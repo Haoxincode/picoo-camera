@@ -164,6 +164,20 @@ object PicooNative {
         outPath: String,
     ): Int
 
+    /** Export diagnostics with session snapshot (REQ-PICOO-PRIVACY-003). */
+    external fun exportDiagnosticsToPathWithSession(
+        trustedStorePath: String,
+        platform: String,
+        appVersion: String,
+        role: String,
+        status: String,
+        accessUnits: Long,
+        packetsReceived: Long,
+        packetsDroppedUnpaired: Long,
+        peerHost: String?,
+        outPath: String,
+    ): Int
+
     external fun parseQrConnect(json: String): QrConnectPayload?
 
     data class SenderStats(

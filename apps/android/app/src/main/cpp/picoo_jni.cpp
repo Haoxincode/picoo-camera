@@ -653,6 +653,59 @@ Java_com_picoo_camera_jni_PicooNative_exportDiagnosticsToPath(
     return picoo_export_diagnostics_to_path(trusted_buf, platform_buf, version_buf, out_buf);
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_exportDiagnosticsToPathWithSession(
+    JNIEnv *env,
+    jobject /* this */,
+    jstring trustedStorePath,
+    jstring platform,
+    jstring appVersion,
+    jstring role,
+    jstring status,
+    jlong accessUnits,
+    jlong packetsReceived,
+    jlong packetsDroppedUnpaired,
+    jstring peerHost,
+    jstring outPath) {
+    if (trustedStorePath == nullptr || platform == nullptr || appVersion == nullptr ||
+        role == nullptr || status == nullptr || outPath == nullptr) {
+        return -1;
+    }
+    char trusted_buf[512] = {0};
+    char platform_buf[64] = {0};
+    char version_buf[64] = {0};
+    char role_buf[32] = {0};
+    char status_buf[64] = {0};
+    char host_buf[256] = {0};
+    char out_buf[512] = {0};
+    if (copyJString(env, trustedStorePath, trusted_buf, sizeof(trusted_buf)) != 0 ||
+        copyJString(env, platform, platform_buf, sizeof(platform_buf)) != 0 ||
+        copyJString(env, appVersion, version_buf, sizeof(version_buf)) != 0 ||
+        copyJString(env, role, role_buf, sizeof(role_buf)) != 0 ||
+        copyJString(env, status, status_buf, sizeof(status_buf)) != 0 ||
+        copyJString(env, outPath, out_buf, sizeof(out_buf)) != 0) {
+        return -1;
+    }
+    const char *host_ptr = nullptr;
+    if (peerHost != nullptr) {
+        if (copyJString(env, peerHost, host_buf, sizeof(host_buf)) != 0) {
+            return -1;
+        }
+        host_ptr = host_buf;
+    }
+    return picoo_export_diagnostics_to_path_with_session(
+        trusted_buf,
+        platform_buf,
+        version_buf,
+        role_buf,
+        status_buf,
+        static_cast<uint64_t>(accessUnits),
+        static_cast<uint64_t>(packetsReceived),
+        static_cast<uint64_t>(packetsDroppedUnpaired),
+        host_ptr,
+        out_buf);
+}
+
 extern "C" JNIEXPORT jobject JNICALL
 Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* this */, jstring json) {
     if (json == nullptr) {

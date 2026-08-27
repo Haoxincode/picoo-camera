@@ -718,10 +718,40 @@ private fun SenderHomeScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
                         val outFile = java.io.File(context.cacheDir, "picoo-diagnostics.json")
-                        val rc = PicooNative.exportDiagnosticsToPath(
-                            trustedStorePath,
+                        val stats = if (senderHandle != 0L) {
+                            PicooNative.readSenderStats(senderHandle)
+                        } else {
+                            null
+                        }
+                        val statusLabel = if (senderHandle != 0L) {
+                            when (PicooNative.getSenderStatus(senderHandle)) {
+                                5 -> "Streaming"
+                                6 -> "Reconnecting"
+                                4 -> "Negotiating"
+                                3 -> "Connecting"
+                                2 -> "Pairing"
+                                1 -> "Discovering"
+                                7 -> "PermissionRequired"
+                                8 -> "NetworkUnstable"
+                                else -> "Disconnected"
+                            }
+                        } else {
+                            "Disconnected"
+                        }
+                        val peer = listOf(hostText, portText)
+                            .filter { it.isNotBlank() }
+                            .joinToString(":")
+                            .ifBlank { null }
+                        val rc = PicooNative.exportDiagnosticsToPathWithSession(
+                            trustedStorePath = trustedStorePath,
                             platform = "android",
                             appVersion = "0.1.0",
+                            role = "sender",
+                            status = statusLabel,
+                            accessUnits = stats?.accessUnits ?: 0L,
+                            packetsReceived = stats?.packets ?: 0L,
+                            packetsDroppedUnpaired = 0L,
+                            peerHost = peer,
                             outPath = outFile.absolutePath,
                         )
                         diagnosticExportPath = if (rc == 0) {

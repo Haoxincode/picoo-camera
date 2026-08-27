@@ -949,6 +949,22 @@ fn export_diagnostics_from_trusted_path(
     platform: &str,
     app_version: &str,
 ) -> Result<String, i32> {
+    export_diagnostics_with_session(
+        trusted_store_path,
+        platform,
+        app_version,
+        None,
+        &[],
+    )
+}
+
+fn export_diagnostics_with_session(
+    trusted_store_path: &str,
+    platform: &str,
+    app_version: &str,
+    session: Option<picoo_diagnostics::DiagnosticSessionSnapshot>,
+    hosts: &[String],
+) -> Result<String, i32> {
     let store = TrustedDeviceStore::load_from_path(trusted_store_path).map_err(|_| -2)?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -958,7 +974,9 @@ fn export_diagnostics_from_trusted_path(
         platform: platform.into(),
         app_version: app_version.into(),
         exported_at_ms: now_ms,
+        session,
         trusted_devices: store.list().cloned().collect(),
+        hosts: hosts.to_vec(),
         ..Default::default()
     });
     export_json(&report).map_err(|_| -3)
@@ -987,6 +1005,70 @@ pub extern "C" fn picoo_export_diagnostics_to_path(
         trusted_store_path.as_ref(),
         platform.as_ref(),
         app_version.as_ref(),
+    ) {
+        Ok(json) => match std::fs::write(out_path.as_ref(), json) {
+            Ok(()) => 0,
+            Err(_) => -4,
+        },
+        Err(code) => code,
+    }
+}
+
+/// Export diagnostics including sender/receiver session snapshot (PRIVACY-003 / PUC-007).
+///
+/// `peer_host` may be null or empty. `packets_dropped_unpaired` is 0 on sender.
+#[no_mangle]
+pub extern "C" fn picoo_export_diagnostics_to_path_with_session(
+    trusted_store_path: *const std::ffi::c_char,
+    platform: *const std::ffi::c_char,
+    app_version: *const std::ffi::c_char,
+    role: *const std::ffi::c_char,
+    status: *const std::ffi::c_char,
+    access_units: u64,
+    packets_received: u64,
+    packets_dropped_unpaired: u64,
+    peer_host: *const std::ffi::c_char,
+    out_path: *const std::ffi::c_char,
+) -> i32 {
+    if trusted_store_path.is_null()
+        || platform.is_null()
+        || app_version.is_null()
+        || role.is_null()
+        || status.is_null()
+        || out_path.is_null()
+    {
+        return -1;
+    }
+    let trusted_store_path = unsafe { CStr::from_ptr(trusted_store_path) }.to_string_lossy();
+    let platform = unsafe { CStr::from_ptr(platform) }.to_string_lossy();
+    let app_version = unsafe { CStr::from_ptr(app_version) }.to_string_lossy();
+    let role = unsafe { CStr::from_ptr(role) }.to_string_lossy();
+    let status = unsafe { CStr::from_ptr(status) }.to_string_lossy();
+    let out_path = unsafe { CStr::from_ptr(out_path) }.to_string_lossy();
+    let hosts = if peer_host.is_null() {
+        Vec::new()
+    } else {
+        let host = unsafe { CStr::from_ptr(peer_host) }.to_string_lossy();
+        if host.is_empty() {
+            Vec::new()
+        } else {
+            vec![host.into_owned()]
+        }
+    };
+    let session = Some(picoo_diagnostics::DiagnosticSessionSnapshot {
+        role: role.into_owned(),
+        status: status.into_owned(),
+        ingress_access_units: access_units,
+        ingress_packets_received: packets_received,
+        ingress_packets_dropped_unpaired: packets_dropped_unpaired,
+        hosts: Vec::new(),
+    });
+    match export_diagnostics_with_session(
+        trusted_store_path.as_ref(),
+        platform.as_ref(),
+        app_version.as_ref(),
+        session,
+        &hosts,
     ) {
         Ok(json) => match std::fs::write(out_path.as_ref(), json) {
             Ok(()) => 0,
@@ -1214,5 +1296,59 @@ mod tests {
         assert!(!handle.is_null());
         assert_eq!(picoo_sender_receiver_max_height(handle), 0);
         picoo_sender_destroy(handle);
+    }
+
+    #[test]
+    fn export_diagnostics_with_session_includes_redacted_host() {
+        use std::ffi::CString;
+        use std::fs;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store_path = dir.path().join("trusted.json");
+        let out_path = dir.path().join("diag.json");
+        fs::write(
+            &store_path,
+            r#"{"version":1,"devices":[]}"#,
+        )
+        .expect("empty store");
+
+        let store = CString::new(store_path.to_str().unwrap()).unwrap();
+        let platform = CString::new("android").unwrap();
+        let version = CString::new("0.1.0").unwrap();
+        let role = CString::new("sender").unwrap();
+        let status = CString::new("Streaming").unwrap();
+        let host = CString::new("192.168.1.42:4433").unwrap();
+        let out = CString::new(out_path.to_str().unwrap()).unwrap();
+
+        assert_eq!(
+            picoo_export_diagnostics_to_path_with_session(
+                store.as_ptr(),
+                platform.as_ptr(),
+                version.as_ptr(),
+                role.as_ptr(),
+                status.as_ptr(),
+                12,
+                34,
+                0,
+                host.as_ptr(),
+                out.as_ptr(),
+            ),
+            0
+        );
+        let json = fs::read_to_string(&out_path).expect("read");
+        // pretty-printed: `"includes_video": false`
+        assert!(
+            json.contains("\"includes_video\": false"),
+            "PRIVACY-002 no-video flag missing: {json}"
+        );
+        assert!(json.contains("\"role\": \"sender\""), "{json}");
+        assert!(json.contains("\"status\": \"Streaming\""), "{json}");
+        assert!(json.contains("xxx"), "peer host must be redacted: {json}");
+        assert!(!json.contains("192.168.1.42"), "{json}");
+        assert_eq!(
+            json.matches("\"ingress_access_units\": 12").count(),
+            1,
+            "{json}"
+        );
     }
 }
