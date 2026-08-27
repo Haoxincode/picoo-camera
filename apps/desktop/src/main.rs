@@ -45,6 +45,11 @@ fn main() {
         return;
     }
 
+    if args.iter().any(|arg| arg == "--clear-paired") {
+        run_clear_paired();
+        return;
+    }
+
     if let Some(index) = args.iter().position(|arg| arg == "--remove-paired") {
         let device_id = args.get(index + 1).map(String::as_str).unwrap_or("");
         if device_id.is_empty() {
@@ -111,7 +116,7 @@ fn main() {
     println!("Run with --loopback-demo to exercise QUIC → FrameHub on Linux CI.");
     println!("Run with --serve to listen, advertise mDNS, and print QR JSON.");
     println!("Run with --gpui for the GPUI desktop shell (requires gpui-ui feature).");
-    println!("Run with --list-paired / --remove-paired <id> to manage trusted devices.");
+    println!("Run with --list-paired / --remove-paired <id> / --clear-paired to manage trusted devices.");
     println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
     #[cfg(all(windows, feature = "windows-vcam"))]
@@ -202,6 +207,23 @@ fn run_remove_paired(device_id: &str) {
         eprintln!("Device not found: {device_id}");
         std::process::exit(1);
     }
+}
+
+fn run_clear_paired() {
+    let path = default_trusted_store_path();
+    let mut store = match TrustedDeviceStore::load_from_path(&path) {
+        Ok(store) => store,
+        Err(err) => {
+            eprintln!("Failed to load trusted store: {err}");
+            std::process::exit(1);
+        }
+    };
+    let n = store.clear();
+    if let Err(err) = store.save_to_path(&path) {
+        eprintln!("Failed to save trusted store: {err}");
+        std::process::exit(1);
+    }
+    println!("Cleared {n} paired device(s)");
 }
 
 fn run_export_diagnostics(out_path: Option<&str>) {

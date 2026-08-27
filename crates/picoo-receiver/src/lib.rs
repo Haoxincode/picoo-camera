@@ -317,6 +317,15 @@ impl ReceiverSession {
         Ok(removed)
     }
 
+    /// Wipe all trusted devices; subsequent connects require re-pairing (PUC-007).
+    pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
+        let n = self.trusted.clear();
+        if n > 0 {
+            self.persist_trusted()?;
+        }
+        Ok(n)
+    }
+
     fn persist_trusted(&self) -> Result<(), ReceiverError> {
         if let Some(path) = &self.trusted_store_path {
             self.trusted.save_to_path(path)?;

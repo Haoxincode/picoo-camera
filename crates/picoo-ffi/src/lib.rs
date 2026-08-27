@@ -732,6 +732,17 @@ pub extern "C" fn picoo_trusted_store_remove(
     }
 }
 
+/// Clear every trusted device. Returns the number removed (≥0), or negative on error.
+#[no_mangle]
+pub extern "C" fn picoo_trusted_store_clear(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
+    let mut store = inner.store.lock().expect("store lock");
+    store.clear() as i32
+}
+
 #[no_mangle]
 pub extern "C" fn picoo_trusted_store_save(handle: *mut std::ffi::c_void) -> i32 {
     if handle.is_null() {

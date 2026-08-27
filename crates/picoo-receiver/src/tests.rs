@@ -949,6 +949,42 @@ fn remove_trusted_device_requires_repair() {
 }
 
 #[test]
+fn clear_trusted_devices_requires_repair() {
+    // REQ-PICOO-PAIRING-005 / PUC-007 — wipe all pairings.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store_path = dir.path().join("trusted.json");
+
+    let mut store = TrustedDeviceStore::new();
+    store.upsert(TrustedDevice {
+        device_id: "phone-a".into(),
+        device_name: "A".into(),
+        public_key: vec![1],
+        certificate_fingerprint: "a".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    store.upsert(TrustedDevice {
+        device_id: "phone-b".into(),
+        device_name: "B".into(),
+        public_key: vec![2],
+        certificate_fingerprint: "b".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    store.save_to_path(&store_path).expect("save");
+
+    let mut receiver = ReceiverSession::new()
+        .with_trusted_store(&store_path)
+        .expect("load store");
+    assert_eq!(receiver.clear_trusted_devices().expect("clear"), 2);
+
+    let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload");
+    assert!(loaded.is_empty());
+    assert!(!loaded.is_paired("phone-a"));
+    assert!(!loaded.is_paired("phone-b"));
+}
+
+#[test]
 fn disconnect_holds_last_frame_then_shows_placeholder() {
     use crate::ReceiverIdentity;
 

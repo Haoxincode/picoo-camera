@@ -618,6 +618,22 @@ private fun SenderHomeScreen(
                         text = "Paired receivers",
                         style = MaterialTheme.typography.titleSmall,
                     )
+                    Button(
+                        onClick = {
+                            val removed = TrustedDeviceList.clearAll(trustedStoreHandle)
+                            if (removed >= 0) {
+                                PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+                                autoConnectAttemptedIds.value = emptySet()
+                                reloadTrustedStore()
+                                errorText = null
+                            } else {
+                                errorText = "Clear all failed: $removed"
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Remove all paired")
+                    }
                     pairedDevices.forEach { device ->
                         Row(
                             modifier = Modifier.fillMaxWidth(),

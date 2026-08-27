@@ -21,6 +21,19 @@ object TrustedDeviceList {
     fun ids(devices: List<PicooNative.TrustedDevice>): Set<String> =
         devices.mapTo(linkedSetOf()) { it.deviceId }
 
+    /**
+     * Wipe all paired devices and persist. Returns the number removed, or a
+     * negative FFI/JNI error code.
+     */
+    fun clearAll(handle: Long): Int {
+        if (handle == 0L) return 0
+        val removed = PicooNative.clearTrustedDevices(handle)
+        if (removed < 0) return removed
+        val saveRc = PicooNative.saveTrustedStore(handle)
+        if (saveRc != 0) return saveRc
+        return removed
+    }
+
     fun shortFingerprint(fingerprint: String, keep: Int = 8): String {
         if (fingerprint.isEmpty()) return "—"
         return if (fingerprint.length <= keep) fingerprint else fingerprint.take(keep) + "…"

@@ -105,4 +105,32 @@ mod tests {
         assert!(store.remove("phone-1"));
         assert!(!store.is_paired("phone-1"));
     }
+
+    #[test]
+    fn clear_wipes_all_and_persists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("trusted.json");
+        let mut store = TrustedDeviceStore::new();
+        store.upsert(TrustedDevice {
+            device_id: "a".into(),
+            device_name: "A".into(),
+            public_key: vec![1],
+            certificate_fingerprint: "aa".into(),
+            paired_at_ms: 0,
+            last_connected_at_ms: None,
+        });
+        store.upsert(TrustedDevice {
+            device_id: "b".into(),
+            device_name: "B".into(),
+            public_key: vec![2],
+            certificate_fingerprint: "bb".into(),
+            paired_at_ms: 0,
+            last_connected_at_ms: None,
+        });
+        assert_eq!(store.clear(), 2);
+        assert!(store.is_empty());
+        store.save_to_path(&path).expect("save");
+        let loaded = TrustedDeviceStore::load_from_path(&path).expect("load");
+        assert!(loaded.is_empty());
+    }
 }

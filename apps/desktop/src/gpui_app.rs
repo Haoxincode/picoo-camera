@@ -627,6 +627,16 @@ impl PicooDesktopApp {
                     .outline()
                     .title("已配对设备")
                     .child(format!("共 {} 台设备", snapshot.trusted_device_count))
+                    .when(snapshot.trusted_device_count > 0, |box_| {
+                        box_.child(
+                            Button::new("clear-all-trusted")
+                                .label("清除全部配对")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let _ = this.runtime.clear_trusted_devices();
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .children(snapshot.trusted_devices.iter().map(|device| {
                         self.render_trusted_device_row(device, cx)
                             .into_any_element()

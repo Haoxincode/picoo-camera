@@ -35,4 +35,9 @@ class TrustedDeviceListTest {
         )
         assertEquals(setOf("a", "b"), TrustedDeviceList.ids(devices))
     }
+
+    @Test
+    fun clearAllWithZeroHandleIsNoop() {
+        assertEquals(0, TrustedDeviceList.clearAll(0L))
+    }
 }

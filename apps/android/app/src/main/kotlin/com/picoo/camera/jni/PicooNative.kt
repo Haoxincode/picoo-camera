@@ -141,6 +141,9 @@ object PicooNative {
 
     external fun removeTrustedDevice(handle: Long, deviceId: String): Int
 
+    /** Clear all trusted devices. Returns count removed (≥0). */
+    external fun clearTrustedDevices(handle: Long): Int
+
     external fun saveTrustedStore(handle: Long): Int
 
     /** Load or create durable sender identity (REQ-PICOO-PAIRING-001). */

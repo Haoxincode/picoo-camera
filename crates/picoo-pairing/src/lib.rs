@@ -83,6 +83,21 @@ impl TrustedDeviceStore {
         self.devices.remove(device_id).is_some()
     }
 
+    /// Remove every trusted device (REQ-PICOO-PAIRING-005 / PUC-007 wipe).
+    pub fn clear(&mut self) -> usize {
+        let n = self.devices.len();
+        self.devices.clear();
+        n
+    }
+
+    pub fn len(&self) -> usize {
+        self.devices.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.devices.is_empty()
+    }
+
     pub fn is_paired(&self, device_id: &str) -> bool {
         self.devices.contains_key(device_id)
     }

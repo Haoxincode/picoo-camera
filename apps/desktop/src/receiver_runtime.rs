@@ -296,6 +296,10 @@ impl ReceiverRuntime {
         self.receiver.remove_trusted_device(device_id)
     }
 
+    pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
+        self.receiver.clear_trusted_devices()
+    }
+
     pub fn receiver(&self) -> &ReceiverSession {
         &self.receiver
     }
