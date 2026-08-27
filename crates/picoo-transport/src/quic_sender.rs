@@ -163,7 +163,9 @@ impl PicooTransport for QuicSenderTransport {
 
     fn close(&mut self, session: SessionId, reason: CloseReason) {
         if self.session == Some(session) || self.pending_session == Some(session) {
-            self.client = None;
+            if let Some(mut client) = self.client.take() {
+                let _ = client.close();
+            }
             self.session = None;
             self.pending_session = None;
             self.control_rx = ControlFrameDecoder::default();

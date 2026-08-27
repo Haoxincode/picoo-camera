@@ -167,6 +167,9 @@ impl QuicServer {
             flush_connection(&self.socket, &mut client.conn, client.peer_addr)?;
         }
 
+        // Drop closed peers so a later Sender reconnect can establish a fresh session (PUC-006).
+        self.clients.retain(|_, client| !client.conn.is_closed());
+
         Ok(())
     }
 
@@ -292,6 +295,19 @@ impl QuicClient {
 
     pub fn is_established(&self) -> bool {
         self.conn.is_established()
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.conn.is_closed()
+    }
+
+    /// Gracefully close so the peer Receiver can observe disconnect and accept reconnect.
+    pub fn close(&mut self) -> Result<(), QuicTransportError> {
+        let _ = self.conn.close(true, 0x00, b"picoo-bye");
+        flush_connection(&self.socket, &mut self.conn, self.server_addr)?;
+        // Drain remaining packets so the peer learns about the close.
+        let _ = self.drive();
+        Ok(())
     }
 
     /// QUIC path stats for this client connection (REQ-PICOO-PROTOCOL-006).

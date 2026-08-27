@@ -590,8 +590,8 @@ impl<T: PicooTransport> SenderSession<T> {
         self.status = status;
     }
 
-    #[cfg(test)]
-    pub(crate) fn disconnect_for_test(&mut self, reason: picoo_transport::CloseReason) {
+    /// Close the active transport session (used by reconnect / recovery tests across crates).
+    pub fn disconnect_for_test(&mut self, reason: picoo_transport::CloseReason) {
         if let Some(session) = self.session {
             self.transport.close(session, reason);
         }

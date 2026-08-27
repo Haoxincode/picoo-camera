@@ -114,8 +114,21 @@ impl QuicReceiverTransport {
         };
 
         server.drive().map_err(Self::map_send_err)?;
+        let now_established = server.is_established();
 
-        if server.is_established() && !self.connected_notified {
+        // Peer closed (or pruned): surface Disconnected so session layer can wait for reconnect.
+        if self.connected_notified && !now_established {
+            if let Some(session) = self.session.take() {
+                self.connected_notified = false;
+                self.control_rx = ControlFrameDecoder::default();
+                self.events.push_back(TransportEvent::Disconnected(
+                    session,
+                    CloseReason::PeerClose,
+                ));
+            }
+        }
+
+        if now_established && !self.connected_notified {
             let session = SessionId(1);
             self.session = Some(session);
             self.connected_notified = true;
