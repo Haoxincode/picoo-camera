@@ -33,10 +33,17 @@ jobs:
       - run: PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
       - run: echo "sdk.dir=${ANDROID_HOME}" >> apps/android/local.properties
       - run: cargo run -p xtask -- build android
+      - run: cargo run -p xtask -- package android
       - uses: actions/upload-artifact@v4
         with:
-          name: android-apk
+          name: android-apk-debug
           path: apps/android/app/build/outputs/apk/debug/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: |
+            apps/android/app/build/outputs/apk/release/
+            apps/android/app/build/outputs/bundle/release/
 
   windows:
     runs-on: windows-latest

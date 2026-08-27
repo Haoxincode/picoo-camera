@@ -145,16 +145,73 @@ impl NotifyIconController {
     }
 
     fn apply_win32(&self, op: NotifyIconOp) {
-        // Real `Shell_NotifyIconW` needs HWND from GPUI + `windows` Win32_UI_Shell.
-        // Until HWND injection lands, record intent only (verified in unit tests).
-        if self.hwnd.is_some() {
+        #[cfg(all(windows, feature = "windows-vcam"))]
+        {
+            self.apply_shell_notify_icon(op);
+        }
+        #[cfg(not(all(windows, feature = "windows-vcam")))]
+        {
+            if self.hwnd.is_some() {
+                tracing::debug!(
+                    target: "picoo_tray",
+                    ?op,
+                    hwnd = ?self.hwnd,
+                    tip = %self.tip,
+                    "notify-icon op recorded (Shell_NotifyIconW unavailable on this build)"
+                );
+            }
+        }
+    }
+
+    /// Resolve HWND: explicit injection, else FindWindowW("Picoo Camera").
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    fn resolve_hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
+        use windows::core::w;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+        if let Some(raw) = self.hwnd {
+            return Some(HWND(raw as *mut _));
+        }
+        unsafe { FindWindowW(None, w!("Picoo Camera")).ok() }.filter(|h| !h.is_invalid())
+    }
+
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    fn apply_shell_notify_icon(&self, op: NotifyIconOp) {
+        use std::mem::size_of;
+        use windows::Win32::UI::Shell::{
+            Shell_NotifyIconW, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+        };
+
+        let Some(hwnd) = self.resolve_hwnd() else {
             tracing::debug!(
                 target: "picoo_tray",
                 ?op,
-                hwnd = ?self.hwnd,
-                tip = %self.tip,
-                "notify-icon op ready for Shell_NotifyIconW"
+                "Shell_NotifyIconW deferred — no HWND (set_notify_icon_hwnd or FindWindowW)"
             );
+            return;
+        };
+
+        let mut tip_buf = [0u16; 128];
+        for (i, c) in self.tip.encode_utf16().take(127).enumerate() {
+            tip_buf[i] = c;
+        }
+        let mut data = NOTIFYICONDATAW {
+            cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            uFlags: NIF_MESSAGE | NIF_TIP,
+            ..Default::default()
+        };
+        data.szTip = tip_buf;
+        let msg = match op {
+            NotifyIconOp::Add => NIM_ADD,
+            NotifyIconOp::Modify => NIM_MODIFY,
+            NotifyIconOp::Delete => NIM_DELETE,
+        };
+        let ok = unsafe { Shell_NotifyIconW(msg, &data) }.as_bool();
+        if !ok {
+            tracing::warn!(target: "picoo_tray", ?op, "Shell_NotifyIconW returned false");
         }
     }
 }

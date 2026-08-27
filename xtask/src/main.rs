@@ -117,7 +117,24 @@ fn package(platform: Platform) -> Result<()> {
             Ok(())
         }
         Platform::Android => {
-            bail!("use `xtask build android` for APK until package target is defined")
+            let sh = Shell::new()?;
+            if !Path::new("apps/android/gradlew").exists() {
+                bail!("android gradle project missing");
+            }
+            if let Ok(sdk) = std::env::var("ANDROID_HOME") {
+                sh.write_file("apps/android/local.properties", format!("sdk.dir={sdk}\n"))?;
+            }
+            // REQ-PICOO-STACK-005 / TRANSPORT-005: release APK + AAB (debug-signed, 签名前可用).
+            cmd!(
+                sh,
+                "./apps/android/gradlew -p apps/android assembleRelease bundleRelease"
+            )
+            .run()?;
+            eprintln!(
+                "android package: APK=apps/android/app/build/outputs/apk/release/ \
+                 AAB=apps/android/app/build/outputs/bundle/release/"
+            );
+            Ok(())
         }
     }
 }

@@ -32,6 +32,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            // Pre-signing local/CI artifacts (PRD §19 — 签名前可用).
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
