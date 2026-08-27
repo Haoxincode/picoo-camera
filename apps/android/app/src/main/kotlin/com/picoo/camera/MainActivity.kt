@@ -82,22 +82,40 @@ private fun SenderHomeScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     var encodedFrames by remember { mutableIntStateOf(0) }
     var keyFrames by remember { mutableIntStateOf(0) }
+    var rustPackets by remember { mutableIntStateOf(0) }
     var encoderState by remember { mutableStateOf(CaptureState.Idle) }
     var statsText by remember { mutableStateOf("") }
     var errorText by remember { mutableStateOf<String?>(null) }
 
+    val senderHandle = remember { PicooNative.createSender() }
+
     val encoder = remember {
         Camera2MediaEncoder(
             context = context,
-            frameListener = EncodedFrameListener { _, isKeyFrame, _, _ ->
+            frameListener = EncodedFrameListener { data, isKeyFrame, ptsUs, streamEpoch ->
                 encodedFrames += 1
                 if (isKeyFrame) keyFrames += 1
+                val fragments = PicooNative.ingestAccessUnit(
+                    handle = senderHandle,
+                    data = data,
+                    keyframe = isKeyFrame,
+                    ptsUs = ptsUs,
+                    streamEpoch = streamEpoch,
+                )
+                if (fragments > 0) {
+                    rustPackets += fragments
+                }
             },
         )
     }
 
-    DisposableEffect(encoder) {
-        onDispose { encoder.close() }
+    DisposableEffect(encoder, senderHandle) {
+        onDispose {
+            encoder.close()
+            if (senderHandle != 0L) {
+                PicooNative.destroySender(senderHandle)
+            }
+        }
     }
 
     Column(
@@ -133,8 +151,13 @@ private fun SenderHomeScreen(
                     Text("Switch camera")
                 }
                 Button(onClick = {
-                    statsText = encoder.stats.let {
-                        "frames=$encodedFrames keys=$keyFrames ~${it.lastBitrateEstimateKbps}kbps epoch=${encoder.streamEpoch}"
+                    val rust = PicooNative.readSenderStats(senderHandle)
+                    statsText = buildString {
+                        append("enc=$encodedFrames keys=$keyFrames ")
+                        append("~${encoder.stats.lastBitrateEstimateKbps}kbps ")
+                        append("epoch=${encoder.streamEpoch}\n")
+                        append("rust AU=${rust.accessUnits} pkts=${rust.packets} ")
+                        append("pending=${rust.pendingPackets}")
                     }
                     encoderState = encoder.state
                     errorText = encoder.lastError
