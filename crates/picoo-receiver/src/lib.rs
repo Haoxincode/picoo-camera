@@ -420,8 +420,12 @@ impl ReceiverSession {
 
     fn handle_control(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         if self.pending_pairing.is_some() {
-            if PairingConfirm::decode(msg.as_ref()).is_ok() {
-                return self.handle_pairing_confirm(session, msg);
+            // Prost will decode many unrelated blobs as PairingConfirm with an empty
+            // signature — only accept SHA-256-length confirm signatures.
+            if let Ok(confirm) = PairingConfirm::decode(msg.as_ref()) {
+                if confirm.confirm_signature.len() == 32 {
+                    return self.handle_pairing_confirm(session, msg);
+                }
             }
             return Ok(());
         }
