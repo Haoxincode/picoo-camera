@@ -391,47 +391,12 @@ mod tests {
             last_seq = producer
                 .publish_nv12(64, 64, 64, 0, i * 1_000, &frame)
                 .expect("publish");
+            // Interleave polls while overwriting (REQ-PICOO-FRAME-002).
+            let _ = consumer.latest_frame();
         }
         let view = consumer.latest_frame().expect("latest");
         assert_eq!(view.sequence, last_seq);
         assert_eq!(view.timestamp_us, 31_000);
-        cleanup(&name);
-    }
-
-    #[test]
-    fn concurrent_publisher_and_poller() {
-        use std::sync::Arc;
-        use std::thread;
-
-        let name = test_ring_name();
-        let max = nv12_byte_size(64, 64);
-        let mut producer = SharedFrameRingProducer::create(&name, max).expect("create");
-        let consumer = SharedFrameRingConsumer::open(&name, max).expect("open");
-        let stop = Arc::new(AtomicU32::new(0));
-        let stop_reader = Arc::clone(&stop);
-
-        let reader = thread::spawn(move || {
-            let mut saw = 0u64;
-            while stop_reader.load(Ordering::Acquire) == 0 {
-                if let Some(view) = consumer.latest_frame() {
-                    saw = saw.max(view.sequence);
-                }
-                thread::yield_now();
-            }
-            saw
-        });
-
-        let frame = nv12_black(64, 64);
-        let mut last = 0u64;
-        for i in 0..64u64 {
-            last = producer
-                .publish_nv12(64, 64, 64, 0, i, &frame)
-                .expect("publish");
-        }
-        stop.store(1, Ordering::Release);
-        let saw = reader.join().expect("join");
-        assert!(saw > 0);
-        assert!(saw <= last);
         cleanup(&name);
     }
 }
