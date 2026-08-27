@@ -821,6 +821,7 @@ fn soak_paired_loopback_memory_stable() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     let deadline = std::time::Instant::now() + Duration::from_secs(soak_secs);
+    let start = std::time::Instant::now();
     let mut next_sample = std::time::Instant::now();
     let mut samples: Vec<(u64, u64, u64)> = Vec::new(); // (elapsed_s, au, rss_kb)
     let mut frame_id = 1u64;
@@ -836,10 +837,10 @@ fn soak_paired_loopback_memory_stable() {
             sender.pump().ok();
         }
         if std::time::Instant::now() >= next_sample {
-            let elapsed = soak_secs.saturating_sub(deadline.saturating_duration_since(std::time::Instant::now()).as_secs());
+            let elapsed = start.elapsed().as_secs();
             let rss = linux_vm_rss_kb().unwrap_or(0);
             let au = receiver.stats().access_units;
-            eprintln!("soak sample elapsed≈{elapsed}s au={au} rss_kb={rss}");
+            eprintln!("soak sample elapsed={elapsed}s au={au} rss_kb={rss}");
             samples.push((elapsed, au, rss));
             next_sample += Duration::from_secs(sample_every);
         }
