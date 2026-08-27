@@ -675,6 +675,7 @@ pub extern "C" fn picoo_export_diagnostics_json(
 }
 
 /// QR JSON connect payload parse helper — returns host/port/receiver_id or negative on error.
+/// Returns -4 if payload is expired (REQ-PICOO-DISCOVERY-004).
 #[no_mangle]
 pub extern "C" fn picoo_qr_connect_parse(
     json: *const std::ffi::c_char,
@@ -683,6 +684,7 @@ pub extern "C" fn picoo_qr_connect_parse(
     out_port: *mut u16,
     out_receiver_id: *mut std::ffi::c_char,
     out_receiver_id_len: usize,
+    out_expires_at_ms: *mut u64,
 ) -> i32 {
     if json.is_null() {
         return -1;
@@ -692,9 +694,21 @@ pub extern "C" fn picoo_qr_connect_parse(
         Ok(payload) => payload,
         Err(_) => return -2,
     };
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if payload.is_expired(now_ms) {
+        return -4;
+    }
     if !out_port.is_null() {
         unsafe {
             *out_port = payload.port;
+        }
+    }
+    if !out_expires_at_ms.is_null() {
+        unsafe {
+            *out_expires_at_ms = payload.expires_at_ms;
         }
     }
     if copy_str_to_buf(&payload.host, out_host, out_host_len) < 0 {
@@ -728,5 +742,37 @@ mod tests {
         );
         assert_eq!(out, 1);
         picoo_sender_destroy(handle);
+    }
+
+    #[test]
+    fn qr_connect_parse_rejects_expired_payload() {
+        use picoo_discovery::{QrConnectPayload, DEFAULT_QR_TTL_MS};
+
+        let payload = QrConnectPayload::new(
+            "192.168.1.10",
+            4433,
+            "recv-1",
+            "fp",
+            "nonce",
+            1_000,
+            DEFAULT_QR_TTL_MS,
+        );
+        let json = payload.encode_json().expect("encode");
+        let mut host = [0u8; 64];
+        let mut receiver_id = [0u8; 64];
+        let mut port = 0u16;
+        let mut expires = 0u64;
+        assert_eq!(
+            picoo_qr_connect_parse(
+                std::ffi::CString::new(json).unwrap().as_ptr(),
+                host.as_mut_ptr() as *mut std::ffi::c_char,
+                host.len(),
+                &mut port,
+                receiver_id.as_mut_ptr() as *mut std::ffi::c_char,
+                receiver_id.len(),
+                &mut expires,
+            ),
+            -4
+        );
     }
 }

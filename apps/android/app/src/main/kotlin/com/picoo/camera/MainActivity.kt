@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +42,7 @@ import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
 import com.picoo.camera.ui.CameraPreviewSurface
+import com.picoo.camera.ui.QrCodeScanner
 import com.picoo.camera.ui.theme.PicooCameraTheme
 
 class MainActivity : ComponentActivity() {
@@ -101,6 +103,8 @@ private fun SenderHomeScreen(
     var pairedDevicesText by remember { mutableStateOf("") }
     var selectedReceiverId by remember { mutableStateOf("") }
     var trustedStoreHandle by remember { mutableLongStateOf(0L) }
+    var qrJsonText by remember { mutableStateOf("") }
+    var showQrScanner by remember { mutableStateOf(false) }
 
     var diagnosticExportPath by remember { mutableStateOf("") }
 
@@ -109,6 +113,65 @@ private fun SenderHomeScreen(
     }
     val senderHandle = remember { PicooNative.createSender() }
     val browserHandle = remember { PicooNative.createDiscoveryBrowser() }
+
+    val encoder = remember {
+        Camera2MediaEncoder(
+            context = context,
+            frameListener = EncodedFrameListener { data, isKeyFrame, ptsUs, streamEpoch ->
+                encodedFrames += 1
+                if (isKeyFrame) keyFrames += 1
+                val fragments = PicooNative.ingestAccessUnit(
+                    handle = senderHandle,
+                    data = data,
+                    keyframe = isKeyFrame,
+                    ptsUs = ptsUs,
+                    streamEpoch = streamEpoch,
+                )
+                if (fragments > 0) {
+                    rustPackets += fragments
+                    PicooNative.flushPending(senderHandle)
+                    PicooNative.pump(senderHandle)
+                }
+            },
+        )
+    }
+
+    fun connectToReceiver(host: String, port: Int, receiverId: String) {
+        PicooNative.setStreamConfig(
+            senderHandle,
+            width = 1280,
+            height = 720,
+            fps = 30,
+            bitrateBps = 6_000_000,
+            streamEpoch = encoder.streamEpoch,
+            mirrored = false,
+        )
+        val rc = PicooNative.connect(senderHandle, host.trim(), port)
+        if (rc == 0) {
+            selectedReceiverId = receiverId
+            PicooNative.sendClientHello(
+                senderHandle,
+                senderId = "android-sender",
+                deviceName = android.os.Build.MODEL,
+                publicKey = byteArrayOf(1, 2, 3),
+            )
+            errorText = null
+        } else {
+            errorText = "Connect failed: $rc"
+        }
+    }
+
+    fun connectFromQrJson(json: String) {
+        val payload = PicooNative.parseQrConnect(json.trim())
+        if (payload == null) {
+            errorText = "Invalid or expired QR payload"
+            return
+        }
+        hostText = payload.host
+        portText = payload.quicPort.toString()
+        selectedReceiverId = payload.receiverId
+        connectToReceiver(payload.host, payload.quicPort, payload.receiverId)
+    }
 
     fun reloadTrustedStore() {
         if (trustedStoreHandle != 0L) {
@@ -156,28 +219,6 @@ private fun SenderHomeScreen(
         }
     }
 
-    val encoder = remember {
-        Camera2MediaEncoder(
-            context = context,
-            frameListener = EncodedFrameListener { data, isKeyFrame, ptsUs, streamEpoch ->
-                encodedFrames += 1
-                if (isKeyFrame) keyFrames += 1
-                val fragments = PicooNative.ingestAccessUnit(
-                    handle = senderHandle,
-                    data = data,
-                    keyframe = isKeyFrame,
-                    ptsUs = ptsUs,
-                    streamEpoch = streamEpoch,
-                )
-                if (fragments > 0) {
-                    rustPackets += fragments
-                    PicooNative.flushPending(senderHandle)
-                    PicooNative.pump(senderHandle)
-                }
-            },
-        )
-    }
-
     DisposableEffect(encoder, senderHandle, browserHandle, trustedStoreHandle) {
         onDispose {
             encoder.close()
@@ -193,8 +234,11 @@ private fun SenderHomeScreen(
         }
     }
 
+    Box(
+        modifier = modifier.fillMaxSize(),
+    ) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -234,33 +278,34 @@ private fun SenderHomeScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
+        OutlinedTextField(
+            value = qrJsonText,
+            onValueChange = { qrJsonText = it },
+            label = { Text("QR JSON (paste or scan)") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val port = portText.toIntOrNull() ?: return@Button
-                PicooNative.setStreamConfig(
-                    senderHandle,
-                    width = 1280,
-                    height = 720,
-                    fps = 30,
-                    bitrateBps = 6_000_000,
-                    streamEpoch = encoder.streamEpoch,
-                    mirrored = false,
-                )
-                val rc = PicooNative.connect(senderHandle, hostText.trim(), port)
-                if (rc == 0) {
-                    PicooNative.sendClientHello(
-                        senderHandle,
-                        senderId = "android-sender",
-                        deviceName = android.os.Build.MODEL,
-                        publicKey = byteArrayOf(1, 2, 3),
-                    )
-                    errorText = null
-                } else {
-                    errorText = "Connect failed: $rc"
-                }
+                connectToReceiver(hostText, port, selectedReceiverId.ifEmpty { "windows-receiver" })
             }) {
                 Text("Connect")
             }
+            Button(onClick = {
+                if (qrJsonText.isBlank()) {
+                    errorText = "Paste QR JSON or scan first"
+                    return@Button
+                }
+                connectFromQrJson(qrJsonText)
+            }) {
+                Text("Connect from QR")
+            }
+            Button(onClick = { showQrScanner = true }) {
+                Text("Scan QR")
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 val receiverId = connectedReceiverId.ifEmpty { selectedReceiverId.ifEmpty { "windows-receiver" } }
                 val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
@@ -365,5 +410,18 @@ private fun SenderHomeScreen(
                 modifier = Modifier.align(Alignment.CenterHorizontally),
             )
         }
+    }
+
+    if (showQrScanner && cameraGranted) {
+        QrCodeScanner(
+            modifier = Modifier.fillMaxSize(),
+            onQrDetected = { payload ->
+                qrJsonText = payload
+                connectFromQrJson(payload)
+                showQrScanner = false
+            },
+            onClose = { showQrScanner = false },
+        )
+    }
     }
 }

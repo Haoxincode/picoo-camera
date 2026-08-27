@@ -134,6 +134,7 @@ object PicooNative {
         val host: String,
         val quicPort: Int,
         val receiverId: String,
+        val expiresAtMs: Long,
     )
 
     fun readSenderStats(handle: Long): SenderStats {

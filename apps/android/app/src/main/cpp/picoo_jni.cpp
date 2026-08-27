@@ -93,7 +93,7 @@ Java_com_picoo_camera_jni_PicooNative_getSenderStats(JNIEnv *env, jobject /* thi
         static_cast<jlong>(stats.packets),
         static_cast<jlong>(stats.bytes),
         static_cast<jlong>(stats.sent_datagrams),
-        static_cast<jlong>(picoo_sender_pending_packets(reinterpret_cast<void *>(handle)),
+        static_cast<jlong>(picoo_sender_pending_packets(reinterpret_cast<void *>(handle))),
     };
     env->SetLongArrayRegion(result, 0, 5, values);
     return result;
@@ -393,13 +393,15 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
     char host_buf[128] = {0};
     char receiver_buf[128] = {0};
     uint16_t port = 0;
+    uint64_t expires_at_ms = 0;
     int32_t rc = picoo_qr_connect_parse(
         json_chars,
         host_buf,
         sizeof(host_buf),
         &port,
         receiver_buf,
-        sizeof(receiver_buf));
+        sizeof(receiver_buf),
+        &expires_at_ms);
     env->ReleaseStringUTFChars(json, json_chars);
     if (rc != 0) {
         return nullptr;
@@ -409,7 +411,10 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
     if (cls == nullptr) {
         return nullptr;
     }
-    jmethodID ctor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;ILjava/lang/String;)V");
+    jmethodID ctor = env->GetMethodID(
+        cls,
+        "<init>",
+        "(Ljava/lang/String;ILjava/lang/String;J)V");
     if (ctor == nullptr) {
         return nullptr;
     }
@@ -418,7 +423,8 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
         ctor,
         makeJString(env, host_buf),
         static_cast<jint>(port),
-        makeJString(env, receiver_buf));
+        makeJString(env, receiver_buf),
+        static_cast<jlong>(expires_at_ms));
 }
 
 extern "C" JNIEXPORT jlong JNICALL
