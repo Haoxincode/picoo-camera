@@ -23,7 +23,9 @@ With desktop receiver running (`picoo-desktop --serve` or GPUI):
 cargo run -p picoo-vcam-ring-reader
 ```
 
-Expect NV12 placeholder frames (`1280x720`) until live H.264 decode lands.
+Expect NV12 placeholder frames (`1280x720`) until a phone streams; after OpenH264/MF
+decode, live frames appear at negotiated resolution (see
+`paired_openh264_publishes_to_shared_frame_ring`).
 
 Built on `windows-latest` for MF DLL — see [ci-and-build.md](../../docs/development/ci-and-build.md).
 

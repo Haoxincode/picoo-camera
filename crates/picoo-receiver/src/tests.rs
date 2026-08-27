@@ -1174,6 +1174,50 @@ fn soak_paired_loopback_memory_stable() {
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
+    // Prefer real H.264 on Linux so soak stresses OpenH264→FrameHub (REQ-PICOO-SESSION-005).
+    #[cfg(not(windows))]
+    let soak_au: Vec<u8> = {
+        use openh264::encoder::Encoder;
+        use openh264::formats::YUVBuffer;
+        use picoo_packet::extract_sps_pps;
+        use picoo_sender::StreamConfigParams;
+
+        let width = 160usize;
+        let height = 120usize;
+        let mut planes = vec![128u8; width * height * 3 / 2];
+        for y in 0..height {
+            for x in 0..width {
+                planes[y * width + x] = ((x + y) % 200 + 20) as u8;
+            }
+        }
+        let yuv = YUVBuffer::from_vec(planes, width, height);
+        let mut encoder = Encoder::new().expect("openh264 encoder");
+        let annex = encoder.encode(&yuv).expect("encode").to_vec();
+        let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
+        sender.set_stream_config(StreamConfigParams {
+            width: width as u32,
+            height: height as u32,
+            fps: 30,
+            bitrate_bps: 500_000,
+            stream_epoch: 1,
+            mirrored: false,
+            rotation: 0,
+            sps,
+            pps,
+        });
+        for _ in 0..50 {
+            receiver.pump().expect("rx");
+            sender.pump().expect("tx");
+            if sender.stream_config_sent() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        annex
+    };
+    #[cfg(windows)]
+    let soak_au: Vec<u8> = b"soak-frame-stub".to_vec();
+
     let deadline = std::time::Instant::now() + Duration::from_secs(soak_secs);
     let start = std::time::Instant::now();
     let mut next_sample = std::time::Instant::now();
@@ -1181,9 +1225,8 @@ fn soak_paired_loopback_memory_stable() {
     let mut frame_id = 1u64;
 
     while std::time::Instant::now() < deadline {
-        let payload = format!("soak-frame-{frame_id}");
         sender
-            .ingest_and_flush(payload.as_bytes(), frame_id % 30 == 1, frame_id, 1)
+            .ingest_and_flush(&soak_au, frame_id % 30 == 1, frame_id, 1)
             .expect("ingest");
         frame_id += 1;
         for _ in 0..8 {
@@ -1765,4 +1808,218 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
         height,
         receiver.stats()
     );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn paired_openh264_publishes_to_shared_frame_ring() {
+    // REQ-PICOO-FRAME-003 / VCAM-003: decode once → Shared Frame Ring for VCam consumer.
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_frame_hub::{
+        nv12_byte_size, SharedFrameRingConsumer, SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES,
+    };
+    use picoo_packet::extract_sps_pps;
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let width = 160usize;
+    let height = 120usize;
+    let mut planes = vec![128u8; width * height * 3 / 2];
+    for y in 0..height {
+        for x in 0..width {
+            planes[y * width + x] = ((x * 11 + y * 3) % 220 + 18) as u8;
+        }
+    }
+    let yuv = YUVBuffer::from_vec(planes, width, height);
+    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let annex = encoder.encode(&yuv).expect("encode").to_vec();
+    let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
+
+    let ring_name = format!(
+        "picoo-h264-ring-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let flink = SharedFrameRingProducer::flink_path(&ring_name);
+    let _ = std::fs::remove_file(&flink);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver
+        .attach_shared_ring(&ring_name)
+        .expect("attach shared ring");
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "ring-phone".into(),
+        device_name: "Ring".into(),
+        public_key: vec![4, 4, 4],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let consumer =
+        SharedFrameRingConsumer::open(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("consumer");
+    // Placeholder is published on attach.
+    let placeholder = consumer.latest_frame().expect("placeholder on ring");
+    assert!(placeholder.sequence >= 1);
+    let placeholder_seq = placeholder.sequence;
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("ring-phone", "Ring", &[4, 4, 4])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: width as u32,
+        height: height as u32,
+        fps: 30,
+        bitrate_bps: 500_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 90,
+        sps,
+        pps,
+    });
+    for _ in 0..50 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .ingest_and_flush(&annex, true, 1, 1)
+        .expect("ingest");
+    for _ in 0..300 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if let Some(view) = consumer.latest_frame() {
+            if view.sequence > placeholder_seq
+                && view.width == width as u32
+                && view.height == height as u32
+            {
+                assert_eq!(view.nv12.len(), nv12_byte_size(view.width, view.height));
+                assert_eq!(view.rotation, 90, "StreamConfig.rotation must reach ring");
+                assert!(
+                    view.nv12.iter().any(|b| *b != 16 && *b != 128),
+                    "ring must carry decoded NV12, not placeholder grey"
+                );
+                let _ = std::fs::remove_file(&flink);
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let _ = std::fs::remove_file(&flink);
+    panic!(
+        "decoded H.264 did not appear on Shared Frame Ring; hub={:?} stats={:?}",
+        receiver.latest_frame().map(|f| (f.width, f.height, f.rotation)),
+        receiver.stats()
+    );
+}
+
+#[test]
+fn paired_loopback_binds_lan_only_without_wan() {
+    // REQ-PICOO-PRIVACY-005: discovery/transport stay on LAN; no WAN dependency.
+    use picoo_pairing::TrustedDevice;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "lan-phone".into(),
+        device_name: "LAN".into(),
+        public_key: vec![1, 1, 1],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    assert!(
+        bind.ip().is_loopback(),
+        "receiver must bind loopback/LAN for PRIVACY-005, got {}",
+        bind.ip()
+    );
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("lan-phone", "LAN", &[1, 1, 1])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    sender
+        .ingest_and_flush(b"lan-only-au", true, 1, 1)
+        .expect("ingest");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!("LAN loopback video path failed without WAN");
 }

@@ -10,8 +10,9 @@ cd "$ROOT"
 SOAK_SECONDS="${SOAK_SECONDS:-60}"
 SAMPLE_EVERY="${SAMPLE_EVERY:-5}"
 
-echo "soak_loopback: duration=${SOAK_SECONDS}s sample_every=${SAMPLE_EVERY}s"
-echo "Building paired loopback binary harness via cargo test (filter)…"
+# Prefer real H.264 soak on Linux (OpenH264). Override duration for PRD §21 2h:
+#   SOAK_SECONDS=7200 ./scripts/soak_loopback.sh
+echo "soak_loopback: duration=${SOAK_SECONDS}s sample_every=${SAMPLE_EVERY}s (H.264 on Linux)"
 
 # Run a dedicated soak test that loops until env deadline.
 export PICOO_SOAK_SECONDS="$SOAK_SECONDS"
