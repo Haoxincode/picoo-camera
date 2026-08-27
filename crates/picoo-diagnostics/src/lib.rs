@@ -36,9 +36,12 @@ impl Default for RedactionPolicy {
 pub struct DiagnosticSessionSnapshot {
     pub role: String,
     pub status: String,
-    pub ingress_access_units: u64,
-    pub ingress_packets_received: u64,
-    pub ingress_packets_dropped_unpaired: u64,
+    /// Access units on the active role path (sender encode / receiver decode).
+    pub access_units: u64,
+    /// Packets on the active role path (sender egress or receiver ingress).
+    pub packets: u64,
+    /// Receiver-only unpaired drops; sender exports 0.
+    pub packets_dropped_unpaired: u64,
     /// Optional bind / peer hosts (IPv4), redacted when policy.redact_ips.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hosts: Vec<String>,
@@ -181,9 +184,9 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
         session = Some(DiagnosticSessionSnapshot {
             role: "unknown".into(),
             status: "unknown".into(),
-            ingress_access_units: 0,
-            ingress_packets_received: 0,
-            ingress_packets_dropped_unpaired: 0,
+            access_units: 0,
+            packets: 0,
+            packets_dropped_unpaired: 0,
             hosts: input
                 .hosts
                 .iter()
@@ -276,9 +279,9 @@ mod tests {
             session: Some(DiagnosticSessionSnapshot {
                 role: "receiver".into(),
                 status: "Streaming".into(),
-                ingress_access_units: 1,
-                ingress_packets_received: 2,
-                ingress_packets_dropped_unpaired: 0,
+                access_units: 1,
+                packets: 2,
+                packets_dropped_unpaired: 0,
                 hosts: vec!["192.168.1.42:4433".into()],
             }),
             hosts: vec!["10.0.0.7".into()],

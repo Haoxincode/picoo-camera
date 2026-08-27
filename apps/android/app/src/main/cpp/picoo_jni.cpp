@@ -663,7 +663,7 @@ Java_com_picoo_camera_jni_PicooNative_exportDiagnosticsToPathWithSession(
     jstring role,
     jstring status,
     jlong accessUnits,
-    jlong packetsReceived,
+    jlong packets,
     jlong packetsDroppedUnpaired,
     jstring peerHost,
     jstring outPath) {
@@ -700,7 +700,7 @@ Java_com_picoo_camera_jni_PicooNative_exportDiagnosticsToPathWithSession(
         role_buf,
         status_buf,
         static_cast<uint64_t>(accessUnits),
-        static_cast<uint64_t>(packetsReceived),
+        static_cast<uint64_t>(packets),
         static_cast<uint64_t>(packetsDroppedUnpaired),
         host_ptr,
         out_buf);

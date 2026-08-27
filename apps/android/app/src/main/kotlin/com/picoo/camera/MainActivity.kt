@@ -749,7 +749,7 @@ private fun SenderHomeScreen(
                             role = "sender",
                             status = statusLabel,
                             accessUnits = stats?.accessUnits ?: 0L,
-                            packetsReceived = stats?.packets ?: 0L,
+                            packets = stats?.packets ?: 0L,
                             packetsDroppedUnpaired = 0L,
                             peerHost = peer,
                             outPath = outFile.absolutePath,

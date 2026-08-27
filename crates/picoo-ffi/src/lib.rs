@@ -1016,6 +1016,7 @@ pub extern "C" fn picoo_export_diagnostics_to_path(
 
 /// Export diagnostics including sender/receiver session snapshot (PRIVACY-003 / PUC-007).
 ///
+/// Session counters are role-neutral (`access_units` / `packets`).
 /// `peer_host` may be null or empty. `packets_dropped_unpaired` is 0 on sender.
 #[no_mangle]
 pub extern "C" fn picoo_export_diagnostics_to_path_with_session(
@@ -1058,9 +1059,9 @@ pub extern "C" fn picoo_export_diagnostics_to_path_with_session(
     let session = Some(picoo_diagnostics::DiagnosticSessionSnapshot {
         role: role.into_owned(),
         status: status.into_owned(),
-        ingress_access_units: access_units,
-        ingress_packets_received: packets_received,
-        ingress_packets_dropped_unpaired: packets_dropped_unpaired,
+        access_units,
+        packets: packets_received,
+        packets_dropped_unpaired,
         hosts: Vec::new(),
     });
     match export_diagnostics_with_session(
@@ -1345,10 +1346,11 @@ mod tests {
         assert!(json.contains("\"status\": \"Streaming\""), "{json}");
         assert!(json.contains("xxx"), "peer host must be redacted: {json}");
         assert!(!json.contains("192.168.1.42"), "{json}");
-        assert_eq!(
-            json.matches("\"ingress_access_units\": 12").count(),
-            1,
-            "{json}"
+        assert_eq!(json.matches("\"access_units\": 12").count(), 1, "{json}");
+        assert_eq!(json.matches("\"packets\": 34").count(), 1, "{json}");
+        assert!(
+            !json.contains("ingress_"),
+            "session counters must be role-neutral: {json}"
         );
     }
 }

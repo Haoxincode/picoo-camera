@@ -172,7 +172,8 @@ object PicooNative {
         role: String,
         status: String,
         accessUnits: Long,
-        packetsReceived: Long,
+        /** Role-path packets (sender egress datagrams). */
+        packets: Long,
         packetsDroppedUnpaired: Long,
         peerHost: String?,
         outPath: String,

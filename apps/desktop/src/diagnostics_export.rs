@@ -64,9 +64,9 @@ fn build_diagnostics_json(
         session: Some(DiagnosticSessionSnapshot {
             role: "receiver".into(),
             status: format!("{status:?}"),
-            ingress_access_units: ingress.access_units,
-            ingress_packets_received: ingress.packets_received,
-            ingress_packets_dropped_unpaired: ingress.packets_dropped_unpaired,
+            access_units: ingress.access_units,
+            packets: ingress.packets_received,
+            packets_dropped_unpaired: ingress.packets_dropped_unpaired,
             hosts: Vec::new(),
         }),
         trusted_devices: store.list().cloned().collect(),
