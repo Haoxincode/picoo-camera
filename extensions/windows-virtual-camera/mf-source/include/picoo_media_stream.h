@@ -3,6 +3,8 @@
 #include "picoo_frame_provider.h"
 #include "picoo_mf_headers.h"
 
+#include <vector>
+
 class PicooMediaSource;
 
 class PicooMediaStream
@@ -45,7 +47,12 @@ public:
 private:
     HRESULT EnsureStarted();
     HRESULT DeliverSample(IUnknown* token);
-    HRESULT CreateManualSample(IMFSample** sample);
+    HRESULT CreateManualSample(const std::vector<uint8_t>& nv12,
+                               uint32_t width,
+                               uint32_t height,
+                               IMFSample** sample);
+    /// Follow midstream resolution (720p ↔ 1080p) so allocator buffers match NV12 size.
+    HRESULT EnsureOutputFormat(uint32_t frame_w, uint32_t frame_h);
 
     PicooMediaSource* source_ = nullptr;
     DWORD stream_id_ = 0;
@@ -55,4 +62,6 @@ private:
     Microsoft::WRL::ComPtr<IMFMediaType> current_type_;
     Microsoft::WRL::ComPtr<IMFSampleAllocatorEx> allocator_;
     PicooFrameProvider frames_;
+    uint32_t output_width_ = PICOO_VCAM_DEFAULT_WIDTH;
+    uint32_t output_height_ = PICOO_VCAM_DEFAULT_HEIGHT;
 };

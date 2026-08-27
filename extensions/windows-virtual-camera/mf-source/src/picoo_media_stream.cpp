@@ -4,6 +4,7 @@
 
 #include "picoo_com_macros.h"
 #include "picoo_media_source.h"
+#include "picoo_vcam_format.h"
 #include "picoo_vcam_ids.h"
 
 #include <cstring>
@@ -49,6 +50,8 @@ HRESULT PicooMediaStream::Initialize(PicooMediaSource* source, DWORD stream_id) 
     RETURN_IF_FAILED(CreateNv12MediaType(&type_720, PICOO_VCAM_DEFAULT_WIDTH, PICOO_VCAM_DEFAULT_HEIGHT));
     RETURN_IF_FAILED(CreateNv12MediaType(&type_1080, 1920, 1080));
     current_type_ = type_720;
+    output_width_ = PICOO_VCAM_DEFAULT_WIDTH;
+    output_height_ = PICOO_VCAM_DEFAULT_HEIGHT;
 
     IMFMediaType* types[2] = {type_720.Get(), type_1080.Get()};
     RETURN_IF_FAILED(MFCreateStreamDescriptor(stream_id, 2, types, &descriptor_));
@@ -196,15 +199,53 @@ HRESULT PicooMediaStream::EnsureStarted() {
     return S_OK;
 }
 
-HRESULT PicooMediaStream::CreateManualSample(IMFSample** sample) {
-    std::vector<uint8_t> nv12;
-    uint32_t width = 0;
-    uint32_t height = 0;
-    uint32_t stride = 0;
-    if (!frames_.AcquireNv12(&nv12, &width, &height, &stride)) {
-        return E_FAIL;
+HRESULT PicooMediaStream::EnsureOutputFormat(uint32_t frame_w, uint32_t frame_h) {
+    if (frame_w == 0 || frame_h == 0) {
+        return E_INVALIDARG;
+    }
+    // Follow Shared Frame Ring dimensions exactly so NV12 byte length matches the
+    // MF sample allocator (fixes 720→1080 midstream DeliverSample failures).
+    if (frame_w == output_width_ && frame_h == output_height_ && current_type_) {
+        return S_OK;
     }
 
+    // Negotiated ladder (720p/1080p) — ring frames should already match.
+    uint32_t ladder_w = 0;
+    uint32_t ladder_h = 0;
+    picoo_select_output_nv12_dims(frame_w, frame_h, &ladder_w, &ladder_h);
+    (void)ladder_w;
+    (void)ladder_h;
+
+    ComPtr<IMFMediaType> type;
+    RETURN_IF_FAILED(CreateNv12MediaType(&type, frame_w, frame_h));
+    current_type_ = type;
+    output_width_ = frame_w;
+    output_height_ = frame_h;
+
+    if (descriptor_) {
+        ComPtr<IMFMediaTypeHandler> handler;
+        RETURN_IF_FAILED(descriptor_->GetMediaTypeHandler(&handler));
+        RETURN_IF_FAILED(handler->SetCurrentMediaType(current_type_.Get()));
+    }
+
+    if (allocator_ && state_ == MF_STREAM_STATE_RUNNING) {
+        allocator_->UninitializeSampleAllocator();
+        RETURN_IF_FAILED(allocator_->InitializeSampleAllocator(10, current_type_.Get()));
+    }
+
+    if (queue_ && state_ == MF_STREAM_STATE_RUNNING) {
+        RETURN_IF_FAILED(
+            queue_->QueueEventParamUnk(MEStreamFormatChanged, GUID_NULL, S_OK, current_type_.Get()));
+    }
+    return S_OK;
+}
+
+HRESULT PicooMediaStream::CreateManualSample(const std::vector<uint8_t>& nv12,
+                                             uint32_t width,
+                                             uint32_t height,
+                                             IMFSample** sample) {
+    (void)width;
+    (void)height;
     ComPtr<IMFSample> out_sample;
     ComPtr<IMFMediaBuffer> buffer;
     RETURN_IF_FAILED(MFCreateSample(&out_sample));
@@ -230,22 +271,27 @@ HRESULT PicooMediaStream::CreateManualSample(IMFSample** sample) {
 }
 
 HRESULT PicooMediaStream::DeliverSample(IUnknown* token) {
+    // Acquire first, then rebuild MF type / allocator before AllocateSample so a
+    // midstream 720→1080 switch cannot copy 1080p NV12 into a 720p buffer.
+    std::vector<uint8_t> nv12;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    uint32_t stride = 0;
+    if (!frames_.AcquireNv12(&nv12, &width, &height, &stride)) {
+        return E_FAIL;
+    }
+    (void)stride;
+    RETURN_IF_FAILED(EnsureOutputFormat(width, height));
+
+    const size_t expected =
+        static_cast<size_t>(output_width_) * static_cast<size_t>(output_height_) * 3u / 2u;
+    if (nv12.size() != expected) {
+        return E_FAIL;
+    }
+
     ComPtr<IMFSample> sample;
     if (allocator_) {
         RETURN_IF_FAILED(allocator_->AllocateSample(&sample));
-    } else {
-        RETURN_IF_FAILED(CreateManualSample(&sample));
-    }
-
-    if (allocator_) {
-        std::vector<uint8_t> nv12;
-        uint32_t width = 0;
-        uint32_t height = 0;
-        uint32_t stride = 0;
-        if (!frames_.AcquireNv12(&nv12, &width, &height, &stride)) {
-            return E_FAIL;
-        }
-
         DWORD buffer_count = 0;
         RETURN_IF_FAILED(sample->GetBufferCount(&buffer_count));
         if (buffer_count == 0) {
@@ -265,6 +311,8 @@ HRESULT PicooMediaStream::DeliverSample(IUnknown* token) {
         RETURN_IF_FAILED(buffer->SetCurrentLength(static_cast<DWORD>(nv12.size())));
         RETURN_IF_FAILED(sample->SetSampleTime(MFGetSystemTime()));
         RETURN_IF_FAILED(sample->SetSampleDuration(PICOO_VCAM_SAMPLE_DURATION_100NS));
+    } else {
+        RETURN_IF_FAILED(CreateManualSample(nv12, width, height, &sample));
     }
 
     if (token) {
