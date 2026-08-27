@@ -54,6 +54,8 @@ pub struct SenderSession<T: PicooTransport> {
     last_endpoint: Option<Endpoint>,
     reconnect_backoff: ReconnectBackoff,
     reconnect_after: Option<Instant>,
+    /// Last delay chosen by [`Self::schedule_reconnect`] (TRANSPORT-004 observability).
+    last_scheduled_reconnect_delay_ms: Option<u64>,
     auto_reconnect: bool,
     bitrate: BitrateController,
     last_bitrate_action: BitrateAction,
@@ -85,6 +87,7 @@ impl<T: PicooTransport> SenderSession<T> {
             last_endpoint: None,
             reconnect_backoff: ReconnectBackoff::default(),
             reconnect_after: None,
+            last_scheduled_reconnect_delay_ms: None,
             auto_reconnect: true,
             bitrate: BitrateController::new(
                 DEFAULT_INITIAL_BITRATE_BPS,
@@ -129,6 +132,16 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn set_auto_reconnect(&mut self, enabled: bool) {
         self.auto_reconnect = enabled;
+    }
+
+    /// Delay scheduled by the most recent reconnect arming (REQ-PICOO-TRANSPORT-004).
+    pub fn last_scheduled_reconnect_delay_ms(&self) -> Option<u64> {
+        self.last_scheduled_reconnect_delay_ms
+    }
+
+    /// Active ABR ladder height after downshift/upshift acknowledgements.
+    pub fn bitrate_active_height(&self) -> u32 {
+        self.bitrate.active_height()
     }
 
     pub fn current_bitrate_bps(&self) -> u32 {
@@ -278,6 +291,7 @@ impl<T: PicooTransport> SenderSession<T> {
             return;
         }
         let delay_ms = self.reconnect_backoff.next_delay_ms();
+        self.last_scheduled_reconnect_delay_ms = Some(delay_ms);
         self.reconnect_after = Some(Instant::now() + Duration::from_millis(delay_ms));
         self.status = SenderStatus::Reconnecting;
     }
@@ -500,7 +514,10 @@ impl<T: PicooTransport> SenderSession<T> {
             self.transport.pump().map_err(SenderError::Transport)?;
             self.drain_events();
         }
-        if self.status == SenderStatus::Streaming {
+        if matches!(
+            self.status,
+            SenderStatus::Streaming | SenderStatus::NetworkUnstable
+        ) {
             let _ = self.send_pending_stream_config();
         }
         Ok(())
@@ -649,14 +666,13 @@ impl<T: PicooTransport> SenderSession<T> {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn inject_control_for_test(&mut self, msg: bytes::Bytes) -> Result<(), SenderError> {
+    /// Inject a decoded control message (tests / ABR loopback harnesses).
+    pub fn inject_control_for_test(&mut self, msg: bytes::Bytes) -> Result<(), SenderError> {
         self.handle_control(msg);
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) fn force_status_for_test(&mut self, status: SenderStatus) {
+    pub fn force_status_for_test(&mut self, status: SenderStatus) {
         self.status = status;
     }
 
@@ -665,6 +681,14 @@ impl<T: PicooTransport> SenderSession<T> {
         if let Some(session) = self.session {
             self.transport.close(session, reason);
         }
+    }
+
+    /// Simulate a failed reconnect attempt: advance backoff without a successful connect.
+    #[cfg(test)]
+    pub(crate) fn simulate_failed_reconnect_for_test(&mut self) {
+        self.reconnect_after = None;
+        self.session = None;
+        self.schedule_reconnect();
     }
 }
 
@@ -713,6 +737,7 @@ mod tests {
         session.disconnect_for_test(CloseReason::PeerClose);
         session.pump().expect("pump after disconnect");
         assert_eq!(session.status(), SenderStatus::Reconnecting);
+        assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(500));
 
         for _ in 0..20 {
             session.pump().expect("reconnect pump");
@@ -723,6 +748,32 @@ mod tests {
         }
         assert!(session.is_connected());
         assert_ne!(session.status(), SenderStatus::Disconnected);
+    }
+
+    #[test]
+    fn reconnect_backoff_escalates_across_failed_attempts() {
+        // REQ-PICOO-TRANSPORT-004 / PUC-006: 500 → 1000 → 2000 → 5000 → 5000.
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+
+        session.disconnect_for_test(CloseReason::Timeout);
+        session.pump().expect("pump");
+        assert_eq!(session.status(), SenderStatus::Reconnecting);
+        assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(500));
+
+        session.simulate_failed_reconnect_for_test();
+        assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(1_000));
+        session.simulate_failed_reconnect_for_test();
+        assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(2_000));
+        session.simulate_failed_reconnect_for_test();
+        assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(5_000));
+        session.simulate_failed_reconnect_for_test();
+        assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(5_000));
     }
 
     #[test]
