@@ -1860,6 +1860,170 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
 
 #[cfg(not(windows))]
 #[test]
+fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
+    // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU → Annex-B normalize → OpenH264.
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_packet::{annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit};
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let width = 160usize;
+    let height = 120usize;
+    let mut planes = vec![128u8; width * height * 3 / 2];
+    for y in 0..height {
+        for x in 0..width {
+            planes[y * width + x] = ((x * 7 + y * 11) % 200 + 20) as u8;
+        }
+    }
+    let yuv = YUVBuffer::from_vec(planes, width, height);
+    let mut encoder = Encoder::new().expect("encoder");
+    let annex = encoder.encode(&yuv).expect("encode").to_vec();
+    let (sps, pps) = extract_sps_pps(&annex).expect("sps/pps");
+    let avcc = annex_b_to_length_prefixed(&annex).expect("avcc wrap");
+    assert!(is_length_prefixed_access_unit(&avcc));
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "avcc-phone".into(),
+        device_name: "Avcc".into(),
+        public_key: vec![8, 8, 8],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("avcc-phone", "Avcc", &[8, 8, 8])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    sender.set_stream_config(StreamConfigParams {
+        width: width as u32,
+        height: height as u32,
+        fps: 30,
+        bitrate_bps: 500_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps,
+        pps,
+    });
+    for _ in 0..50 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.ingest_and_flush(&avcc, true, 1, 1).expect("ingest avcc");
+    for _ in 0..300 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.width == width as u32 && frame.height == height as u32 {
+                assert_eq!(
+                    frame.pixel_data.len(),
+                    nv12_byte_size(frame.width, frame.height)
+                );
+                assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!("AVCC AU did not reach FrameHub; stats={:?}", receiver.stats());
+}
+
+#[cfg(not(windows))]
+#[test]
+fn thermal_hold_blocks_abr_upshift_on_sender() {
+    // REQ-PICOO-MEDIA-010: host thermal force keeps ABR from requesting 1080p.
+    use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
+    use picoo_transport::QuicSenderTransport;
+    use prost::Message;
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_preferred_height(1080);
+    sender.sync_encode_height(720);
+    sender.set_thermal_hold(true);
+    assert_eq!(sender.bitrate_active_height(), 720);
+    assert!(sender.thermal_hold());
+
+    for _ in 0..80 {
+        let stats = ReceiverStatsMsg {
+            packet_loss: 0.0,
+            frame_age_ms: 40.0,
+            jitter_buffer_depth_ms: 40.0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        stats.encode(&mut buf).expect("encode");
+        sender
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        assert!(
+            !sender.take_resolution_upshift(),
+            "thermal hold must suppress upshift hint"
+        );
+    }
+    sender.set_thermal_hold(false);
+    let mut up = false;
+    for _ in 0..120 {
+        let stats = ReceiverStatsMsg {
+            packet_loss: 0.0,
+            frame_age_ms: 40.0,
+            jitter_buffer_depth_ms: 40.0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        stats.encode(&mut buf).expect("encode");
+        sender
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        if sender.take_resolution_upshift() {
+            up = true;
+            break;
+        }
+    }
+    assert!(up, "after thermal clear, ABR should request upshift");
+    assert_eq!(sender.bitrate_active_height(), 1080);
+}
+
+#[cfg(not(windows))]
+#[test]
 fn paired_openh264_publishes_to_shared_frame_ring() {
     // REQ-PICOO-FRAME-003 / VCAM-003: decode once → Shared Frame Ring for VCam consumer.
     use openh264::encoder::Encoder;

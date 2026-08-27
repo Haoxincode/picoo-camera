@@ -90,6 +90,20 @@ pub fn length_prefixed_to_annex_b(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Wrap Annex-B NALs as a 4-byte length-prefixed (MediaCodec AVCC-style) AU.
+pub fn annex_b_to_length_prefixed(data: &[u8]) -> Option<Vec<u8>> {
+    let nals = split_annex_b_nals(data);
+    if nals.is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for nal in nals {
+        out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+        out.extend_from_slice(nal);
+    }
+    Some(out)
+}
+
 /// Normalize an access unit to Annex-B for soft/hardware decoders.
 ///
 /// Passes Annex-B through unchanged; converts complete length-prefixed AUs.
@@ -247,6 +261,18 @@ mod tests {
             access_unit_to_annex_b(&avcc),
             std::borrow::Cow::Owned(_)
         ));
+    }
+
+    #[test]
+    fn annex_b_roundtrips_through_length_prefixed() {
+        let annex = [0u8, 0, 0, 1, 0x67, 0x42, 0x00, 0x0a, 0, 0, 0, 1, 0x68, 0xce];
+        let avcc = annex_b_to_length_prefixed(&annex).expect("to avcc");
+        assert!(is_length_prefixed_access_unit(&avcc));
+        let back = length_prefixed_to_annex_b(&avcc).expect("to annex");
+        assert_eq!(
+            split_annex_b_nals(&annex),
+            split_annex_b_nals(&back)
+        );
     }
 
     #[test]
