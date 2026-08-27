@@ -9,11 +9,16 @@ license.workspace = true
 name = "picoo-desktop"
 path = "src/main.rs"
 
+[features]
+default = []
+gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets"]
+
 [dependencies]
 picoo-discovery.workspace = true
 picoo-diagnostics.workspace = true
 picoo-frame-hub.workspace = true
 picoo-pairing.workspace = true
+picoo-protocol.workspace = true
 picoo-metrics.workspace = true
 picoo-receiver.workspace = true
 picoo-session.workspace = true
@@ -22,5 +27,10 @@ qrcode = "0.14"
 serde.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+gpui = { workspace = true, optional = true }
+gpui_platform = { workspace = true, optional = true }
+gpui-component = { workspace = true, optional = true }
+gpui-component-assets = { workspace = true, optional = true }
 
 [dev-dependencies]

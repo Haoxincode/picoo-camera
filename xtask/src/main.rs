@@ -69,8 +69,12 @@ fn build(platform: Platform) -> Result<()> {
             }
         }
         Platform::Windows => {
-            cmd!(sh, "cargo build -p picoo-desktop --release").run()?;
-            eprintln!("windows: GPUI/MF/VCam packaging pending platform implementation");
+            cmd!(
+                sh,
+                "cargo build -p picoo-desktop --release --features gpui-ui"
+            )
+            .run()?;
+            eprintln!("windows: MF/VCam packaging pending platform implementation");
         }
     }
     Ok(())

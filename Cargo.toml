@@ -38,6 +38,12 @@ serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
 
+# GPUI stack — lock to gpui-component compatible revision (ARCH-PICOO-UI-001)
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+
 picoo-protocol = { path = "crates/picoo-protocol" }
 picoo-packet = { path = "crates/picoo-packet" }
 picoo-pairing = { path = "crates/picoo-pairing" }

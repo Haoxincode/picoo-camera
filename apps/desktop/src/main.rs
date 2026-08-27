@@ -1,23 +1,21 @@
 //! Picoo Camera desktop Receiver — ARCH-PICOO-UI-001 shell.
-//!
-//! GPUI integration will be added in the Windows vertical slice step.
 
 mod model;
 mod qr_display;
+mod receiver_runtime;
+
+#[cfg(feature = "gpui-ui")]
+mod gpui_app;
 
 use std::io::{self, BufRead};
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 
 use model::DesktopAppState;
 use picoo_diagnostics::{build_report, export_json, DiagnosticInput, DiagnosticSessionSnapshot};
-use picoo_discovery::{
-    generate_nonce, MdnsAdvertiser, QrConnectPayload, ReceiverAdvertisement, DEFAULT_QR_TTL_MS,
-};
 use picoo_pairing::TrustedDeviceStore;
-use picoo_receiver::{ReceiverIdentity, ReceiverSession};
-use picoo_transport::Endpoint;
+use picoo_receiver::ReceiverSession;
+use receiver_runtime::{default_trusted_store_path, ReceiverRuntime, ReceiverRuntimeConfig};
 use tracing_subscriber::EnvFilter;
 
 fn main() {
@@ -52,9 +50,34 @@ fn main() {
         return;
     }
 
+    if args.iter().any(|arg| arg == "--gpui") {
+        #[cfg(feature = "gpui-ui")]
+        {
+            if let Err(err) = gpui_app::run_gpui_app() {
+                eprintln!("GPUI app failed: {err}");
+                std::process::exit(1);
+            }
+            return;
+        }
+        #[cfg(not(feature = "gpui-ui"))]
+        {
+            eprintln!("Rebuild with --features gpui-ui to launch the desktop UI.");
+            std::process::exit(1);
+        }
+    }
+
     if let Some(index) = args.iter().position(|arg| arg == "--export-diagnostics") {
         let out_path = args.get(index + 1).map(String::as_str);
         run_export_diagnostics(out_path);
+        return;
+    }
+
+    #[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
+    if args.len() <= 1 {
+        if let Err(err) = gpui_app::run_gpui_app() {
+            eprintln!("GPUI app failed: {err}");
+            std::process::exit(1);
+        }
         return;
     }
 
@@ -65,21 +88,10 @@ fn main() {
     );
     println!("Run with --loopback-demo to exercise QUIC → FrameHub on Linux CI.");
     println!("Run with --serve to listen, advertise mDNS, and print QR JSON.");
+    println!("Run with --gpui for the GPUI desktop shell (requires gpui-ui feature).");
     println!("Run with --list-paired / --remove-paired <id> to manage trusted devices.");
     println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
-}
-
-fn default_trusted_store_path() -> PathBuf {
-    std::env::var("PICOO_TRUSTED_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home)
-                .join(".config")
-                .join("picoo-camera")
-                .join("trusted_devices.json")
-        })
 }
 
 fn run_list_paired() {
@@ -266,96 +278,30 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
 }
 
 fn run_serve_mode() {
-    let identity = ReceiverIdentity::default();
-    let trusted_path = default_trusted_store_path();
-    let mut receiver = match ReceiverSession::new()
-        .with_identity(identity.clone())
-        .with_trusted_store(&trusted_path)
-    {
-        Ok(session) => session,
+    let config = ReceiverRuntimeConfig::default();
+    let trusted_path = config.trusted_store_path.clone();
+    let mut runtime = match ReceiverRuntime::start(config) {
+        Ok(runtime) => runtime,
         Err(err) => {
-            eprintln!(
-                "Failed to load trusted store {}: {err}",
-                trusted_path.display()
-            );
+            eprintln!("Failed to start receiver: {err}");
             std::process::exit(1);
         }
     };
 
-    if let Err(err) = receiver.attach_shared_ring("picoo-camera-v1") {
-        eprintln!("Shared Frame Ring unavailable: {err}");
-    }
-
-    let bind = match receiver.listen(Endpoint {
-        host: "0.0.0.0".into(),
-        port: 0,
-    }) {
-        Ok(addr) => addr,
-        Err(err) => {
-            eprintln!("Failed to bind QUIC listener: {err}");
-            std::process::exit(1);
-        }
-    };
-
-    let mut mdns = match MdnsAdvertiser::new() {
-        Ok(advertiser) => Some(advertiser),
-        Err(err) => {
-            eprintln!("mDNS unavailable: {err}");
-            None
-        }
-    };
-
-    let advertisement = ReceiverAdvertisement::new(
-        identity.receiver_id.clone(),
-        identity.display_name.clone(),
-        bind.port(),
-        "00000000",
-    );
-
-    if let Some(advertiser) = mdns.as_mut() {
-        if let Err(err) = advertiser.register("127.0.0.1", &advertisement) {
-            eprintln!("mDNS register failed: {err}");
-        } else {
-            println!(
-                "mDNS advertising {} on port {}",
-                advertisement.display_name,
-                bind.port()
-            );
+    if let Some(json) = &runtime.snapshot().qr_json {
+        println!("QR payload: {json}");
+        if let Some(art) = &runtime.snapshot().qr_ascii {
+            println!("Scan QR Code (PUC-003):\n{art}");
         }
     }
 
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let qr = QrConnectPayload::new(
-        bind.ip().to_string(),
-        bind.port(),
-        identity.receiver_id,
-        "00000000",
-        generate_nonce(),
-        now_ms,
-        DEFAULT_QR_TTL_MS,
-    );
-    match qr.encode_json() {
-        Ok(json) => {
-            println!("QR payload: {json}");
-            match qr_display::render_qr_ascii(&json) {
-                Ok(art) => {
-                    println!("Scan QR Code (PUC-003):\n{art}");
-                }
-                Err(err) => eprintln!("QR render failed: {err}"),
-            }
-        }
-        Err(err) => eprintln!("QR encode failed: {err}"),
+    if let Some(bind) = runtime.snapshot().bind_addr {
+        println!(
+            "Listening on {bind} — status {:?}. Trusted store: {}",
+            runtime.snapshot().status,
+            trusted_path.display()
+        );
     }
-
-    println!(
-        "Listening on {} — status {:?}. Trusted store: {}",
-        bind,
-        receiver.status(),
-        trusted_path.display()
-    );
     println!("Type `confirm` when pairing code matches, `list`, `remove <device_id>`, or `export-diagnostics`.");
 
     let stdin_rx = spawn_stdin_commands();
@@ -363,13 +309,13 @@ fn run_serve_mode() {
 
     loop {
         while let Ok(line) = stdin_rx.try_recv() {
-            handle_console_command(&mut receiver, &line);
+            handle_console_command(runtime.receiver_mut(), &line);
         }
 
-        if let Err(err) = receiver.pump() {
+        if let Err(err) = runtime.pump() {
             eprintln!("Receiver pump error: {err}");
         }
-        if let Some(code) = receiver.pairing_short_code() {
+        if let Some(code) = runtime.receiver().pairing_short_code() {
             let hint = format!("Pairing code: {code} — type `confirm` on desktop to approve");
             if hint != last_pairing_hint {
                 println!("{hint}");
@@ -379,5 +325,16 @@ fn run_serve_mode() {
             last_pairing_hint.clear();
         }
         thread::sleep(std::time::Duration::from_millis(16));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_trusted_store_path_is_non_empty() {
+        let path = default_trusted_store_path();
+        assert!(!path.as_os_str().is_empty());
     }
 }
