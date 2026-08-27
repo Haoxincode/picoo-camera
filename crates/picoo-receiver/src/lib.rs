@@ -16,7 +16,8 @@ use picoo_pairing::{
     verify_pairing_confirm, PairingError, PairingHandshakeError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm, ReceiverStats as ReceiverStatsMsg, ServerHello,
+    ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm,
+    ReceiverStats as ReceiverStatsMsg, ServerHello,
 };
 use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
@@ -267,8 +268,7 @@ impl ReceiverSession {
                         self.ingress.packets_dropped_unpaired += 1;
                         continue;
                     }
-                    self.stats_reporter
-                        .record_packet(packet.payload.len());
+                    self.stats_reporter.record_packet(packet.payload.len());
                     if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
                         self.publish_access_unit(access_unit)?;
                     }
@@ -294,9 +294,13 @@ impl ReceiverSession {
             .active_session()
             .ok_or(ReceiverError::NotListening)?;
 
-        let elapsed = self.stats_reporter.last_sent.elapsed().as_secs_f64().max(0.001);
-        let receive_bitrate =
-            ((self.stats_reporter.window_bytes as f64 * 8.0) / elapsed) as u32;
+        let elapsed = self
+            .stats_reporter
+            .last_sent
+            .elapsed()
+            .as_secs_f64()
+            .max(0.001);
+        let receive_bitrate = ((self.stats_reporter.window_bytes as f64 * 8.0) / elapsed) as u32;
         let reassembly_drop = self
             .reassembly
             .drop_count()
@@ -505,7 +509,17 @@ impl ReceiverSession {
         } else {
             access_unit.to_vec()
         };
-        self.publish_nv12_frame(1280, 720, 1280, 0, self.ingress.access_units, &nv12)
+        self.publish_nv12_frame(
+            1280,
+            720,
+            1280,
+            0,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_micros() as u64)
+                .unwrap_or(0),
+            &nv12,
+        )
     }
 
     fn publish_nv12_frame(

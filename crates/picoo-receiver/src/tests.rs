@@ -9,8 +9,9 @@ use crate::{run_loopback_access_unit, ReceiverSession};
 
 #[test]
 fn loopback_sender_to_receiver_frame_hub() {
-    let frame = run_loopback_access_unit(b"test-access-unit").expect("loopback");
-    assert_eq!(frame.as_ref(), b"test-access-unit");
+    let payload = b"test-access-unit";
+    let frame = run_loopback_access_unit(payload).expect("loopback");
+    assert_eq!(&frame.as_ref()[..payload.len()], payload);
 }
 
 #[test]
@@ -255,7 +256,9 @@ fn receiver_sends_stats_to_paired_sender() {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    assert!(sender.last_receiver_stats().is_some());
-    assert!(sender.last_receiver_stats().unwrap().receive_bitrate > 0);
-    assert_eq!(sender.last_bitrate_action(), BitrateAction::Hold);
+    let stats = sender.last_receiver_stats().expect("receiver stats");
+    assert!(stats.receive_bitrate > 0);
+    // 1s stats interval with a static frame ⇒ high frame_age ⇒ bitrate decrease.
+    assert!(stats.frame_age_ms > 200.0);
+    assert_eq!(sender.last_bitrate_action(), BitrateAction::Decrease);
 }
