@@ -12,7 +12,7 @@
 
 ## Product Use Case
 
-`product/` 描述用户通过 Pico Camera 完成目标时可感知的产品行为，使用 `PUC-###` 作为稳定 ID。
+`product/` 描述用户通过 Picoo Camera 完成目标时可感知的产品行为，使用 `PUC-###` 作为稳定 ID。
 
 完整索引见 [Product Use Cases](product/README.md)。
 

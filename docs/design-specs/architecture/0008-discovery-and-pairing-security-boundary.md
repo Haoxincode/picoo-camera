@@ -1,4 +1,4 @@
-# ARCH-PICO-DISCOVERY-001: 设备发现、配对与安全边界
+# ARCH-PICOO-DISCOVERY-001: 设备发现、配对与安全边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-001 / PUC-002 / PUC-003 / PUC-007
@@ -14,7 +14,7 @@ Source: product PRD V1.0 / PUC-001 / PUC-002 / PUC-003 / PUC-007
 Receiver 启动后广播服务类型：
 
 ```text
-_picocam._udp.local
+_picoocam._udp.local
 ```
 
 广播记录 **只允许** 包含：
@@ -108,10 +108,10 @@ Sender 扫码后绕过 mDNS 直接连接。短期随机数过期后旧二维码�
 
 ## 相关 Architecture
 
-- [ARCH-PICO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICO-PROTOCOL-001](0003-pico-camera-protocol-boundary.md)
-- [ARCH-PICO-STACK-001](0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](0003-picoo-camera-protocol-boundary.md)
+- [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-DISCOVERY-*`、`REQ-PICO-PAIRING-*`、`REQ-PICO-PRIVACY-*`
+- 待分解：`REQ-PICOO-DISCOVERY-*`、`REQ-PICOO-PAIRING-*`、`REQ-PICOO-PRIVACY-*`

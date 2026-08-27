@@ -29,9 +29,9 @@
 
 ## 相关 Architecture
 
-- [ARCH-PICO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
-- [ARCH-PICO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
+- [ARCH-PICOO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-DISCOVERY-*`
+- 待分解：`REQ-PICOO-DISCOVERY-*`

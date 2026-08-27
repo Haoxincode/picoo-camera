@@ -1,11 +1,11 @@
-# ARCH-PICO-VCAM-001: 虚拟摄像头平台边界
+# ARCH-PICOO-VCAM-001: 虚拟摄像头平台边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-001 / PUC-004
 
 ## 背景
 
-会议软件通过操作系统标准摄像头 API 枚举设备。Pico Camera 必须在 Windows 与 macOS 上注册统一名称 **`Pico Camera`**，并向 Zoom、Teams、腾讯会议、OBS 和浏览器会议提供稳定 NV12 帧流。
+会议软件通过操作系统标准摄像头 API 枚举设备。Picoo Camera 必须在 Windows 与 macOS 上注册统一名称 **`Picoo Camera`**，并向 Zoom、Teams、腾讯会议、OBS 和浏览器会议提供稳定 NV12 帧流。
 
 Windows 与 macOS 的虚拟摄像头机制不同，但产品语义一致：无连接占位、有连接实时帧、扩展进程不持有网络逻辑。
 
@@ -13,7 +13,7 @@ Windows 与 macOS 的虚拟摄像头机制不同，但产品语义一致：无�
 
 ### 统一产品名称
 
-Windows 与 macOS 都向系统注册：**Pico Camera**
+Windows 与 macOS 都向系统注册：**Picoo Camera**
 
 ### Windows
 
@@ -22,14 +22,14 @@ Windows 与 macOS 都向系统注册：**Pico Camera**
 ```text
 MFCreateVirtualCamera
   → IMFVirtualCamera
-  → Custom IMFMediaSource (PicoVirtualCameraSource.dll)
+  → Custom IMFMediaSource (PicooVirtualCameraSource.dll)
   → Shared Frame Ring
 ```
 
 组件包括：
 
-- `Pico Camera Desktop.exe`
-- `PicoVirtualCameraSource.dll`
+- `Picoo Camera Desktop.exe`
+- `PicooVirtualCameraSource.dll`
 - Installer
 - Shared Frame Ring
 
@@ -40,10 +40,10 @@ Media Source 作为独立组件安装并注册，由 Windows Frame Server 加载
 使用 Core Media I/O Camera Extension（最低 macOS 12.3）：
 
 ```text
-Pico Camera Desktop.app
+Picoo Camera Desktop.app
   → App Group Container
   → mmap Shared Frame Ring
-  → Pico Camera Extension.systemextension
+  → Picoo Camera Extension.systemextension
 ```
 
 Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用户批准。扩展是独立进程边界；主应用不得把网络会话逻辑放入扩展。
@@ -82,7 +82,7 @@ Rust Receiver Core
 ## 约束
 
 - 未配对或未连接时输出定义占位画面，不是不可枚举设备或随机噪声。
-- 会议软件关闭并重新打开后仍可选择 Pico Camera。
+- 会议软件关闭并重新打开后仍可选择 Picoo Camera。
 - 虚拟摄像头组件升级必须与 Desktop 主应用版本兼容，并通过安装器或应用内修复流程处理。
 
 ## 相关 Use Case
@@ -92,9 +92,9 @@ Rust Receiver Core
 
 ## 相关 Architecture
 
-- [ARCH-PICO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
-- [ARCH-PICO-STACK-001](0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
+- [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-VCAM-*`
+- 待分解：`REQ-PICOO-VCAM-*`

@@ -1,4 +1,4 @@
-# ARCH-PICO-FRAME-001: FrameHub 与 Shared Frame Ring 边界
+# ARCH-PICOO-FRAME-001: FrameHub 与 Shared Frame Ring 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-004
@@ -54,7 +54,7 @@ Decoded Frame (NV12)
 没有手机连接时，FrameHub / Shared Frame Ring 输出定义的占位画面：
 
 - 纯黑背景；
-- Pico Camera 标志；
+- Picoo Camera 标志；
 - `Waiting for phone...`
 
 连接暂时中断时，最多短暂重复最后一帧，随后切换到重连占位画面。
@@ -63,7 +63,7 @@ Decoded Frame (NV12)
 
 ### 预览与虚拟摄像头各用一个解码器
 
-不采用。违反单次解码原则，见 [ARCH-PICO-MEDIA-001](0004-cross-platform-media-pipeline-boundary.md)。
+不采用。违反单次解码原则，见 [ARCH-PICOO-MEDIA-001](0004-cross-platform-media-pipeline-boundary.md)。
 
 ### 第一版使用 IOSurface 跨进程共享
 
@@ -86,10 +86,10 @@ Decoded Frame (NV12)
 
 ## 相关 Architecture
 
-- [ARCH-PICO-MEDIA-001](0004-cross-platform-media-pipeline-boundary.md)
-- [ARCH-PICO-VCAM-001](0007-virtual-camera-platform-boundary.md)
-- [ARCH-PICO-UI-001](0009-desktop-gpui-mobile-native-ui-boundary.md)
+- [ARCH-PICOO-MEDIA-001](0004-cross-platform-media-pipeline-boundary.md)
+- [ARCH-PICOO-VCAM-001](0007-virtual-camera-platform-boundary.md)
+- [ARCH-PICOO-UI-001](0009-desktop-gpui-mobile-native-ui-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-FRAME-*`
+- 待分解：`REQ-PICOO-FRAME-*`

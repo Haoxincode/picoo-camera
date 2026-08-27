@@ -29,9 +29,9 @@
 
 ## 相关 Architecture
 
-- [ARCH-PICO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
-- [ARCH-PICO-STACK-001](../../architecture/0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
+- [ARCH-PICOO-STACK-001](../../architecture/0001-rust-core-monorepo-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-PAIRING-*`、`REQ-PICO-PRIVACY-*`
+- 待分解：`REQ-PICOO-PAIRING-*`、`REQ-PICOO-PRIVACY-*`

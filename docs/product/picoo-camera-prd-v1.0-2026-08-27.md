@@ -1,6 +1,6 @@
 # 无线手机摄像头系统：产品需求与技术设计文档
 
-暂定产品名： Pico Camera
+暂定产品名： Picoo Camera
 
 文档版本： V1.0
 
@@ -10,7 +10,7 @@
 
 ## 1. 项目概述
 
-Pico Camera 是一套局域网无线摄像头系统。
+Picoo Camera 是一套局域网无线摄像头系统。
 
 用户在 Android 手机或 iPhone 上运行 Sender 应用，手机通过同一 Wi-Fi 局域网将实时画面传输到 Windows 或 macOS 电脑。电脑端接收、解码并将画面注册为系统虚拟摄像头，供腾讯会议、Zoom、Microsoft Teams、OBS、浏览器会议等软件使用。
 
@@ -23,7 +23,7 @@ Pico Camera 是一套局域网无线摄像头系统。
     ↓
 自动发现并连接
     ↓
-会议软件中选择“Pico Camera”
+会议软件中选择“Picoo Camera”
     ↓
 手机成为无线摄像头
 ```
@@ -205,7 +205,7 @@ macOS 的 Core Media I/O Camera Extension 从 macOS 12.3 开始提供，以系�
     ↓
 自动连接或点击连接
     ↓
-会议软件选择 Pico Camera
+会议软件选择 Picoo Camera
 ```
 
 ### 6.3 会议中操作
@@ -240,7 +240,7 @@ macOS 的 Core Media I/O Camera Extension 从 macOS 12.3 开始提供，以系�
 建议服务类型：
 
 ```text
-_picocam._udp.local
+_picoocam._udp.local
 ```
 
 手机端应自动浏览该服务并显示附近可连接电脑。
@@ -477,7 +477,7 @@ H.264
 Windows 和 macOS 中均注册为：
 
 ```text
-Pico Camera
+Picoo Camera
 ```
 
 **FR-VCAM-002 Windows**
@@ -492,8 +492,8 @@ Media Source 作为独立组件安装并注册，由 Windows Frame Server 加载
 
 Windows 组件包括：
 
-- Pico Camera Desktop.exe
-- PicoVirtualCameraSource.dll
+- Picoo Camera Desktop.exe
+- PicooVirtualCameraSource.dll
 - Installer
 - Shared Frame Ring
 
@@ -507,8 +507,8 @@ Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用
 
 组件包括：
 
-- Pico Camera Desktop.app
-- Pico Camera Extension.systemextension
+- Picoo Camera Desktop.app
+- Picoo Camera Extension.systemextension
 - App Group Container
 - Shared Frame Ring
 
@@ -519,7 +519,7 @@ Camera Extension 是独立进程边界，桌面主应用不应直接把网络会
 没有手机连接时，虚拟摄像头输出：
 
 - 纯黑背景
-- Pico Camera 标志
+- Picoo Camera 标志
 - Waiting for phone...
 
 连接暂时中断时，最多短暂重复最后一帧，随后切换到重连占位画面。
@@ -711,7 +711,7 @@ gpui-base
 GPUI
 ```
 
-第一版不从 gpui-base 开始重做 Pico Camera Design System。
+第一版不从 gpui-base 开始重做 Picoo Camera Design System。
 
 gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，并明确支持一套 Rust 代码运行于 macOS、Windows 和 Linux；gpui-base 则用于产品需要自行拥有完整设计系统时复用行为与基础设施。
 
@@ -764,17 +764,17 @@ gpui、gpui_platform 和 gpui-component 必须在 Workspace 根目录统一锁�
 
 ### 11.1 Rust Core 职责
 
-- pico-protocol
-- pico-transport
-- pico-session
-- pico-pairing
-- pico-discovery-model
-- pico-packet
-- pico-jitter
-- pico-rate-control
-- pico-metrics
-- pico-frame-types
-- pico-ffi
+- picoo-protocol
+- picoo-transport
+- picoo-session
+- picoo-pairing
+- picoo-discovery-model
+- picoo-packet
+- picoo-jitter
+- picoo-rate-control
+- picoo-metrics
+- picoo-frame-types
+- picoo-ffi
 
 Rust Core 不负责：
 
@@ -819,7 +819,7 @@ quiche 本身是低层协议状态机，应用需要提供：
 因此业务代码禁止直接调用 quiche::Connection，必须通过统一封装：
 
 ```rust
-trait PicoTransport {
+trait PicooTransport {
     fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId>;
     fn send_control(&mut self, message: ControlMessage) -> Result<()>;
     fn send_video(&mut self, packet: VideoPacket) -> Result<()>;
@@ -828,7 +828,7 @@ trait PicoTransport {
 }
 ```
 
-所有平台只依赖 pico-transport，不直接感知 quiche 细节。
+所有平台只依赖 picoo-transport，不直接感知 quiche 细节。
 
 ### 11.3 FFI
 
@@ -839,7 +839,7 @@ Android 与 iOS 通过稳定 C ABI 调用 Rust Core。
 ```text
 Rust extern "C"
     ↓ cbindgen
-    ↓ pico_camera.h
+    ↓ picoo_camera.h
 ```
 
 平台封装：
@@ -864,11 +864,11 @@ FFI 边界只允许：
 
 ## 12. 协议设计
 
-协议暂定名称：**Pico Camera Protocol**
+协议暂定名称：**Picoo Camera Protocol**
 
 协议版本：**PCP/1**
 
-QUIC ALPN：**picocam/1**
+QUIC ALPN：**picoocam/1**
 
 ### 12.1 连接角色
 
@@ -1152,7 +1152,7 @@ Windows 和 macOS 统一使用“共享内存环形帧区”的抽象，但平�
 显示：
 
 ```text
-Pico Camera
+Picoo Camera
 Use your phone as a wireless camera
 
 Virtual Camera [ Installed / Not Installed ]
@@ -1162,10 +1162,10 @@ Virtual Camera [ Installed / Not Installed ]
 **等待连接页**
 
 ```text
-Pico Camera
+Picoo Camera
 
 Waiting for phone...
-Open Pico Camera on your phone and connect to this computer.
+Open Picoo Camera on your phone and connect to this computer.
 
 [ Show QR Code ]
 
@@ -1176,7 +1176,7 @@ Virtual Camera: Ready
 
 ```text
 ┌────────────────────────────────────────────┐
-│ Pico Camera                           ⚙    │
+│ Picoo Camera                           ⚙    │
 ├────────────────────────────────────────────┤
 │                                            │
 │             Camera Preview                 │
@@ -1230,7 +1230,7 @@ struct DesktopAppState {
 ### 17.1 设备列表页
 
 ```text
-Pico Camera
+Picoo Camera
 
 Available Computers
 
@@ -1310,21 +1310,21 @@ picoo-camera/
 ├── rust-toolchain.toml
 │
 ├── proto/
-│   └── pico_camera.proto
+│   └── picoo_camera.proto
 │
 ├── crates/
-│   ├── pico-protocol/
-│   ├── pico-transport/
-│   ├── pico-quiche/
-│   ├── pico-session/
-│   ├── pico-pairing/
-│   ├── pico-packet/
-│   ├── pico-jitter/
-│   ├── pico-rate-control/
-│   ├── pico-metrics/
-│   ├── pico-frame-hub/
-│   ├── pico-ffi/
-│   └── pico-testkit/
+│   ├── picoo-protocol/
+│   ├── picoo-transport/
+│   ├── picoo-quiche/
+│   ├── picoo-session/
+│   ├── picoo-pairing/
+│   ├── picoo-packet/
+│   ├── picoo-jitter/
+│   ├── picoo-rate-control/
+│   ├── picoo-metrics/
+│   ├── picoo-frame-hub/
+│   ├── picoo-ffi/
+│   └── picoo-testkit/
 │
 ├── apps/
 │   ├── android/
@@ -1332,7 +1332,7 @@ picoo-camera/
 │   │   └── native/
 │   │
 │   ├── ios/
-│   │   ├── PicoCamera/
+│   │   ├── PicooCamera/
 │   │   └── RustBridge/
 │   │
 │   └── desktop/
@@ -1548,8 +1548,8 @@ macOS：
 - 配对与撤销配对可用；
 - 前后摄像头切换可用；
 - 720p30 和 1080p30 可用；
-- Windows 和 macOS 均能注册 Pico Camera；
-- 目标会议软件可以选择并使用 Pico Camera；
+- Windows 和 macOS 均能注册 Picoo Camera；
+- 目标会议软件可以选择并使用 Picoo Camera；
 - 无手机连接时显示占位画面；
 - 断网后自动恢复。
 
@@ -1602,7 +1602,7 @@ macOS：
 
 | 风险 | 影响 | 控制措施 |
 | --- | --- | --- |
-| quiche 较低层 | 传输代码复杂 | 单独封装 pico-transport，业务层禁止直接调用 |
+| quiche 较低层 | 传输代码复杂 | 单独封装 picoo-transport，业务层禁止直接调用 |
 | BoringSSL 构建复杂 | 四端 CI 不稳定 | 固定工具链，CI 生成预构建静态库 |
 | GPUI 版本快速变化 | 类型冲突、构建失败 | 锁定精确 commit，提交 Cargo.lock |
 | 小米等 OEM Camera2 差异 | 黑屏、规格不支持 | 能力探测、安全默认值、设备测试矩阵 |

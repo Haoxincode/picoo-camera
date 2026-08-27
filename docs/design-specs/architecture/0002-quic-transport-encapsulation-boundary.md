@@ -1,11 +1,11 @@
-# ARCH-PICO-TRANSPORT-001: QUIC 传输与 pico-transport 封装边界
+# ARCH-PICOO-TRANSPORT-001: QUIC 传输与 picoo-transport 封装边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-002 / PUC-006
 
 ## 背景
 
-Pico Camera 需要在局域网内同时承载两类数据：
+Picoo Camera 需要在局域网内同时承载两类数据：
 
 - **控制数据**：Hello、Capabilities、Pairing、StartStream、CameraCommand、ReceiverStats 等，要求可靠、有序。
 - **视频数据**：H.264 片段，允许丢包，要求低延迟，不能因等待旧片段导致延迟累积。
@@ -17,7 +17,7 @@ QUIC 同时提供 Reliable Stream 与 Datagram（RFC 9221），适合这一组�
 业务代码禁止直接调用 `quiche::Connection`。所有平台只依赖统一封装：
 
 ```rust
-trait PicoTransport {
+trait PicooTransport {
     fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId>;
     fn send_control(&mut self, message: ControlMessage) -> Result<()>;
     fn send_video(&mut self, packet: VideoPacket) -> Result<()>;
@@ -26,7 +26,7 @@ trait PicoTransport {
 }
 ```
 
-`pico-quiche` crate 负责 quiche 与 BoringSSL 的构建适配；`pico-transport` crate 负责 trait、连接表、UDP I/O 事件循环、定时器和发送节奏控制。
+`picoo-quiche` crate 负责 quiche 与 BoringSSL 的构建适配；`picoo-transport` crate 负责 trait、连接表、UDP I/O 事件循环、定时器和发送节奏控制。
 
 ### 连接角色
 
@@ -43,7 +43,7 @@ QUIC Connection
   └── QUIC Datagram                  → H.264 VideoPacket 片段
 ```
 
-QUIC ALPN：`picocam/1`
+QUIC ALPN：`picoocam/1`
 
 ### 重连与退避
 
@@ -61,7 +61,7 @@ QUIC ALPN：`picocam/1`
 
 ### 业务层直接使用 quiche API
 
-不采用。见 [ARCH-PICO-STACK-001](0001-rust-core-monorepo-boundary.md)。
+不采用。见 [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)。
 
 ## 约束
 
@@ -78,9 +78,9 @@ QUIC ALPN：`picocam/1`
 
 ## 相关 Architecture
 
-- [ARCH-PICO-STACK-001](0001-rust-core-monorepo-boundary.md)
-- [ARCH-PICO-PROTOCOL-001](0003-pico-camera-protocol-boundary.md)
+- [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](0003-picoo-camera-protocol-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-TRANSPORT-*`
+- 待分解：`REQ-PICOO-TRANSPORT-*`

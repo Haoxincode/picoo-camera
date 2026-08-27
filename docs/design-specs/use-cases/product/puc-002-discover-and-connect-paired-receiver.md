@@ -8,7 +8,7 @@
 
 ## 场景
 
-用户打开桌面端 Receiver。Receiver 启动后通过 mDNS/DNS-SD 广播 `_picocam._udp.local` 服务，广播记录仅包含 `receiver_id`、`display_name`、`protocol_version`、`quic_port`、`pairing_state` 和 `public_key_fingerprint_prefix`，不包含用户身份、视频状态或完整密钥。
+用户打开桌面端 Receiver。Receiver 启动后通过 mDNS/DNS-SD 广播 `_picoocam._udp.local` 服务，广播记录仅包含 `receiver_id`、`display_name`、`protocol_version`、`quic_port`、`pairing_state` 和 `public_key_fingerprint_prefix`，不包含用户身份、视频状态或完整密钥。
 
 用户打开手机端 Sender。Sender 浏览局域网内的 Receiver 列表，显示电脑显示名称、平台类型和就绪状态。对于已配对设备，Sender 可自动连接或等待用户点击连接；对于未配对设备，进入 [PUC-001](puc-001-first-install-and-pairing.md) 的配对流程。
 
@@ -32,11 +32,11 @@
 
 ## 相关 Architecture
 
-- [ARCH-PICO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
-- [ARCH-PICO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICO-PROTOCOL-001](../../architecture/0003-pico-camera-protocol-boundary.md)
-- [ARCH-PICO-SESSION-001](../../architecture/0005-session-reconnect-jitter-bitrate-boundary.md)
+- [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
+- [ARCH-PICOO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](../../architecture/0003-picoo-camera-protocol-boundary.md)
+- [ARCH-PICOO-SESSION-001](../../architecture/0005-session-reconnect-jitter-bitrate-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-DISCOVERY-*`、`REQ-PICO-TRANSPORT-*`、`REQ-PICO-SESSION-*`
+- 待分解：`REQ-PICOO-DISCOVERY-*`、`REQ-PICOO-TRANSPORT-*`、`REQ-PICOO-SESSION-*`
