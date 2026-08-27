@@ -619,6 +619,7 @@ dependencies = [
  "picoo-discovery",
  "picoo-frame-hub",
  "picoo-metrics",
+ "picoo-pairing",
  "picoo-receiver",
  "picoo-session",
  "picoo-transport",
@@ -693,6 +694,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "thiserror",
 ]
 
@@ -741,6 +743,7 @@ dependencies = [
  "picoo-session",
  "picoo-transport",
  "prost",
+ "tempfile",
  "thiserror",
 ]
 

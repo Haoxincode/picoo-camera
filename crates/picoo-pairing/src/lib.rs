@@ -1,6 +1,7 @@
 //! Pairing and trusted device storage — REQ-PICOO-PAIRING-*.
 
 mod handshake;
+mod store;
 
 use std::collections::HashMap;
 
@@ -11,6 +12,7 @@ pub use handshake::{
     trusted_device_from_pairing, verify_pairing_confirm, PairingChallenge, PairingHandshakeError,
 };
 use sha2::{Digest, Sha256};
+pub use store::StoreError;
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,6 +91,13 @@ impl TrustedDeviceStore {
     ) -> Result<(), PairingError> {
         let device = self.devices.get(device_id).ok_or(PairingError::NotPaired)?;
         verify_public_key(device, observed_key)
+    }
+
+    pub fn touch_last_connected(&mut self, device_id: &str, now_ms: u64) {
+        if let Some(mut device) = self.get(device_id).cloned() {
+            device.last_connected_at_ms = Some(now_ms);
+            self.upsert(device);
+        }
     }
 }
 

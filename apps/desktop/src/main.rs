@@ -4,10 +4,16 @@
 
 mod model;
 
+use std::io::{self, BufRead};
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::thread;
+
 use model::DesktopAppState;
 use picoo_discovery::{
     generate_nonce, MdnsAdvertiser, QrConnectPayload, ReceiverAdvertisement, DEFAULT_QR_TTL_MS,
 };
+use picoo_pairing::TrustedDeviceStore;
 use picoo_receiver::{ReceiverIdentity, ReceiverSession};
 use picoo_transport::Endpoint;
 use tracing_subscriber::EnvFilter;
@@ -17,12 +23,29 @@ fn main() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    if std::env::args().any(|arg| arg == "--loopback-demo") {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|arg| arg == "--loopback-demo") {
         run_loopback_demo();
         return;
     }
 
-    if std::env::args().any(|arg| arg == "--serve") {
+    if args.iter().any(|arg| arg == "--list-paired") {
+        run_list_paired();
+        return;
+    }
+
+    if let Some(index) = args.iter().position(|arg| arg == "--remove-paired") {
+        let device_id = args.get(index + 1).map(String::as_str).unwrap_or("");
+        if device_id.is_empty() {
+            eprintln!("Usage: picoo-desktop --remove-paired <device_id>");
+            std::process::exit(1);
+        }
+        run_remove_paired(device_id);
+        return;
+    }
+
+    if args.iter().any(|arg| arg == "--serve") {
         run_serve_mode();
         return;
     }
@@ -34,7 +57,67 @@ fn main() {
     );
     println!("Run with --loopback-demo to exercise QUIC → FrameHub on Linux CI.");
     println!("Run with --serve to listen, advertise mDNS, and print QR JSON.");
+    println!("Run with --list-paired / --remove-paired <id> to manage trusted devices.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
+}
+
+fn default_trusted_store_path() -> PathBuf {
+    std::env::var("PICOO_TRUSTED_STORE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            PathBuf::from(home)
+                .join(".config")
+                .join("picoo-camera")
+                .join("trusted_devices.json")
+        })
+}
+
+fn run_list_paired() {
+    let path = default_trusted_store_path();
+    match TrustedDeviceStore::load_from_path(&path) {
+        Ok(store) => {
+            let mut listed = false;
+            for device in store.list() {
+                listed = true;
+                println!(
+                    "{} | {} | fp={} | last={:?}",
+                    device.device_id,
+                    device.device_name,
+                    device.certificate_fingerprint,
+                    device.last_connected_at_ms
+                );
+            }
+            if !listed {
+                println!("No paired devices ({})", path.display());
+            }
+        }
+        Err(err) => {
+            eprintln!("Failed to load trusted store {}: {err}", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run_remove_paired(device_id: &str) {
+    let path = default_trusted_store_path();
+    let mut store = match TrustedDeviceStore::load_from_path(&path) {
+        Ok(store) => store,
+        Err(err) => {
+            eprintln!("Failed to load trusted store: {err}");
+            std::process::exit(1);
+        }
+    };
+    if store.remove(device_id) {
+        if let Err(err) = store.save_to_path(&path) {
+            eprintln!("Failed to save trusted store: {err}");
+            std::process::exit(1);
+        }
+        println!("Removed paired device {device_id}");
+    } else {
+        eprintln!("Device not found: {device_id}");
+        std::process::exit(1);
+    }
 }
 
 fn run_loopback_demo() {
@@ -52,9 +135,73 @@ fn run_loopback_demo() {
     }
 }
 
+fn spawn_stdin_commands() -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let stdin = io::stdin();
+        for line in stdin.lock().lines() {
+            match line {
+                Ok(line) => {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    rx
+}
+
+fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
+    let line = line.trim();
+    if line.is_empty() {
+        return;
+    }
+    match line {
+        "confirm" | "confirm-pairing" => {
+            receiver.confirm_pairing_locally();
+            println!("Desktop confirmed pairing locally.");
+        }
+        "list" | "list-paired" => {
+            for device in receiver.trusted_devices().list() {
+                println!(
+                    "{} | {} | fp={}",
+                    device.device_id, device.device_name, device.certificate_fingerprint
+                );
+            }
+        }
+        cmd if cmd.starts_with("remove ") => {
+            let device_id = cmd.trim_start_matches("remove ").trim();
+            match receiver.remove_trusted_device(device_id) {
+                Ok(true) => println!("Removed paired device {device_id}"),
+                Ok(false) => println!("Device not found: {device_id}"),
+                Err(err) => eprintln!("Remove failed: {err}"),
+            }
+        }
+        "help" => {
+            println!("Commands: confirm | list | remove <device_id> | help");
+        }
+        other => println!("Unknown command: {other} (type help)"),
+    }
+}
+
 fn run_serve_mode() {
     let identity = ReceiverIdentity::default();
-    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    let trusted_path = default_trusted_store_path();
+    let mut receiver = match ReceiverSession::new()
+        .with_identity(identity.clone())
+        .with_trusted_store(&trusted_path)
+    {
+        Ok(session) => session,
+        Err(err) => {
+            eprintln!(
+                "Failed to load trusted store {}: {err}",
+                trusted_path.display()
+            );
+            std::process::exit(1);
+        }
+    };
 
     if let Err(err) = receiver.attach_shared_ring("picoo-camera-v1") {
         eprintln!("Shared Frame Ring unavailable: {err}");
@@ -117,18 +264,33 @@ fn run_serve_mode() {
     }
 
     println!(
-        "Listening on {} — status {:?}. Ctrl+C to exit.",
+        "Listening on {} — status {:?}. Trusted store: {}",
         bind,
-        receiver.status()
+        receiver.status(),
+        trusted_path.display()
     );
+    println!("Type `confirm` when pairing code matches, `list`, or `remove <device_id>`.");
+
+    let stdin_rx = spawn_stdin_commands();
+    let mut last_pairing_hint = String::new();
 
     loop {
+        while let Ok(line) = stdin_rx.try_recv() {
+            handle_console_command(&mut receiver, &line);
+        }
+
         if let Err(err) = receiver.pump() {
             eprintln!("Receiver pump error: {err}");
         }
         if let Some(code) = receiver.pairing_short_code() {
-            println!("Pairing code: {code} (call confirm_pairing_locally via UI)");
+            let hint = format!("Pairing code: {code} — type `confirm` on desktop to approve");
+            if hint != last_pairing_hint {
+                println!("{hint}");
+                last_pairing_hint = hint;
+            }
+        } else {
+            last_pairing_hint.clear();
         }
-        std::thread::sleep(std::time::Duration::from_millis(16));
+        thread::sleep(std::time::Duration::from_millis(16));
     }
 }

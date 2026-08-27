@@ -3,6 +3,7 @@
 //! REQ-PICOO-FRAME-001, REQ-PICOO-MEDIA-005/006 (decode placeholder until MF/VT).
 //! REQ-PICOO-PAIRING-*: ClientHello/ServerHello gate before video ingress.
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
@@ -13,7 +14,7 @@ use picoo_frame_hub::{
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::{
     new_pairing_challenge, random_challenge_nonce, trusted_device_from_pairing,
-    verify_pairing_confirm, PairingError, PairingHandshakeError, TrustedDeviceStore,
+    verify_pairing_confirm, PairingError, PairingHandshakeError, StoreError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
     Capabilities, ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm,
@@ -41,6 +42,8 @@ pub enum ReceiverError {
     Protocol(String),
     #[error("shared ring: {0}")]
     SharedRing(#[from] picoo_frame_hub::SharedRingError),
+    #[error("pairing store: {0}")]
+    Store(#[from] StoreError),
     #[error("not listening")]
     NotListening,
     #[error("loopback timeout")]
@@ -117,6 +120,7 @@ pub struct ReceiverSession {
     frame_hub: FrameHub,
     identity: ReceiverIdentity,
     trusted: TrustedDeviceStore,
+    trusted_store_path: Option<PathBuf>,
     active_sender: Option<ActiveSender>,
     pending_pairing: Option<PendingPairing>,
     local_pairing_confirmed: bool,
@@ -143,6 +147,7 @@ impl ReceiverSession {
             frame_hub: FrameHub::new(),
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),
+            trusted_store_path: None,
             active_sender: None,
             pending_pairing: None,
             local_pairing_confirmed: false,
@@ -182,6 +187,39 @@ impl ReceiverSession {
     pub fn with_identity(mut self, identity: ReceiverIdentity) -> Self {
         self.identity = identity;
         self
+    }
+
+    pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, ReceiverError> {
+        let path = path.as_ref().to_path_buf();
+        self.trusted = TrustedDeviceStore::load_from_path(&path)?;
+        self.trusted_store_path = Some(path);
+        Ok(self)
+    }
+
+    pub fn trusted_store_path(&self) -> Option<&Path> {
+        self.trusted_store_path.as_deref()
+    }
+
+    pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, ReceiverError> {
+        let removed = self.trusted.remove(device_id);
+        if removed {
+            self.persist_trusted()?;
+        }
+        Ok(removed)
+    }
+
+    fn persist_trusted(&self) -> Result<(), ReceiverError> {
+        if let Some(path) = &self.trusted_store_path {
+            self.trusted.save_to_path(path)?;
+        }
+        Ok(())
+    }
+
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 
     pub fn stream_config(&self) -> Option<&StreamConfig> {
@@ -430,6 +468,9 @@ impl ReceiverSession {
         self.send_control_message(session, &server_hello)?;
 
         if paired {
+            self.trusted
+                .touch_last_connected(&hello.sender_id, self.now_ms());
+            self.persist_trusted()?;
             self.active_sender = Some(ActiveSender {
                 sender_id: hello.sender_id,
                 device_name: hello.device_name,
@@ -504,10 +545,7 @@ impl ReceiverSession {
             }
         })?;
 
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+        let now_ms = self.now_ms();
 
         let active = self.active_sender.as_ref().expect("active sender");
         self.trusted.upsert(trusted_device_from_pairing(
@@ -516,6 +554,7 @@ impl ReceiverSession {
             &active.public_key,
             now_ms,
         ));
+        self.persist_trusted()?;
 
         if let Some(sender) = self.active_sender.as_mut() {
             sender.video_allowed = true;

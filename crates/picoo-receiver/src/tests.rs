@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use picoo_pairing::TrustedDevice;
+use picoo_pairing::{TrustedDevice, TrustedDeviceStore};
 use picoo_sender::SenderSession;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
@@ -336,4 +336,101 @@ fn stream_config_and_capabilities_after_paired_hello() {
     assert_eq!(config.height, 720);
     assert_eq!(config.stream_epoch, 1);
     assert!(sender.receiver_capabilities().is_some());
+}
+
+#[test]
+fn trusted_store_persists_after_pairing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store_path = dir.path().join("trusted.json");
+
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new()
+        .with_identity(identity.clone())
+        .with_trusted_store(&store_path)
+        .expect("load empty store");
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("persist-phone", "Pixel", &[7, 7, 7])
+        .expect("client hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    receiver.confirm_pairing_locally();
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("pairing confirm");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert!(store_path.exists());
+    let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload store");
+    assert!(loaded.is_paired("persist-phone"));
+    assert_eq!(
+        loaded.get("persist-phone").map(|d| d.public_key.as_slice()),
+        Some([7u8, 7, 7].as_slice())
+    );
+}
+
+#[test]
+fn remove_trusted_device_requires_repair() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store_path = dir.path().join("trusted.json");
+
+    let mut store = TrustedDeviceStore::new();
+    store.upsert(TrustedDevice {
+        device_id: "phone-1".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    store.save_to_path(&store_path).expect("save");
+
+    let mut receiver = ReceiverSession::new()
+        .with_trusted_store(&store_path)
+        .expect("load store");
+
+    assert!(receiver.remove_trusted_device("phone-1").expect("remove"));
+
+    let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload");
+    assert!(!loaded.is_paired("phone-1"));
 }

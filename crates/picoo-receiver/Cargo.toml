@@ -21,3 +21,4 @@ thiserror.workspace = true
 [dev-dependencies]
 picoo-protocol.workspace = true
 picoo-sender.workspace = true
+tempfile = "3.14"
