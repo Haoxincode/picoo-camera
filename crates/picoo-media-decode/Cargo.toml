@@ -17,6 +17,9 @@ picoo-protocol.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
 
+[target.'cfg(not(windows))'.dependencies]
+openh264 = { version = "0.9", default-features = true }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", optional = true, features = [
     "Win32_Foundation",
@@ -25,3 +28,4 @@ windows = { version = "0.58", optional = true, features = [
 ] }
 
 [dev-dependencies]
+openh264 = { version = "0.9", default-features = true }

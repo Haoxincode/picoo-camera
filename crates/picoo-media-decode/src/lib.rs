@@ -1,12 +1,16 @@
 //! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006.
 //!
 //! Receiver decodes once; output NV12 feeds FrameHub and Shared Frame Ring.
-//! Linux CI uses [`StubDecoder`]; Windows builds enable `windows-mf` for MF pipeline.
+//! - Windows: Media Foundation (`windows-mf`)
+//! - Linux/CI: Cisco OpenH264 soft decode, with StubDecoder fallback for fixtures
 
 mod stub;
 
 #[cfg(all(windows, feature = "windows-mf"))]
 mod mf;
+
+#[cfg(not(windows))]
+mod openh264_dec;
 
 use bytes::Bytes;
 use picoo_protocol::control::StreamConfig;
@@ -49,7 +53,7 @@ pub trait AccessUnitDecoder: Send {
     }
 }
 
-/// Platform decoder selection — stub on Linux; MF when `windows-mf` is enabled.
+/// Platform decoder selection — OpenH264 on Linux; MF when `windows-mf` is enabled.
 pub fn create_platform_decoder() -> Box<dyn AccessUnitDecoder> {
     #[cfg(all(windows, feature = "windows-mf"))]
     {
@@ -60,6 +64,18 @@ pub fn create_platform_decoder() -> Box<dyn AccessUnitDecoder> {
             }
             Err(err) => {
                 tracing::warn!("MF decoder unavailable, falling back to stub: {err}");
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match openh264_dec::OpenH264Decoder::new() {
+            Ok(decoder) => {
+                tracing::info!("Using OpenH264 software H.264 decoder");
+                return Box::new(decoder);
+            }
+            Err(err) => {
+                tracing::warn!("OpenH264 unavailable, falling back to stub: {err}");
             }
         }
     }
@@ -85,6 +101,60 @@ mod tests {
             .expect("decode")
             .expect("frame");
         assert!(!frame.nv12.is_empty());
+        assert_eq!(frame.width, 1280);
+        assert_eq!(frame.height, 720);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn openh264_roundtrip_produces_nv12() {
+        use openh264::encoder::Encoder;
+        use openh264::formats::YUVBuffer;
+
+        let width = 64usize;
+        let height = 64usize;
+        let mut planes = vec![128u8; width * height * 3 / 2];
+        for y in 0..height {
+            for x in 0..width {
+                planes[y * width + x] = ((x + y) % 256) as u8;
+            }
+        }
+        let yuv = YUVBuffer::from_vec(planes, width, height);
+        let mut encoder = Encoder::new().expect("encoder");
+        let bitstream = encoder.encode(&yuv).expect("encode");
+        let annex = bitstream.to_vec();
+        assert!(
+            annex.len() > 64,
+            "encoded AU should exceed stub-heuristic size"
+        );
+        assert!(
+            annex.windows(3).any(|w| w == [0, 0, 1]),
+            "encoded AU must be Annex-B"
+        );
+
+        let mut decoder = create_platform_decoder();
+        let frame = decoder
+            .decode_access_unit(&annex, None)
+            .expect("decode")
+            .expect("picture");
+        assert_eq!(frame.width, width as u32);
+        assert_eq!(frame.height, height as u32);
+        assert_eq!(
+            frame.nv12.len(),
+            picoo_frame_hub::nv12_byte_size(frame.width, frame.height)
+        );
+        // Real decode should not be constant grey placeholder.
+        assert!(frame.nv12.iter().any(|b| *b != 16 && *b != 128));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn openh264_falls_back_to_stub_for_tiny_fixture() {
+        let mut decoder = create_platform_decoder();
+        let frame = decoder
+            .decode_access_unit(b"test-au", None)
+            .expect("decode")
+            .expect("frame");
         assert_eq!(frame.width, 1280);
         assert_eq!(frame.height, 720);
     }

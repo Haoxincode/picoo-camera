@@ -1,4 +1,4 @@
-//! Placeholder decoder for Linux CI and MF fallback — maps test AUs into NV12.
+//! Placeholder decoder for fixtures and MF/OpenH264 fallback — maps test AUs into NV12.
 
 use bytes::Bytes;
 use picoo_frame_hub::waiting_placeholder;

@@ -6,7 +6,7 @@
 | REQ-PICOO-MEDIA-002 | implemented | PUC-005 | 720p30 / 1080p30 能力协商与回退 | Capabilities + Android max-height 钳制 |
 | REQ-PICOO-MEDIA-003 | implemented | PUC-005 | 前后摄切换触发 stream_epoch 递增与 IDR | Android epoch++；Receiver epoch↑→清 jitter/reassembly + RequestKeyframe |
 | REQ-PICOO-MEDIA-004 | implemented | PUC-005 | 本机预览镜像与远端输出镜像独立 | Android local vs remote；Receiver `nv12_mirror_horizontal` 应用 `StreamConfig.mirrored` |
-| REQ-PICOO-MEDIA-005 | implemented | ARCH-PICOO-MEDIA-001 | Windows MF + D3D11 硬件解码 H.264 | MF 管线 + StreamConfig SPS/PPS 序列头；真机验证仍待 |
+| REQ-PICOO-MEDIA-005 | implemented | ARCH-PICOO-MEDIA-001 | Windows MF + D3D11 硬件解码 H.264；Linux/CI OpenH264 软解 | Windows：`windows-mf` MF 管线 + SPS/PPS；Linux：`OpenH264Decoder` + stub fixture 回退；真机 MF 验证仍待 |
 | REQ-PICOO-MEDIA-006 | implemented | ARCH-PICOO-MEDIA-001 | Receiver 单次解码、FrameHub 多路消费 | `decode_invocations == access_units` 测试 |
 | REQ-PICOO-MEDIA-007 | implemented | PUC-006 | 动态码率 720p 3–5 Mbps / 1080p 3–10 Mbps | rate-control + Android MediaCodec PARAMETER_KEY_VIDEO_BITRATE |
 | REQ-PICOO-MEDIA-008 | implemented | PUC-005 | 手机端曝光补偿可调 | `Camera2MediaEncoder.setExposureCompensation` + Streaming EV±（真机验证仍待） |
