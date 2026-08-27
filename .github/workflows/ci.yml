@@ -3,10 +3,7 @@ name: CI
 on:
   push:
     branches: [main, 'cursor/**']
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref_name }}
-  cancel-in-progress: true
+  pull_request:
 
 jobs:
   rust-and-docs:
