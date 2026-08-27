@@ -195,6 +195,17 @@ private fun SenderHomeScreen(
         reloadTrustedStore()
     }
 
+    LaunchedEffect(senderStatus) {
+        when (senderStatus) {
+            PicooNative.STATUS_STREAMING,
+            PicooNative.STATUS_NEGOTIATING,
+            PicooNative.STATUS_PAIRING,
+            PicooNative.STATUS_CONNECTING,
+            -> StreamingForegroundService.start(context)
+            else -> StreamingForegroundService.stop(context)
+        }
+    }
+
     LaunchedEffect(senderHandle, browserHandle) {
         while (true) {
             if (senderHandle != 0L) {

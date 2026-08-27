@@ -2,6 +2,7 @@
 //!
 //! REQ-PICOO-TRANSPORT-001
 
+mod control_framing;
 mod quic;
 mod quic_receiver;
 mod quic_sender;
@@ -9,6 +10,10 @@ mod quic_sender;
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use thiserror::Error;
+
+pub use control_framing::{
+    encode_control_frame, ControlFrameDecoder, ControlFramingError, MAX_CONTROL_MESSAGE_SIZE,
+};
 
 pub use quic::{establish_loopback, QuicLoopback, QuicTransportError, CONTROL_STREAM_ID};
 pub use quic_receiver::QuicReceiverTransport;

@@ -7,6 +7,7 @@ use std::str::FromStr;
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 
+use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
 use crate::quic::{QuicClient, QuicTransportError, CONTROL_STREAM_ID};
 use crate::{CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent};
 
@@ -16,6 +17,7 @@ pub struct QuicSenderTransport {
     pending_session: Option<SessionId>,
     events: VecDeque<TransportEvent>,
     next_session: u64,
+    control_rx: ControlFrameDecoder,
 }
 
 impl Default for QuicSenderTransport {
@@ -32,6 +34,7 @@ impl QuicSenderTransport {
             pending_session: None,
             events: VecDeque::new(),
             next_session: 1,
+            control_rx: ControlFrameDecoder::default(),
         }
     }
 
@@ -55,6 +58,7 @@ impl QuicSenderTransport {
             pending_session: None,
             events,
             next_session: 2,
+            control_rx: ControlFrameDecoder::default(),
         })
     }
 
@@ -77,8 +81,15 @@ impl QuicSenderTransport {
 
         while let Some((stream_id, data)) = client.recv_stream().map_err(Self::map_send_err)? {
             if stream_id == CONTROL_STREAM_ID {
-                self.events
-                    .push_back(TransportEvent::ControlMessage(session, Bytes::from(data)));
+                self.control_rx.push(&data);
+                for message in self
+                    .control_rx
+                    .drain_messages()
+                    .map_err(|e| TransportError::SendFailed(e.to_string()))?
+                {
+                    self.events
+                        .push_back(TransportEvent::ControlMessage(session, message));
+                }
             }
         }
 
@@ -122,8 +133,10 @@ impl PicooTransport for QuicSenderTransport {
             return Err(TransportError::NotConnected);
         }
         let client = self.client.as_mut().ok_or(TransportError::NotConnected)?;
+        let framed = encode_control_frame(&message)
+            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
         client
-            .send_stream(CONTROL_STREAM_ID, &message)
+            .send_stream(CONTROL_STREAM_ID, &framed)
             .map_err(Self::map_send_err)?;
         Ok(())
     }
@@ -153,6 +166,7 @@ impl PicooTransport for QuicSenderTransport {
             self.client = None;
             self.session = None;
             self.pending_session = None;
+            self.control_rx = ControlFrameDecoder::default();
             self.events
                 .push_back(TransportEvent::Disconnected(session, reason));
         }

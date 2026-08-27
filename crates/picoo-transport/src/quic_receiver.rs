@@ -7,6 +7,7 @@ use std::str::FromStr;
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 
+use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
 use crate::quic::{QuicServer, QuicTransportError, CONTROL_STREAM_ID};
 use crate::{CloseReason, Endpoint, SessionId, TransportError, TransportEvent};
 
@@ -15,6 +16,7 @@ pub struct QuicReceiverTransport {
     events: VecDeque<TransportEvent>,
     session: Option<SessionId>,
     connected_notified: bool,
+    control_rx: ControlFrameDecoder,
 }
 
 impl Default for QuicReceiverTransport {
@@ -30,6 +32,7 @@ impl QuicReceiverTransport {
             events: VecDeque::new(),
             session: None,
             connected_notified: false,
+            control_rx: ControlFrameDecoder::default(),
         }
     }
 
@@ -83,8 +86,10 @@ impl QuicReceiverTransport {
             return Err(TransportError::NotConnected);
         }
         let server = self.server.as_mut().ok_or(TransportError::NotConnected)?;
+        let framed = encode_control_frame(&message)
+            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
         server
-            .send_stream(CONTROL_STREAM_ID, &message)
+            .send_stream(CONTROL_STREAM_ID, &framed)
             .map_err(Self::map_send_err)
     }
 
@@ -92,6 +97,7 @@ impl QuicReceiverTransport {
         if self.session == Some(session) {
             self.session = None;
             self.connected_notified = false;
+            self.control_rx = ControlFrameDecoder::default();
             self.events
                 .push_back(TransportEvent::Disconnected(session, reason));
         }
@@ -118,8 +124,15 @@ impl QuicReceiverTransport {
 
         while let Some((stream_id, data)) = server.recv_stream().map_err(Self::map_send_err)? {
             if stream_id == CONTROL_STREAM_ID {
-                self.events
-                    .push_back(TransportEvent::ControlMessage(session, Bytes::from(data)));
+                self.control_rx.push(&data);
+                for message in self
+                    .control_rx
+                    .drain_messages()
+                    .map_err(|e| TransportError::SendFailed(e.to_string()))?
+                {
+                    self.events
+                        .push_back(TransportEvent::ControlMessage(session, message));
+                }
             }
         }
 
@@ -140,6 +153,7 @@ mod tests {
     use picoo_protocol::VideoPacketFlags;
 
     use crate::quic::establish_loopback;
+    use crate::{Endpoint, PicooTransport, QuicSenderTransport};
 
     #[test]
     fn quic_receiver_transport_receives_video_datagram() {
@@ -176,5 +190,59 @@ mod tests {
             }
             other => panic!("unexpected event: {other:?}"),
         }
+    }
+
+    #[test]
+    fn quic_receiver_gets_multiple_framed_control_messages() {
+        let mut receiver = QuicReceiverTransport::new();
+        let bind = receiver
+            .bind(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 0,
+            })
+            .expect("bind");
+
+        let mut sender = QuicSenderTransport::new();
+        let session = sender
+            .connect(Endpoint {
+                host: bind.ip().to_string(),
+                port: bind.port(),
+            })
+            .expect("connect");
+
+        for _ in 0..200 {
+            receiver.pump().expect("receiver pump");
+            sender.pump().expect("sender pump");
+            if sender.is_connected() && receiver.is_connected() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        sender
+            .send_control(session, Bytes::from_static(b"first"))
+            .expect("first");
+        sender
+            .send_control(session, Bytes::from_static(b"second"))
+            .expect("second");
+
+        let mut seen = Vec::new();
+        for _ in 0..100 {
+            sender.pump().expect("sender pump");
+            receiver.pump().expect("receiver pump");
+            while let Some(event) = receiver.poll_event() {
+                if let TransportEvent::ControlMessage(_, msg) = event {
+                    seen.push(msg);
+                }
+            }
+            if seen.len() >= 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].as_ref(), b"first");
+        assert_eq!(seen[1].as_ref(), b"second");
     }
 }
