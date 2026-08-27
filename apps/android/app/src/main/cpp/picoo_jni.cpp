@@ -300,6 +300,25 @@ Java_com_picoo_camera_jni_PicooNative_getCurrentBitrateBps(JNIEnv * /* env */, j
     return static_cast<jint>(picoo_sender_current_bitrate_bps(reinterpret_cast<void *>(handle)));
 }
 
+extern "C" JNIEXPORT jdoubleArray JNICALL
+Java_com_picoo_camera_jni_PicooNative_getLinkStats(JNIEnv *env, jobject /* this */, jlong handle) {
+    if (handle == 0 || env == nullptr) {
+        return nullptr;
+    }
+    double values[6] = {0};
+    const int32_t rc = picoo_sender_last_receiver_stats(
+        reinterpret_cast<void *>(handle), values, 6);
+    if (rc != 0) {
+        return nullptr;
+    }
+    jdoubleArray out = env->NewDoubleArray(6);
+    if (out == nullptr) {
+        return nullptr;
+    }
+    env->SetDoubleArrayRegion(out, 0, 6, values);
+    return out;
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_picoo_camera_jni_PicooNative_getReceiverMaxHeight(JNIEnv * /* env */, jobject /* this */, jlong handle) {
     if (handle == 0) {

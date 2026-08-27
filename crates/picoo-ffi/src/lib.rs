@@ -433,6 +433,35 @@ pub extern "C" fn picoo_sender_current_bitrate_bps(handle: *mut std::ffi::c_void
         .current_bitrate_bps()
 }
 
+/// Latest ReceiverStats feedback for live UI (PUC-005 / REQ-PICOO-PROTOCOL-006).
+///
+/// Writes `[rtt_ms, packet_loss, jitter_ms, frame_age_ms, receive_bitrate, jitter_depth_ms]`
+/// into `out` (length 6). Returns 0 when stats are available, 1 when none yet, -1 on error.
+#[no_mangle]
+pub extern "C" fn picoo_sender_last_receiver_stats(
+    handle: *mut std::ffi::c_void,
+    out: *mut f64,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() || out.is_null() || out_len < 6 {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let session = inner.session.lock().expect("sender lock");
+    let Some(stats) = session.last_receiver_stats() else {
+        return 1;
+    };
+    unsafe {
+        *out.add(0) = stats.rtt_ms;
+        *out.add(1) = stats.packet_loss;
+        *out.add(2) = stats.jitter_ms;
+        *out.add(3) = stats.frame_age_ms;
+        *out.add(4) = f64::from(stats.receive_bitrate);
+        *out.add(5) = stats.jitter_buffer_depth_ms;
+    }
+    0
+}
+
 /// Returns 1 if receiver requested an IDR (consumes the flag). REQ-PICOO-SESSION-003.
 #[no_mangle]
 pub extern "C" fn picoo_sender_take_keyframe_request(handle: *mut std::ffi::c_void) -> i32 {
@@ -975,6 +1004,12 @@ mod tests {
             0
         );
         assert_eq!(out, 1);
+        let mut stats = [0.0f64; 6];
+        assert_eq!(
+            picoo_sender_last_receiver_stats(handle, stats.as_mut_ptr(), stats.len()),
+            1,
+            "no ReceiverStats yet"
+        );
         picoo_sender_destroy(handle);
     }
 

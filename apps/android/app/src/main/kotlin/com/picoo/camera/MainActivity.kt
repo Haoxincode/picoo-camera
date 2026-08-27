@@ -45,6 +45,7 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.ui.CameraPreviewSurface
@@ -184,6 +185,7 @@ private fun SenderHomeScreen(
     var localPreviewMirrored by remember { mutableStateOf(true) }
     var resolutionLabel by remember { mutableStateOf("720p") }
     var powerHint by remember { mutableStateOf("") }
+    var linkStatsText by remember { mutableStateOf("") }
     var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
     var senderTab by remember { mutableStateOf(SenderTab.Devices) }
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
@@ -424,6 +426,17 @@ private fun SenderHomeScreen(
                 if (bps > 0) {
                     adaptiveBitrateBps = bps
                     encoder.setTargetBitrateBps(bps)
+                }
+                val link = PicooNative.getLinkStats(senderHandle)
+                linkStatsText = if (link != null && link.size >= 6) {
+                    LinkQuality.formatLine(
+                        rttMs = link[0],
+                        packetLoss = link[1],
+                        frameAgeMs = link[3],
+                        receiveBitrate = link[4],
+                    )
+                } else {
+                    ""
                 }
                 if (PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                     encoder.requestKeyFrame()
@@ -677,6 +690,12 @@ private fun SenderHomeScreen(
                     Text(
                         text = powerHint,
                         color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (linkStatsText.isNotEmpty()) {
+                    Text(
+                        text = linkStatsText,
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

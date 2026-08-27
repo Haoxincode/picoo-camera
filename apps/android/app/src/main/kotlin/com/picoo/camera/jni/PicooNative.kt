@@ -85,6 +85,12 @@ object PicooNative {
     /** Adaptive bitrate target from ReceiverStats feedback (REQ-PICOO-MEDIA-007). */
     external fun getCurrentBitrateBps(handle: Long): Int
 
+    /**
+     * Latest ReceiverStats feedback for Streaming metrics (PUC-005).
+     * @return [rttMs, packetLoss, jitterMs, frameAgeMs, receiveBitrate, jitterDepthMs] or null.
+     */
+    external fun getLinkStats(handle: Long): DoubleArray?
+
     /** Max height from receiver Capabilities; 0 if unknown (REQ-PICOO-MEDIA-002). */
     external fun getReceiverMaxHeight(handle: Long): Int
 
