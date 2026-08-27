@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <cstdint>
 #include <cstring>
 
 extern "C" {
@@ -226,7 +227,7 @@ Java_com_picoo_camera_jni_PicooNative_getPairingShortCode(JNIEnv *env, jobject /
 
 extern "C" JNIEXPORT jint JNICALL
 Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
-    JNIEnv * /* env */,
+    JNIEnv *env,
     jobject /* this */,
     jlong handle,
     jint width,
@@ -234,18 +235,99 @@ Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
     jint fps,
     jint bitrateBps,
     jint streamEpoch,
-    jboolean mirrored) {
+    jboolean mirrored,
+    jbyteArray sps,
+    jbyteArray pps) {
     if (handle == 0) {
         return -1;
     }
-    return picoo_sender_set_stream_config(
+    jbyte *sps_ptr = nullptr;
+    jsize sps_len = 0;
+    jbyte *pps_ptr = nullptr;
+    jsize pps_len = 0;
+    if (sps != nullptr) {
+        sps_len = env->GetArrayLength(sps);
+        sps_ptr = env->GetByteArrayElements(sps, nullptr);
+    }
+    if (pps != nullptr) {
+        pps_len = env->GetArrayLength(pps);
+        pps_ptr = env->GetByteArrayElements(pps, nullptr);
+    }
+    const jint rc = picoo_sender_set_stream_config(
         reinterpret_cast<void *>(handle),
         static_cast<uint32_t>(width),
         static_cast<uint32_t>(height),
         static_cast<uint32_t>(fps),
         static_cast<uint32_t>(bitrateBps),
         static_cast<uint32_t>(streamEpoch),
-        mirrored ? 1 : 0);
+        mirrored ? 1 : 0,
+        reinterpret_cast<const uint8_t *>(sps_ptr),
+        static_cast<uintptr_t>(sps_len > 0 ? sps_len : 0),
+        reinterpret_cast<const uint8_t *>(pps_ptr),
+        static_cast<uintptr_t>(pps_len > 0 ? pps_len : 0));
+    if (sps_ptr != nullptr) {
+        env->ReleaseByteArrayElements(sps, sps_ptr, JNI_ABORT);
+    }
+    if (pps_ptr != nullptr) {
+        env->ReleaseByteArrayElements(pps, pps_ptr, JNI_ABORT);
+    }
+    return rc;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_getCurrentBitrateBps(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return 0;
+    }
+    return static_cast<jint>(picoo_sender_current_bitrate_bps(reinterpret_cast<void *>(handle)));
+}
+
+extern "C" JNIEXPORT jobjectArray JNICALL
+Java_com_picoo_camera_jni_PicooNative_extractSpsPps(JNIEnv *env, jobject /* this */, jbyteArray data) {
+    if (data == nullptr) {
+        return nullptr;
+    }
+    const jsize len = env->GetArrayLength(data);
+    if (len <= 0) {
+        return nullptr;
+    }
+    jbyte *bytes = env->GetByteArrayElements(data, nullptr);
+    if (bytes == nullptr) {
+        return nullptr;
+    }
+    uint8_t sps_buf[512];
+    uint8_t pps_buf[256];
+    size_t sps_len = sizeof(sps_buf);
+    size_t pps_len = sizeof(pps_buf);
+    const int32_t rc = picoo_h264_extract_sps_pps(
+        reinterpret_cast<const uint8_t *>(bytes),
+        static_cast<uintptr_t>(len),
+        sps_buf,
+        &sps_len,
+        pps_buf,
+        &pps_len);
+    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+    if (rc != 0) {
+        return nullptr;
+    }
+    jclass byteArrayClass = env->FindClass("[B");
+    if (byteArrayClass == nullptr) {
+        return nullptr;
+    }
+    jobjectArray result = env->NewObjectArray(2, byteArrayClass, nullptr);
+    if (result == nullptr) {
+        return nullptr;
+    }
+    jbyteArray spsArr = env->NewByteArray(static_cast<jsize>(sps_len));
+    jbyteArray ppsArr = env->NewByteArray(static_cast<jsize>(pps_len));
+    if (spsArr == nullptr || ppsArr == nullptr) {
+        return nullptr;
+    }
+    env->SetByteArrayRegion(spsArr, 0, static_cast<jsize>(sps_len), reinterpret_cast<jbyte *>(sps_buf));
+    env->SetByteArrayRegion(ppsArr, 0, static_cast<jsize>(pps_len), reinterpret_cast<jbyte *>(pps_buf));
+    env->SetObjectArrayElement(result, 0, spsArr);
+    env->SetObjectArrayElement(result, 1, ppsArr);
+    return result;
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -355,6 +437,77 @@ Java_com_picoo_camera_jni_PicooNative_saveTrustedStore(JNIEnv * /* env */, jobje
         return -1;
     }
     return picoo_trusted_store_save(reinterpret_cast<void *>(handle));
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_picoo_camera_jni_PicooNative_loadOrCreateIdentity(
+    JNIEnv *env,
+    jobject /* this */,
+    jstring path,
+    jstring defaultName) {
+    if (path == nullptr) {
+        return 0;
+    }
+    char path_buf[512] = {0};
+    char name_buf[128] = {0};
+    if (copyJString(env, path, path_buf, sizeof(path_buf)) != 0) {
+        return 0;
+    }
+    const char *name_ptr = "Picoo Phone";
+    if (defaultName != nullptr && copyJString(env, defaultName, name_buf, sizeof(name_buf)) == 0) {
+        name_ptr = name_buf;
+    }
+    return reinterpret_cast<jlong>(picoo_identity_load_or_create(path_buf, name_ptr));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_picoo_camera_jni_PicooNative_destroyIdentity(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return;
+    }
+    picoo_identity_destroy(reinterpret_cast<void *>(handle));
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_picoo_camera_jni_PicooNative_getIdentityDeviceId(JNIEnv *env, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return env->NewStringUTF("");
+    }
+    char buf[128] = {0};
+    if (picoo_identity_device_id(reinterpret_cast<void *>(handle), buf, sizeof(buf)) <= 0) {
+        return env->NewStringUTF("");
+    }
+    return makeJString(env, buf);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_picoo_camera_jni_PicooNative_getIdentityDeviceName(JNIEnv *env, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return env->NewStringUTF("");
+    }
+    char buf[128] = {0};
+    if (picoo_identity_device_name(reinterpret_cast<void *>(handle), buf, sizeof(buf)) <= 0) {
+        return env->NewStringUTF("");
+    }
+    return makeJString(env, buf);
+}
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_picoo_camera_jni_PicooNative_getIdentityPublicKey(JNIEnv *env, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return env->NewByteArray(0);
+    }
+    uint8_t key[64] = {0};
+    const int32_t len = picoo_identity_public_key(reinterpret_cast<void *>(handle), key, sizeof(key));
+    if (len <= 0) {
+        return env->NewByteArray(0);
+    }
+    jbyteArray out = env->NewByteArray(len);
+    if (out == nullptr) {
+        return nullptr;
+    }
+    env->SetByteArrayRegion(out, 0, len, reinterpret_cast<const jbyte *>(key));
+    return out;
 }
 
 extern "C" JNIEXPORT jint JNICALL

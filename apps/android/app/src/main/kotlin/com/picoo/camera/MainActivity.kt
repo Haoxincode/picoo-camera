@@ -42,9 +42,11 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.QrCodeScanner
 import com.picoo.camera.ui.theme.PicooCameraTheme
+import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
@@ -109,11 +111,33 @@ private fun SenderHomeScreen(
     var remoteMirrored by remember { mutableStateOf(false) }
     var resolutionLabel by remember { mutableStateOf("720p") }
     var powerHint by remember { mutableStateOf("") }
+    var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
+    val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
+    val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
     var diagnosticExportPath by remember { mutableStateOf("") }
 
     val trustedStorePath = remember {
         java.io.File(context.filesDir, "trusted_devices.json").absolutePath
+    }
+    val identityPath = remember {
+        java.io.File(context.filesDir, "sender_identity.json").absolutePath
+    }
+    val identityHandle = remember {
+        PicooNative.loadOrCreateIdentity(identityPath, android.os.Build.MODEL)
+    }
+    val senderDeviceId = remember(identityHandle) {
+        if (identityHandle == 0L) "android-sender" else PicooNative.getIdentityDeviceId(identityHandle)
+    }
+    val senderPublicKey = remember(identityHandle) {
+        if (identityHandle == 0L) byteArrayOf(1, 2, 3) else PicooNative.getIdentityPublicKey(identityHandle)
+    }
+    val senderDeviceName = remember(identityHandle) {
+        if (identityHandle == 0L) {
+            android.os.Build.MODEL
+        } else {
+            PicooNative.getIdentityDeviceName(identityHandle).ifBlank { android.os.Build.MODEL }
+        }
     }
     val senderHandle = remember { PicooNative.createSender() }
     val browserHandle = remember { PicooNative.createDiscoveryBrowser() }
@@ -137,20 +161,33 @@ private fun SenderHomeScreen(
                     PicooNative.pump(senderHandle)
                 }
             },
+            parameterSetsListener = ParameterSetsListener { sps, pps ->
+                parameterSetsRef.set(sps to pps)
+                streamConfigDirty.set(true)
+            },
         )
     }
 
     fun applyStreamConfigToSender() {
         val (width, height) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
+        val bitrate = when {
+            adaptiveBitrateBps > 0 -> adaptiveBitrateBps
+            width >= 1920 -> 6_000_000
+            else -> 3_000_000
+        }
+        val sets = parameterSetsRef.get()
         PicooNative.setStreamConfig(
             senderHandle,
             width = width,
             height = height,
             fps = 30,
-            bitrateBps = if (width >= 1920) 6_000_000 else 3_000_000,
+            bitrateBps = bitrate,
             streamEpoch = encoder.streamEpoch,
             mirrored = remoteMirrored,
+            sps = sets?.first,
+            pps = sets?.second,
         )
+        streamConfigDirty.set(false)
     }
 
     fun connectToReceiver(host: String, port: Int, receiverId: String) {
@@ -160,9 +197,9 @@ private fun SenderHomeScreen(
             selectedReceiverId = receiverId
             PicooNative.sendClientHello(
                 senderHandle,
-                senderId = "android-sender",
-                deviceName = android.os.Build.MODEL,
-                publicKey = byteArrayOf(1, 2, 3),
+                senderId = senderDeviceId,
+                deviceName = senderDeviceName,
+                publicKey = senderPublicKey,
             )
             errorText = null
         } else {
@@ -230,6 +267,17 @@ private fun SenderHomeScreen(
                 senderStatus = PicooNative.getSenderStatus(senderHandle)
                 pairingCode = PicooNative.getPairingShortCode(senderHandle)
                 connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
+                val bps = PicooNative.getCurrentBitrateBps(senderHandle)
+                if (bps > 0) {
+                    adaptiveBitrateBps = bps
+                    encoder.setTargetBitrateBps(bps)
+                }
+                if (streamConfigDirty.get() &&
+                    (senderStatus == PicooNative.STATUS_STREAMING ||
+                        senderStatus == PicooNative.STATUS_NEGOTIATING)
+                ) {
+                    applyStreamConfigToSender()
+                }
             }
             if (browserHandle != 0L) {
                 PicooNative.pollDiscoveryBrowser(browserHandle, 200)
@@ -247,7 +295,7 @@ private fun SenderHomeScreen(
         }
     }
 
-    DisposableEffect(encoder, senderHandle, browserHandle, trustedStoreHandle) {
+    DisposableEffect(encoder, senderHandle, browserHandle, trustedStoreHandle, identityHandle) {
         onDispose {
             encoder.close()
             if (browserHandle != 0L) {
@@ -258,6 +306,9 @@ private fun SenderHomeScreen(
             }
             if (senderHandle != 0L) {
                 PicooNative.destroySender(senderHandle)
+            }
+            if (identityHandle != 0L) {
+                PicooNative.destroyIdentity(identityHandle)
             }
         }
     }

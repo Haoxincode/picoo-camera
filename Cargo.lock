@@ -4992,11 +4992,13 @@ dependencies = [
  "cbindgen 0.27.0",
  "picoo-diagnostics",
  "picoo-discovery",
+ "picoo-packet",
  "picoo-pairing",
  "picoo-protocol",
  "picoo-sender",
  "picoo-session",
  "picoo-transport",
+ "tempfile",
 ]
 
 [[package]]

@@ -118,7 +118,9 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn set_stream_config(&mut self, config: StreamConfigParams) {
+        // Allow re-send when SPS/PPS arrive late or resolution/mirror changes (PUC-005/006).
         self.pending_stream_config = Some(config);
+        self.stream_config_sent = false;
     }
 
     pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, SenderError> {

@@ -26,6 +26,7 @@ class Camera2MediaEncoder(
     context: Context,
     initialProfile: CaptureProfile = CaptureProfile(),
     private val frameListener: EncodedFrameListener = EncodedFrameListener.NOOP,
+    private val parameterSetsListener: ParameterSetsListener = ParameterSetsListener.NOOP,
 ) : CameraCaptureController, Closeable {
     private val appContext = context.applicationContext
     private val cameraManager = appContext.getSystemService(CameraManager::class.java)
@@ -57,12 +58,30 @@ class Camera2MediaEncoder(
     private var keyFrameCount = 0
     private var bytesSinceLastEstimate = 0L
     private var lastEstimateAtMs = System.currentTimeMillis()
+    private var targetBitrateBps: Int = bitrateFor(profile.resolution)
+    private var lastAppliedBitrateBps: Int = targetBitrateBps
 
     var stats: EncoderStats = EncoderStats()
         private set
 
     var lastError: String? = null
         private set
+
+    var lastSps: ByteArray? = null
+        private set
+    var lastPps: ByteArray? = null
+        private set
+
+    override fun setTargetBitrateBps(bitrateBps: Int) {
+        if (bitrateBps <= 0) return
+        val clamped = bitrateBps.coerceIn(500_000, 12_000_000)
+        targetBitrateBps = clamped
+        applyBitrateIfNeeded()
+    }
+
+    override fun requestKeyFrame() {
+        requestSyncFrame()
+    }
 
     override fun bindPreviewSurface(surface: Surface) {
         previewSurface = surface
@@ -236,6 +255,11 @@ class Camera2MediaEncoder(
             buffer.get(data)
             codec.releaseOutputBuffer(index, false)
 
+            if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                handleCodecConfig(data)
+                return
+            }
+
             val keyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
             frameCount += 1
             if (keyFrame) keyFrameCount += 1
@@ -249,7 +273,73 @@ class Camera2MediaEncoder(
             fail("MediaCodec error: ${e.diagnosticInfo}")
         }
 
-        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) = Unit
+        override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
+            val csd0 = format.getByteBuffer("csd-0") ?: return
+            val copy = ByteArray(csd0.remaining())
+            csd0.mark()
+            csd0.get(copy)
+            csd0.reset()
+            val csd1 = format.getByteBuffer("csd-1")
+            if (csd1 != null) {
+                val pps = ByteArray(csd1.remaining())
+                csd1.mark()
+                csd1.get(pps)
+                csd1.reset()
+                // csd-0 is often AVCC or raw SPS; csd-1 raw PPS.
+                publishParameterSets(copy, pps)
+            } else {
+                handleCodecConfig(copy)
+            }
+        }
+    }
+
+    private fun handleCodecConfig(data: ByteArray) {
+        // Prefer Rust Annex-B / AVCC extractor via JNI when linked; fall back to local split.
+        val extracted = runCatching {
+            com.picoo.camera.jni.PicooNative.extractSpsPps(data)
+        }.getOrNull()
+        if (extracted != null && extracted.size == 2) {
+            publishParameterSets(extracted[0], extracted[1])
+            return
+        }
+        // Local Annex-B fallback if native lib unavailable in unit tests.
+        val nals = splitAnnexB(data)
+        val sps = nals.firstOrNull { it.isNotEmpty() && (it[0].toInt() and 0x1f) == 7 }
+        val pps = nals.firstOrNull { it.isNotEmpty() && (it[0].toInt() and 0x1f) == 8 }
+        if (sps != null && pps != null) {
+            publishParameterSets(sps, pps)
+        }
+    }
+
+    private fun publishParameterSets(sps: ByteArray, pps: ByteArray) {
+        lastSps = sps
+        lastPps = pps
+        parameterSetsListener.onParameterSets(sps, pps)
+    }
+
+    private fun splitAnnexB(data: ByteArray): List<ByteArray> {
+        data class Mark(val codeStart: Int, val payloadStart: Int)
+        val marks = mutableListOf<Mark>()
+        var i = 0
+        while (i + 3 <= data.size) {
+            when {
+                i + 4 <= data.size &&
+                    data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
+                    data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte() -> {
+                    marks.add(Mark(i, i + 4))
+                    i += 4
+                }
+                data[i] == 0.toByte() && data[i + 1] == 0.toByte() && data[i + 2] == 1.toByte() -> {
+                    marks.add(Mark(i, i + 3))
+                    i += 3
+                }
+                else -> i += 1
+            }
+        }
+        return marks.mapIndexed { idx, mark ->
+            val end = marks.getOrNull(idx + 1)?.codeStart ?: data.size
+            data.copyOfRange(mark.payloadStart, end)
+        }
     }
 
     private fun updateBitrateEstimate() {
@@ -273,10 +363,25 @@ class Camera2MediaEncoder(
         }
     }
 
+    private fun applyBitrateIfNeeded() {
+        if (targetBitrateBps == lastAppliedBitrateBps) return
+        val codec = mediaCodec ?: return
+        runCatching {
+            codec.setParameters(
+                android.os.Bundle().apply {
+                    putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, targetBitrateBps)
+                },
+            )
+            lastAppliedBitrateBps = targetBitrateBps
+        }
+    }
+
     private fun createEncoder(size: Size): MediaCodec? {
+        targetBitrateBps = bitrateFor(size)
+        lastAppliedBitrateBps = targetBitrateBps
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.width, size.height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrateFor(size))
+            setInteger(MediaFormat.KEY_BIT_RATE, targetBitrateBps)
             setInteger(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
             setInteger(

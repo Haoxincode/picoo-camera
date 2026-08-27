@@ -4,11 +4,13 @@
 
 use picoo_diagnostics::{build_report, export_json, DiagnosticInput};
 use picoo_discovery::MdnsBrowser;
-use picoo_pairing::TrustedDeviceStore;
+use picoo_packet::extract_sps_pps;
+use picoo_pairing::{DeviceIdentity, TrustedDeviceStore};
 use picoo_sender::{SenderSession, SessionStats, StreamConfigParams};
 use picoo_session::SenderStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
 use std::ffi::CStr;
+use std::slice;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -286,7 +288,11 @@ pub extern "C" fn picoo_sender_pairing_short_code(
     }
 }
 
-/// Configure stream parameters before/at streaming (PUC-005).
+/// Configure stream parameters before/at streaming (PUC-005 / REQ-PICOO-PROTOCOL-005).
+///
+/// `sps`/`pps` may be null/0 when unknown. Prefer NAL payloads without start codes;
+/// Annex-B blobs are also accepted when both parameter sets are present in one buffer
+/// passed via `sps` (with `pps` empty) — see `picoo_h264_extract_sps_pps`.
 #[no_mangle]
 pub extern "C" fn picoo_sender_set_stream_config(
     handle: *mut std::ffi::c_void,
@@ -296,10 +302,15 @@ pub extern "C" fn picoo_sender_set_stream_config(
     bitrate_bps: u32,
     stream_epoch: u32,
     mirrored: u8,
+    sps: *const u8,
+    sps_len: usize,
+    pps: *const u8,
+    pps_len: usize,
 ) -> i32 {
     if handle.is_null() {
         return -1;
     }
+    let (sps_bytes, pps_bytes) = copy_parameter_sets(sps, sps_len, pps, pps_len);
     let inner = unsafe { &*(handle as *mut SenderInner) };
     inner
         .session
@@ -312,8 +323,79 @@ pub extern "C" fn picoo_sender_set_stream_config(
             bitrate_bps,
             stream_epoch,
             mirrored: mirrored != 0,
-            ..StreamConfigParams::default()
+            sps: sps_bytes,
+            pps: pps_bytes,
         });
+    0
+}
+
+fn copy_parameter_sets(
+    sps: *const u8,
+    sps_len: usize,
+    pps: *const u8,
+    pps_len: usize,
+) -> (Vec<u8>, Vec<u8>) {
+    let sps_slice = if !sps.is_null() && sps_len > 0 {
+        unsafe { slice::from_raw_parts(sps, sps_len) }
+    } else {
+        &[]
+    };
+    let pps_slice = if !pps.is_null() && pps_len > 0 {
+        unsafe { slice::from_raw_parts(pps, pps_len) }
+    } else {
+        &[]
+    };
+    if !pps_slice.is_empty() {
+        return (sps_slice.to_vec(), pps_slice.to_vec());
+    }
+    if let Some((s, p)) = extract_sps_pps(sps_slice) {
+        return (s, p);
+    }
+    (sps_slice.to_vec(), Vec::new())
+}
+
+/// Extract SPS/PPS from Annex-B or AVCC bytes into caller buffers (REQ-PICOO-PROTOCOL-005).
+///
+/// Returns 0 on success, negative on error. On success writes lengths into `*_len` in/out.
+#[no_mangle]
+pub extern "C" fn picoo_h264_extract_sps_pps(
+    data: *const u8,
+    data_len: usize,
+    sps_out: *mut u8,
+    sps_len: *mut usize,
+    pps_out: *mut u8,
+    pps_len: *mut usize,
+) -> i32 {
+    if data.is_null() || data_len == 0 || sps_len.is_null() || pps_len.is_null() {
+        return -1;
+    }
+    let slice = unsafe { slice::from_raw_parts(data, data_len) };
+    let Some((sps, pps)) = extract_sps_pps(slice) else {
+        return -2;
+    };
+    let sps_cap = unsafe { *sps_len };
+    let pps_cap = unsafe { *pps_len };
+    if sps.len() > sps_cap || pps.len() > pps_cap {
+        unsafe {
+            *sps_len = sps.len();
+            *pps_len = pps.len();
+        }
+        return -3;
+    }
+    if !sps_out.is_null() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(sps.as_ptr(), sps_out, sps.len());
+        }
+    }
+    if !pps_out.is_null() {
+        unsafe {
+            std::ptr::copy_nonoverlapping(pps.as_ptr(), pps_out, pps.len());
+        }
+    }
+    unsafe {
+        *sps_len = sps.len();
+        *pps_len = pps.len();
+    }
     0
 }
 
@@ -497,14 +579,113 @@ pub extern "C" fn picoo_trusted_store_save(handle: *mut std::ffi::c_void) -> i32
         return -1;
     }
     let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
-    let store = inner.store.lock().expect("store lock");
-    let path = inner.path.lock().expect("path lock");
-    let Some(path) = path.as_deref() else {
+    let path = inner.path.lock().expect("path lock").clone();
+    let Some(path) = path else {
         return -2;
     };
-    match store.save_to_path(path) {
+    match inner.store.lock().expect("store lock").save_to_path(&path) {
         Ok(()) => 0,
         Err(_) => -3,
+    }
+}
+
+/// Load or create durable sender identity at `path` (REQ-PICOO-PAIRING-001).
+#[no_mangle]
+pub extern "C" fn picoo_identity_load_or_create(
+    path: *const std::ffi::c_char,
+    default_name: *const std::ffi::c_char,
+) -> *mut std::ffi::c_void {
+    if path.is_null() {
+        return std::ptr::null_mut();
+    }
+    let path = unsafe { CStr::from_ptr(path) }.to_string_lossy();
+    let default_name = if default_name.is_null() {
+        "Picoo Phone".to_string()
+    } else {
+        unsafe { CStr::from_ptr(default_name) }
+            .to_string_lossy()
+            .into_owned()
+    };
+    match DeviceIdentity::load_or_create(path.as_ref(), &default_name) {
+        Ok(identity) => Box::into_raw(Box::new(identity)) as *mut std::ffi::c_void,
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_identity_destroy(handle: *mut std::ffi::c_void) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut DeviceIdentity));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_identity_device_id(
+    handle: *mut std::ffi::c_void,
+    out: *mut std::ffi::c_char,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let identity = unsafe { &*(handle as *mut DeviceIdentity) };
+    copy_str_to_buf(&identity.device_id, out, out_len)
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_identity_device_name(
+    handle: *mut std::ffi::c_void,
+    out: *mut std::ffi::c_char,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let identity = unsafe { &*(handle as *mut DeviceIdentity) };
+    copy_str_to_buf(&identity.device_name, out, out_len)
+}
+
+/// Copy public key bytes into `out`. Returns length, or negative on error.
+#[no_mangle]
+pub extern "C" fn picoo_identity_public_key(
+    handle: *mut std::ffi::c_void,
+    out: *mut u8,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() || out.is_null() {
+        return -1;
+    }
+    let identity = unsafe { &*(handle as *mut DeviceIdentity) };
+    let key = identity.public_key();
+    if out_len < key.len() {
+        return -2;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(key.as_ptr(), out, key.len());
+    }
+    key.len() as i32
+}
+
+/// Persist identity after renaming display name.
+#[no_mangle]
+pub extern "C" fn picoo_identity_set_device_name(
+    handle: *mut std::ffi::c_void,
+    name: *const std::ffi::c_char,
+    path: *const std::ffi::c_char,
+) -> i32 {
+    if handle.is_null() || name.is_null() || path.is_null() {
+        return -1;
+    }
+    let name = unsafe { CStr::from_ptr(name) }.to_string_lossy();
+    let path = unsafe { CStr::from_ptr(path) }.to_string_lossy();
+    let identity = unsafe { &mut *(handle as *mut DeviceIdentity) };
+    identity.set_device_name(&name);
+    match identity.save_to_path(path.as_ref()) {
+        Ok(()) => 0,
+        Err(_) => -2,
     }
 }
 
@@ -774,5 +955,66 @@ mod tests {
             ),
             -4
         );
+    }
+
+    #[test]
+    fn identity_load_roundtrip_via_ffi() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("id.json");
+        let path_c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+        let name_c = std::ffi::CString::new("TestPhone").unwrap();
+        let handle = picoo_identity_load_or_create(path_c.as_ptr(), name_c.as_ptr());
+        assert!(!handle.is_null());
+        let mut id_buf = [0u8; 64];
+        let n = picoo_identity_device_id(
+            handle,
+            id_buf.as_mut_ptr() as *mut std::ffi::c_char,
+            id_buf.len(),
+        );
+        assert!(n > 0);
+        let mut key = [0u8; 32];
+        assert_eq!(
+            picoo_identity_public_key(handle, key.as_mut_ptr(), key.len()),
+            32
+        );
+        picoo_identity_destroy(handle);
+
+        let again = picoo_identity_load_or_create(path_c.as_ptr(), name_c.as_ptr());
+        assert!(!again.is_null());
+        let mut key2 = [0u8; 32];
+        assert_eq!(
+            picoo_identity_public_key(again, key2.as_mut_ptr(), key2.len()),
+            32
+        );
+        assert_eq!(key, key2);
+        picoo_identity_destroy(again);
+    }
+
+    #[test]
+    fn extract_sps_pps_via_ffi() {
+        let sps = [0x67u8, 0x42, 0x00, 0x0a];
+        let pps = [0x68u8, 0xce, 0x3c, 0x80];
+        let mut annex = Vec::new();
+        annex.extend_from_slice(&[0, 0, 0, 1]);
+        annex.extend_from_slice(&sps);
+        annex.extend_from_slice(&[0, 0, 0, 1]);
+        annex.extend_from_slice(&pps);
+        let mut sps_out = [0u8; 64];
+        let mut pps_out = [0u8; 64];
+        let mut sps_len = sps_out.len();
+        let mut pps_len = pps_out.len();
+        assert_eq!(
+            picoo_h264_extract_sps_pps(
+                annex.as_ptr(),
+                annex.len(),
+                sps_out.as_mut_ptr(),
+                &mut sps_len,
+                pps_out.as_mut_ptr(),
+                &mut pps_len,
+            ),
+            0
+        );
+        assert_eq!(&sps_out[..sps_len], &sps);
+        assert_eq!(&pps_out[..pps_len], &pps);
     }
 }

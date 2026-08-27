@@ -12,6 +12,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 picoo-discovery.workspace = true
 picoo-diagnostics.workspace = true
 picoo-pairing.workspace = true
+picoo-packet.workspace = true
 picoo-protocol.workspace = true
 picoo-session.workspace = true
 picoo-sender.workspace = true
@@ -19,3 +20,6 @@ picoo-transport.workspace = true
 
 [build-dependencies]
 cbindgen = "0.27"
+
+[dev-dependencies]
+tempfile = "3.14"

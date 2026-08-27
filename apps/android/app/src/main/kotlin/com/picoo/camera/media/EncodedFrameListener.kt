@@ -18,6 +18,15 @@ fun interface EncodedFrameListener {
     }
 }
 
+/** Notified when MediaCodec emits SPS/PPS (codec config) for StreamConfig. */
+fun interface ParameterSetsListener {
+    fun onParameterSets(sps: ByteArray, pps: ByteArray)
+
+    companion object {
+        val NOOP = ParameterSetsListener { _, _ -> }
+    }
+}
+
 data class EncoderStats(
     val frameCount: Int = 0,
     val keyFrameCount: Int = 0,

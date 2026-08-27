@@ -70,7 +70,18 @@ object PicooNative {
         bitrateBps: Int,
         streamEpoch: Int,
         mirrored: Boolean,
+        sps: ByteArray? = null,
+        pps: ByteArray? = null,
     ): Int
+
+    /** Adaptive bitrate target from ReceiverStats feedback (REQ-PICOO-MEDIA-007). */
+    external fun getCurrentBitrateBps(handle: Long): Int
+
+    /**
+     * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
+     * @return `[sps, pps]` or null when extraction fails.
+     */
+    external fun extractSpsPps(data: ByteArray): Array<ByteArray>?
 
     external fun createDiscoveryBrowser(): Long
 
@@ -97,6 +108,17 @@ object PicooNative {
     external fun removeTrustedDevice(handle: Long, deviceId: String): Int
 
     external fun saveTrustedStore(handle: Long): Int
+
+    /** Load or create durable sender identity (REQ-PICOO-PAIRING-001). */
+    external fun loadOrCreateIdentity(path: String, defaultName: String): Long
+
+    external fun destroyIdentity(handle: Long)
+
+    external fun getIdentityDeviceId(handle: Long): String
+
+    external fun getIdentityDeviceName(handle: Long): String
+
+    external fun getIdentityPublicKey(handle: Long): ByteArray
 
     external fun exportDiagnosticsToPath(
         trustedStorePath: String,

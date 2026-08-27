@@ -35,4 +35,6 @@ interface CameraCaptureController {
     fun stopPreview()
     fun switchCamera()
     fun setResolution(width: Int, height: Int)
+    fun setTargetBitrateBps(bitrateBps: Int)
+    fun requestKeyFrame()
 }
