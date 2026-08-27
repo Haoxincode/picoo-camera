@@ -4,11 +4,42 @@ package com.picoo.camera.jni
  * JNI bridge to Rust Core C ABI (REQ-PICOO-STACK-003).
  *
  * Kotlin → JNI (libpicoo_jni.so) → C ABI (libpicoo_ffi.so) → Rust
+ *
+ * Native load is explicit and recoverable: a failed `<clinit>` would otherwise
+ * poison the class with ExceptionInInitializerError and crash Compose startup
+ * on devices that cannot dlopen (e.g. 16 KB page size).
  */
 object PicooNative {
-    init {
-        System.loadLibrary("picoo_ffi")
-        System.loadLibrary("picoo_jni")
+    @Volatile
+    private var loadAttempted: Boolean = false
+
+    /** Null when native libs loaded successfully; otherwise the failure message. */
+    @Volatile
+    var loadError: String? = null
+        private set
+
+    val isAvailable: Boolean
+        get() = ensureLoaded()
+
+    /**
+     * Load `libpicoo_ffi` then `libpicoo_jni`. Safe to call repeatedly.
+     * @return true when both libraries loaded.
+     */
+    @Synchronized
+    fun ensureLoaded(): Boolean {
+        if (loadAttempted) {
+            return loadError == null
+        }
+        loadAttempted = true
+        return try {
+            System.loadLibrary("picoo_ffi")
+            System.loadLibrary("picoo_jni")
+            loadError = null
+            true
+        } catch (t: Throwable) {
+            loadError = t.message ?: t.toString()
+            false
+        }
     }
 
     const val STATUS_DISCONNECTED = SenderStatusCodes.DISCONNECTED
@@ -233,6 +264,7 @@ object PicooNative {
     )
 
     fun readSenderStats(handle: Long): SenderStats {
+        check(isAvailable) { "native unavailable: $loadError" }
         val values = getSenderStats(handle)
         return SenderStats(
             accessUnits = values.getOrElse(0) { 0 },

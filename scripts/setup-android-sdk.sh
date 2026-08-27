@@ -3,7 +3,8 @@
 set -euo pipefail
 
 ANDROID_HOME="${ANDROID_HOME:-${HOME}/android-sdk}"
-NDK_VERSION="${PICOO_ANDROID_NDK_VERSION:-26.1.10909125}"
+# NDK r28+: 16 KB page-size support for Xiaomi 15 / Android 15 (libpicoo_jni / STL).
+NDK_VERSION="${PICOO_ANDROID_NDK_VERSION:-28.0.12674087}"
 BUILD_TOOLS="${PICOO_ANDROID_BUILD_TOOLS:-34.0.0}"
 PLATFORM="${PICOO_ANDROID_PLATFORM:-android-34}"
 CMDLINE_TOOLS="${ANDROID_HOME}/cmdline-tools/latest"

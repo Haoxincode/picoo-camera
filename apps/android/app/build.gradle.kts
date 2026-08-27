@@ -9,6 +9,8 @@ val workspaceRoot = rootProject.projectDir.parentFile.parentFile
 android {
     namespace = "com.picoo.camera"
     compileSdk = 34
+    // NDK r28+ ships 16 KB-aligned libc++ and honors flexible page sizes (Xiaomi 15 / Android 15).
+    ndkVersion = "28.0.12674087"
 
     defaultConfig {
         applicationId = "com.picoo.camera"
@@ -24,7 +26,13 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags += listOf("-std=c++17", "-Wall")
-                arguments += listOf("-DANDROID_STL=c++_shared")
+                // Static STL avoids shipping a 4 KB-aligned libc++_shared from older NDKs;
+                // picoo_jni is the only consumer.
+                arguments +=
+                    listOf(
+                        "-DANDROID_STL=c++_static",
+                        "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON",
+                    )
             }
         }
     }
@@ -62,7 +70,10 @@ android {
 
     packaging {
         jniLibs {
+            // Extract .so so 16 KB-page devices can mmap with correct ELF p_align.
             useLegacyPackaging = true
+            // cargo-ndk may drop intermediate libquiche-*.so into jniLibs; do not ship them.
+            excludes += listOf("**/libquiche-*.so")
         }
     }
 }
@@ -100,6 +111,10 @@ tasks.register<Exec>("cargoBuildFfi") {
     val ndkHome = System.getenv("ANDROID_NDK_HOME") ?: android.ndkDirectory.absolutePath
     doFirst {
         jniLibsDir.asFile.mkdirs()
+        // Drop stale hashed quiche intermediates from prior cargo-ndk runs.
+        jniLibsDir.asFile.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("libquiche-") && it.extension == "so" }
+            .forEach { it.delete() }
     }
     commandLine(
         "cargo",
@@ -114,6 +129,17 @@ tasks.register<Exec>("cargoBuildFfi") {
         "picoo-ffi",
     )
     environment("ANDROID_NDK_HOME", ndkHome)
+    // Ensure Rust cdylib LOAD segments are 16 KB aligned and expose a stable SONAME
+    // so libpicoo_jni DT_NEEDED is "libpicoo_ffi.so" (not a host absolute path).
+    environment(
+        "CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS",
+        "-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-soname,libpicoo_ffi.so",
+    )
+    doLast {
+        jniLibsDir.asFile.walkTopDown()
+            .filter { it.isFile && it.name.startsWith("libquiche-") && it.extension == "so" }
+            .forEach { it.delete() }
+    }
 }
 
 tasks.named("preBuild") {
