@@ -513,6 +513,43 @@ pub extern "C" fn picoo_sender_take_resolution_downshift(handle: *mut std::ffi::
     }
 }
 
+/// Returns 1 if ABR asks the host to restore preferred resolution (consumes the flag).
+#[no_mangle]
+pub extern "C" fn picoo_sender_take_resolution_upshift(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    if inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .take_resolution_upshift()
+    {
+        1
+    } else {
+        0
+    }
+}
+
+/// Set preferred capture height for ABR upshift decisions (720 or 1080).
+#[no_mangle]
+pub extern "C" fn picoo_sender_set_preferred_height(
+    handle: *mut std::ffi::c_void,
+    height: u32,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .set_preferred_height(height);
+    0
+}
+
 /// Max height advertised by receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
 #[no_mangle]
 pub extern "C" fn picoo_sender_receiver_max_height(handle: *mut std::ffi::c_void) -> u32 {

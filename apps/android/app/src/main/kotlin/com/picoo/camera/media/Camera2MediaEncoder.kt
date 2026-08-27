@@ -80,7 +80,7 @@ class Camera2MediaEncoder(
 
     override fun setTargetBitrateBps(bitrateBps: Int) {
         if (bitrateBps <= 0) return
-        val clamped = MediaBitrate.clampAdaptive(bitrateBps)
+        val clamped = MediaBitrate.clampAdaptive(bitrateBps, profile.resolution.height)
         targetBitrateBps = clamped
         applyBitrateIfNeeded()
     }

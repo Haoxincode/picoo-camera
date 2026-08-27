@@ -33,8 +33,20 @@ object PowerHints {
             else -> null
         }
 
+    /** PUC-006 / PRD risk: force 720p when thermal is severe or worse. */
+    fun shouldForce720p(status: Int): Boolean =
+        status >= PowerManager.THERMAL_STATUS_SEVERE
+
     fun combine(battery: String?, thermal: String?): String =
         listOfNotNull(battery, thermal).joinToString(" · ")
+
+    fun readThermalStatus(context: Context): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return PowerManager.THERMAL_STATUS_NONE
+        }
+        val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+        return pm.currentThermalStatus
+    }
 
     fun readHint(context: Context): String {
         val filter = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
@@ -42,15 +54,7 @@ object PowerHints {
         val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = battery?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
         val batteryMsg = batteryHint(batteryPercent(level, scale))
-
-        val thermalMsg =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-                thermalHint(pm.currentThermalStatus)
-            } else {
-                null
-            }
-
+        val thermalMsg = thermalHint(readThermalStatus(context))
         return combine(batteryMsg, thermalMsg)
     }
 }

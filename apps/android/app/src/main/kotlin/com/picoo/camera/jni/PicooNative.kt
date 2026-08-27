@@ -104,6 +104,12 @@ object PicooNative {
     /** 1 if ABR asks to drop 1080p→720p (consumes flag). REQ-PICOO-MEDIA-010. */
     external fun takeResolutionDownshift(handle: Long): Int
 
+    /** 1 if ABR asks to restore 720p→1080p (consumes flag). REQ-PICOO-MEDIA-010. */
+    external fun takeResolutionUpshift(handle: Long): Int
+
+    /** User preferred height for ABR upshift (720 or 1080). */
+    external fun setPreferredHeight(handle: Long, height: Int): Int
+
     /**
      * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
      * @return `[sps, pps]` or null when extraction fails.

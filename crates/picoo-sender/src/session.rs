@@ -65,6 +65,8 @@ pub struct SenderSession<T: PicooTransport> {
     keyframe_requested: bool,
     /// ABR last rung: host should drop capture height (typically 1080→720).
     resolution_downshift_requested: bool,
+    /// ABR recovery: host may restore preferred height (typically 720→1080).
+    resolution_upshift_requested: bool,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -96,6 +98,7 @@ impl<T: PicooTransport> SenderSession<T> {
             stream_config_sent: false,
             keyframe_requested: false,
             resolution_downshift_requested: false,
+            resolution_upshift_requested: false,
         }
     }
 
@@ -150,6 +153,11 @@ impl<T: PicooTransport> SenderSession<T> {
         self.stream_config_sent = false;
     }
 
+    /// User / capability preferred capture height (does not change active encode height).
+    pub fn set_preferred_height(&mut self, height: u32) {
+        self.bitrate.set_preferred_height(height);
+    }
+
     pub fn stream_config_sent(&self) -> bool {
         self.stream_config_sent
     }
@@ -171,6 +179,16 @@ impl<T: PicooTransport> SenderSession<T> {
         self.resolution_downshift_requested = false;
         if pending {
             self.bitrate.acknowledge_resolution_downshift();
+        }
+        pending
+    }
+
+    /// Consume ABR resolution upshift hint (REQ-PICOO-MEDIA-010 / PUC-006).
+    pub fn take_resolution_upshift(&mut self) -> bool {
+        let pending = self.resolution_upshift_requested;
+        self.resolution_upshift_requested = false;
+        if pending {
+            self.bitrate.acknowledge_resolution_upshift();
         }
         pending
     }
@@ -329,6 +347,9 @@ impl<T: PicooTransport> SenderSession<T> {
             self.last_bitrate_action = self.bitrate.update(&metrics);
             if self.last_bitrate_action == BitrateAction::DownshiftResolution {
                 self.resolution_downshift_requested = true;
+            }
+            if self.last_bitrate_action == BitrateAction::UpshiftResolution {
+                self.resolution_upshift_requested = true;
             }
             // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
             if matches!(

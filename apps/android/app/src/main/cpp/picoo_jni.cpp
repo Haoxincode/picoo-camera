@@ -356,6 +356,30 @@ Java_com_picoo_camera_jni_PicooNative_takeResolutionDownshift(
     return picoo_sender_take_resolution_downshift(reinterpret_cast<void *>(handle));
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_takeResolutionUpshift(
+    JNIEnv * /* env */,
+    jobject /* this */,
+    jlong handle) {
+    if (handle == 0) {
+        return -1;
+    }
+    return picoo_sender_take_resolution_upshift(reinterpret_cast<void *>(handle));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_setPreferredHeight(
+    JNIEnv * /* env */,
+    jobject /* this */,
+    jlong handle,
+    jint height) {
+    if (handle == 0) {
+        return -1;
+    }
+    return picoo_sender_set_preferred_height(
+        reinterpret_cast<void *>(handle), static_cast<uint32_t>(height));
+}
+
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_picoo_camera_jni_PicooNative_extractSpsPps(JNIEnv *env, jobject /* this */, jbyteArray data) {
     if (data == nullptr) {

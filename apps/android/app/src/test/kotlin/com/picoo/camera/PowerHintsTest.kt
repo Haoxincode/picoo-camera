@@ -40,4 +40,12 @@ class PowerHintsTest {
             ),
         )
     }
+
+    @Test
+    fun thermalSevereForces720p() {
+        assertEquals(true, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_SEVERE))
+        assertEquals(true, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_CRITICAL))
+        assertEquals(false, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_NONE))
+        assertEquals(false, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_MODERATE))
+    }
 }

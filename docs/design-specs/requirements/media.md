@@ -11,4 +11,4 @@
 | REQ-PICOO-MEDIA-007 | implemented | PUC-006 | 动态码率 720p 3–5 Mbps / 1080p 3–10 Mbps | rate-control + Android MediaCodec PARAMETER_KEY_VIDEO_BITRATE |
 | REQ-PICOO-MEDIA-008 | implemented | PUC-005 | 手机端曝光补偿可调 | `Camera2MediaEncoder.setExposureCompensation` + Streaming EV±（真机验证仍待） |
 | REQ-PICOO-MEDIA-009 | implemented | PUC-005 | StreamConfig.rotation 驱动 FrameHub/VCam 朝向 | Sender SENSOR_ORIENTATION → FFI → Receiver 覆盖解码器 rotation |
-| REQ-PICOO-MEDIA-010 | implemented | PUC-006 | 持续拥塞且已到最低码率时 1080p→720p | `BitrateAction::DownshiftResolution` + Android `takeResolutionDownshift` |
+| REQ-PICOO-MEDIA-010 | implemented | PUC-006 | 持续拥塞降至 720p；健康后可回升 1080p；过热强制 720p | `Downshift/UpshiftResolution` + 720/1080 ladder + `PowerHints.shouldForce720p` |
