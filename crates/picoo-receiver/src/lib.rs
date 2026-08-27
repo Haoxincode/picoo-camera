@@ -16,8 +16,8 @@ use picoo_pairing::{
     verify_pairing_confirm, PairingError, PairingHandshakeError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm,
-    ReceiverStats as ReceiverStatsMsg, ServerHello,
+    Capabilities, ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm,
+    ReceiverStats as ReceiverStatsMsg, Resolution, ServerHello, StreamConfig,
 };
 use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
@@ -125,6 +125,8 @@ pub struct ReceiverSession {
     stats_reporter: StatsReporter,
     permit_unpaired_video: bool,
     shared_ring: Option<SharedFrameRingProducer>,
+    current_stream_config: Option<StreamConfig>,
+    receiver_capabilities_sent: Option<()>,
 }
 
 impl Default for ReceiverSession {
@@ -149,6 +151,8 @@ impl ReceiverSession {
             stats_reporter: StatsReporter::new(),
             permit_unpaired_video: false,
             shared_ring: None,
+            current_stream_config: None,
+            receiver_capabilities_sent: None,
         }
     }
 
@@ -178,6 +182,10 @@ impl ReceiverSession {
     pub fn with_identity(mut self, identity: ReceiverIdentity) -> Self {
         self.identity = identity;
         self
+    }
+
+    pub fn stream_config(&self) -> Option<&StreamConfig> {
+        self.current_stream_config.as_ref()
     }
 
     pub fn trusted_devices(&self) -> &TrustedDeviceStore {
@@ -351,9 +359,56 @@ impl ReceiverSession {
 
     fn handle_control(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         if self.pending_pairing.is_some() {
-            return self.handle_pairing_confirm(session, msg);
+            if PairingConfirm::decode(msg.as_ref()).is_ok() {
+                return self.handle_pairing_confirm(session, msg);
+            }
+            return Ok(());
         }
-        self.handle_client_hello(session, msg)
+        if self.active_sender.is_none() {
+            return self.handle_client_hello(session, msg);
+        }
+        if let Ok(config) = StreamConfig::decode(msg.as_ref()) {
+            return self.handle_stream_config(session, config);
+        }
+        Ok(())
+    }
+
+    fn handle_stream_config(
+        &mut self,
+        session: SessionId,
+        config: StreamConfig,
+    ) -> Result<(), ReceiverError> {
+        self.current_stream_config = Some(config);
+        if self.receiver_capabilities_sent.is_none() {
+            self.send_capabilities(session)?;
+            self.receiver_capabilities_sent = Some(());
+        }
+        Ok(())
+    }
+
+    fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        let capabilities = Capabilities {
+            codecs: vec!["h264".into()],
+            resolutions: vec![
+                Resolution {
+                    width: 1280,
+                    height: 720,
+                },
+                Resolution {
+                    width: 1920,
+                    height: 1080,
+                },
+            ],
+            fps: vec![30],
+            front_camera: true,
+            back_camera: true,
+        };
+        self.send_control_message(session, &capabilities)
+    }
+
+    fn begin_streaming(&mut self, _session: SessionId) -> Result<(), ReceiverError> {
+        self.status = ReceiverStatus::Streaming;
+        Ok(())
     }
 
     fn handle_client_hello(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
@@ -381,8 +436,7 @@ impl ReceiverSession {
                 public_key: hello.public_key,
                 video_allowed: true,
             });
-            self.status = ReceiverStatus::Streaming;
-            return Ok(());
+            return self.begin_streaming(session);
         }
 
         let nonce = random_challenge_nonce();
@@ -468,8 +522,7 @@ impl ReceiverSession {
         }
         self.pending_pairing = None;
         self.local_pairing_confirmed = false;
-        self.status = ReceiverStatus::Streaming;
-        Ok(())
+        self.begin_streaming(session)
     }
 
     fn send_control_message<M: Message>(

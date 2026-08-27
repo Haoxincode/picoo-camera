@@ -3,6 +3,7 @@
 //! REQ-PICOO-MEDIA-001, REQ-PICOO-STACK-001
 
 mod session;
+mod stream_config;
 
 use bytes::Bytes;
 use picoo_protocol::{
@@ -13,6 +14,7 @@ use thiserror::Error;
 
 pub use picoo_rate_control::BitrateAction;
 pub use session::{SenderSession, SessionStats};
+pub use stream_config::StreamConfigParams;
 
 const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE;
 

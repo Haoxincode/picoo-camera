@@ -262,3 +262,78 @@ fn receiver_sends_stats_to_paired_sender() {
     assert!(stats.frame_age_ms > 200.0);
     assert_eq!(sender.last_bitrate_action(), BitrateAction::Decrease);
 }
+
+#[test]
+fn stream_config_and_capabilities_after_paired_hello() {
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("android-sender", "Pixel Test", &[1, 2, 3])
+        .expect("client hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    if receiver.stream_config().is_none() {
+        sender
+            .send_stream_config(&StreamConfigParams::default())
+            .expect("stream config send");
+    }
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.stream_config().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    let config = receiver.stream_config().expect("stream config");
+    assert_eq!(config.width, 1280);
+    assert_eq!(config.height, 720);
+    assert_eq!(config.stream_epoch, 1);
+    assert!(sender.receiver_capabilities().is_some());
+}

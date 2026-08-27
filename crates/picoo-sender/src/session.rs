@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_pairing::pairing_confirm_signature;
 use picoo_protocol::control::{
-    ClientHello, PairingChallenge, PairingConfirm, ReceiverStats as ReceiverStatsMsg, ServerHello,
+    Capabilities, ClientHello, PairingChallenge, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
+    ServerHello,
 };
 use picoo_protocol::VideoPacket;
 use picoo_protocol::ALPN;
@@ -16,6 +17,7 @@ use picoo_session::{ReconnectBackoff, SenderStatus};
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
 use prost::Message;
 
+use crate::stream_config::StreamConfigParams;
 use crate::{SenderError, SenderPipeline, SenderStats};
 
 const DEFAULT_INITIAL_BITRATE_BPS: u32 = 6_000_000;
@@ -51,6 +53,9 @@ pub struct SenderSession<T: PicooTransport> {
     bitrate: BitrateController,
     last_bitrate_action: BitrateAction,
     last_receiver_stats: Option<MetricsReceiverStats>,
+    pending_stream_config: Option<StreamConfigParams>,
+    receiver_capabilities: Option<Capabilities>,
+    stream_config_sent: bool,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -75,6 +80,9 @@ impl<T: PicooTransport> SenderSession<T> {
             ),
             last_bitrate_action: BitrateAction::Hold,
             last_receiver_stats: None,
+            pending_stream_config: Some(StreamConfigParams::default()),
+            receiver_capabilities: None,
+            stream_config_sent: false,
         }
     }
 
@@ -96,6 +104,45 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn last_receiver_stats(&self) -> Option<&MetricsReceiverStats> {
         self.last_receiver_stats.as_ref()
+    }
+
+    pub fn receiver_capabilities(&self) -> Option<&Capabilities> {
+        self.receiver_capabilities.as_ref()
+    }
+
+    pub fn set_stream_config(&mut self, config: StreamConfigParams) {
+        self.pending_stream_config = Some(config);
+    }
+
+    fn enter_streaming(&mut self) {
+        self.status = SenderStatus::Streaming;
+        let _ = self.send_pending_stream_config();
+    }
+
+    fn send_pending_stream_config(&mut self) -> Result<(), SenderError> {
+        if self.stream_config_sent {
+            return Ok(());
+        }
+        let Some(config) = self.pending_stream_config.clone() else {
+            return Ok(());
+        };
+        self.send_stream_config(&config)?;
+        self.stream_config_sent = true;
+        Ok(())
+    }
+
+    pub fn send_stream_config(&mut self, config: &StreamConfigParams) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let msg = config.to_proto();
+        let mut buf = Vec::new();
+        msg.encode(&mut buf)
+            .map_err(|e| SenderError::Protocol(e.to_string()))?;
+        self.transport
+            .send_control(session, bytes::Bytes::from(buf))
+            .map_err(SenderError::Transport)?;
+        self.transport.pump().map_err(SenderError::Transport)?;
+        self.pending_stream_config = Some(config.clone());
+        Ok(())
     }
 
     fn schedule_reconnect(&mut self) {
@@ -149,6 +196,7 @@ impl<T: PicooTransport> SenderSession<T> {
                 TransportEvent::Disconnected(_, _) => {
                     self.session = None;
                     self.pairing = None;
+                    self.stream_config_sent = false;
                     self.schedule_reconnect();
                 }
                 TransportEvent::VideoPacket(_, _) => {}
@@ -170,6 +218,13 @@ impl<T: PicooTransport> SenderSession<T> {
             };
             self.last_receiver_stats = Some(metrics.clone());
             self.last_bitrate_action = self.bitrate.update(&metrics);
+            return;
+        }
+        if let Ok(capabilities) = Capabilities::decode(msg.as_ref()) {
+            self.receiver_capabilities = Some(capabilities);
+            if self.status == SenderStatus::Negotiating {
+                self.enter_streaming();
+            }
             return;
         }
         if let Ok(challenge) = PairingChallenge::decode(msg.as_ref()) {
@@ -197,7 +252,7 @@ impl<T: PicooTransport> SenderSession<T> {
                 });
                 self.status = SenderStatus::Pairing;
             } else {
-                self.status = SenderStatus::Streaming;
+                self.enter_streaming();
             }
         }
     }
@@ -231,6 +286,9 @@ impl<T: PicooTransport> SenderSession<T> {
             self.try_reconnect()?;
             self.transport.pump().map_err(SenderError::Transport)?;
             self.drain_events();
+        }
+        if self.status == SenderStatus::Streaming {
+            let _ = self.send_pending_stream_config();
         }
         Ok(())
     }
