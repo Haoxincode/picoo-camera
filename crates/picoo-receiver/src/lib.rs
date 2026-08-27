@@ -163,6 +163,8 @@ pub struct ReceiverSession {
     last_stats: Option<picoo_metrics::ReceiverStats>,
     /// Active QR connect nonce + expiry (REQ-PICOO-DISCOVERY-004 / PUC-003).
     active_qr: Option<(String, u64)>,
+    /// Max height advertised in Capabilities (MEDIA-002); default both 720+1080.
+    advertised_max_height: u32,
 }
 
 impl Default for ReceiverSession {
@@ -199,7 +201,13 @@ impl ReceiverSession {
             jitter_timeline: None,
             last_stats: None,
             active_qr: None,
+            advertised_max_height: 1080,
         }
+    }
+
+    /// Limit advertised Capabilities resolutions (REQ-PICOO-MEDIA-002). `720` or `1080`.
+    pub fn set_advertised_max_height(&mut self, height: u32) {
+        self.advertised_max_height = if height <= 720 { 720 } else { 1080 };
     }
 
     /// Publish / rotate the QR nonce currently shown on Waiting (REQ-PICOO-DISCOVERY-004).
@@ -779,18 +787,19 @@ impl ReceiverSession {
     }
 
     fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        let mut resolutions = vec![Resolution {
+            width: 1280,
+            height: 720,
+        }];
+        if self.advertised_max_height >= 1080 {
+            resolutions.push(Resolution {
+                width: 1920,
+                height: 1080,
+            });
+        }
         let capabilities = Capabilities {
             codecs: vec!["h264".into()],
-            resolutions: vec![
-                Resolution {
-                    width: 1280,
-                    height: 720,
-                },
-                Resolution {
-                    width: 1920,
-                    height: 1080,
-                },
-            ],
+            resolutions,
             fps: vec![30],
             front_camera: true,
             back_camera: true,
@@ -814,6 +823,17 @@ impl ReceiverSession {
     fn handle_client_hello(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         let hello = ClientHello::decode(msg.as_ref())
             .map_err(|e| ReceiverError::Protocol(format!("ClientHello decode: {e}")))?;
+
+        // ARCH-PICOO-PROTOCOL-001: version negotiation must fail fast.
+        if hello.protocol_version != picoo_protocol::ALPN {
+            self.transport
+                .close(session, CloseReason::LocalClose);
+            return Err(ReceiverError::Protocol(format!(
+                "unsupported protocol_version {:?} (expected {})",
+                hello.protocol_version,
+                picoo_protocol::ALPN
+            )));
+        }
 
         self.validate_qr_nonce(&hello.qr_nonce)?;
         // One-shot: consumed nonce cannot be reused after a successful hello.

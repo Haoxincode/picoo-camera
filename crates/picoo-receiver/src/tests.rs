@@ -2694,6 +2694,295 @@ fn matching_qr_nonce_allows_hello_and_consumes_nonce() {
     );
 }
 
+#[test]
+fn mismatched_protocol_version_rejects_client_hello() {
+    // ARCH-PICOO-PROTOCOL-001 / PROTOCOL-002: version negotiation fail-fast.
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let mut receiver = ReceiverSession::new();
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        let _ = receiver.pump();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello_with_version("ver-phone", "Ver", &[1, 1, 1], "", "picoocam/9")
+        .expect("send hello");
+    let mut saw_protocol_err = false;
+    for _ in 0..50 {
+        match receiver.pump() {
+            Err(err) => {
+                let msg = err.to_string();
+                if msg.contains("protocol_version") || msg.contains("unsupported") {
+                    saw_protocol_err = true;
+                    break;
+                }
+            }
+            Ok(()) => {}
+        }
+        sender.pump().ok();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        saw_protocol_err
+            || !matches!(
+                receiver.status(),
+                ReceiverStatus::Streaming | ReceiverStatus::Pairing | ReceiverStatus::Connecting
+            ),
+        "mismatched protocol_version must fail fast; status={:?}",
+        receiver.status()
+    );
+    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+}
+
+#[test]
+fn capabilities_720_only_clamps_sender_stream_config() {
+    // REQ-PICOO-MEDIA-002: Sender must not exceed advertised Capabilities height.
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.set_advertised_max_height(720);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "cap-phone".into(),
+        device_name: "Cap".into(),
+        public_key: vec![2, 2, 2],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // Prefer 1080 before Caps arrive — will be clamped when Capabilities returns.
+    sender.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        bitrate_bps: 6_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps: vec![0x67],
+        pps: vec![0x68],
+    });
+    sender
+        .send_client_hello("cap-phone", "Cap", &[2, 2, 2])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming && sender.receiver_max_height() > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(sender.receiver_max_height(), 720);
+    let pending = sender.pending_stream_config().expect("pending config");
+    assert_eq!(pending.height, 720);
+    assert_eq!(pending.width, 1280);
+}
+
+#[test]
+fn qr_json_payload_connects_to_streaming() {
+    // PUC-003: mint QR JSON → parse → connect with nonce → Streaming.
+    use picoo_discovery::{generate_nonce, QrConnectPayload, DEFAULT_QR_TTL_MS};
+    use picoo_pairing::TrustedDevice;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "qr-json-phone".into(),
+        device_name: "QRJSON".into(),
+        public_key: vec![4, 4, 4],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let nonce = generate_nonce();
+    let qr = QrConnectPayload::new(
+        bind.ip().to_string(),
+        bind.port(),
+        receiver.identity().receiver_id.clone(),
+        "deadbeef",
+        nonce.clone(),
+        now_ms,
+        DEFAULT_QR_TTL_MS,
+    );
+    let json = qr.encode_json().expect("encode qr");
+    let parsed = QrConnectPayload::decode_json(&json).expect("parse qr");
+    assert_eq!(parsed.nonce, nonce);
+    receiver.set_active_qr_nonce(parsed.nonce.clone(), parsed.expires_at_ms);
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: parsed.host.clone(),
+            port: parsed.port,
+        })
+        .expect("connect from QR");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello_with_qr("qr-json-phone", "QRJSON", &[4, 4, 4], &parsed.nonce)
+        .expect("hello with qr");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert!(receiver.active_qr_nonce().is_none());
+}
+
+#[test]
+fn reconnect_churn_smoke_five_rounds() {
+    run_reconnect_churn(5);
+}
+
+#[test]
+#[ignore = "PRD §20.6 N=50 reconnect churn; enable via --ignored"]
+fn reconnect_churn_fifty_rounds() {
+    run_reconnect_churn(50);
+}
+
+fn run_reconnect_churn(rounds: u32) {
+    // REQ-PICOO-SESSION-004 / SESSION-008 / PRD §20.6.
+    use picoo_pairing::TrustedDevice;
+    use picoo_transport::{CloseReason, Endpoint, QuicSenderTransport};
+    use std::time::Instant;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.set_last_frame_hold_for_test(Duration::from_millis(10));
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "churn-phone".into(),
+        device_name: "Churn".into(),
+        public_key: vec![5, 5, 5],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("churn-phone", "Churn", &[5, 5, 5])
+        .expect("hello");
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == picoo_session::SenderStatus::Streaming
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    for round in 0..rounds {
+        sender.disconnect_for_test(CloseReason::Timeout);
+        let t0 = Instant::now();
+        let mut recovered = false;
+        for _ in 0..500 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if receiver.status() == ReceiverStatus::Streaming
+                && sender.status() == picoo_session::SenderStatus::Streaming
+                && sender.is_connected()
+            {
+                recovered = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            recovered,
+            "reconnect round {round}/{rounds} failed to recover Streaming"
+        );
+        assert!(
+            t0.elapsed() < Duration::from_secs(5),
+            "round {round} recovery {:?} exceeds 5s",
+            t0.elapsed()
+        );
+    }
+}
+
 #[cfg(not(windows))]
 fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use openh264::encoder::Encoder;

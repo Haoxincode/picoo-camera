@@ -599,10 +599,7 @@ pub extern "C" fn picoo_sender_receiver_max_height(handle: *mut std::ffi::c_void
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
     let session = inner.session.lock().expect("sender lock");
-    session
-        .receiver_capabilities()
-        .map(|caps| caps.resolutions.iter().map(|r| r.height).max().unwrap_or(0))
-        .unwrap_or(0)
+    session.receiver_max_height()
 }
 
 /// Attach trusted device store path to sender (load + auto-save on pairing).

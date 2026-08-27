@@ -5129,6 +5129,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "openh264",
+ "picoo-discovery",
  "picoo-frame-hub",
  "picoo-jitter",
  "picoo-media-decode",

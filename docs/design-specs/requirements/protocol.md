@@ -3,7 +3,7 @@
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-PROTOCOL-001 | implemented | ARCH-PICOO-PROTOCOL-001 | VideoPacket 固定二进制头（26 字节 + payload） | 编解码往返 + header size 测试 |
-| REQ-PICOO-PROTOCOL-002 | implemented | ARCH-PICOO-PROTOCOL-001 | QUIC ALPN 为 `picoocam/1` | `ALPN` 常量且 transport/discovery 使用 |
+| REQ-PICOO-PROTOCOL-002 | implemented | ARCH-PICOO-PROTOCOL-001 | QUIC ALPN 为 `picoocam/1` | `ALPN` 常量；Hello `protocol_version` 不匹配 fail-fast |
 | REQ-PICOO-PROTOCOL-003 | implemented | ARCH-PICOO-PROTOCOL-001 | 单包最大 1150 字节，payload 不超 MTU | `rejects_oversized_datagram` |
 | REQ-PICOO-PROTOCOL-004 | implemented | ARCH-PICOO-PROTOCOL-001 | stream_epoch 隔离重组 | packet crate epoch 测试 |
 | REQ-PICOO-PROTOCOL-005 | implemented | PUC-005 | StreamConfig 携带 codec/分辨率/SPS/PPS/epoch；AU AVCC→Annex-B 规范化 | Android 提取 SPS/PPS → FFI → StreamConfig；`access_unit_to_annex_b`；`paired_avcc_length_prefixed_au_reaches_frame_hub` |

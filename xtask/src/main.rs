@@ -186,6 +186,26 @@ fn test_suite(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
+                "cargo test -p picoo-receiver --lib mismatched_protocol_version_rejects_client_hello"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib capabilities_720_only_clamps_sender_stream_config"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib qr_json_payload_connects_to_streaming"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib reconnect_churn_smoke_five_rounds"
+            )
+            .run()?;
+            cmd!(
+                sh,
                 "cargo test -p picoo-discovery --lib synthetic_advertise_to_list_p50_under_two_seconds"
             )
             .run()?;

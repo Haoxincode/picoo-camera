@@ -3,7 +3,7 @@
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-MEDIA-001 | implemented | PUC-005 | Android Camera2 + MediaCodec InputSurface 硬件 H.264 | `Camera2MediaEncoder` + `MediaBitrate` 单元测试（真机预览/编码仍待） |
-| REQ-PICOO-MEDIA-002 | implemented | PUC-005 | 720p30 / 1080p30 能力协商与回退；中途分辨率切换 | `CaptureSizeSelector` 1080→720 OEM 回退 + JVM；`midstream_resolution_change_openh264_updates_framehub` |
+| REQ-PICOO-MEDIA-002 | implemented | PUC-005 | 720p30 / 1080p30 能力协商与回退；中途分辨率切换 | Caps→`receiver_max_height` 钳制 pending StreamConfig；`capabilities_720_only_clamps_sender_stream_config`；JVM OEM 回退 |
 | REQ-PICOO-MEDIA-003 | implemented | PUC-005 | 前后摄切换触发 stream_epoch 递增与 IDR，3s 内恢复 | Android `StreamEpoch` + Camera2；`stream_epoch_bump_recovers_openh264_framehub_under_three_seconds`；JVM `StreamEpochTest` |
 | REQ-PICOO-MEDIA-004 | implemented | PUC-005 | 本机预览镜像与远端输出镜像独立 | Android `LocalPreviewMirror` 按前后摄默认；Receiver `nv12_mirror_horizontal` 应用 `StreamConfig.mirrored` |
 | REQ-PICOO-MEDIA-005 | implemented | ARCH-PICOO-MEDIA-001 | Windows MF + D3D11 硬件解码 H.264；Linux/CI OpenH264 软解 | Windows：`windows-mf` MF 管线 + SPS/PPS；Linux：`OpenH264Decoder` + stub fixture 回退；真机 MF 验证仍待 |

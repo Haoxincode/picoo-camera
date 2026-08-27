@@ -164,6 +164,39 @@ impl<T: PicooTransport> SenderSession<T> {
         // Allow re-send when SPS/PPS arrive late or resolution/mirror changes (PUC-005/006).
         self.pending_stream_config = Some(config);
         self.stream_config_sent = false;
+        self.apply_capability_height_clamp();
+    }
+
+    /// Max height from receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
+    pub fn receiver_max_height(&self) -> u32 {
+        self.receiver_capabilities
+            .as_ref()
+            .map(|caps| caps.resolutions.iter().map(|r| r.height).max().unwrap_or(0))
+            .unwrap_or(0)
+    }
+
+    /// Clamp pending StreamConfig to advertised Capabilities heights.
+    fn apply_capability_height_clamp(&mut self) {
+        let max_h = self.receiver_max_height();
+        if max_h == 0 {
+            return;
+        }
+        let Some(cfg) = self.pending_stream_config.as_mut() else {
+            return;
+        };
+        if cfg.height <= max_h {
+            return;
+        }
+        // Map onto the receiver ladder (720p / 1080p for A→W V1).
+        if max_h <= 720 {
+            cfg.width = 1280;
+            cfg.height = 720;
+        } else {
+            cfg.width = 1920;
+            cfg.height = 1080.min(max_h);
+        }
+        self.stream_config_sent = false;
+        self.bitrate.sync_encode_height(cfg.height);
     }
 
     /// User / capability preferred capture height (does not change active encode height).
@@ -409,6 +442,7 @@ impl<T: PicooTransport> SenderSession<T> {
             // Empty Capabilities is a prost false-positive for almost any blob.
             if !capabilities.codecs.is_empty() {
                 self.receiver_capabilities = Some(capabilities);
+                self.apply_capability_height_clamp();
                 if self.status == SenderStatus::Negotiating {
                     self.enter_streaming();
                 }
@@ -438,6 +472,16 @@ impl<T: PicooTransport> SenderSession<T> {
         }
         if let Ok(hello) = ServerHello::decode(msg.as_ref()) {
             if hello.receiver_id.is_empty() {
+                return;
+            }
+            // ARCH-PICOO-PROTOCOL-001: reject mismatched PCP version fail-fast.
+            if hello.protocol_version != picoo_protocol::ALPN {
+                if let Some(session) = self.session.take() {
+                    self.transport
+                        .close(session, picoo_transport::CloseReason::LocalClose);
+                }
+                self.status = SenderStatus::Disconnected;
+                self.pairing = None;
                 return;
             }
             if self.trusted.is_paired(&hello.receiver_id) {
@@ -617,11 +661,23 @@ impl<T: PicooTransport> SenderSession<T> {
         public_key: &[u8],
         qr_nonce: &str,
     ) -> Result<(), SenderError> {
+        self.send_client_hello_with_version(sender_id, device_name, public_key, qr_nonce, ALPN)
+    }
+
+    /// Emit ClientHello with an explicit protocol_version (protocol fail-fast tests).
+    pub fn send_client_hello_with_version(
+        &mut self,
+        sender_id: &str,
+        device_name: &str,
+        public_key: &[u8],
+        qr_nonce: &str,
+        protocol_version: &str,
+    ) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
         let hello = ClientHello {
             sender_id: sender_id.into(),
             device_name: device_name.into(),
-            protocol_version: ALPN.into(),
+            protocol_version: protocol_version.into(),
             public_key: public_key.to_vec(),
             qr_nonce: qr_nonce.into(),
         };
