@@ -6,7 +6,10 @@ mod placeholder;
 mod shared_ring;
 
 pub use hub::{FrameHub, FrameHubError, FrameSlot, ReadyState, SLOT_COUNT};
-pub use nv12::{nv12_mirror_horizontal, nv12_preview_rgba, nv12_preview_rgba_max_width};
+pub use nv12::{
+    normalize_rotation_degrees, nv12_mirror_horizontal, nv12_preview_rgba,
+    nv12_preview_rgba_max_width, nv12_rotate_clockwise,
+};
 pub use placeholder::{
     nv12_black, nv12_byte_size, waiting_placeholder, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };

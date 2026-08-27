@@ -845,7 +845,10 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     }
 
     let frame = receiver.latest_frame().expect("frame");
-    assert_eq!(frame.rotation, 90);
+    // Pixels are upright; metadata cleared after apply (REQ-PICOO-MEDIA-009).
+    assert_eq!(frame.rotation, 0);
+    assert_eq!(frame.width, height); // 90° swaps dims
+    assert_eq!(frame.height, width);
 }
 
 #[test]
@@ -1931,11 +1934,14 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         sender.pump().ok();
         if let Some(view) = consumer.latest_frame() {
             if view.sequence > placeholder_seq
-                && view.width == width as u32
-                && view.height == height as u32
+                && view.width == height as u32
+                && view.height == width as u32
             {
                 assert_eq!(view.nv12.len(), nv12_byte_size(view.width, view.height));
-                assert_eq!(view.rotation, 90, "StreamConfig.rotation must reach ring");
+                assert_eq!(
+                    view.rotation, 0,
+                    "pixels upright after rotate; metadata cleared"
+                );
                 assert!(
                     view.nv12.iter().any(|b| *b != 16 && *b != 128),
                     "ring must carry decoded NV12, not placeholder grey"

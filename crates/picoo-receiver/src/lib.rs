@@ -990,22 +990,33 @@ impl ReceiverSession {
         timestamp_us: u64,
         nv12: &[u8],
     ) -> Result<(), ReceiverError> {
-        // REQ-PICOO-MEDIA-004: apply remote StreamConfig.mirrored before FrameHub/ring.
+        // REQ-PICOO-MEDIA-009: rotate pixels to upright before FrameHub / Shared Ring / VCam.
+        // REQ-PICOO-MEDIA-004: then apply remote StreamConfig.mirrored in upright space.
+        let rotated_buf =
+            picoo_frame_hub::nv12_rotate_clockwise(width, height, stride, rotation, nv12);
+        let (width, height, stride, base_pixels): (u32, u32, u32, &[u8]) = match &rotated_buf {
+            Some((ow, oh, os, buf)) => (*ow, *oh, *os, buf.as_slice()),
+            None => (width, height, stride, nv12),
+        };
+
         let mirrored = self
             .current_stream_config
             .as_ref()
             .is_some_and(|c| c.mirrored);
-        let mirrored_owned;
-        let pixels = if mirrored {
-            mirrored_owned = {
-                let mut buf = nv12.to_vec();
-                picoo_frame_hub::nv12_mirror_horizontal(width, height, stride, &mut buf);
-                buf
-            };
-            mirrored_owned.as_slice()
+        let mirrored_owned = if mirrored {
+            let mut buf = base_pixels.to_vec();
+            picoo_frame_hub::nv12_mirror_horizontal(width, height, stride, &mut buf);
+            Some(buf)
         } else {
-            nv12
+            None
         };
+        let pixels = mirrored_owned
+            .as_ref()
+            .map(|b| b.as_slice())
+            .unwrap_or(base_pixels);
+
+        // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
+        let published_rotation = 0u32;
 
         let index = self.frame_hub.begin_write()?;
         self.frame_hub.commit_write(
@@ -1013,12 +1024,19 @@ impl ReceiverSession {
             width,
             height,
             stride,
-            rotation,
+            published_rotation,
             timestamp_us,
             Bytes::copy_from_slice(pixels),
         );
         if let Some(ring) = self.shared_ring.as_mut() {
-            ring.publish_nv12(width, height, stride, rotation, timestamp_us, pixels)?;
+            ring.publish_nv12(
+                width,
+                height,
+                stride,
+                published_rotation,
+                timestamp_us,
+                pixels,
+            )?;
         }
         Ok(())
     }
