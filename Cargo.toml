@@ -11,6 +11,7 @@ members = [
   "crates/picoo-jitter",
   "crates/picoo-rate-control",
   "crates/picoo-metrics",
+  "crates/picoo-media-decode",
   "crates/picoo-diagnostics",
   "crates/picoo-frame-hub",
   "crates/picoo-sender",
@@ -19,6 +20,7 @@ members = [
   "crates/picoo-testkit",
   "xtask",
   "apps/desktop",
+  "extensions/windows-virtual-camera/ring-reader",
 ]
 
 [workspace.package]
@@ -54,6 +56,7 @@ picoo-quiche = { path = "crates/picoo-quiche" }
 picoo-jitter = { path = "crates/picoo-jitter" }
 picoo-rate-control = { path = "crates/picoo-rate-control" }
 picoo-metrics = { path = "crates/picoo-metrics" }
+picoo-media-decode = { path = "crates/picoo-media-decode" }
 picoo-diagnostics = { path = "crates/picoo-diagnostics" }
 picoo-frame-hub = { path = "crates/picoo-frame-hub" }
 picoo-sender = { path = "crates/picoo-sender" }

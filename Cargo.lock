@@ -5013,6 +5013,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "picoo-media-decode"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "picoo-frame-hub",
+ "picoo-protocol",
+ "thiserror 2.0.20",
+ "tracing",
+ "windows 0.58.0",
+]
+
+[[package]]
 name = "picoo-metrics"
 version = "0.1.0"
 dependencies = [
@@ -5078,6 +5090,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "picoo-frame-hub",
+ "picoo-media-decode",
  "picoo-metrics",
  "picoo-packet",
  "picoo-pairing",
@@ -5139,6 +5152,16 @@ dependencies = [
  "picoo-quiche",
  "ring",
  "thiserror 2.0.20",
+]
+
+[[package]]
+name = "picoo-vcam-ring-reader"
+version = "0.1.0"
+dependencies = [
+ "picoo-frame-hub",
+ "picoo-receiver",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

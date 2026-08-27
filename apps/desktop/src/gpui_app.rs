@@ -11,7 +11,9 @@ use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 
 use crate::model::VirtualCameraStatus;
-use crate::receiver_runtime::{ReceiverRuntime, ReceiverRuntimeConfig, ReceiverSnapshot};
+use crate::receiver_runtime::{
+    ReceiverRuntime, ReceiverRuntimeConfig, ReceiverSnapshot, TrustedDeviceSummary,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DesktopPage {
@@ -266,11 +268,7 @@ impl PicooDesktopApp {
         )
     }
 
-    fn render_settings(
-        &self,
-        snapshot: &ReceiverSnapshot,
-        _cx: &Context<Self>,
-    ) -> impl IntoElement {
+    fn render_settings(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
         div()
             .v_flex()
             .gap_4()
@@ -280,13 +278,46 @@ impl PicooDesktopApp {
                     .outline()
                     .title("已配对设备")
                     .child(format!("共 {} 台设备", snapshot.trusted_device_count))
-                    .child("GPUI 设备列表与删除将在下一迭代接入。"),
+                    .children(snapshot.trusted_devices.iter().map(|device| {
+                        self.render_trusted_device_row(device, cx)
+                            .into_any_element()
+                    })),
             )
             .child(
                 GroupBox::new()
                     .outline()
                     .title("诊断")
                     .child("CLI: picoo-desktop --export-diagnostics"),
+            )
+    }
+
+    fn render_trusted_device_row(
+        &self,
+        device: &TrustedDeviceSummary,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .h_flex()
+            .w_full()
+            .gap_2()
+            .items_center()
+            .child(
+                div()
+                    .v_flex()
+                    .child(format!("{} ({})", device.device_name, device.device_id))
+                    .child(format!("fp={}", device.certificate_fingerprint)),
+            )
+            .child(div().flex_1())
+            .child(
+                Button::new(format!("remove-{}", device.device_id))
+                    .label("删除")
+                    .on_click({
+                        let device_id = device.device_id.clone();
+                        cx.listener(move |this, _, _, cx| {
+                            let _ = this.runtime.remove_trusted_device(&device_id);
+                            cx.notify();
+                        })
+                    }),
             )
     }
 }

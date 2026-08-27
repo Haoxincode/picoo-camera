@@ -1,7 +1,9 @@
 //! Desktop receiver session: QUIC ingress → reassembly → FrameHub.
 //!
-//! REQ-PICOO-FRAME-001, REQ-PICOO-MEDIA-005/006 (decode placeholder until MF/VT).
+//! REQ-PICOO-FRAME-001, REQ-PICOO-MEDIA-005/006 via picoo-media-decode.
 //! REQ-PICOO-PAIRING-*: ClientHello/ServerHello gate before video ingress.
+
+pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera-v1";
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -11,6 +13,7 @@ use picoo_frame_hub::{
     waiting_placeholder, FrameHub, FrameSlot, SharedFrameRingProducer, PLACEHOLDER_HEIGHT,
     PLACEHOLDER_WIDTH,
 };
+use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError};
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::{
     new_pairing_challenge, random_challenge_nonce, trusted_device_from_pairing,
@@ -44,6 +47,8 @@ pub enum ReceiverError {
     SharedRing(#[from] picoo_frame_hub::SharedRingError),
     #[error("pairing store: {0}")]
     Store(#[from] StoreError),
+    #[error("decode: {0}")]
+    Decode(#[from] DecodeError),
     #[error("not listening")]
     NotListening,
     #[error("loopback timeout")]
@@ -131,6 +136,7 @@ pub struct ReceiverSession {
     shared_ring: Option<SharedFrameRingProducer>,
     current_stream_config: Option<StreamConfig>,
     receiver_capabilities_sent: Option<()>,
+    decoder: Box<dyn AccessUnitDecoder>,
 }
 
 impl Default for ReceiverSession {
@@ -158,6 +164,7 @@ impl ReceiverSession {
             shared_ring: None,
             current_stream_config: None,
             receiver_capabilities_sent: None,
+            decoder: create_platform_decoder(),
         }
     }
 
@@ -589,29 +596,23 @@ impl ReceiverSession {
         self.local_pairing_confirmed = false;
     }
 
-    /// Placeholder decode path: store NV12 until MF/VT H.264 decoder lands.
+    /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
-        // Until MF decoder exists, treat small loopback payloads as opaque test bytes mapped into NV12 buffer.
-        let nv12 = if access_unit.len() <= 64 {
-            let mut frame = waiting_placeholder();
-            let copy_len = access_unit.len().min(frame.len());
-            frame[..copy_len].copy_from_slice(&access_unit[..copy_len]);
-            frame
-        } else {
-            access_unit.to_vec()
-        };
-        self.publish_nv12_frame(
-            1280,
-            720,
-            1280,
-            0,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_micros() as u64)
-                .unwrap_or(0),
-            &nv12,
-        )
+        if let Some(frame) = self
+            .decoder
+            .decode_access_unit(&access_unit, self.current_stream_config.as_ref())?
+        {
+            self.publish_nv12_frame(
+                frame.width,
+                frame.height,
+                frame.stride,
+                frame.rotation,
+                frame.timestamp_us,
+                &frame.nv12,
+            )?;
+        }
+        Ok(())
     }
 
     fn publish_nv12_frame(

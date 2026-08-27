@@ -16,7 +16,15 @@ use picoo_transport::Endpoint;
 
 use crate::qr_display;
 
-pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera-v1";
+pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // GPUI settings reads fields when `gpui-ui` is enabled.
+pub struct TrustedDeviceSummary {
+    pub device_id: String,
+    pub device_name: String,
+    pub certificate_fingerprint: String,
+}
 
 #[derive(Debug, Clone)]
 pub struct ReceiverRuntimeConfig {
@@ -48,6 +56,7 @@ pub struct ReceiverSnapshot {
     pub ingress: IngressStats,
     pub stream_config: Option<StreamConfig>,
     pub trusted_device_count: usize,
+    pub trusted_devices: Vec<TrustedDeviceSummary>,
     pub display_name: String,
 }
 
@@ -129,6 +138,16 @@ impl ReceiverRuntime {
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
             trusted_device_count: self.receiver.trusted_devices().list().count(),
+            trusted_devices: self
+                .receiver
+                .trusted_devices()
+                .list()
+                .map(|d| TrustedDeviceSummary {
+                    device_id: d.device_id.clone(),
+                    device_name: d.device_name.clone(),
+                    certificate_fingerprint: d.certificate_fingerprint.clone(),
+                })
+                .collect(),
             display_name: self.display_name.clone(),
         }
     }

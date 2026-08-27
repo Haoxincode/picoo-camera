@@ -71,10 +71,18 @@ fn build(platform: Platform) -> Result<()> {
         Platform::Windows => {
             cmd!(
                 sh,
-                "cargo build -p picoo-desktop --release --features gpui-ui"
+                "cargo build -p picoo-desktop -p picoo-vcam-ring-reader --release --features gpui-ui"
             )
             .run()?;
-            eprintln!("windows: MF/VCam packaging pending platform implementation");
+            #[cfg(target_os = "windows")]
+            {
+                cmd!(
+                    sh,
+                    "cargo build -p picoo-media-decode --release --features windows-mf"
+                )
+                .run()?;
+            }
+            eprintln!("windows: MF VCam DLL + MSI packaging pending platform implementation");
         }
     }
     Ok(())
