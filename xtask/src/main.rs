@@ -38,6 +38,8 @@ enum Platform {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum TestSuite {
     Protocol,
+    /// Linux-hostable product gates (WiX scaffold, VCam format, TXT sync, soak smoke).
+    Linux,
 }
 
 fn main() -> Result<()> {
@@ -127,6 +129,27 @@ fn test_suite(suite: TestSuite) -> Result<()> {
             cmd!(
                 sh,
                 "cargo test -p picoo-protocol -p picoo-packet -p picoo-transport -p picoo-testkit"
+            )
+            .run()?;
+        }
+        TestSuite::Linux => {
+            // REQ-PICOO-VCAM-004 / DISCOVERY-005 / SESSION-005 — runnable without Win11.
+            cmd!(sh, "bash scripts/validate_wix_scaffold.sh").run()?;
+            cmd!(sh, "bash scripts/test_vcam_format.sh").run()?;
+            cmd!(sh, "bash scripts/check_discovery_txt_keys.sh").run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib soak_harness_smoke_five_seconds"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-discovery --lib synthetic_advertise_to_list_p50_under_two_seconds"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-ffi --lib export_diagnostics_with_session_includes_redacted_host"
             )
             .run()?;
         }
