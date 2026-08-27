@@ -15,6 +15,36 @@ fn loopback_sender_to_receiver_frame_hub() {
 }
 
 #[test]
+fn session_status_markers_cover_vcam_permission_and_network() {
+    // REQ-PICOO-SESSION-001
+    let mut receiver = ReceiverSession::new();
+    assert_eq!(receiver.status(), ReceiverStatus::Disconnected);
+
+    receiver.mark_permission_required();
+    assert_eq!(receiver.status(), ReceiverStatus::PermissionRequired);
+
+    receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    assert_eq!(receiver.status(), ReceiverStatus::Discovering);
+
+    receiver.mark_virtual_camera_unavailable();
+    assert_eq!(
+        receiver.status(),
+        ReceiverStatus::VirtualCameraUnavailable
+    );
+    receiver.clear_virtual_camera_unavailable();
+    assert_eq!(receiver.status(), ReceiverStatus::Discovering);
+
+    // Network unstable only while live.
+    receiver.mark_network_unstable();
+    assert_eq!(receiver.status(), ReceiverStatus::Discovering);
+}
+
+#[test]
 fn single_decode_per_access_unit_into_frame_hub() {
     // REQ-PICOO-MEDIA-006: one decode invocation per reassembled AU (hub fans out).
     let payload = b"single-decode-au";

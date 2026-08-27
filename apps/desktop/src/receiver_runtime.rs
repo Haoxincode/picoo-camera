@@ -189,6 +189,17 @@ impl ReceiverRuntime {
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_virtual_camera_status(&mut self, status: crate::model::VirtualCameraStatus) {
         self.virtual_camera = status;
+        // REQ-PICOO-SESSION-001 / PUC-004: mirror VCam install into session status when idle.
+        match status {
+            crate::model::VirtualCameraStatus::NotInstalled => {
+                self.receiver.mark_virtual_camera_unavailable();
+            }
+            crate::model::VirtualCameraStatus::Installed
+            | crate::model::VirtualCameraStatus::Active
+            | crate::model::VirtualCameraStatus::Unknown => {
+                self.receiver.clear_virtual_camera_unavailable();
+            }
+        }
     }
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]

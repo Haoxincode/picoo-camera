@@ -2,7 +2,7 @@
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
-| REQ-PICOO-SESSION-001 | proposed | ARCH-PICOO-SESSION-001 | UI 可观察会话状态枚举完整 | `ReceiverStatus`/`SenderStatus` 导出 |
+| REQ-PICOO-SESSION-001 | implemented | ARCH-PICOO-SESSION-001 | UI 可观察会话状态枚举完整 | `ReceiverStatus`/`SenderStatus` + `as_label`/`as_code`；VCam/权限/网络不稳定接线；FFI 7/8 |
 | REQ-PICOO-SESSION-002 | implemented | ARCH-PICOO-SESSION-001 | 抖动缓冲目标 50ms，最大 120ms | jitter crate + receiver 重组后接入 |
 | REQ-PICOO-SESSION-003 | implemented | ARCH-PICOO-SESSION-001 | 不完整非关键帧丢弃，关键帧丢则请求 IDR | packet `take_keyframe_loss` + EncoderCommand |
 | REQ-PICOO-SESSION-004 | implemented | PUC-006 | 重连后恢复分辨率/镜像并请求 SPS/PPS/IDR | sender reconnect 集成测试 |

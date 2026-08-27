@@ -318,6 +318,52 @@ impl ReceiverSession {
         self.status
     }
 
+    /// Surface Virtual Camera Unavailable to UI (REQ-PICOO-SESSION-001 / PUC-004).
+    /// Only applied while idle so an active session is not clobbered.
+    pub fn mark_virtual_camera_unavailable(&mut self) {
+        if matches!(
+            self.status,
+            ReceiverStatus::Discovering
+                | ReceiverStatus::Disconnected
+                | ReceiverStatus::VirtualCameraUnavailable
+        ) {
+            self.status = ReceiverStatus::VirtualCameraUnavailable;
+        }
+    }
+
+    /// Clear Virtual Camera Unavailable after install/repair (REQ-PICOO-SESSION-001).
+    pub fn clear_virtual_camera_unavailable(&mut self) {
+        if self.status == ReceiverStatus::VirtualCameraUnavailable {
+            self.status = if self.bind_addr().is_some() {
+                ReceiverStatus::Discovering
+            } else {
+                ReceiverStatus::Disconnected
+            };
+        }
+    }
+
+    /// Surface permission gate to UI (REQ-PICOO-SESSION-001).
+    pub fn mark_permission_required(&mut self) {
+        self.status = ReceiverStatus::PermissionRequired;
+    }
+
+    /// Surface Network Unstable while live (REQ-PICOO-SESSION-001 / ARCH loss > 3%).
+    pub fn mark_network_unstable(&mut self) {
+        if matches!(
+            self.status,
+            ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
+        ) {
+            self.status = ReceiverStatus::NetworkUnstable;
+        }
+    }
+
+    /// Restore Streaming when loss recovers (REQ-PICOO-SESSION-001).
+    pub fn clear_network_unstable(&mut self) {
+        if self.status == ReceiverStatus::NetworkUnstable {
+            self.status = ReceiverStatus::Streaming;
+        }
+    }
+
     pub fn ingress_stats(&self) -> IngressStats {
         self.ingress
     }
@@ -492,7 +538,10 @@ impl ReceiverSession {
     }
 
     fn maybe_send_receiver_stats(&mut self) -> Result<(), ReceiverError> {
-        if self.status != ReceiverStatus::Streaming {
+        if !matches!(
+            self.status,
+            ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
+        ) {
             return Ok(());
         }
         if !self.stats_reporter.due() {
@@ -563,6 +612,13 @@ impl ReceiverSession {
         self.send_control_message(session, &stats)?;
         self.transport.pump()?;
 
+        // REQ-PICOO-SESSION-001: reflect Network Unstable from live loss (ARCH >3% / <1%).
+        if packet_loss > 0.03 {
+            self.mark_network_unstable();
+        } else if packet_loss < 0.01 {
+            self.clear_network_unstable();
+        }
+
         self.stats_reporter.last_sent = Instant::now();
         self.stats_reporter.window_packets = 0;
         self.stats_reporter.window_bytes = 0;
@@ -607,9 +663,27 @@ impl ReceiverSession {
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
         self.current_stream_config = Some(config);
+        // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.
+        if self.video_allowed()
+            && matches!(
+                self.status,
+                ReceiverStatus::Connecting
+                    | ReceiverStatus::Pairing
+                    | ReceiverStatus::Negotiating
+                    | ReceiverStatus::Streaming
+            )
+        {
+            if self.status != ReceiverStatus::Streaming {
+                self.status = ReceiverStatus::Negotiating;
+            }
+        }
         if self.receiver_capabilities_sent.is_none() {
             self.send_capabilities(session)?;
             self.receiver_capabilities_sent = Some(());
+        }
+        // After capabilities, paired receivers are ready to stream.
+        if self.video_allowed() && self.status == ReceiverStatus::Negotiating {
+            self.status = ReceiverStatus::Streaming;
         }
         Ok(())
     }

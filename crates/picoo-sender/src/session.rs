@@ -100,6 +100,18 @@ impl<T: PicooTransport> SenderSession<T> {
         self.status
     }
 
+    /// Surface camera/mic permission gate to UI (REQ-PICOO-SESSION-001).
+    pub fn mark_permission_required(&mut self) {
+        self.status = SenderStatus::PermissionRequired;
+    }
+
+    /// Clear permission gate once the host grants access (REQ-PICOO-SESSION-001).
+    pub fn clear_permission_required(&mut self) {
+        if self.status == SenderStatus::PermissionRequired {
+            self.status = SenderStatus::Disconnected;
+        }
+    }
+
     pub fn set_auto_reconnect(&mut self, enabled: bool) {
         self.auto_reconnect = enabled;
     }
@@ -293,6 +305,17 @@ impl<T: PicooTransport> SenderSession<T> {
             };
             self.last_receiver_stats = Some(metrics.clone());
             self.last_bitrate_action = self.bitrate.update(&metrics);
+            // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
+            if matches!(
+                self.status,
+                SenderStatus::Streaming | SenderStatus::NetworkUnstable
+            ) {
+                if metrics.packet_loss > 0.03 {
+                    self.status = SenderStatus::NetworkUnstable;
+                } else if metrics.packet_loss < 0.01 {
+                    self.status = SenderStatus::Streaming;
+                }
+            }
             return;
         }
         if let Ok(command) = EncoderCommand::decode(msg.as_ref()) {
@@ -554,6 +577,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     #[cfg(test)]
+    pub(crate) fn force_status_for_test(&mut self, status: SenderStatus) {
+        self.status = status;
+    }
+
+    #[cfg(test)]
     pub(crate) fn disconnect_for_test(&mut self, reason: picoo_transport::CloseReason) {
         if let Some(session) = self.session {
             self.transport.close(session, reason);
@@ -639,6 +667,50 @@ mod tests {
         session.pump().expect("pump");
         assert_eq!(session.last_bitrate_action(), BitrateAction::Decrease);
         assert!(session.current_bitrate_bps() < DEFAULT_INITIAL_BITRATE_BPS);
+    }
+
+    #[test]
+    fn high_packet_loss_marks_network_unstable() {
+        // REQ-PICOO-SESSION-001
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        session.force_status_for_test(SenderStatus::Streaming);
+
+        let high_loss = ReceiverStatsMsg {
+            packet_loss: 0.05,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        high_loss.encode(&mut buf).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        assert_eq!(session.status(), SenderStatus::NetworkUnstable);
+
+        let recovered = ReceiverStatsMsg {
+            packet_loss: 0.005,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        recovered.encode(&mut buf).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        assert_eq!(session.status(), SenderStatus::Streaming);
+    }
+
+    #[test]
+    fn mark_permission_required_is_observable() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session.mark_permission_required();
+        assert_eq!(session.status(), SenderStatus::PermissionRequired);
+        session.clear_permission_required();
+        assert_eq!(session.status(), SenderStatus::Disconnected);
     }
 
     #[test]

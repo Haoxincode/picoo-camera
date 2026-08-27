@@ -25,17 +25,7 @@ struct BrowserInner {
 }
 
 fn sender_status_code(status: SenderStatus) -> i32 {
-    match status {
-        SenderStatus::Disconnected => 0,
-        SenderStatus::Discovering => 1,
-        SenderStatus::Pairing => 2,
-        SenderStatus::Connecting => 3,
-        SenderStatus::Negotiating => 4,
-        SenderStatus::Streaming => 5,
-        SenderStatus::Reconnecting => 6,
-        SenderStatus::PermissionRequired => 7,
-        SenderStatus::NetworkUnstable => 8,
-    }
+    status.as_code()
 }
 
 fn copy_str_to_buf(value: &str, out: *mut std::ffi::c_char, out_len: usize) -> i32 {
@@ -215,6 +205,36 @@ pub extern "C" fn picoo_sender_status(handle: *mut std::ffi::c_void) -> i32 {
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
     sender_status_code(inner.session.lock().expect("sender lock").status())
+}
+
+/// Mark Permission Required (REQ-PICOO-SESSION-001). Returns 0 on success.
+#[no_mangle]
+pub extern "C" fn picoo_sender_mark_permission_required(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .mark_permission_required();
+    0
+}
+
+/// Clear Permission Required after the host grants access. Returns 0 on success.
+#[no_mangle]
+pub extern "C" fn picoo_sender_clear_permission_required(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .clear_permission_required();
+    0
 }
 
 /// Send ClientHello after QUIC connect (PUC-001).

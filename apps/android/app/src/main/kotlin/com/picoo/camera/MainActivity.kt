@@ -53,6 +53,7 @@ import java.util.concurrent.atomic.AtomicReference
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
     private var pendingAfterCameraGrant: (() -> Unit)? = null
+    private var activeSenderHandle: Long = 0L
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -60,7 +61,13 @@ class MainActivity : ComponentActivity() {
             val pending = pendingAfterCameraGrant
             pendingAfterCameraGrant = null
             if (granted) {
+                if (activeSenderHandle != 0L) {
+                    PicooNative.clearPermissionRequired(activeSenderHandle)
+                }
                 pending?.invoke()
+            } else if (activeSenderHandle != 0L) {
+                // REQ-PICOO-SESSION-001: Permission Required when CAMERA denied.
+                PicooNative.markPermissionRequired(activeSenderHandle)
             }
         }
 
@@ -70,11 +77,18 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         ) {
             cameraGranted = true
+            if (activeSenderHandle != 0L) {
+                PicooNative.clearPermissionRequired(activeSenderHandle)
+            }
             then?.invoke()
             return
         }
         pendingAfterCameraGrant = then
         permissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    fun bindSenderHandle(handle: Long) {
+        activeSenderHandle = handle
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -165,6 +179,9 @@ private fun SenderHomeScreen(
         }
     }
     val senderHandle = remember { PicooNative.createSender() }
+    LaunchedEffect(senderHandle) {
+        (context as? MainActivity)?.bindSenderHandle(senderHandle)
+    }
     val nsdBrowser =
         remember {
             NsdReceiverBrowser(context) { list ->
@@ -291,6 +308,7 @@ private fun SenderHomeScreen(
             PicooNative.STATUS_NEGOTIATING,
             PicooNative.STATUS_PAIRING,
             PicooNative.STATUS_CONNECTING,
+            PicooNative.STATUS_NETWORK_UNSTABLE,
             -> StreamingForegroundService.start(context)
             else -> StreamingForegroundService.stop(context)
         }
@@ -335,7 +353,9 @@ private fun SenderHomeScreen(
         senderTab = when {
             senderStatus == PicooNative.STATUS_STREAMING ||
                 senderStatus == PicooNative.STATUS_NEGOTIATING ||
-                senderStatus == PicooNative.STATUS_RECONNECTING -> SenderTab.Streaming
+                senderStatus == PicooNative.STATUS_RECONNECTING ||
+                senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE -> SenderTab.Streaming
+            senderStatus == PicooNative.STATUS_PERMISSION_REQUIRED -> SenderTab.Streaming
             pairingCode.isNotEmpty() || senderStatus == PicooNative.STATUS_PAIRING -> SenderTab.Pairing
             else -> senderTab
         }

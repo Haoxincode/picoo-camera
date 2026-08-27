@@ -18,6 +18,8 @@ object PicooNative {
     const val STATUS_NEGOTIATING = 4
     const val STATUS_STREAMING = 5
     const val STATUS_RECONNECTING = 6
+    const val STATUS_PERMISSION_REQUIRED = 7
+    const val STATUS_NETWORK_UNSTABLE = 8
 
     /** Returns PCP/1 protocol version from Rust Core. */
     external fun getProtocolVersion(): String
@@ -50,6 +52,12 @@ object PicooNative {
     external fun pump(handle: Long): Int
 
     external fun getSenderStatus(handle: Long): Int
+
+    /** REQ-PICOO-SESSION-001: surface Permission Required when CAMERA denied. */
+    external fun markPermissionRequired(handle: Long): Int
+
+    /** REQ-PICOO-SESSION-001: clear Permission Required after CAMERA granted. */
+    external fun clearPermissionRequired(handle: Long): Int
 
     external fun sendClientHello(
         handle: Long,
@@ -184,6 +192,8 @@ object PicooNative {
             STATUS_NEGOTIATING -> "Negotiating"
             STATUS_STREAMING -> "Streaming"
             STATUS_RECONNECTING -> "Reconnecting"
+            STATUS_PERMISSION_REQUIRED -> "Permission Required"
+            STATUS_NETWORK_UNSTABLE -> "Network Unstable"
             else -> "Disconnected"
         }
 }
