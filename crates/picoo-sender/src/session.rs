@@ -8,8 +8,8 @@ use std::time::{Duration, Instant};
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_pairing::{pairing_confirm_signature, trusted_device_from_pairing, TrustedDeviceStore};
 use picoo_protocol::control::{
-    Capabilities, ClientHello, PairingChallenge, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
-    ServerHello,
+    encoder_command, Capabilities, ClientHello, EncoderCommand, PairingChallenge, PairingConfirm,
+    ReceiverStats as ReceiverStatsMsg, ServerHello,
 };
 use picoo_protocol::VideoPacket;
 use picoo_protocol::ALPN;
@@ -61,6 +61,8 @@ pub struct SenderSession<T: PicooTransport> {
     pending_stream_config: Option<StreamConfigParams>,
     receiver_capabilities: Option<Capabilities>,
     stream_config_sent: bool,
+    /// Receiver asked for IDR via EncoderCommand (REQ-PICOO-SESSION-003/004).
+    keyframe_requested: bool,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -90,6 +92,7 @@ impl<T: PicooTransport> SenderSession<T> {
             pending_stream_config: Some(StreamConfigParams::default()),
             receiver_capabilities: None,
             stream_config_sent: false,
+            keyframe_requested: false,
         }
     }
 
@@ -121,6 +124,21 @@ impl<T: PicooTransport> SenderSession<T> {
         // Allow re-send when SPS/PPS arrive late or resolution/mirror changes (PUC-005/006).
         self.pending_stream_config = Some(config);
         self.stream_config_sent = false;
+    }
+
+    pub fn stream_config_sent(&self) -> bool {
+        self.stream_config_sent
+    }
+
+    pub fn pending_stream_config(&self) -> Option<&StreamConfigParams> {
+        self.pending_stream_config.as_ref()
+    }
+
+    /// Consume a pending IDR request from the receiver (REQ-PICOO-SESSION-003).
+    pub fn take_keyframe_request(&mut self) -> bool {
+        let pending = self.keyframe_requested;
+        self.keyframe_requested = false;
+        pending
     }
 
     pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, SenderError> {
@@ -171,6 +189,8 @@ impl<T: PicooTransport> SenderSession<T> {
 
     fn enter_streaming(&mut self) {
         self.status = SenderStatus::Streaming;
+        // Fresh streaming (including post-reconnect) needs an IDR (REQ-PICOO-SESSION-004).
+        self.keyframe_requested = true;
         let _ = self.send_pending_stream_config();
     }
 
@@ -275,30 +295,47 @@ impl<T: PicooTransport> SenderSession<T> {
             self.last_bitrate_action = self.bitrate.update(&metrics);
             return;
         }
-        if let Ok(capabilities) = Capabilities::decode(msg.as_ref()) {
-            self.receiver_capabilities = Some(capabilities);
-            if self.status == SenderStatus::Negotiating {
-                self.enter_streaming();
+        if let Ok(command) = EncoderCommand::decode(msg.as_ref()) {
+            if command.command == encoder_command::Command::RequestKeyframe as i32 {
+                self.keyframe_requested = true;
+                return;
             }
-            return;
+        }
+        if let Ok(capabilities) = Capabilities::decode(msg.as_ref()) {
+            // Empty Capabilities is a prost false-positive for almost any blob.
+            if !capabilities.codecs.is_empty() {
+                self.receiver_capabilities = Some(capabilities);
+                if self.status == SenderStatus::Negotiating {
+                    self.enter_streaming();
+                }
+                return;
+            }
         }
         if let Ok(challenge) = PairingChallenge::decode(msg.as_ref()) {
-            if let Some(pairing) = self.pairing.as_mut() {
-                pairing.challenge_nonce = challenge.challenge_nonce;
-                pairing.short_code = challenge.short_code;
-            } else {
-                self.pairing = Some(SenderPairing {
-                    receiver_id: String::new(),
-                    display_name: String::new(),
-                    public_key: Vec::new(),
-                    challenge_nonce: challenge.challenge_nonce,
-                    short_code: challenge.short_code,
-                });
+            let valid = challenge.challenge_nonce.len() == 32
+                && challenge.short_code.len() == 6
+                && challenge.short_code.chars().all(|c| c.is_ascii_digit());
+            if valid {
+                if let Some(pairing) = self.pairing.as_mut() {
+                    pairing.challenge_nonce = challenge.challenge_nonce;
+                    pairing.short_code = challenge.short_code;
+                } else {
+                    self.pairing = Some(SenderPairing {
+                        receiver_id: String::new(),
+                        display_name: String::new(),
+                        public_key: Vec::new(),
+                        challenge_nonce: challenge.challenge_nonce,
+                        short_code: challenge.short_code,
+                    });
+                }
+                self.status = SenderStatus::Pairing;
+                return;
             }
-            self.status = SenderStatus::Pairing;
-            return;
         }
         if let Ok(hello) = ServerHello::decode(msg.as_ref()) {
+            if hello.receiver_id.is_empty() {
+                return;
+            }
             if self.trusted.is_paired(&hello.receiver_id) {
                 if self
                     .trusted
@@ -318,20 +355,27 @@ impl<T: PicooTransport> SenderSession<T> {
                 let _ = self.persist_trusted();
             }
 
-            if let Some(pairing) = self.pairing.as_mut() {
-                pairing.receiver_id = hello.receiver_id.clone();
-                pairing.display_name = hello.display_name.clone();
-                pairing.public_key = hello.public_key.clone();
-            } else if hello.pairing_required {
-                self.pairing = Some(SenderPairing {
-                    receiver_id: hello.receiver_id,
-                    display_name: hello.display_name,
-                    public_key: hello.public_key,
-                    challenge_nonce: Vec::new(),
-                    short_code: String::new(),
-                });
+            if hello.pairing_required {
+                if let Some(pairing) = self.pairing.as_mut() {
+                    pairing.receiver_id = hello.receiver_id;
+                    pairing.display_name = hello.display_name;
+                    pairing.public_key = hello.public_key;
+                } else {
+                    self.pairing = Some(SenderPairing {
+                        receiver_id: hello.receiver_id,
+                        display_name: hello.display_name,
+                        public_key: hello.public_key,
+                        challenge_nonce: Vec::new(),
+                        short_code: String::new(),
+                    });
+                }
                 self.status = SenderStatus::Pairing;
             } else {
+                if let Some(pairing) = self.pairing.as_mut() {
+                    pairing.receiver_id = hello.receiver_id;
+                    pairing.display_name = hello.display_name;
+                    pairing.public_key = hello.public_key;
+                }
                 self.enter_streaming();
             }
         }
@@ -620,6 +664,106 @@ mod tests {
             std::thread::sleep(Duration::from_millis(600));
         }
         assert!(session.is_connected());
+    }
+
+    #[test]
+    fn resends_stream_config_and_requests_keyframe_after_reconnect() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        let endpoint = Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        };
+        session.connect(endpoint.clone()).expect("connect");
+        session
+            .send_client_hello("phone-1", "Pixel", &[1, 2, 3])
+            .expect("hello");
+        session.set_stream_config(StreamConfigParams {
+            width: 1920,
+            height: 1080,
+            fps: 30,
+            bitrate_bps: 6_000_000,
+            stream_epoch: 2,
+            mirrored: true,
+            sps: vec![0x67, 0x42],
+            pps: vec![0x68, 0xce],
+        });
+
+        let hello = ServerHello {
+            receiver_id: "recv-1".into(),
+            display_name: "Desktop".into(),
+            protocol_version: ALPN.into(),
+            public_key: vec![9, 9],
+            pairing_required: false,
+        };
+        let mut buf = Vec::new();
+        hello.encode(&mut buf).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject hello");
+        assert_eq!(session.status(), SenderStatus::Streaming);
+        assert!(session.stream_config_sent());
+        assert!(session.take_keyframe_request());
+
+        session.disconnect_for_test(CloseReason::PeerClose);
+        session.pump().expect("disconnect pump");
+        assert!(!session.stream_config_sent());
+
+        for _ in 0..20 {
+            session.pump().expect("reconnect pump");
+            if session.is_connected() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(600));
+        }
+        assert!(session.is_connected());
+
+        let hello2 = ServerHello {
+            receiver_id: "recv-1".into(),
+            display_name: "Desktop".into(),
+            protocol_version: ALPN.into(),
+            public_key: vec![9, 9],
+            pairing_required: false,
+        };
+        let mut buf2 = Vec::new();
+        hello2.encode(&mut buf2).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf2))
+            .expect("inject hello2");
+        session.pump().expect("pump streaming");
+
+        assert_eq!(session.status(), SenderStatus::Streaming);
+        assert!(session.stream_config_sent());
+        let cfg = session.pending_stream_config().expect("config");
+        assert_eq!(cfg.width, 1920);
+        assert_eq!(cfg.height, 1080);
+        assert!(cfg.mirrored);
+        assert_eq!(cfg.sps, vec![0x67, 0x42]);
+        assert_eq!(cfg.pps, vec![0x68, 0xce]);
+        assert!(session.take_keyframe_request());
+    }
+
+    #[test]
+    fn encoder_command_request_keyframe_sets_flag() {
+        use picoo_protocol::control::EncoderCommand;
+        use picoo_protocol::control::encoder_command;
+
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 1,
+            })
+            .expect("connect");
+        let cmd = EncoderCommand {
+            command: encoder_command::Command::RequestKeyframe as i32,
+        };
+        let mut buf = Vec::new();
+        cmd.encode(&mut buf).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        assert!(session.take_keyframe_request());
+        assert!(!session.take_keyframe_request());
     }
 
     #[test]

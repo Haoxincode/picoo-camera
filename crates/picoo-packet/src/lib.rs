@@ -52,6 +52,8 @@ pub struct ReassemblyMap {
     current_epoch: u32,
     frames: HashMap<FrameKey, PartialFrame>,
     drops: u64,
+    /// Set when a partial KEYFRAME is discarded (REQ-PICOO-SESSION-003).
+    keyframe_loss_pending: bool,
 }
 
 impl ReassemblyMap {
@@ -62,11 +64,19 @@ impl ReassemblyMap {
             current_epoch: 0,
             frames: HashMap::new(),
             drops: 0,
+            keyframe_loss_pending: false,
         }
     }
 
     pub fn drop_count(&self) -> u64 {
         self.drops
+    }
+
+    /// True if a keyframe was dropped since the last take (REQ-PICOO-SESSION-003).
+    pub fn take_keyframe_loss(&mut self) -> bool {
+        let pending = self.keyframe_loss_pending;
+        self.keyframe_loss_pending = false;
+        pending
     }
 
     pub fn ingest(&mut self, packet: VideoPacket) -> Result<Option<Bytes>, ReassemblyError> {
@@ -79,6 +89,7 @@ impl ReassemblyMap {
         }
 
         if packet.stream_epoch > self.current_epoch {
+            self.mark_keyframe_loss_in_pending();
             self.drops += self.frames.len() as u64;
             self.current_epoch = packet.stream_epoch;
             self.frames.clear();
@@ -106,7 +117,11 @@ impl ReassemblyMap {
         });
 
         if entry.fragment_count != packet.fragment_count {
+            if Self::is_keyframe(entry.flags) {
+                self.keyframe_loss_pending = true;
+            }
             self.frames.remove(&key);
+            self.drops += 1;
             return Ok(None);
         }
 
@@ -128,7 +143,11 @@ impl ReassemblyMap {
             if let Some(chunk) = entry.fragments.get(&index) {
                 assembled.extend_from_slice(chunk);
             } else {
+                if Self::is_keyframe(entry.flags) {
+                    self.keyframe_loss_pending = true;
+                }
                 self.frames.remove(&key);
+                self.drops += 1;
                 return Ok(None);
             }
         }
@@ -141,9 +160,23 @@ impl ReassemblyMap {
         flags.contains(VideoPacketFlags::KEYFRAME)
     }
 
+    fn mark_keyframe_loss_in_pending(&mut self) {
+        if self
+            .frames
+            .values()
+            .any(|frame| Self::is_keyframe(frame.flags))
+        {
+            self.keyframe_loss_pending = true;
+        }
+    }
+
     fn drop_oldest(&mut self) {
         if let Some(key) = self.frames.keys().next().copied() {
-            self.frames.remove(&key);
+            if let Some(frame) = self.frames.remove(&key) {
+                if Self::is_keyframe(frame.flags) {
+                    self.keyframe_loss_pending = true;
+                }
+            }
             self.drops += 1;
         }
     }
@@ -186,5 +219,26 @@ mod tests {
         let mut map = ReassemblyMap::new(8, 16);
         assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
         assert!(map.ingest(fragment(2, 10, 0, 1, b"xy")).unwrap().is_some());
+    }
+
+    #[test]
+    fn dropping_incomplete_keyframe_sets_loss_flag() {
+        let mut map = ReassemblyMap::new(1, 16);
+        let key = VideoPacket {
+            version: VideoPacket::VERSION,
+            flags: VideoPacketFlags::KEYFRAME,
+            stream_epoch: 1,
+            frame_id: 1,
+            pts_us: 0,
+            fragment_index: 0,
+            fragment_count: 2,
+            payload: Bytes::copy_from_slice(b"k0"),
+        };
+        assert!(map.ingest(key).unwrap().is_none());
+        // Force drop of the incomplete keyframe by admitting another frame.
+        let other = fragment(1, 2, 0, 1, b"z");
+        assert!(map.ingest(other).unwrap().is_some());
+        assert!(map.take_keyframe_loss());
+        assert!(!map.take_keyframe_loss());
     }
 }

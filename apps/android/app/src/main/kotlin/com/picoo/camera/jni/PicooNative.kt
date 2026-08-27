@@ -80,6 +80,9 @@ object PicooNative {
     /** Max height from receiver Capabilities; 0 if unknown (REQ-PICOO-MEDIA-002). */
     external fun getReceiverMaxHeight(handle: Long): Int
 
+    /** 1 if receiver requested IDR (consumes flag). REQ-PICOO-SESSION-003. */
+    external fun takeKeyframeRequest(handle: Long): Int
+
     /**
      * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
      * @return `[sps, pps]` or null when extraction fails.

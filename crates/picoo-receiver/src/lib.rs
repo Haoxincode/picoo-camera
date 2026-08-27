@@ -20,8 +20,8 @@ use picoo_pairing::{
     verify_pairing_confirm, PairingError, PairingHandshakeError, StoreError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    Capabilities, ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm,
-    ReceiverStats as ReceiverStatsMsg, Resolution, ServerHello, StreamConfig,
+    Capabilities, ClientHello, EncoderCommand, PairingChallenge as PairingChallengeMsg,
+    PairingConfirm, ReceiverStats as ReceiverStatsMsg, Resolution, ServerHello, StreamConfig,
 };
 use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
@@ -331,7 +331,7 @@ impl ReceiverSession {
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
                 }
-                TransportEvent::VideoPacket(_session, packet) => {
+                TransportEvent::VideoPacket(session, packet) => {
                     self.ingress.packets_received += 1;
                     if !self.video_allowed() {
                         self.ingress.packets_dropped_unpaired += 1;
@@ -340,6 +340,9 @@ impl ReceiverSession {
                     self.stats_reporter.record_packet(packet.payload.len());
                     if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
                         self.publish_access_unit(access_unit)?;
+                    }
+                    if self.reassembly.take_keyframe_loss() {
+                        self.send_request_keyframe(session)?;
                     }
                 }
             }
@@ -469,6 +472,14 @@ impl ReceiverSession {
             back_camera: true,
         };
         self.send_control_message(session, &capabilities)
+    }
+
+    /// Ask Sender for an IDR after keyframe reassembly loss (REQ-PICOO-SESSION-003).
+    fn send_request_keyframe(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        let command = EncoderCommand {
+            command: picoo_protocol::control::encoder_command::Command::RequestKeyframe as i32,
+        };
+        self.send_control_message(session, &command)
     }
 
     fn begin_streaming(&mut self, _session: SessionId) -> Result<(), ReceiverError> {

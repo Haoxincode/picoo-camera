@@ -273,6 +273,9 @@ private fun SenderHomeScreen(
                     adaptiveBitrateBps = bps
                     encoder.setTargetBitrateBps(bps)
                 }
+                if (PicooNative.takeKeyframeRequest(senderHandle) == 1) {
+                    encoder.requestKeyFrame()
+                }
                 if (previousStatus == PicooNative.STATUS_RECONNECTING &&
                     senderStatus == PicooNative.STATUS_STREAMING
                 ) {

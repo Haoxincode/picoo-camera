@@ -413,6 +413,25 @@ pub extern "C" fn picoo_sender_current_bitrate_bps(handle: *mut std::ffi::c_void
         .current_bitrate_bps()
 }
 
+/// Returns 1 if receiver requested an IDR (consumes the flag). REQ-PICOO-SESSION-003.
+#[no_mangle]
+pub extern "C" fn picoo_sender_take_keyframe_request(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    if inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .take_keyframe_request()
+    {
+        1
+    } else {
+        0
+    }
+}
+
 /// Max height advertised by receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
 #[no_mangle]
 pub extern "C" fn picoo_sender_receiver_max_height(handle: *mut std::ffi::c_void) -> u32 {
