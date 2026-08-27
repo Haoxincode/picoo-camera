@@ -97,7 +97,31 @@ mod tests {
     }
 
     #[test]
+    fn skips_multicast_and_falls_back_to_public() {
+        let addrs = ["224.0.0.251".parse().unwrap(), "8.8.8.8".parse().unwrap()];
+        assert_eq!(
+            select_advertise_ipv4(&addrs),
+            Some("8.8.8.8".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn first_private_in_list_order_wins() {
+        let addrs = ["192.168.1.20".parse().unwrap(), "10.0.0.5".parse().unwrap()];
+        assert_eq!(
+            select_advertise_ipv4(&addrs),
+            Some("192.168.1.20".parse().unwrap())
+        );
+    }
+
+    #[test]
     fn default_quic_port_matches_wix_firewall() {
         assert_eq!(DEFAULT_QUIC_PORT, 4433);
+        // Keep in sync with installers/windows/picoo-camera.wxs FirewallException.
+        let wxs = include_str!("../../../installers/windows/picoo-camera.wxs");
+        assert!(
+            wxs.contains("Port=\"4433\""),
+            "WiX FirewallException Port must equal DEFAULT_QUIC_PORT ({DEFAULT_QUIC_PORT})"
+        );
     }
 }

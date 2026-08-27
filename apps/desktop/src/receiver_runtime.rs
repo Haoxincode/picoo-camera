@@ -518,10 +518,34 @@ pub fn format_last_connected_ms(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::format_last_connected_ms;
+    use picoo_discovery::{QrConnectPayload, DEFAULT_QUIC_PORT};
 
     #[test]
     fn format_last_connected_utc_date_or_dash() {
         assert_eq!(format_last_connected_ms(0), "—");
         assert_eq!(format_last_connected_ms(1_577_836_800_000), "2020-01-01");
+    }
+
+    #[test]
+    fn qr_payload_uses_advertise_host_not_bind_any() {
+        // REQ-PICOO-DISCOVERY-003: QR must carry LAN unicast host + DEFAULT_QUIC_PORT,
+        // never the bind address 0.0.0.0.
+        let advertise = "192.168.1.42";
+        let qr = QrConnectPayload::new(
+            advertise.to_string(),
+            DEFAULT_QUIC_PORT,
+            "recv-1".to_string(),
+            "fp".to_string(),
+            "nonce".to_string(),
+            1_000,
+            60_000,
+        );
+        let json = qr.encode_json().expect("encode");
+        assert!(json.contains(advertise), "json={json}");
+        assert!(!json.contains("0.0.0.0"), "json={json}");
+        assert!(json.contains(&DEFAULT_QUIC_PORT.to_string()), "json={json}");
+        let parsed = QrConnectPayload::decode_json(&json).expect("decode");
+        assert_eq!(parsed.host, advertise);
+        assert_eq!(parsed.port, DEFAULT_QUIC_PORT);
     }
 }

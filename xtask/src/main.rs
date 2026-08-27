@@ -216,6 +216,11 @@ fn test_suite(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
+                "cargo test -p picoo-receiver --lib unpaired_stop_stream_is_ignored_without_teardown"
+            )
+            .run()?;
+            cmd!(
+                sh,
                 "cargo test -p picoo-receiver --lib paired_start_stop_stream_and_camera_command_roundtrip"
             )
             .run()?;

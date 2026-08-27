@@ -730,6 +730,12 @@ impl ReceiverSession {
                     return self.handle_start_stream(session);
                 }
             }
+            // StopStream must not wipe pairing; route through the same guard as post-pair.
+            if let Ok(stop) = StopStream::decode(msg.as_ref()) {
+                if stop.magic == 2 {
+                    return self.handle_stop_stream(session);
+                }
+            }
             return Ok(());
         }
         if self.active_sender.is_none() {
@@ -769,6 +775,11 @@ impl ReceiverSession {
     }
 
     fn handle_stop_stream(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        // Unpaired / mid-pairing StopStream must not wipe the pairing challenge (PAIRING-003).
+        if !self.video_allowed() {
+            self.ingress.control_rejected_unpaired += 1;
+            return Ok(());
+        }
         // Sender-initiated stop: tear down session video without auto-reconnect wait.
         self.active_sender = None;
         self.pending_pairing = None;

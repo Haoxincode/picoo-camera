@@ -409,6 +409,65 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
 }
 
 #[test]
+fn unpaired_stop_stream_is_ignored_without_teardown() {
+    // StopStream while still Pairing must not tear down into Streaming teardown paths
+    // and must not clear the pending short code (idempotent / no-op for unpaired).
+    let mut receiver = ReceiverSession::new();
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("stop-unpaired", "StopU", &[6, 6, 6])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    let code = receiver
+        .pairing_short_code()
+        .expect("short code")
+        .to_string();
+    let rejected_before = receiver.stats().control_rejected_unpaired;
+
+    sender.send_stop_stream().expect("stop");
+    for _ in 0..80 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    assert_eq!(receiver.pairing_short_code(), Some(code.as_str()));
+    assert!(receiver.stats().control_rejected_unpaired > rejected_before);
+}
+
+#[test]
 fn camera_command_rejected_while_unpaired() {
     // REQ-PICOO-PAIRING-003: CameraCommand requires paired video path.
     let mut receiver = ReceiverSession::new();
