@@ -84,6 +84,8 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
     implementation("androidx.camera:camera-view:$cameraXVersion")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
+    testImplementation("junit:junit:4.13.2")
 }
 
 val rustAbi = "arm64-v8a"

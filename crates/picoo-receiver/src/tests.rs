@@ -751,3 +751,124 @@ fn default_jitter_holds_au_until_target_delay() {
         started.elapsed()
     );
 }
+
+/// REQ-PICOO-SESSION-005 — paired loopback soak (default 60s; set `PICOO_SOAK_SECONDS`).
+///
+/// Run: `PICOO_SOAK_SECONDS=60 cargo test -p picoo-receiver --lib soak_paired_loopback_memory_stable -- --ignored --nocapture`
+#[test]
+#[ignore = "long-running soak; enable via --ignored"]
+fn soak_paired_loopback_memory_stable() {
+    let soak_secs: u64 = std::env::var("PICOO_SOAK_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let sample_every: u64 = std::env::var("PICOO_SOAK_SAMPLE_EVERY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    receiver.set_jitter_target_ms(0);
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.is_connected());
+
+    sender
+        .send_client_hello("soak-phone", "Soak Phone", &[7, 7, 7])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    receiver.confirm_pairing_locally();
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("confirm");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(soak_secs);
+    let mut next_sample = std::time::Instant::now();
+    let mut samples: Vec<(u64, u64, u64)> = Vec::new(); // (elapsed_s, au, rss_kb)
+    let mut frame_id = 1u64;
+
+    while std::time::Instant::now() < deadline {
+        let payload = format!("soak-frame-{frame_id}");
+        sender
+            .ingest_and_flush(payload.as_bytes(), frame_id % 30 == 1, frame_id, 1)
+            .expect("ingest");
+        frame_id += 1;
+        for _ in 0..8 {
+            receiver.pump().expect("rx");
+            sender.pump().ok();
+        }
+        if std::time::Instant::now() >= next_sample {
+            let elapsed = soak_secs.saturating_sub(deadline.saturating_duration_since(std::time::Instant::now()).as_secs());
+            let rss = linux_vm_rss_kb().unwrap_or(0);
+            let au = receiver.stats().access_units;
+            eprintln!("soak sample elapsed≈{elapsed}s au={au} rss_kb={rss}");
+            samples.push((elapsed, au, rss));
+            next_sample += Duration::from_secs(sample_every);
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+
+    assert!(
+        receiver.stats().access_units > 10,
+        "expected many AUs during soak, got {}",
+        receiver.stats().access_units
+    );
+    if samples.len() >= 3 {
+        let first = samples[0].2;
+        let last = samples[samples.len() - 1].2;
+        // Soft bound: RSS should not grow unboundedly (allow 64 MiB headroom for allocator).
+        assert!(
+            last <= first.saturating_add(64 * 1024),
+            "RSS grew too much during soak: first={first}kb last={last}kb samples={samples:?}"
+        );
+    }
+}
+
+fn linux_vm_rss_kb() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            let kb = rest.split_whitespace().next()?.parse().ok()?;
+            return Some(kb);
+        }
+    }
+    None
+}

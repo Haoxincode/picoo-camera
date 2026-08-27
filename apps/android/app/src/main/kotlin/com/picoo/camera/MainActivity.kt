@@ -38,6 +38,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.picoo.camera.discovery.NsdReceiverBrowser
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
@@ -101,7 +102,9 @@ private fun SenderHomeScreen(
     var portText by remember { mutableStateOf("4433") }
     var senderStatus by remember { mutableIntStateOf(PicooNative.STATUS_DISCONNECTED) }
     var pairingCode by remember { mutableStateOf("") }
-    var discoveredReceivers by remember { mutableStateOf("") }
+    val discoveredListState =
+        remember { mutableStateOf<List<PicooNative.DiscoveredReceiver>>(emptyList()) }
+    val discoveredList = discoveredListState.value
     var connectedReceiverId by remember { mutableStateOf("") }
     var pairedDevicesText by remember { mutableStateOf("") }
     var selectedReceiverId by remember { mutableStateOf("") }
@@ -140,7 +143,18 @@ private fun SenderHomeScreen(
         }
     }
     val senderHandle = remember { PicooNative.createSender() }
-    val browserHandle = remember { PicooNative.createDiscoveryBrowser() }
+    val nsdBrowser =
+        remember {
+            NsdReceiverBrowser(context) { list ->
+                discoveredListState.value = list
+            }
+        }
+
+    DisposableEffect(nsdBrowser) {
+        // REQ-PICOO-DISCOVERY-005 / ARCH-PICOO-DISCOVERY-001: Android uses NSD, not Rust mDNS.
+        nsdBrowser.start()
+        onDispose { nsdBrowser.stop() }
+    }
 
     val encoder = remember {
         Camera2MediaEncoder(
@@ -260,7 +274,7 @@ private fun SenderHomeScreen(
         }
     }
 
-    LaunchedEffect(senderHandle, browserHandle) {
+    LaunchedEffect(senderHandle) {
         var previousStatus = PicooNative.STATUS_DISCONNECTED
         while (true) {
             if (senderHandle != 0L) {
@@ -291,28 +305,13 @@ private fun SenderHomeScreen(
                     applyStreamConfigToSender()
                 }
             }
-            if (browserHandle != 0L) {
-                PicooNative.pollDiscoveryBrowser(browserHandle, 200)
-                val count = PicooNative.getDiscoveryCount(browserHandle)
-                discoveredReceivers = buildString {
-                    for (index in 0 until count) {
-                        val receiver = PicooNative.getDiscoveredReceiver(browserHandle, index)
-                        if (receiver != null) {
-                            append("${receiver.displayName} (${receiver.host}:${receiver.quicPort})\n")
-                        }
-                    }
-                }.trim()
-            }
             delay(500)
         }
     }
 
-    DisposableEffect(encoder, senderHandle, browserHandle, trustedStoreHandle, identityHandle) {
+    DisposableEffect(encoder, senderHandle, trustedStoreHandle, identityHandle) {
         onDispose {
             encoder.close()
-            if (browserHandle != 0L) {
-                PicooNative.destroyDiscoveryBrowser(browserHandle)
-            }
             if (trustedStoreHandle != 0L) {
                 PicooNative.destroyTrustedStore(trustedStoreHandle)
             }
@@ -346,8 +345,26 @@ private fun SenderHomeScreen(
         if (pairingCode.isNotEmpty()) {
             Text(text = "Pairing code: $pairingCode", style = MaterialTheme.typography.bodyLarge)
         }
-        if (discoveredReceivers.isNotEmpty()) {
-            Text(text = "Discovered:\n$discoveredReceivers", style = MaterialTheme.typography.bodySmall)
+        if (discoveredList.isNotEmpty()) {
+            Text(text = "Discovered (NSD):", style = MaterialTheme.typography.bodySmall)
+            discoveredList.forEach { receiver ->
+                Button(
+                    onClick = {
+                        hostText = receiver.host
+                        portText = receiver.quicPort.toString()
+                        selectedReceiverId = receiver.receiverId
+                        connectToReceiver(receiver.host, receiver.quicPort, receiver.receiverId)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("${receiver.displayName} (${receiver.host}:${receiver.quicPort})")
+                }
+            }
+        } else {
+            Text(
+                text = "Searching for receivers via NSD (_picoocam._udp)…",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         if (pairedDevicesText.isNotEmpty()) {
             Text(text = "Paired receivers:\n$pairedDevicesText", style = MaterialTheme.typography.bodySmall)
