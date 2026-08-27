@@ -2514,3 +2514,184 @@ fn midstream_resolution_change_openh264_updates_framehub() {
         "resolution switch {elapsed_ms}ms exceeds 3s budget"
     );
 }
+
+#[cfg(not(windows))]
+#[test]
+fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
+    // REQ-PICOO-SESSION-003: incomplete IDR → RequestKeyframe → fresh IDR → FrameHub.
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_packet::extract_sps_pps;
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_testkit::DropKeyframeTailTransport;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let width = 160usize;
+    let height = 120usize;
+    let mut planes = vec![128u8; width * height * 3 / 2];
+    for y in 0..height {
+        for x in 0..width {
+            planes[y * width + x] = ((x * 7 + y * 11) % 200 + 20) as u8;
+        }
+    }
+    let yuv = YUVBuffer::from_vec(planes.clone(), width, height);
+    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let annex = encoder.encode(&yuv).expect("encode").to_vec();
+    let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
+    assert!(annex.len() > 32);
+
+    // Pad with filler NAL so the AU spans ≥2 QUIC video fragments (~1124 B payload).
+    let mut large_key = annex.clone();
+    large_key.extend_from_slice(&[0, 0, 0, 1, 0x0c]);
+    large_key.resize(large_key.len() + 1_300, 0x00);
+    assert!(
+        large_key.len() > 1_200,
+        "padded AU must exceed one datagram payload"
+    );
+
+    let mut recovery_planes = planes;
+    for y in 0..height {
+        for x in 0..width {
+            recovery_planes[y * width + x] = ((x * 13 + y * 17) % 180 + 30) as u8;
+        }
+    }
+    let recovery_yuv = YUVBuffer::from_vec(recovery_planes, width, height);
+    let recovery_au = encoder.encode(&recovery_yuv).expect("recovery encode").to_vec();
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "idr-phone".into(),
+        device_name: "Idr".into(),
+        public_key: vec![9, 9, 9],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let dropper = DropKeyframeTailTransport::new(QuicSenderTransport::new());
+    let mut sender = SenderSession::new(dropper);
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("idr-phone", "Idr", &[9, 9, 9])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: width as u32,
+        height: height as u32,
+        fps: 30,
+        bitrate_bps: 500_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps,
+        pps,
+    });
+    for _ in 0..50 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    // Baseline IDR (single-fragment) — tails not armed yet.
+    sender
+        .ingest_and_flush(&annex, true, 1, 1)
+        .expect("baseline");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.latest_frame().is_some(), "baseline frame missing");
+    let before_seq = receiver.latest_frame().map(|f| f.sequence).unwrap_or(0);
+    let _ = sender.take_keyframe_request();
+
+    // Incomplete multi-fragment IDR: only fragment 0 arrives.
+    sender.transport_mut().arm();
+    sender
+        .ingest_and_flush(&large_key, true, 2, 1)
+        .expect("large incomplete");
+    assert!(
+        sender.transport_mut().dropped_tail_fragments >= 1,
+        "expected keyframe tail drop"
+    );
+
+    // Epoch bump clears pending incomplete keyframe and sets keyframe_loss (SESSION-003).
+    let tiny = [0u8, 0, 0, 1, 0x01, 0x42];
+    let _ = sender.ingest_and_flush(&tiny, false, 3, 2);
+
+    let mut keyed = false;
+    for _ in 0..80 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.take_keyframe_request() {
+            keyed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        keyed,
+        "incomplete keyframe must produce EncoderCommand::RequestKeyframe"
+    );
+
+    // Fresh IDR recovers FrameHub (stay on epoch 2 after the bump above).
+    sender.transport_mut().disarm();
+    sender
+        .ingest_and_flush(&recovery_au, true, 100, 2)
+        .expect("recovery idr");
+    let mut recovered = false;
+    for _ in 0..400 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.sequence > before_seq
+                && frame.width == width as u32
+                && frame.pixel_data.len() == nv12_byte_size(width as u32, height as u32)
+                && frame.pixel_data.iter().any(|b| *b != 16 && *b != 128)
+            {
+                recovered = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(recovered, "FrameHub did not recover after RequestKeyframe IDR");
+}
