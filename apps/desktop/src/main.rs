@@ -6,6 +6,8 @@ mod receiver_runtime;
 
 #[cfg(feature = "gpui-ui")]
 mod gpui_app;
+#[cfg(feature = "gpui-ui")]
+mod video_surface;
 
 use std::io::{self, BufRead};
 use std::sync::mpsc;

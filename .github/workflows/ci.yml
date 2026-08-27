@@ -48,4 +48,8 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo run -p xtask -- build windows
       - run: cargo run -p xtask -- package windows
-      # GPUI/MF/VCam artifacts uploaded when implemented
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-bundle
+          path: target/release/bundle/
+          if-no-files-found: warn

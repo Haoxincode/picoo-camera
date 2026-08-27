@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets"]
+gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets", "dep:image", "dep:smallvec"]
 
 [dependencies]
 picoo-discovery.workspace = true
@@ -32,5 +32,7 @@ gpui = { workspace = true, optional = true }
 gpui_platform = { workspace = true, optional = true }
 gpui-component = { workspace = true, optional = true }
 gpui-component-assets = { workspace = true, optional = true }
+image = { version = "0.25", optional = true }
+smallvec = { version = "1", optional = true }
 
 [dev-dependencies]

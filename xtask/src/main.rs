@@ -1,6 +1,4 @@
 //! Build orchestration — REQ-PICOO-STACK-004.
-//!
-//! Not a product engine; see ARCH-PICOO-STACK-001.
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
@@ -17,17 +15,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Build a platform target
     Build {
         #[arg(value_enum)]
         platform: Platform,
     },
-    /// Package release artifacts
     Package {
         #[arg(value_enum)]
         platform: Platform,
     },
-    /// Run protocol/integration tests
     Test {
         #[arg(value_enum)]
         suite: TestSuite,
@@ -74,17 +69,31 @@ fn build(platform: Platform) -> Result<()> {
                 "cargo build -p picoo-desktop -p picoo-vcam-ring-reader --release --features gpui-ui"
             )
             .run()?;
-            #[cfg(target_os = "windows")]
-            {
-                cmd!(
-                    sh,
-                    "cargo build -p picoo-media-decode --release --features windows-mf"
-                )
-                .run()?;
-            }
-            eprintln!("windows: MF VCam DLL + MSI packaging pending platform implementation");
+            cmd!(
+                sh,
+                "cargo build -p picoo-media-decode --release --features windows-mf"
+            )
+            .run()?;
+            build_vcam_dll(&sh)?;
         }
     }
+    Ok(())
+}
+
+fn build_vcam_dll(sh: &Shell) -> Result<()> {
+    let cmake_lists = Path::new("extensions/windows-virtual-camera/mf-source/CMakeLists.txt");
+    if !cmake_lists.exists() {
+        eprintln!("windows: mf-source CMake project not found");
+        return Ok(());
+    }
+    let build_dir = "target/vcam-build";
+    cmd!(
+        sh,
+        "cmake -S extensions/windows-virtual-camera/mf-source -B {build_dir}"
+    )
+    .run()?;
+    cmd!(sh, "cmake --build {build_dir} --config Release").run()?;
+    eprintln!("windows: built PicooVirtualCameraSource.dll scaffold");
     Ok(())
 }
 
@@ -92,7 +101,17 @@ fn package(platform: Platform) -> Result<()> {
     match platform {
         Platform::Windows => {
             build(Platform::Windows)?;
-            eprintln!("windows package: MSI/installer pipeline not yet implemented");
+            let sh = Shell::new()?;
+            let stage_script = Path::new("installers/windows/stage.ps1");
+            if stage_script.exists() {
+                cmd!(
+                    sh,
+                    "powershell -ExecutionPolicy Bypass -File installers/windows/stage.ps1"
+                )
+                .run()?;
+            } else {
+                eprintln!("windows package: stage.ps1 not found");
+            }
             Ok(())
         }
         Platform::Android => {

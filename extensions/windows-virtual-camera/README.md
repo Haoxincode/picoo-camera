@@ -7,7 +7,7 @@ Independent IMFMediaSource DLL (`PicooVirtualCameraSource.dll`) consuming Shared
 | Artifact | Status | Description |
 | --- | --- | --- |
 | `picoo-vcam-ring-reader` | implemented | Polls Shared Frame Ring; validates VCam consumer path on Linux CI |
-| `PicooVirtualCameraSource.dll` | pending | COM IMFMediaSource for MFCreateVirtualCamera — build on `windows-latest` |
+| `PicooVirtualCameraSource.dll` | scaffold | CMake DLL shell; IMFMediaSource + ring consumer pending |
 
 ## Requirement 映射
 

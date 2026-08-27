@@ -14,6 +14,7 @@ use crate::model::VirtualCameraStatus;
 use crate::receiver_runtime::{
     ReceiverRuntime, ReceiverRuntimeConfig, ReceiverSnapshot, TrustedDeviceSummary,
 };
+use crate::video_surface::VideoSurface;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DesktopPage {
@@ -27,6 +28,7 @@ pub struct PicooDesktopApp {
     page: DesktopPage,
     show_qr: bool,
     pump_started: bool,
+    video_surface: VideoSurface,
 }
 
 impl PicooDesktopApp {
@@ -36,6 +38,7 @@ impl PicooDesktopApp {
             page: DesktopPage::Waiting,
             show_qr: true,
             pump_started: false,
+            video_surface: VideoSurface::default(),
         }
     }
 
@@ -55,6 +58,9 @@ impl PicooDesktopApp {
             if this
                 .update(cx, |this, cx| {
                     let _ = this.runtime.pump();
+                    if let Some(slot) = this.runtime.receiver().latest_frame() {
+                        this.video_surface.update_from_slot(slot);
+                    }
                     let snapshot = this.runtime.snapshot();
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
                         this.page = DesktopPage::Live;
@@ -252,11 +258,9 @@ impl PicooDesktopApp {
                             .w_full()
                             .h_64()
                             .bg(cx.theme().muted)
-                            .flex()
-                            .items_center()
-                            .justify_center()
                             .rounded_md()
-                            .child("VideoSurface 占位 — MF 解码接入中"),
+                            .overflow_hidden()
+                            .child(self.video_surface.render_preview()),
                     )
                     .child(format!("状态：{status}"))
                     .child(format!("分辨率：{resolution} @ {fps} fps"))

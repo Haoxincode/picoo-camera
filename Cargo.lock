@@ -3288,6 +3288,7 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
+ "rgb",
  "tiff",
  "zune-core 0.5.3",
  "zune-jpeg 0.5.15",
@@ -4943,6 +4944,7 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
+ "image",
  "picoo-diagnostics",
  "picoo-discovery",
  "picoo-frame-hub",
@@ -4954,6 +4956,7 @@ dependencies = [
  "picoo-transport",
  "qrcode",
  "serde",
+ "smallvec",
  "tracing",
  "tracing-subscriber",
 ]
