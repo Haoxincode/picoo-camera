@@ -3,6 +3,7 @@
 //! REQ-PICOO-TRANSPORT-001
 
 mod quic;
+mod quic_receiver;
 mod quic_sender;
 
 use bytes::Bytes;
@@ -10,6 +11,7 @@ use picoo_protocol::VideoPacket;
 use thiserror::Error;
 
 pub use quic::{establish_loopback, QuicLoopback, QuicTransportError, CONTROL_STREAM_ID};
+pub use quic_receiver::QuicReceiverTransport;
 pub use quic_sender::QuicSenderTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

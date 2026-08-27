@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 picoo-frame-hub.workspace = true
 picoo-metrics.workspace = true
+picoo-receiver.workspace = true
 picoo-session.workspace = true
 serde.workspace = true
 tracing = "0.1"

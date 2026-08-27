@@ -522,6 +522,7 @@ version = "0.1.0"
 dependencies = [
  "picoo-frame-hub",
  "picoo-metrics",
+ "picoo-receiver",
  "picoo-session",
  "serde",
  "tracing",
@@ -613,6 +614,20 @@ name = "picoo-rate-control"
 version = "0.1.0"
 dependencies = [
  "picoo-metrics",
+]
+
+[[package]]
+name = "picoo-receiver"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "picoo-frame-hub",
+ "picoo-packet",
+ "picoo-protocol",
+ "picoo-sender",
+ "picoo-session",
+ "picoo-transport",
+ "thiserror",
 ]
 
 [[package]]

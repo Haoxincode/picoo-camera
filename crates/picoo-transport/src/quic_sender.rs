@@ -3,7 +3,6 @@
 use std::collections::VecDeque;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use std::time::Duration;
 
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
@@ -14,6 +13,7 @@ use crate::{CloseReason, Endpoint, PicooTransport, SessionId, TransportError, Tr
 pub struct QuicSenderTransport {
     client: Option<QuicClient>,
     session: Option<SessionId>,
+    pending_session: Option<SessionId>,
     events: VecDeque<TransportEvent>,
     next_session: u64,
 }
@@ -29,6 +29,7 @@ impl QuicSenderTransport {
         Self {
             client: None,
             session: None,
+            pending_session: None,
             events: VecDeque::new(),
             next_session: 1,
         }
@@ -51,6 +52,7 @@ impl QuicSenderTransport {
         Ok(Self {
             client: Some(client),
             session: Some(session),
+            pending_session: None,
             events,
             next_session: 2,
         })
@@ -68,7 +70,10 @@ impl QuicSenderTransport {
         let Some(client) = self.client.as_mut() else {
             return Ok(());
         };
-        let session = self.session.expect("session set when client exists");
+        if !client.is_established() {
+            return Ok(());
+        }
+        let session = self.session.expect("session set when established");
 
         while let Some((stream_id, data)) = client.recv_stream().map_err(Self::map_send_err)? {
             if stream_id == CONTROL_STREAM_ID {
@@ -90,27 +95,26 @@ impl QuicSenderTransport {
 
 impl PicooTransport for QuicSenderTransport {
     fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, TransportError> {
+        if self.is_connected() {
+            return Ok(self.session.expect("session when connected"));
+        }
+
+        if self.client.is_some() {
+            return Ok(self
+                .pending_session
+                .expect("pending session while connecting"));
+        }
+
         let addr = SocketAddr::from_str(&format!("{}:{}", endpoint.host, endpoint.port))
             .map_err(|e| TransportError::ConnectFailed(e.to_string()))?;
 
-        let mut client = QuicClient::connect(addr).map_err(Self::map_err)?;
-        for _ in 0..500 {
-            client.drive().map_err(Self::map_err)?;
-            self.poll_inbound()?;
-            if client.is_established() {
-                let session = SessionId(self.next_session);
-                self.next_session += 1;
-                self.client = Some(client);
-                self.session = Some(session);
-                self.events.push_back(TransportEvent::Connected(session));
-                return Ok(session);
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-
-        Err(TransportError::ConnectFailed(
-            "QUIC handshake timeout".into(),
-        ))
+        let client = QuicClient::connect(addr).map_err(Self::map_err)?;
+        let session = SessionId(self.next_session);
+        self.next_session += 1;
+        self.client = Some(client);
+        self.pending_session = Some(session);
+        self.pump()?;
+        Ok(session)
     }
 
     fn send_control(&mut self, session: SessionId, message: Bytes) -> Result<(), TransportError> {
@@ -145,9 +149,10 @@ impl PicooTransport for QuicSenderTransport {
     }
 
     fn close(&mut self, session: SessionId, reason: CloseReason) {
-        if self.session == Some(session) {
+        if self.session == Some(session) || self.pending_session == Some(session) {
             self.client = None;
             self.session = None;
+            self.pending_session = None;
             self.events
                 .push_back(TransportEvent::Disconnected(session, reason));
         }
@@ -157,7 +162,19 @@ impl PicooTransport for QuicSenderTransport {
         if let Some(client) = self.client.as_mut() {
             client.drive().map_err(Self::map_send_err)?;
         }
-        self.poll_inbound()
+
+        if self.session.is_none() {
+            if let Some(client) = self.client.as_ref() {
+                if client.is_established() {
+                    let session = self.pending_session.take().expect("pending session");
+                    self.session = Some(session);
+                    self.events.push_back(TransportEvent::Connected(session));
+                }
+            }
+        }
+
+        self.poll_inbound()?;
+        Ok(())
     }
 }
 

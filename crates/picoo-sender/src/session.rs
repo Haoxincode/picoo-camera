@@ -1,7 +1,7 @@
 //! Sender session: packetization + transport flush.
 
 use picoo_protocol::VideoPacket;
-use picoo_transport::{Endpoint, PicooTransport, SessionId};
+use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
 
 use crate::{SenderError, SenderPipeline, SenderStats};
 
@@ -28,6 +28,14 @@ impl<T: PicooTransport> SenderSession<T> {
         }
     }
 
+    fn drain_connected_events(&mut self) {
+        while let Some(event) = self.transport.poll_event() {
+            if let TransportEvent::Connected(session) = event {
+                self.session = Some(session);
+            }
+        }
+    }
+
     pub fn stats(&self) -> SessionStats {
         SessionStats {
             pipeline: self.pipeline.stats(),
@@ -40,17 +48,18 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, SenderError> {
-        self.transport
+        let session = self
+            .transport
             .connect(endpoint)
-            .map_err(SenderError::Transport)
-            .map(|session| {
-                self.session = Some(session);
-                session
-            })
+            .map_err(SenderError::Transport)?;
+        self.drain_connected_events();
+        Ok(session)
     }
 
     pub fn pump(&mut self) -> Result<(), SenderError> {
-        self.transport.pump().map_err(SenderError::Transport)
+        self.transport.pump().map_err(SenderError::Transport)?;
+        self.drain_connected_events();
+        Ok(())
     }
 
     pub fn ingest_access_unit(

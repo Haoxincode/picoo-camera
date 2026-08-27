@@ -12,6 +12,7 @@ members = [
   "crates/picoo-metrics",
   "crates/picoo-frame-hub",
   "crates/picoo-sender",
+  "crates/picoo-receiver",
   "crates/picoo-ffi",
   "crates/picoo-testkit",
   "xtask",
@@ -46,6 +47,7 @@ picoo-rate-control = { path = "crates/picoo-rate-control" }
 picoo-metrics = { path = "crates/picoo-metrics" }
 picoo-frame-hub = { path = "crates/picoo-frame-hub" }
 picoo-sender = { path = "crates/picoo-sender" }
+picoo-receiver = { path = "crates/picoo-receiver" }
 picoo-ffi = { path = "crates/picoo-ffi" }
 picoo-testkit = { path = "crates/picoo-testkit" }
 
