@@ -2,10 +2,11 @@
 //!
 //! REQ-PICOO-SESSION-001, REQ-PICOO-TRANSPORT-004, REQ-PICOO-MEDIA-007
 
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
-use picoo_pairing::pairing_confirm_signature;
+use picoo_pairing::{pairing_confirm_signature, trusted_device_from_pairing, TrustedDeviceStore};
 use picoo_protocol::control::{
     Capabilities, ClientHello, PairingChallenge, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
     ServerHello,
@@ -27,6 +28,8 @@ const DEFAULT_MAX_BITRATE_BPS: u32 = 10_000_000;
 #[derive(Debug, Clone)]
 struct SenderPairing {
     receiver_id: String,
+    display_name: String,
+    public_key: Vec<u8>,
     challenge_nonce: Vec<u8>,
     short_code: String,
 }
@@ -45,6 +48,8 @@ pub struct SenderSession<T: PicooTransport> {
     pairing: Option<SenderPairing>,
     sender_id: Option<String>,
     hello_params: Option<(String, String, Vec<u8>)>,
+    trusted: TrustedDeviceStore,
+    trusted_store_path: Option<PathBuf>,
     status: SenderStatus,
     last_endpoint: Option<Endpoint>,
     reconnect_backoff: ReconnectBackoff,
@@ -68,6 +73,8 @@ impl<T: PicooTransport> SenderSession<T> {
             pairing: None,
             sender_id: None,
             hello_params: None,
+            trusted: TrustedDeviceStore::new(),
+            trusted_store_path: None,
             status: SenderStatus::Disconnected,
             last_endpoint: None,
             reconnect_backoff: ReconnectBackoff::default(),
@@ -112,6 +119,52 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn set_stream_config(&mut self, config: StreamConfigParams) {
         self.pending_stream_config = Some(config);
+    }
+
+    pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, SenderError> {
+        let path = path.as_ref().to_path_buf();
+        self.trusted = TrustedDeviceStore::load_from_path(&path)?;
+        self.trusted_store_path = Some(path);
+        Ok(self)
+    }
+
+    pub fn attach_trusted_store(&mut self, path: impl AsRef<Path>) -> Result<(), SenderError> {
+        let path = path.as_ref().to_path_buf();
+        self.trusted = TrustedDeviceStore::load_from_path(&path)?;
+        self.trusted_store_path = Some(path);
+        Ok(())
+    }
+
+    pub fn trusted_devices(&self) -> &TrustedDeviceStore {
+        &self.trusted
+    }
+
+    pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, SenderError> {
+        let removed = self.trusted.remove(device_id);
+        if removed {
+            self.persist_trusted()?;
+        }
+        Ok(removed)
+    }
+
+    pub fn connected_receiver_id(&self) -> Option<&str> {
+        self.pairing
+            .as_ref()
+            .and_then(|p| (!p.receiver_id.is_empty()).then_some(p.receiver_id.as_str()))
+    }
+
+    fn persist_trusted(&self) -> Result<(), SenderError> {
+        if let Some(path) = &self.trusted_store_path {
+            self.trusted.save_to_path(path)?;
+        }
+        Ok(())
+    }
+
+    fn now_ms(&self) -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0)
     }
 
     fn enter_streaming(&mut self) {
@@ -234,6 +287,8 @@ impl<T: PicooTransport> SenderSession<T> {
             } else {
                 self.pairing = Some(SenderPairing {
                     receiver_id: String::new(),
+                    display_name: String::new(),
+                    public_key: Vec::new(),
                     challenge_nonce: challenge.challenge_nonce,
                     short_code: challenge.short_code,
                 });
@@ -242,11 +297,34 @@ impl<T: PicooTransport> SenderSession<T> {
             return;
         }
         if let Ok(hello) = ServerHello::decode(msg.as_ref()) {
+            if self.trusted.is_paired(&hello.receiver_id) {
+                if self
+                    .trusted
+                    .verify_paired_key(&hello.receiver_id, &hello.public_key)
+                    .is_err()
+                {
+                    if let Some(session) = self.session.take() {
+                        self.transport
+                            .close(session, picoo_transport::CloseReason::LocalClose);
+                    }
+                    self.status = SenderStatus::Disconnected;
+                    self.pairing = None;
+                    return;
+                }
+                self.trusted
+                    .touch_last_connected(&hello.receiver_id, self.now_ms());
+                let _ = self.persist_trusted();
+            }
+
             if let Some(pairing) = self.pairing.as_mut() {
-                pairing.receiver_id = hello.receiver_id;
+                pairing.receiver_id = hello.receiver_id.clone();
+                pairing.display_name = hello.display_name.clone();
+                pairing.public_key = hello.public_key.clone();
             } else if hello.pairing_required {
                 self.pairing = Some(SenderPairing {
                     receiver_id: hello.receiver_id,
+                    display_name: hello.display_name,
+                    public_key: hello.public_key,
                     challenge_nonce: Vec::new(),
                     short_code: String::new(),
                 });
@@ -398,6 +476,27 @@ impl<T: PicooTransport> SenderSession<T> {
             .send_control(session, bytes::Bytes::from(buf))
             .map_err(SenderError::Transport)?;
         self.transport.pump().map_err(SenderError::Transport)?;
+
+        if !receiver_id.is_empty() {
+            let display_name = if pairing.display_name.is_empty() {
+                receiver_id
+            } else {
+                pairing.display_name.as_str()
+            };
+            let now_ms = self.now_ms();
+            self.trusted.upsert(trusted_device_from_pairing(
+                receiver_id,
+                display_name,
+                if pairing.public_key.is_empty() {
+                    &[]
+                } else {
+                    &pairing.public_key
+                },
+                now_ms,
+            ));
+            self.persist_trusted()?;
+        }
+
         self.status = SenderStatus::Streaming;
         Ok(())
     }
@@ -421,6 +520,8 @@ mod tests {
     use std::time::Duration;
 
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
+    use picoo_protocol::control::{PairingChallenge, ServerHello};
+    use picoo_protocol::ALPN;
     use picoo_rate_control::BitrateAction;
     use picoo_session::SenderStatus;
     use picoo_testkit::MemoryTransport;
@@ -517,5 +618,55 @@ mod tests {
             std::thread::sleep(Duration::from_millis(600));
         }
         assert!(session.is_connected());
+    }
+
+    #[test]
+    fn pairing_confirm_persists_trusted_receiver() {
+        use picoo_pairing::TrustedDeviceStore;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store_path = dir.path().join("trusted.json");
+
+        let mut session = SenderSession::new(MemoryTransport::new())
+            .with_trusted_store(&store_path)
+            .expect("attach store");
+        let endpoint = Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        };
+        session.connect(endpoint).expect("connect");
+        session
+            .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
+            .expect("client hello");
+
+        let hello = ServerHello {
+            receiver_id: "windows-receiver".into(),
+            display_name: "Picoo Camera".into(),
+            protocol_version: ALPN.into(),
+            public_key: vec![4, 5, 6],
+            pairing_required: true,
+        };
+        let mut buf = Vec::new();
+        hello.encode(&mut buf).expect("encode hello");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject hello");
+
+        let challenge = PairingChallenge {
+            short_code: "123456".into(),
+            challenge_nonce: b"nonce".to_vec(),
+        };
+        let mut buf = Vec::new();
+        challenge.encode(&mut buf).expect("encode challenge");
+        session
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject challenge");
+
+        session
+            .send_pairing_confirm("windows-receiver")
+            .expect("confirm");
+
+        let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("load");
+        assert!(loaded.is_paired("windows-receiver"));
     }
 }

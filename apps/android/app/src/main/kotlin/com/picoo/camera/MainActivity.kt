@@ -22,11 +22,13 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.text.input.KeyboardType
 import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -95,9 +97,38 @@ private fun SenderHomeScreen(
     var senderStatus by remember { mutableIntStateOf(PicooNative.STATUS_DISCONNECTED) }
     var pairingCode by remember { mutableStateOf("") }
     var discoveredReceivers by remember { mutableStateOf("") }
+    var connectedReceiverId by remember { mutableStateOf("") }
+    var pairedDevicesText by remember { mutableStateOf("") }
+    var selectedReceiverId by remember { mutableStateOf("") }
+    var trustedStoreHandle by remember { mutableLongStateOf(0L) }
 
+    val trustedStorePath = remember {
+        java.io.File(context.filesDir, "trusted_devices.json").absolutePath
+    }
     val senderHandle = remember { PicooNative.createSender() }
     val browserHandle = remember { PicooNative.createDiscoveryBrowser() }
+
+    fun reloadTrustedStore() {
+        if (trustedStoreHandle != 0L) {
+            PicooNative.destroyTrustedStore(trustedStoreHandle)
+        }
+        trustedStoreHandle = PicooNative.loadTrustedStore(trustedStorePath)
+        pairedDevicesText = buildString {
+            if (trustedStoreHandle == 0L) return@buildString
+            val count = PicooNative.getTrustedDeviceCount(trustedStoreHandle)
+            for (index in 0 until count) {
+                val device = PicooNative.getTrustedDevice(trustedStoreHandle, index) ?: continue
+                append("${device.deviceName} (${device.deviceId})\n")
+            }
+        }.trim()
+    }
+
+    LaunchedEffect(senderHandle, trustedStorePath) {
+        if (senderHandle != 0L) {
+            PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+        }
+        reloadTrustedStore()
+    }
 
     LaunchedEffect(senderHandle, browserHandle) {
         while (true) {
@@ -105,6 +136,7 @@ private fun SenderHomeScreen(
                 PicooNative.pump(senderHandle)
                 senderStatus = PicooNative.getSenderStatus(senderHandle)
                 pairingCode = PicooNative.getPairingShortCode(senderHandle)
+                connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
             }
             if (browserHandle != 0L) {
                 PicooNative.pollDiscoveryBrowser(browserHandle, 200)
@@ -144,11 +176,14 @@ private fun SenderHomeScreen(
         )
     }
 
-    DisposableEffect(encoder, senderHandle, browserHandle) {
+    DisposableEffect(encoder, senderHandle, browserHandle, trustedStoreHandle) {
         onDispose {
             encoder.close()
             if (browserHandle != 0L) {
                 PicooNative.destroyDiscoveryBrowser(browserHandle)
+            }
+            if (trustedStoreHandle != 0L) {
+                PicooNative.destroyTrustedStore(trustedStoreHandle)
             }
             if (senderHandle != 0L) {
                 PicooNative.destroySender(senderHandle)
@@ -176,6 +211,12 @@ private fun SenderHomeScreen(
         }
         if (discoveredReceivers.isNotEmpty()) {
             Text(text = "Discovered:\n$discoveredReceivers", style = MaterialTheme.typography.bodySmall)
+        }
+        if (pairedDevicesText.isNotEmpty()) {
+            Text(text = "Paired receivers:\n$pairedDevicesText", style = MaterialTheme.typography.bodySmall)
+        }
+        if (connectedReceiverId.isNotEmpty()) {
+            Text(text = "Connected receiver: $connectedReceiverId", style = MaterialTheme.typography.bodySmall)
         }
 
         OutlinedTextField(
@@ -219,10 +260,34 @@ private fun SenderHomeScreen(
                 Text("Connect")
             }
             Button(onClick = {
-                val rc = PicooNative.sendPairingConfirm(senderHandle, "windows-receiver")
-                errorText = if (rc == 0) null else "Pairing confirm failed: $rc"
+                val receiverId = connectedReceiverId.ifEmpty { selectedReceiverId.ifEmpty { "windows-receiver" } }
+                val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
+                if (rc == 0) {
+                    errorText = null
+                    reloadTrustedStore()
+                } else {
+                    errorText = "Pairing confirm failed: $rc"
+                }
             }) {
                 Text("Confirm pairing")
+            }
+            Button(onClick = {
+                val deviceId = selectedReceiverId.ifEmpty { pairedDevicesText.lines().firstOrNull()?.substringAfter("(")?.substringBefore(")") ?: "" }
+                if (deviceId.isEmpty()) {
+                    errorText = "Select a paired device to remove"
+                    return@Button
+                }
+                val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, deviceId)
+                if (rc == 1) {
+                    PicooNative.saveTrustedStore(trustedStoreHandle)
+                    PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+                    reloadTrustedStore()
+                    errorText = null
+                } else {
+                    errorText = "Remove failed: $rc"
+                }
+            }) {
+                Text("Remove paired")
             }
         }
 

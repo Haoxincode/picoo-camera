@@ -248,6 +248,115 @@ Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
         mirrored ? 1 : 0);
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_attachTrustedStore(
+    JNIEnv *env,
+    jobject /* this */,
+    jlong handle,
+    jstring path) {
+    if (handle == 0 || path == nullptr) {
+        return -1;
+    }
+    char path_buf[512] = {0};
+    if (copyJString(env, path, path_buf, sizeof(path_buf)) != 0) {
+        return -1;
+    }
+    return picoo_sender_attach_trusted_store(reinterpret_cast<void *>(handle), path_buf);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_picoo_camera_jni_PicooNative_getConnectedReceiverId(JNIEnv *env, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return makeJString(env, "");
+    }
+    char buf[128] = {0};
+    if (picoo_sender_connected_receiver_id(reinterpret_cast<void *>(handle), buf, sizeof(buf)) <= 0) {
+        return makeJString(env, "");
+    }
+    return makeJString(env, buf);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_picoo_camera_jni_PicooNative_loadTrustedStore(JNIEnv *env, jobject /* this */, jstring path) {
+    if (path == nullptr) {
+        return 0;
+    }
+    char path_buf[512] = {0};
+    if (copyJString(env, path, path_buf, sizeof(path_buf)) != 0) {
+        return 0;
+    }
+    return reinterpret_cast<jlong>(picoo_trusted_store_load(path_buf));
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_picoo_camera_jni_PicooNative_destroyTrustedStore(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    picoo_trusted_store_destroy(reinterpret_cast<void *>(handle));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_getTrustedDeviceCount(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return 0;
+    }
+    return static_cast<jint>(picoo_trusted_store_count(reinterpret_cast<void *>(handle)));
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_picoo_camera_jni_PicooNative_getTrustedDevice(JNIEnv *env, jobject /* this */, jlong handle, jint index) {
+    if (handle == 0) {
+        return nullptr;
+    }
+    PicooTrustedDevice item{};
+    if (picoo_trusted_store_get(reinterpret_cast<void *>(handle), static_cast<uint32_t>(index), &item) != 0) {
+        return nullptr;
+    }
+
+    jclass cls = env->FindClass("com/picoo/camera/jni/PicooNative$TrustedDevice");
+    if (cls == nullptr) {
+        return nullptr;
+    }
+    jmethodID ctor = env->GetMethodID(
+        cls,
+        "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJ)V");
+    if (ctor == nullptr) {
+        return nullptr;
+    }
+
+    return env->NewObject(
+        cls,
+        ctor,
+        makeJString(env, reinterpret_cast<const char *>(item.device_id)),
+        makeJString(env, reinterpret_cast<const char *>(item.device_name)),
+        makeJString(env, reinterpret_cast<const char *>(item.certificate_fingerprint)),
+        static_cast<jlong>(item.paired_at_ms),
+        static_cast<jlong>(item.last_connected_at_ms));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_removeTrustedDevice(
+    JNIEnv *env,
+    jobject /* this */,
+    jlong handle,
+    jstring deviceId) {
+    if (handle == 0 || deviceId == nullptr) {
+        return -1;
+    }
+    char id_buf[128] = {0};
+    if (copyJString(env, deviceId, id_buf, sizeof(id_buf)) != 0) {
+        return -1;
+    }
+    return picoo_trusted_store_remove(reinterpret_cast<void *>(handle), id_buf);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_saveTrustedStore(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return -1;
+    }
+    return picoo_trusted_store_save(reinterpret_cast<void *>(handle));
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_picoo_camera_jni_PicooNative_createDiscoveryBrowser(JNIEnv * /* env */, jobject /* this */) {
     return reinterpret_cast<jlong>(picoo_discovery_browser_create());

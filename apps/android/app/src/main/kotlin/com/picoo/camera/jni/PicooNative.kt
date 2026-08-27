@@ -82,6 +82,22 @@ object PicooNative {
 
     external fun getDiscoveredReceiver(handle: Long, index: Int): DiscoveredReceiver?
 
+    external fun attachTrustedStore(handle: Long, path: String): Int
+
+    external fun getConnectedReceiverId(handle: Long): String
+
+    external fun loadTrustedStore(path: String): Long
+
+    external fun destroyTrustedStore(handle: Long)
+
+    external fun getTrustedDeviceCount(handle: Long): Int
+
+    external fun getTrustedDevice(handle: Long, index: Int): TrustedDevice?
+
+    external fun removeTrustedDevice(handle: Long, deviceId: String): Int
+
+    external fun saveTrustedStore(handle: Long): Int
+
     data class SenderStats(
         val accessUnits: Long,
         val packets: Long,
@@ -95,6 +111,14 @@ object PicooNative {
         val displayName: String,
         val host: String,
         val quicPort: Int,
+    )
+
+    data class TrustedDevice(
+        val deviceId: String,
+        val deviceName: String,
+        val certificateFingerprint: String,
+        val pairedAtMs: Long,
+        val lastConnectedAtMs: Long,
     )
 
     fun readSenderStats(handle: Long): SenderStats {
