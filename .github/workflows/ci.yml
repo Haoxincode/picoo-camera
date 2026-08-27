@@ -25,9 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: bash .cursor/install.sh
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
+      - run: echo "sdk.dir=${ANDROID_HOME}" >> apps/android/local.properties
       - run: cargo run -p xtask -- build android
-      # Gradle + NDK steps added when apps/android is configured
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-apk
+          path: apps/android/app/build/outputs/apk/debug/
 
   windows:
     runs-on: windows-latest

@@ -60,6 +60,9 @@ fn build(platform: Platform) -> Result<()> {
         Platform::Android => {
             cmd!(sh, "cargo test --workspace").run()?;
             if Path::new("apps/android/gradlew").exists() {
+                if let Ok(sdk) = std::env::var("ANDROID_HOME") {
+                    sh.write_file("apps/android/local.properties", format!("sdk.dir={sdk}\n"))?;
+                }
                 cmd!(sh, "./apps/android/gradlew -p apps/android assembleDebug").run()?;
             } else {
                 eprintln!("android: gradle project not yet configured — workspace tests passed");

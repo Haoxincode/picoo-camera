@@ -58,6 +58,23 @@ fi
 
 install_lychee
 
+if [ "${PICOO_INSTALL_ANDROID:-0}" = "1" ]; then
+  if ! command -v unzip >/dev/null 2>&1; then
+    log "安装 unzip（Android SDK 需要）"
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq unzip
+  fi
+  # shellcheck source=/dev/null
+  source "$(dirname "$0")/../scripts/setup-android-sdk.sh"
+  if ! command -v cargo-ndk >/dev/null 2>&1; then
+    log "安装 cargo-ndk"
+    cargo install cargo-ndk --locked
+  fi
+  if command -v rustup >/dev/null 2>&1; then
+    rustup target add aarch64-linux-android >/dev/null 2>&1 || true
+  fi
+fi
+
 log "工具链版本汇总"
 rustc --version
 cargo --version

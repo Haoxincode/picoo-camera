@@ -1,0 +1,10 @@
+/local.properties
+/.gradle/
+/build/
+/app/build/
+/app/src/main/jniLibs/
+*.iml
+.idea/
+.DS_Store
+/captures/
+.cxx/
