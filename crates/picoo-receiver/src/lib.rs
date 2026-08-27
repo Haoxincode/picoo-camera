@@ -6,7 +6,10 @@
 use std::time::Duration;
 
 use bytes::Bytes;
-use picoo_frame_hub::{FrameHub, FrameSlot};
+use picoo_frame_hub::{
+    waiting_placeholder, FrameHub, FrameSlot, SharedFrameRingProducer, PLACEHOLDER_HEIGHT,
+    PLACEHOLDER_WIDTH,
+};
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::{PairingError, TrustedDeviceStore};
 use picoo_protocol::control::{ClientHello, ServerHello};
@@ -30,6 +33,8 @@ pub enum ReceiverError {
     Pairing(#[from] PairingError),
     #[error("protocol: {0}")]
     Protocol(String),
+    #[error("shared ring: {0}")]
+    SharedRing(#[from] picoo_frame_hub::SharedRingError),
     #[error("not listening")]
     NotListening,
     #[error("loopback timeout")]
@@ -79,6 +84,7 @@ pub struct ReceiverSession {
     status: ReceiverStatus,
     stats: ReceiverStats,
     permit_unpaired_video: bool,
+    shared_ring: Option<SharedFrameRingProducer>,
 }
 
 impl Default for ReceiverSession {
@@ -99,7 +105,31 @@ impl ReceiverSession {
             status: ReceiverStatus::Disconnected,
             stats: ReceiverStats::default(),
             permit_unpaired_video: false,
+            shared_ring: None,
         }
+    }
+
+    /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
+    pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
+        let ring = SharedFrameRingProducer::open_or_create(
+            name,
+            picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+        )?;
+        self.shared_ring = Some(ring);
+        self.publish_waiting_placeholder()?;
+        Ok(())
+    }
+
+    pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
+        let nv12 = waiting_placeholder();
+        self.publish_nv12_frame(
+            PLACEHOLDER_WIDTH,
+            PLACEHOLDER_HEIGHT,
+            PLACEHOLDER_WIDTH,
+            0,
+            0,
+            &nv12,
+        )
     }
 
     pub fn with_identity(mut self, identity: ReceiverIdentity) -> Self {
@@ -170,6 +200,7 @@ impl ReceiverSession {
                     self.status = ReceiverStatus::Disconnected;
                     self.active_sender = None;
                     self.reassembly = ReassemblyMap::new(8, 16);
+                    let _ = self.publish_waiting_placeholder();
                 }
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
@@ -246,12 +277,43 @@ impl ReceiverSession {
         self.active_sender = None;
     }
 
-    /// Placeholder decode path: store H.264 access unit bytes until MF/VT decoder lands.
+    /// Placeholder decode path: store NV12 until MF/VT H.264 decoder lands.
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
         self.stats.access_units += 1;
+        // Until MF decoder exists, treat small loopback payloads as opaque test bytes mapped into NV12 buffer.
+        let nv12 = if access_unit.len() <= 64 {
+            let mut frame = waiting_placeholder();
+            let copy_len = access_unit.len().min(frame.len());
+            frame[..copy_len].copy_from_slice(&access_unit[..copy_len]);
+            frame
+        } else {
+            access_unit.to_vec()
+        };
+        self.publish_nv12_frame(1280, 720, 1280, 0, self.stats.access_units, &nv12)
+    }
+
+    fn publish_nv12_frame(
+        &mut self,
+        width: u32,
+        height: u32,
+        stride: u32,
+        rotation: u32,
+        timestamp_us: u64,
+        nv12: &[u8],
+    ) -> Result<(), ReceiverError> {
         let index = self.frame_hub.begin_write()?;
-        self.frame_hub
-            .commit_write(index, 1280, 720, 1280, 0, 0, access_unit);
+        self.frame_hub.commit_write(
+            index,
+            width,
+            height,
+            stride,
+            rotation,
+            timestamp_us,
+            Bytes::copy_from_slice(nv12),
+        );
+        if let Some(ring) = self.shared_ring.as_mut() {
+            ring.publish_nv12(width, height, stride, rotation, timestamp_us, nv12)?;
+        }
         Ok(())
     }
 

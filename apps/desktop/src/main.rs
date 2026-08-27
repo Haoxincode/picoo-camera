@@ -56,6 +56,10 @@ fn run_serve_mode() {
     let identity = ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
 
+    if let Err(err) = receiver.attach_shared_ring("picoo-camera-v1") {
+        eprintln!("Shared Frame Ring unavailable: {err}");
+    }
+
     let bind = match receiver.listen(Endpoint {
         host: "0.0.0.0".into(),
         port: 0,
