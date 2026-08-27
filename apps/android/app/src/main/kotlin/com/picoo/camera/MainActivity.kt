@@ -724,19 +724,9 @@ private fun SenderHomeScreen(
                             null
                         }
                         val statusLabel = if (senderHandle != 0L) {
-                            when (PicooNative.getSenderStatus(senderHandle)) {
-                                5 -> "Streaming"
-                                6 -> "Reconnecting"
-                                4 -> "Negotiating"
-                                3 -> "Connecting"
-                                2 -> "Pairing"
-                                1 -> "Discovering"
-                                7 -> "PermissionRequired"
-                                8 -> "NetworkUnstable"
-                                else -> "Disconnected"
-                            }
+                            PicooNative.statusLabel(PicooNative.getSenderStatus(senderHandle))
                         } else {
-                            "Disconnected"
+                            PicooNative.statusLabel(PicooNative.STATUS_DISCONNECTED)
                         }
                         val peer = listOf(hostText, portText)
                             .filter { it.isNotBlank() }

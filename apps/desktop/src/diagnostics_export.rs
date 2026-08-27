@@ -63,7 +63,7 @@ fn build_diagnostics_json(
         exported_at_ms: now_ms,
         session: Some(DiagnosticSessionSnapshot {
             role: "receiver".into(),
-            status: format!("{status:?}"),
+            status: status.as_label().into(),
             access_units: ingress.access_units,
             packets: ingress.packets_received,
             packets_dropped_unpaired: ingress.packets_dropped_unpaired,
