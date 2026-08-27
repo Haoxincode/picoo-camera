@@ -90,10 +90,9 @@ impl PicooDesktopApp {
         self.runtime.snapshot()
     }
 
-    /// Close-button policy from settings (REQ-PICOO-UI-008). Win32 notify icon still pending.
-    #[allow(dead_code)] // consulted when window-close / Shell_NotifyIcon hook lands.
-    fn close_action(&self) -> crate::tray::CloseAction {
-        self.tray_policy.on_close_requested()
+    /// Close-button policy from settings (REQ-PICOO-UI-008).
+    fn close_outcome(&self) -> crate::tray::CloseOutcome {
+        self.tray_policy.close_outcome()
     }
 
     fn ensure_qr_image(&mut self, snapshot: &ReceiverSnapshot) {
@@ -790,6 +789,20 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 });
                 let view = cx.new(|_| {
                     PicooDesktopApp::new(runtime, prefs_for_window, display_name_input, vcam_status)
+                });
+                // REQ-PICOO-UI-008: close → tray hide (or quit) from Settings preference.
+                let tray_view = view.clone();
+                window.on_window_should_close(cx, move |window, cx| {
+                    let outcome = tray_view.read(cx).close_outcome();
+                    if outcome.hide_to_tray {
+                        crate::tray::note_hidden_to_tray();
+                        // App-level hide keeps the process; minimize covers hosts
+                        // where hide() is a no-op until Shell_NotifyIcon lands.
+                        cx.hide();
+                        window.minimize_window();
+                        return false;
+                    }
+                    outcome.allow_close
                 });
                 cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
             },
