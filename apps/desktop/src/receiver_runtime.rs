@@ -296,6 +296,7 @@ impl ReceiverRuntime {
         self.receiver.remove_trusted_device(device_id)
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
         self.receiver.clear_trusted_devices()
     }
