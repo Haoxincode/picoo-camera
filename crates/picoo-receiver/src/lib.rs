@@ -140,6 +140,8 @@ pub struct ReceiverSession {
     ingress: IngressStats,
     stats_reporter: StatsReporter,
     permit_unpaired_video: bool,
+    /// When true (default), already-trusted senders skip short-code confirm (PUC-002).
+    auto_accept_paired: bool,
     shared_ring: Option<SharedFrameRingProducer>,
     current_stream_config: Option<StreamConfig>,
     receiver_capabilities_sent: Option<()>,
@@ -178,6 +180,7 @@ impl ReceiverSession {
             ingress: IngressStats::default(),
             stats_reporter: StatsReporter::new(),
             permit_unpaired_video: false,
+            auto_accept_paired: true,
             shared_ring: None,
             current_stream_config: None,
             receiver_capabilities_sent: None,
@@ -282,6 +285,15 @@ impl ReceiverSession {
     /// Test/loopback helper — production receivers keep the default `false`.
     pub fn set_permit_unpaired_video(&mut self, permit: bool) {
         self.permit_unpaired_video = permit;
+    }
+
+    /// Auto-accept already-trusted senders without short-code (REQ-PICOO-UI-002 / PRD §16).
+    pub fn set_auto_accept_paired(&mut self, enabled: bool) {
+        self.auto_accept_paired = enabled;
+    }
+
+    pub fn auto_accept_paired(&self) -> bool {
+        self.auto_accept_paired
     }
 
     pub fn status(&self) -> ReceiverStatus {
@@ -625,17 +637,18 @@ impl ReceiverSession {
             .trusted
             .verify_paired_key(&hello.sender_id, &hello.public_key)
             .is_ok();
+        let auto_accept = paired && self.auto_accept_paired;
 
         let server_hello = ServerHello {
             receiver_id: self.identity.receiver_id.clone(),
             display_name: self.identity.display_name.clone(),
             protocol_version: ALPN.into(),
             public_key: self.identity.public_key.clone(),
-            pairing_required: !paired,
+            pairing_required: !auto_accept,
         };
         self.send_control_message(session, &server_hello)?;
 
-        if paired {
+        if auto_accept {
             self.trusted
                 .touch_last_connected(&hello.sender_id, self.now_ms());
             self.persist_trusted()?;

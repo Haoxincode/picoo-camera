@@ -157,13 +157,22 @@ impl ReceiverRuntime {
             }
             config.identity = receiver_identity_from_device(&identity);
         }
-        Self::start(config)
+        let mut runtime = Self::start(config)?;
+        runtime
+            .receiver
+            .set_auto_accept_paired(prefs.auto_accept_paired);
+        Ok(runtime)
     }
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_display_name(&mut self, name: String) {
         self.display_name = name.clone();
         self.receiver.set_display_name(name);
+    }
+
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+    pub fn set_auto_accept_paired(&mut self, enabled: bool) {
+        self.receiver.set_auto_accept_paired(enabled);
     }
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]

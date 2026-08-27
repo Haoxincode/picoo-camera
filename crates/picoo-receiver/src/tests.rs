@@ -185,6 +185,68 @@ fn paired_sender_enters_streaming_after_client_hello() {
 }
 
 #[test]
+fn auto_accept_paired_off_requires_confirm_for_trusted_sender() {
+    // PRD §16 / REQ-PICOO-UI-002: toggling off forces short-code even for trusted devices.
+    let mut receiver = ReceiverSession::new();
+    receiver.set_auto_accept_paired(false);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
+        .expect("hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    assert!(receiver.pairing_short_code().is_some());
+    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender
+        .ingest_and_flush(b"blocked-until-confirm", true, 1, 1)
+        .expect("send");
+    receiver.pump().expect("rx");
+    assert_eq!(receiver.stats().access_units, 0);
+}
+
+#[test]
 fn first_time_pairing_flow_enables_video() {
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());

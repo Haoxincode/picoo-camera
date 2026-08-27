@@ -460,6 +460,7 @@ impl PicooDesktopApp {
                             .label("自动接受已配对设备")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.auto_accept_paired = *checked;
+                                this.runtime.set_auto_accept_paired(*checked);
                                 let _ = this.persist_prefs();
                                 cx.notify();
                             })),
