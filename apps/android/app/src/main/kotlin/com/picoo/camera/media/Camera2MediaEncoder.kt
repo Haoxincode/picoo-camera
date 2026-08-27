@@ -37,6 +37,12 @@ class Camera2MediaEncoder(
     override var streamEpoch: Int = 1
         private set
 
+    override var exposureCompensation: Int = 0
+        private set
+
+    override var exposureCompensationRange: IntRange = IntRange.EMPTY
+        private set
+
     private val _state = AtomicReference(CaptureState.Idle)
     override val state: CaptureState
         get() = _state.get()
@@ -81,6 +87,13 @@ class Camera2MediaEncoder(
 
     override fun requestKeyFrame() {
         requestSyncFrame()
+    }
+
+    override fun setExposureCompensation(index: Int) {
+        val clamped = ExposureCompensation.clamp(index, exposureCompensationRange)
+        if (clamped == exposureCompensation) return
+        exposureCompensation = clamped
+        reissueRepeatingRequest()
     }
 
     override fun bindPreviewSurface(surface: Surface) {
@@ -153,10 +166,32 @@ class Camera2MediaEncoder(
         }
         selectedCameraId = cameraId
         captureSize = chooseCaptureSize(cameraId, profile.resolution)
+        refreshExposureRange(cameraId)
 
         runCatching {
             cameraManager.openCamera(cameraId, cameraStateCallback, cameraHandler)
         }.onFailure { fail("openCamera failed: ${it.message}") }
+    }
+
+    private fun refreshExposureRange(cameraId: String) {
+        val characteristics = runCatching {
+            cameraManager.getCameraCharacteristics(cameraId)
+        }.getOrNull() ?: run {
+            exposureCompensationRange = IntRange.EMPTY
+            return
+        }
+        val range = characteristics.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE)
+        exposureCompensationRange = if (range == null) {
+            IntRange.EMPTY
+        } else {
+            range.lower..range.upper
+        }
+        if (!exposureCompensationRange.isEmpty()) {
+            exposureCompensation = exposureCompensation.coerceIn(
+                exposureCompensationRange.first,
+                exposureCompensationRange.last,
+            )
+        }
     }
 
     private val cameraStateCallback = object : CameraDevice.StateCallback() {
@@ -227,10 +262,24 @@ class Camera2MediaEncoder(
                 codecInputSurface?.let { addTarget(it) }
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(profile.targetFps, profile.targetFps))
+                if (!exposureCompensationRange.isEmpty()) {
+                    set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposureCompensation)
+                }
             }.build()
         }.getOrElse {
             fail("CaptureRequest failed: ${it.message}")
             null
+        }
+    }
+
+    private fun reissueRepeatingRequest() {
+        val camera = cameraDevice ?: return
+        val session = captureSession ?: return
+        val request = buildCaptureRequest(camera, session) ?: return
+        runCatching {
+            session.setRepeatingRequest(request, null, cameraHandler)
+        }.onFailure {
+            lastError = "exposure update failed: ${it.message}"
         }
     }
 

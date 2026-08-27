@@ -28,6 +28,10 @@ interface CameraCaptureController {
     val state: CaptureState
     val profile: CaptureProfile
     val streamEpoch: Int
+    /** Current AE exposure compensation index (device units). */
+    val exposureCompensation: Int
+    /** Inclusive range supported by the active camera; empty if unknown. */
+    val exposureCompensationRange: IntRange
 
     fun bindPreviewSurface(surface: Surface)
     fun unbindPreviewSurface()
@@ -37,4 +41,6 @@ interface CameraCaptureController {
     fun setResolution(width: Int, height: Int)
     fun setTargetBitrateBps(bitrateBps: Int)
     fun requestKeyFrame()
+    /** Clamp and apply AE exposure compensation (PUC-005). */
+    fun setExposureCompensation(index: Int)
 }

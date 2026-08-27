@@ -772,6 +772,26 @@ private fun SenderHomeScreen(
                             Text("Refresh stats")
                         }
                     }
+                    val evRange = encoder.exposureCompensationRange
+                    if (!evRange.isEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("EV ${encoder.exposureCompensation}", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = {
+                                encoder.setExposureCompensation(encoder.exposureCompensation - 1)
+                            }) {
+                                Text("EV -")
+                            }
+                            Button(onClick = {
+                                encoder.setExposureCompensation(encoder.exposureCompensation + 1)
+                            }) {
+                                Text("EV +")
+                            }
+                        }
+                    }
                     Text(text = "State: $encoderState", style = MaterialTheme.typography.bodySmall)
                     Text(text = statsText, style = MaterialTheme.typography.bodySmall)
                     errorText?.let {
