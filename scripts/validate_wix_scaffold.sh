@@ -51,6 +51,9 @@ need "$WXS" 'Component Id="VcamDll"'
 need "$WXS" 'Component Id="RingReader"'
 # LAN QUIC firewall exception scaffolding (PRD §19.3)
 need "$WXS" 'FirewallException'
+need "$WXS" 'xmlns:fw='
+need "$WXS" 'fw:FirewallException'
+need "$WXS" 'Port="4433"'
 need "$WXS" 'Picoo Camera QUIC'
 need "$WXS" 'Protocol="udp"'
 

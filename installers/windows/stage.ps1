@@ -38,6 +38,9 @@ if ($null -ne $VcamDll) {
     Copy-Item -Force $VcamDll (Join-Path $Bundle "PicooVirtualCameraSource.dll")
     Write-Host "Staged PicooVirtualCameraSource.dll"
 } else {
+    if ($env:PICOO_REQUIRE_MSI -eq "1") {
+        Write-Error "PicooVirtualCameraSource.dll not found (PICOO_REQUIRE_MSI=1)"
+    }
     Write-Warning "PicooVirtualCameraSource.dll not found - mf-source CMake build skipped or failed"
 }
 

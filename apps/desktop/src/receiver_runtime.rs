@@ -7,8 +7,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use picoo_discovery::{
-    generate_nonce, MdnsAdvertiser, PairingState, QrConnectPayload, ReceiverAdvertisement,
-    DEFAULT_QR_TTL_MS,
+    generate_nonce, local_advertise_host, MdnsAdvertiser, PairingState, QrConnectPayload,
+    ReceiverAdvertisement, DEFAULT_QR_TTL_MS, DEFAULT_QUIC_PORT,
 };
 use picoo_pairing::{public_key_fingerprint, public_key_fingerprint_prefix, DeviceIdentity};
 use picoo_protocol::control::{CameraCommand, StreamConfig};
@@ -83,6 +83,8 @@ pub struct ReceiverRuntime {
     #[allow(dead_code)]
     mdns: Option<MdnsAdvertiser>,
     bind_addr: Option<SocketAddr>,
+    /// Unicast IPv4 advertised in mDNS / QR (never 0.0.0.0 / 127.0.0.1).
+    advertise_host: String,
     qr_json: Option<String>,
     qr_ascii: Option<String>,
     /// Wall-clock expiry of the currently advertised QR payload.
@@ -104,8 +106,16 @@ impl ReceiverRuntime {
 
         let bind = receiver.listen(Endpoint {
             host: config.bind_host,
-            port: 0,
+            // Stable port matches WiX FirewallException (REQ-PICOO-VCAM-004).
+            port: DEFAULT_QUIC_PORT,
         })?;
+
+        let advertise_host = local_advertise_host().unwrap_or_else(|| {
+            tracing::warn!(
+                "no LAN IPv4 for mDNS/QR; falling back to 127.0.0.1 (phones on LAN will not connect)"
+            );
+            "127.0.0.1".into()
+        });
 
         let mut mdns = match MdnsAdvertiser::new() {
             Ok(advertiser) => Some(advertiser),
@@ -128,25 +138,31 @@ impl ReceiverRuntime {
         ));
 
         if let Some(advertiser) = mdns.as_mut() {
-            if let Err(err) = advertiser.register("127.0.0.1", &advertisement) {
+            if let Err(err) = advertiser.register(&advertise_host, &advertisement) {
                 tracing::warn!("mDNS register failed: {err}");
             } else {
                 tracing::info!(
-                    "mDNS advertising {} on port {} ({})",
+                    "mDNS advertising {} at {}:{} ({})",
                     advertisement.display_name,
+                    advertise_host,
                     bind.port(),
                     advertisement.pairing_state.as_str()
                 );
             }
         }
 
-        let (qr_json, qr_ascii, qr_expires_at_ms) =
-            build_qr_payload(&config.identity, bind, &mut receiver);
+        let (qr_json, qr_ascii, qr_expires_at_ms) = build_qr_payload(
+            &config.identity,
+            &advertise_host,
+            bind.port(),
+            &mut receiver,
+        );
 
         Ok(Self {
             receiver,
             mdns,
             bind_addr: Some(bind),
+            advertise_host,
             qr_json,
             qr_ascii,
             qr_expires_at_ms,
@@ -215,12 +231,13 @@ impl ReceiverRuntime {
             fingerprint_prefix,
         )
         .with_pairing_state(pairing_state);
-        if let Err(err) = advertiser.register("127.0.0.1", &advertisement) {
+        if let Err(err) = advertiser.register(&self.advertise_host, &advertisement) {
             tracing::warn!("mDNS re-advertise failed: {err}");
         } else {
             tracing::info!(
-                "mDNS re-advertising {} on port {} ({})",
+                "mDNS re-advertising {} at {}:{} ({})",
                 advertisement.display_name,
+                self.advertise_host,
                 bind.port(),
                 advertisement.pairing_state.as_str()
             );
@@ -288,7 +305,12 @@ impl ReceiverRuntime {
             display_name: self.display_name.clone(),
             public_key: self.receiver.identity().public_key.clone(),
         };
-        let (qr_json, qr_ascii, expires) = build_qr_payload(&identity, bind, &mut self.receiver);
+        let (qr_json, qr_ascii, expires) = build_qr_payload(
+            &identity,
+            &self.advertise_host,
+            bind.port(),
+            &mut self.receiver,
+        );
         self.qr_json = qr_json;
         self.qr_ascii = qr_ascii;
         self.qr_expires_at_ms = expires;
@@ -382,7 +404,8 @@ impl ReceiverRuntime {
 
 fn build_qr_payload(
     identity: &ReceiverIdentity,
-    bind: SocketAddr,
+    advertise_host: &str,
+    quic_port: u16,
     receiver: &mut ReceiverSession,
 ) -> (Option<String>, Option<String>, u64) {
     let now_ms = std::time::SystemTime::now()
@@ -392,8 +415,8 @@ fn build_qr_payload(
     let fingerprint = public_key_fingerprint(&identity.public_key);
     let nonce = generate_nonce();
     let qr = QrConnectPayload::new(
-        bind.ip().to_string(),
-        bind.port(),
+        advertise_host.to_string(),
+        quic_port,
         identity.receiver_id.clone(),
         fingerprint,
         nonce.clone(),
