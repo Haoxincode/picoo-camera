@@ -2695,3 +2695,177 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     }
     assert!(recovered, "FrameHub did not recover after RequestKeyframe IDR");
 }
+
+#[cfg(not(windows))]
+#[test]
+fn abr_downshift_updates_stream_config_and_framehub() {
+    // REQ-PICOO-MEDIA-010: sustained congestion → DownshiftResolution → 720p StreamConfig → FrameHub.
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_packet::extract_sps_pps;
+    use picoo_pairing::TrustedDevice;
+    use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+    use prost::Message;
+
+    fn encode_pattern(w: usize, h: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut planes = vec![128u8; w * h * 3 / 2];
+        for y in 0..h {
+            for x in 0..w {
+                planes[y * w + x] = ((x as u8).wrapping_mul(3).wrapping_add(y as u8).wrapping_add(seed)) % 200 + 20;
+            }
+        }
+        let yuv = YUVBuffer::from_vec(planes, w, h);
+        let mut encoder = Encoder::new().expect("encoder");
+        let annex = encoder.encode(&yuv).expect("encode").to_vec();
+        let (sps, pps) = extract_sps_pps(&annex).expect("sps/pps");
+        (annex, sps, pps)
+    }
+
+    let (au_hi, sps_hi, pps_hi) = encode_pattern(320, 240, 1);
+    let (au_lo, sps_lo, pps_lo) = encode_pattern(160, 120, 9);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "abr-phone".into(),
+        device_name: "Abr".into(),
+        public_key: vec![5, 5, 5],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("abr-phone", "Abr", &[5, 5, 5])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert_eq!(sender.bitrate_active_height(), 1080);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        bitrate_bps: 6_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_hi,
+        pps: pps_hi,
+    });
+    for _ in 0..40 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.ingest_and_flush(&au_hi, true, 1, 1).expect("hi");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.latest_frame().is_some_and(|f| f.width == 320) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.latest_frame().is_some_and(|f| f.width == 320));
+
+    // Sustained congestion → ABR downshift hint (same path Android MainActivity polls).
+    let mut downshifted = false;
+    for _ in 0..40 {
+        let stats = ReceiverStatsMsg {
+            packet_loss: 0.05,
+            frame_age_ms: 250.0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        stats.encode(&mut buf).expect("encode");
+        sender
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        if sender.take_resolution_downshift() {
+            downshifted = true;
+            break;
+        }
+    }
+    assert!(downshifted, "ABR must request resolution downshift");
+    assert_eq!(sender.bitrate_active_height(), 720);
+
+    // Apply 720p StreamConfig + smaller AU (Android would call encoder.setResolution).
+    // Must work while status is NetworkUnstable (congestion path) — REQ-PICOO-MEDIA-010.
+    let cfg_lo = StreamConfigParams {
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 2,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_lo,
+        pps: pps_lo,
+    };
+    sender.set_stream_config(cfg_lo.clone());
+    for _ in 0..80 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent()
+            && receiver.stream_config().is_some_and(|c| c.height == 720)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        receiver.stream_config().map(|c| (c.width, c.height)),
+        Some((1280, 720)),
+        "StreamConfig must be 1280x720 after ABR apply"
+    );
+    sender.ingest_and_flush(&au_lo, true, 2, 2).expect("lo");
+    let mut ok = false;
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.width == 160 && frame.height == 120 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(160, 120));
+                ok = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(ok, "FrameHub must show post-downshift frames");
+}
