@@ -20,7 +20,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.text.input.KeyboardType
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -86,8 +90,37 @@ private fun SenderHomeScreen(
     var encoderState by remember { mutableStateOf(CaptureState.Idle) }
     var statsText by remember { mutableStateOf("") }
     var errorText by remember { mutableStateOf<String?>(null) }
+    var hostText by remember { mutableStateOf("127.0.0.1") }
+    var portText by remember { mutableStateOf("4433") }
+    var senderStatus by remember { mutableIntStateOf(PicooNative.STATUS_DISCONNECTED) }
+    var pairingCode by remember { mutableStateOf("") }
+    var discoveredReceivers by remember { mutableStateOf("") }
 
     val senderHandle = remember { PicooNative.createSender() }
+    val browserHandle = remember { PicooNative.createDiscoveryBrowser() }
+
+    LaunchedEffect(senderHandle, browserHandle) {
+        while (true) {
+            if (senderHandle != 0L) {
+                PicooNative.pump(senderHandle)
+                senderStatus = PicooNative.getSenderStatus(senderHandle)
+                pairingCode = PicooNative.getPairingShortCode(senderHandle)
+            }
+            if (browserHandle != 0L) {
+                PicooNative.pollDiscoveryBrowser(browserHandle, 200)
+                val count = PicooNative.getDiscoveryCount(browserHandle)
+                discoveredReceivers = buildString {
+                    for (index in 0 until count) {
+                        val receiver = PicooNative.getDiscoveredReceiver(browserHandle, index)
+                        if (receiver != null) {
+                            append("${receiver.displayName} (${receiver.host}:${receiver.quicPort})\n")
+                        }
+                    }
+                }.trim()
+            }
+            delay(500)
+        }
+    }
 
     val encoder = remember {
         Camera2MediaEncoder(
@@ -111,9 +144,12 @@ private fun SenderHomeScreen(
         )
     }
 
-    DisposableEffect(encoder, senderHandle) {
+    DisposableEffect(encoder, senderHandle, browserHandle) {
         onDispose {
             encoder.close()
+            if (browserHandle != 0L) {
+                PicooNative.destroyDiscoveryBrowser(browserHandle)
+            }
             if (senderHandle != 0L) {
                 PicooNative.destroySender(senderHandle)
             }
@@ -131,6 +167,64 @@ private fun SenderHomeScreen(
             style = MaterialTheme.typography.headlineSmall,
         )
         Text(text = "Protocol: $protocolVersion", style = MaterialTheme.typography.bodyMedium)
+        Text(
+            text = "Session: ${PicooNative.statusLabel(senderStatus)}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (pairingCode.isNotEmpty()) {
+            Text(text = "Pairing code: $pairingCode", style = MaterialTheme.typography.bodyLarge)
+        }
+        if (discoveredReceivers.isNotEmpty()) {
+            Text(text = "Discovered:\n$discoveredReceivers", style = MaterialTheme.typography.bodySmall)
+        }
+
+        OutlinedTextField(
+            value = hostText,
+            onValueChange = { hostText = it },
+            label = { Text("Receiver host") },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = portText,
+            onValueChange = { portText = it },
+            label = { Text("QUIC port") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = {
+                val port = portText.toIntOrNull() ?: return@Button
+                PicooNative.setStreamConfig(
+                    senderHandle,
+                    width = 1280,
+                    height = 720,
+                    fps = 30,
+                    bitrateBps = 6_000_000,
+                    streamEpoch = encoder.streamEpoch,
+                    mirrored = false,
+                )
+                val rc = PicooNative.connect(senderHandle, hostText.trim(), port)
+                if (rc == 0) {
+                    PicooNative.sendClientHello(
+                        senderHandle,
+                        senderId = "android-sender",
+                        deviceName = android.os.Build.MODEL,
+                        publicKey = byteArrayOf(1, 2, 3),
+                    )
+                    errorText = null
+                } else {
+                    errorText = "Connect failed: $rc"
+                }
+            }) {
+                Text("Connect")
+            }
+            Button(onClick = {
+                val rc = PicooNative.sendPairingConfirm(senderHandle, "windows-receiver")
+                errorText = if (rc == 0) null else "Pairing confirm failed: $rc"
+            }) {
+                Text("Confirm pairing")
+            }
+        }
 
         if (cameraGranted) {
             CameraPreviewSurface(

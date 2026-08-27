@@ -2,15 +2,49 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use picoo_sender::{SenderSession, SessionStats};
-use picoo_session::ReceiverStatus;
+use picoo_discovery::MdnsBrowser;
+use picoo_sender::{SenderSession, SessionStats, StreamConfigParams};
+use picoo_session::SenderStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
 use std::ffi::CStr;
 use std::sync::Mutex;
+use std::time::Duration;
 
 /// Opaque handle placeholder for future session context.
 pub struct PicooSessionHandle {
-    pub status: ReceiverStatus,
+    pub status: picoo_session::ReceiverStatus,
+}
+
+struct BrowserInner {
+    browser: Mutex<MdnsBrowser>,
+    receivers: Mutex<Vec<PicooDiscoveredReceiver>>,
+}
+
+fn sender_status_code(status: SenderStatus) -> i32 {
+    match status {
+        SenderStatus::Disconnected => 0,
+        SenderStatus::Discovering => 1,
+        SenderStatus::Pairing => 2,
+        SenderStatus::Connecting => 3,
+        SenderStatus::Negotiating => 4,
+        SenderStatus::Streaming => 5,
+        SenderStatus::Reconnecting => 6,
+        SenderStatus::PermissionRequired => 7,
+        SenderStatus::NetworkUnstable => 8,
+    }
+}
+
+fn copy_str_to_buf(value: &str, out: *mut std::ffi::c_char, out_len: usize) -> i32 {
+    if out.is_null() || out_len == 0 {
+        return -1;
+    }
+    let bytes = value.as_bytes();
+    let copy_len = bytes.len().min(out_len.saturating_sub(1));
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
+        *out.add(copy_len) = 0;
+    }
+    copy_len as i32
 }
 
 struct SenderInner {
@@ -167,6 +201,267 @@ pub extern "C" fn picoo_sender_pending_packets(handle: *mut std::ffi::c_void) ->
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
     inner.session.lock().expect("sender lock").pending_packets() as u64
+}
+
+/// Current sender session status (see `PicooSenderStatus` values).
+#[no_mangle]
+pub extern "C" fn picoo_sender_status(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return sender_status_code(SenderStatus::Disconnected);
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    sender_status_code(inner.session.lock().expect("sender lock").status())
+}
+
+/// Send ClientHello after QUIC connect (PUC-001).
+#[no_mangle]
+pub extern "C" fn picoo_sender_send_client_hello(
+    handle: *mut std::ffi::c_void,
+    sender_id: *const std::ffi::c_char,
+    device_name: *const std::ffi::c_char,
+    public_key: *const u8,
+    public_key_len: usize,
+) -> i32 {
+    if handle.is_null() || sender_id.is_null() || device_name.is_null() {
+        return -1;
+    }
+    let sender_id = unsafe { CStr::from_ptr(sender_id) }.to_string_lossy();
+    let device_name = unsafe { CStr::from_ptr(device_name) }.to_string_lossy();
+    let key = if public_key.is_null() || public_key_len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(public_key, public_key_len) }
+    };
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    match inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .send_client_hello(&sender_id, &device_name, key)
+    {
+        Ok(()) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// Send PairingConfirm after desktop confirms six-digit code.
+#[no_mangle]
+pub extern "C" fn picoo_sender_send_pairing_confirm(
+    handle: *mut std::ffi::c_void,
+    receiver_id: *const std::ffi::c_char,
+) -> i32 {
+    if handle.is_null() || receiver_id.is_null() {
+        return -1;
+    }
+    let receiver_id = unsafe { CStr::from_ptr(receiver_id) }.to_string_lossy();
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    match inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .send_pairing_confirm(&receiver_id)
+    {
+        Ok(()) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// Copy pairing short code into `out` buffer. Returns length, 0 if none, negative on error.
+#[no_mangle]
+pub extern "C" fn picoo_sender_pairing_short_code(
+    handle: *mut std::ffi::c_void,
+    out: *mut std::ffi::c_char,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let session = inner.session.lock().expect("sender lock");
+    match session.pairing_short_code() {
+        Some(code) => copy_str_to_buf(code, out, out_len),
+        None => 0,
+    }
+}
+
+/// Configure stream parameters before/at streaming (PUC-005).
+#[no_mangle]
+pub extern "C" fn picoo_sender_set_stream_config(
+    handle: *mut std::ffi::c_void,
+    width: u32,
+    height: u32,
+    fps: u32,
+    bitrate_bps: u32,
+    stream_epoch: u32,
+    mirrored: u8,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .set_stream_config(StreamConfigParams {
+            width,
+            height,
+            fps,
+            bitrate_bps,
+            stream_epoch,
+            mirrored: mirrored != 0,
+            ..StreamConfigParams::default()
+        });
+    0
+}
+
+/// Current adaptive bitrate in bps.
+#[no_mangle]
+pub extern "C" fn picoo_sender_current_bitrate_bps(handle: *mut std::ffi::c_void) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .current_bitrate_bps()
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PicooDiscoveredReceiver {
+    pub receiver_id: [u8; 64],
+    pub display_name: [u8; 64],
+    pub host: [u8; 64],
+    pub quic_port: u16,
+}
+
+fn write_field(buf: &mut [u8], value: &str) {
+    let bytes = value.as_bytes();
+    let copy_len = bytes.len().min(buf.len().saturating_sub(1));
+    buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+    if copy_len < buf.len() {
+        buf[copy_len] = 0;
+    }
+}
+
+/// Create mDNS browser for receiver discovery (PUC-002).
+#[no_mangle]
+pub extern "C" fn picoo_discovery_browser_create() -> *mut std::ffi::c_void {
+    match MdnsBrowser::new() {
+        Ok(browser) => Box::into_raw(Box::new(BrowserInner {
+            browser: Mutex::new(browser),
+            receivers: Mutex::new(Vec::new()),
+        })) as *mut std::ffi::c_void,
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_discovery_browser_destroy(handle: *mut std::ffi::c_void) {
+    if handle.is_null() {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut BrowserInner));
+    }
+}
+
+/// Poll mDNS events; refreshes cached receiver list.
+#[no_mangle]
+pub extern "C" fn picoo_discovery_browser_poll(
+    handle: *mut std::ffi::c_void,
+    timeout_ms: u32,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut BrowserInner) };
+    let mut browser = inner.browser.lock().expect("browser lock");
+    if browser
+        .poll(Duration::from_millis(timeout_ms as u64))
+        .is_err()
+    {
+        return -2;
+    }
+    let mut cached = inner.receivers.lock().expect("cache lock");
+    cached.clear();
+    for entry in browser.list() {
+        let mut item = PicooDiscoveredReceiver {
+            receiver_id: [0; 64],
+            display_name: [0; 64],
+            host: [0; 64],
+            quic_port: entry.advertisement.quic_port,
+        };
+        write_field(&mut item.receiver_id, &entry.advertisement.receiver_id);
+        write_field(&mut item.display_name, &entry.advertisement.display_name);
+        write_field(&mut item.host, &entry.host);
+        cached.push(item);
+    }
+    cached.len() as i32
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_discovery_browser_count(handle: *mut std::ffi::c_void) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut BrowserInner) };
+    inner.receivers.lock().expect("cache lock").len() as u32
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_discovery_browser_get(
+    handle: *mut std::ffi::c_void,
+    index: u32,
+    out: *mut PicooDiscoveredReceiver,
+) -> i32 {
+    if handle.is_null() || out.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut BrowserInner) };
+    let cached = inner.receivers.lock().expect("cache lock");
+    let Some(item) = cached.get(index as usize) else {
+        return -2;
+    };
+    unsafe {
+        *out = *item;
+    }
+    0
+}
+
+/// QR JSON connect payload parse helper — returns host/port/receiver_id or negative on error.
+#[no_mangle]
+pub extern "C" fn picoo_qr_connect_parse(
+    json: *const std::ffi::c_char,
+    out_host: *mut std::ffi::c_char,
+    out_host_len: usize,
+    out_port: *mut u16,
+    out_receiver_id: *mut std::ffi::c_char,
+    out_receiver_id_len: usize,
+) -> i32 {
+    if json.is_null() {
+        return -1;
+    }
+    let json = unsafe { CStr::from_ptr(json) }.to_string_lossy();
+    let payload = match picoo_discovery::QrConnectPayload::decode_json(&json) {
+        Ok(payload) => payload,
+        Err(_) => return -2,
+    };
+    if !out_port.is_null() {
+        unsafe {
+            *out_port = payload.port;
+        }
+    }
+    if copy_str_to_buf(&payload.host, out_host, out_host_len) < 0 {
+        return -3;
+    }
+    if copy_str_to_buf(&payload.receiver_id, out_receiver_id, out_receiver_id_len) < 0 {
+        return -3;
+    }
+    0
 }
 
 #[cfg(test)]

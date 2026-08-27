@@ -11,6 +11,14 @@ object PicooNative {
         System.loadLibrary("picoo_jni")
     }
 
+    const val STATUS_DISCONNECTED = 0
+    const val STATUS_DISCOVERING = 1
+    const val STATUS_PAIRING = 2
+    const val STATUS_CONNECTING = 3
+    const val STATUS_NEGOTIATING = 4
+    const val STATUS_STREAMING = 5
+    const val STATUS_RECONNECTING = 6
+
     /** Returns PCP/1 protocol version from Rust Core. */
     external fun getProtocolVersion(): String
 
@@ -41,12 +49,52 @@ object PicooNative {
 
     external fun pump(handle: Long): Int
 
+    external fun getSenderStatus(handle: Long): Int
+
+    external fun sendClientHello(
+        handle: Long,
+        senderId: String,
+        deviceName: String,
+        publicKey: ByteArray?,
+    ): Int
+
+    external fun sendPairingConfirm(handle: Long, receiverId: String): Int
+
+    external fun getPairingShortCode(handle: Long): String
+
+    external fun setStreamConfig(
+        handle: Long,
+        width: Int,
+        height: Int,
+        fps: Int,
+        bitrateBps: Int,
+        streamEpoch: Int,
+        mirrored: Boolean,
+    ): Int
+
+    external fun createDiscoveryBrowser(): Long
+
+    external fun destroyDiscoveryBrowser(handle: Long)
+
+    external fun pollDiscoveryBrowser(handle: Long, timeoutMs: Int): Int
+
+    external fun getDiscoveryCount(handle: Long): Int
+
+    external fun getDiscoveredReceiver(handle: Long, index: Int): DiscoveredReceiver?
+
     data class SenderStats(
         val accessUnits: Long,
         val packets: Long,
         val bytes: Long,
         val sentDatagrams: Long,
         val pendingPackets: Long,
+    )
+
+    data class DiscoveredReceiver(
+        val receiverId: String,
+        val displayName: String,
+        val host: String,
+        val quicPort: Int,
     )
 
     fun readSenderStats(handle: Long): SenderStats {
@@ -59,4 +107,15 @@ object PicooNative {
             pendingPackets = values.getOrElse(4) { 0 },
         )
     }
+
+    fun statusLabel(status: Int): String =
+        when (status) {
+            STATUS_DISCOVERING -> "Discovering"
+            STATUS_PAIRING -> "Pairing"
+            STATUS_CONNECTING -> "Connecting"
+            STATUS_NEGOTIATING -> "Negotiating"
+            STATUS_STREAMING -> "Streaming"
+            STATUS_RECONNECTING -> "Reconnecting"
+            else -> "Disconnected"
+        }
 }

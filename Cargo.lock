@@ -643,6 +643,7 @@ name = "picoo-ffi"
 version = "0.1.0"
 dependencies = [
  "cbindgen",
+ "picoo-discovery",
  "picoo-protocol",
  "picoo-sender",
  "picoo-session",

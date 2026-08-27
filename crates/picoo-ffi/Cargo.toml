@@ -9,6 +9,7 @@ license.workspace = true
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
+picoo-discovery.workspace = true
 picoo-protocol.workspace = true
 picoo-session.workspace = true
 picoo-sender.workspace = true
