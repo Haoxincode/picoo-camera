@@ -376,6 +376,8 @@ private fun SenderHomeScreen(
         -> true
         else -> false
     }
+    // PUC-005 / PRD FR-CAM-005: Streaming uses a dark low-brightness surface.
+    val dimForStreaming = senderTab == SenderTab.Streaming && keepScreenOn
     val view = LocalView.current
     androidx.compose.runtime.SideEffect {
         // REQ-PICOO-UI-005: prevent lock screen while actively streaming.
@@ -384,6 +386,18 @@ private fun SenderHomeScreen(
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         } else {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        window?.let { w ->
+            val attrs = w.attributes
+            val target = if (dimForStreaming) {
+                StreamingBrightness.DIMMED
+            } else {
+                WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            }
+            if (attrs.screenBrightness != target) {
+                attrs.screenBrightness = target
+                w.attributes = attrs
+            }
         }
     }
 
