@@ -3,6 +3,8 @@
 本清单用于在 **Windows 11 x86_64** 真机上验证 PUC-004 / PRD §21：安装后可在目标会议软件中选用「Picoo Camera」。
 
 > 状态：`proposed` → 全部勾选并附截图/录屏后改为 `verified`。
+>
+> **CI 不能替代本清单。** `windows-latest` 仅验证 MSI/DLL 产物与友好名称字符串嵌入（`scripts/verify_windows_bundle.ps1`）；会议软件枚举与画面必须在真机完成。
 
 ## 前置
 
@@ -31,3 +33,9 @@
 ## 证据
 
 将截图/录屏放入发布说明或本仓库 `docs/design-specs/verification/artifacts/`（勿提交含人脸的敏感素材）。
+
+## CI 可自动完成的前置（非本 REQ 关闭条件）
+
+- [x] MSI 由 `PICOO_REQUIRE_MSI=1` 强制产出
+- [x] DLL UTF-16 嵌入 `Picoo Camera`（`verify_windows_bundle.ps1`）
+- [ ] 真机安装后系统相机枚举（仍属人工）
