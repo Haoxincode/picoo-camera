@@ -63,6 +63,8 @@ pub struct SenderSession<T: PicooTransport> {
     stream_config_sent: bool,
     /// Receiver asked for IDR via EncoderCommand (REQ-PICOO-SESSION-003/004).
     keyframe_requested: bool,
+    /// ABR last rung: host should drop capture height (typically 1080→720).
+    resolution_downshift_requested: bool,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -93,6 +95,7 @@ impl<T: PicooTransport> SenderSession<T> {
             receiver_capabilities: None,
             stream_config_sent: false,
             keyframe_requested: false,
+            resolution_downshift_requested: false,
         }
     }
 
@@ -159,6 +162,16 @@ impl<T: PicooTransport> SenderSession<T> {
     pub fn take_keyframe_request(&mut self) -> bool {
         let pending = self.keyframe_requested;
         self.keyframe_requested = false;
+        pending
+    }
+
+    /// Consume ABR resolution downshift hint (REQ-PICOO-MEDIA-010 / PUC-006).
+    pub fn take_resolution_downshift(&mut self) -> bool {
+        let pending = self.resolution_downshift_requested;
+        self.resolution_downshift_requested = false;
+        if pending {
+            self.bitrate.acknowledge_resolution_downshift();
+        }
         pending
     }
 
@@ -314,6 +327,9 @@ impl<T: PicooTransport> SenderSession<T> {
             };
             self.last_receiver_stats = Some(metrics.clone());
             self.last_bitrate_action = self.bitrate.update(&metrics);
+            if self.last_bitrate_action == BitrateAction::DownshiftResolution {
+                self.resolution_downshift_requested = true;
+            }
             // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
             if matches!(
                 self.status,
@@ -729,6 +745,50 @@ mod tests {
         session.pump().expect("pump");
         assert_eq!(session.last_bitrate_action(), BitrateAction::Decrease);
         assert!(session.current_bitrate_bps() < DEFAULT_INITIAL_BITRATE_BPS);
+    }
+
+    #[test]
+    fn sustained_floor_congestion_requests_resolution_downshift() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        // Drive bitrate to the floor first.
+        for _ in 0..20 {
+            let stats = ReceiverStatsMsg {
+                packet_loss: 0.05,
+                frame_age_ms: 250.0,
+                ..Default::default()
+            };
+            let mut buf = Vec::new();
+            stats.encode(&mut buf).expect("encode");
+            session
+                .inject_control_for_test(bytes::Bytes::from(buf))
+                .expect("inject");
+        }
+        // Keep injecting while at floor until downshift fires.
+        let mut saw = false;
+        for _ in 0..10 {
+            let stats = ReceiverStatsMsg {
+                packet_loss: 0.05,
+                frame_age_ms: 250.0,
+                ..Default::default()
+            };
+            let mut buf = Vec::new();
+            stats.encode(&mut buf).expect("encode");
+            session
+                .inject_control_for_test(bytes::Bytes::from(buf))
+                .expect("inject");
+            if session.take_resolution_downshift() {
+                saw = true;
+                break;
+            }
+        }
+        assert!(saw, "expected resolution downshift after sustained floor congestion");
+        assert!(!session.take_resolution_downshift());
     }
 
     #[test]

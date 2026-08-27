@@ -446,6 +446,15 @@ private fun SenderHomeScreen(
                 if (PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                     encoder.requestKeyFrame()
                 }
+                if (PicooNative.takeResolutionDownshift(senderHandle) == 1 &&
+                    resolutionLabel != "720p"
+                ) {
+                    // PUC-006 last rung: sustained congestion → 1080p down to 720p.
+                    resolutionLabel = "720p"
+                    encoder.setResolution(1280, 720)
+                    streamConfigDirty.set(true)
+                    encoder.requestKeyFrame()
+                }
                 if (previousStatus == PicooNative.STATUS_RECONNECTING &&
                     senderStatus == PicooNative.STATUS_STREAMING
                 ) {

@@ -101,6 +101,9 @@ object PicooNative {
     /** 1 if receiver requested IDR (consumes flag). REQ-PICOO-SESSION-003. */
     external fun takeKeyframeRequest(handle: Long): Int
 
+    /** 1 if ABR asks to drop 1080p→720p (consumes flag). REQ-PICOO-MEDIA-010. */
+    external fun takeResolutionDownshift(handle: Long): Int
+
     /**
      * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
      * @return `[sps, pps]` or null when extraction fails.
