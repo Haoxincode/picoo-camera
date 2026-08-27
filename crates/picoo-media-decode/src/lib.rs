@@ -158,4 +158,42 @@ mod tests {
         assert_eq!(frame.width, 1280);
         assert_eq!(frame.height, 720);
     }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn openh264_decodes_length_prefixed_au() {
+        use openh264::encoder::Encoder;
+        use openh264::formats::YUVBuffer;
+        use picoo_packet::{length_prefixed_to_annex_b, split_annex_b_nals};
+
+        let width = 64usize;
+        let height = 64usize;
+        let mut planes = vec![128u8; width * height * 3 / 2];
+        for y in 0..height {
+            for x in 0..width {
+                planes[y * width + x] = ((x * 7 + y) % 200 + 20) as u8;
+            }
+        }
+        let yuv = YUVBuffer::from_vec(planes, width, height);
+        let mut encoder = Encoder::new().expect("encoder");
+        let annex = encoder.encode(&yuv).expect("encode").to_vec();
+        // Rebuild as MediaCodec-style length-prefixed AU.
+        let mut length_prefixed = Vec::new();
+        for nal in split_annex_b_nals(&annex) {
+            length_prefixed.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+            length_prefixed.extend_from_slice(nal);
+        }
+        assert!(
+            length_prefixed_to_annex_b(&length_prefixed).is_some(),
+            "fixture must look like AVCC AU"
+        );
+
+        let mut decoder = create_platform_decoder();
+        let frame = decoder
+            .decode_access_unit(&length_prefixed, None)
+            .expect("decode")
+            .expect("picture");
+        assert_eq!(frame.width, width as u32);
+        assert_eq!(frame.height, height as u32);
+    }
 }

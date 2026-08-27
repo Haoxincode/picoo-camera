@@ -41,6 +41,66 @@ pub fn annex_b_parameter_sets(sps: &[u8], pps: &[u8]) -> Vec<u8> {
     out
 }
 
+/// True when `data` is a complete 4-byte length-prefixed (AVCC-style) access unit.
+///
+/// Android MediaCodec H.264 elementary buffers commonly use this layout.
+/// Note: NAL payloads may contain `00 00 01` emulation patterns, so we do **not**
+/// reject based on interior start-code-like bytes; only a leading Annex-B start
+/// code forces the Annex-B path.
+pub fn is_length_prefixed_access_unit(data: &[u8]) -> bool {
+    if data.len() < 5 {
+        return false;
+    }
+    // Leading Annex-B start code → not length-prefixed.
+    if data.starts_with(&[0, 0, 0, 1]) || data.starts_with(&[0, 0, 1]) {
+        return false;
+    }
+    let mut i = 0usize;
+    let mut nal_count = 0usize;
+    while i + 4 <= data.len() {
+        let len = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
+        if len == 0 || i + 4 + len > data.len() {
+            return false;
+        }
+        let nal_type = data[i + 4] & 0x1f;
+        // Reject clearly non-VCL/non-parameter NAL types for elementary AUs.
+        if nal_type == 0 || nal_type > 12 {
+            return false;
+        }
+        i += 4 + len;
+        nal_count += 1;
+    }
+    nal_count >= 1 && i == data.len()
+}
+
+/// Convert a length-prefixed AU into Annex-B (4-byte start codes). Returns `None` if not AVCC.
+pub fn length_prefixed_to_annex_b(data: &[u8]) -> Option<Vec<u8>> {
+    if !is_length_prefixed_access_unit(data) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(data.len() + 16);
+    let mut i = 0usize;
+    while i + 4 <= data.len() {
+        let len = u32::from_be_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]) as usize;
+        i += 4;
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(&data[i..i + len]);
+        i += len;
+    }
+    Some(out)
+}
+
+/// Normalize an access unit to Annex-B for soft/hardware decoders.
+///
+/// Passes Annex-B through unchanged; converts complete length-prefixed AUs.
+pub fn access_unit_to_annex_b(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if let Some(converted) = length_prefixed_to_annex_b(data) {
+        std::borrow::Cow::Owned(converted)
+    } else {
+        std::borrow::Cow::Borrowed(data)
+    }
+}
+
 /// Extract SPS (type 7) and PPS (type 8) from Annex-B or AVCC `csd-0` style blobs.
 ///
 /// Returns NAL payloads without start codes.
@@ -171,5 +231,31 @@ mod tests {
         let (got_sps, got_pps) = extract_sps_pps(&blob).expect("pair");
         assert_eq!(got_sps, sps);
         assert_eq!(got_pps, pps);
+    }
+
+    #[test]
+    fn length_prefixed_au_converts_to_annex_b() {
+        let nal = [0x65u8, 0x88, 0x84, 0x00]; // IDR slice header-ish
+        let mut avcc = Vec::new();
+        avcc.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+        avcc.extend_from_slice(&nal);
+        assert!(is_length_prefixed_access_unit(&avcc));
+        let annex = length_prefixed_to_annex_b(&avcc).expect("convert");
+        assert_eq!(&annex[..4], &[0, 0, 0, 1]);
+        assert_eq!(&annex[4..], &nal);
+        assert!(matches!(
+            access_unit_to_annex_b(&avcc),
+            std::borrow::Cow::Owned(_)
+        ));
+    }
+
+    #[test]
+    fn annex_b_au_passes_through_normalize() {
+        let annex = [0u8, 0, 0, 1, 0x65, 0x00];
+        assert!(!is_length_prefixed_access_unit(&annex));
+        assert!(matches!(
+            access_unit_to_annex_b(&annex),
+            std::borrow::Cow::Borrowed(_)
+        ));
     }
 }

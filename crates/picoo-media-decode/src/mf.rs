@@ -9,7 +9,7 @@
 use std::mem::ManuallyDrop;
 
 use bytes::Bytes;
-use picoo_packet::annex_b_parameter_sets;
+use picoo_packet::{access_unit_to_annex_b, annex_b_parameter_sets};
 use picoo_protocol::control::StreamConfig;
 use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::{
@@ -120,6 +120,9 @@ impl MfH264Decoder {
         stream_config: Option<&StreamConfig>,
     ) -> Result<Option<DecodedFrame>, DecodeError> {
         self.ensure_configured(stream_config)?;
+        // Android MediaCodec commonly emits length-prefixed AUs; MF expects Annex-B.
+        let annex = access_unit_to_annex_b(access_unit);
+        let access_unit = annex.as_ref();
         let owned;
         let payload = if self.inject_sequence_header && !self.sequence_header.is_empty() {
             self.inject_sequence_header = false;

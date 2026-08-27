@@ -5,7 +5,7 @@ use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use openh264::nal_units;
 use picoo_frame_hub::nv12_byte_size;
-use picoo_packet::annex_b_parameter_sets;
+use picoo_packet::{access_unit_to_annex_b, annex_b_parameter_sets, is_length_prefixed_access_unit};
 use picoo_protocol::control::StreamConfig;
 
 use crate::stub::StubDecoder;
@@ -54,6 +54,9 @@ impl OpenH264Decoder {
     }
 
     fn looks_like_loopback_stub(access_unit: &[u8], stream_config: Option<&StreamConfig>) -> bool {
+        if is_length_prefixed_access_unit(access_unit) {
+            return false;
+        }
         if access_unit.len() <= 64 {
             return true;
         }
@@ -65,7 +68,9 @@ impl OpenH264Decoder {
         }
         // Real H.264 AUs typically contain Annex-B start codes or length-prefixed NALs.
         let has_start_code = access_unit.windows(3).any(|w| w == [0, 0, 1]);
-        !has_start_code && access_unit.first().map(|b| b & 0x1f) != Some(5) && access_unit.first().map(|b| b & 0x1f) != Some(1)
+        !has_start_code
+            && access_unit.first().map(|b| b & 0x1f) != Some(5)
+            && access_unit.first().map(|b| b & 0x1f) != Some(1)
     }
 
     fn i420_to_nv12(yuv: &impl YUVSource) -> Result<(u32, u32, u32, Vec<u8>), DecodeError> {
@@ -126,6 +131,9 @@ impl AccessUnitDecoder for OpenH264Decoder {
         }
 
         self.ensure_param_sets(stream_config)?;
+
+        let annex = access_unit_to_annex_b(access_unit);
+        let access_unit = annex.as_ref();
 
         let mut last: Option<(u32, u32, u32, Vec<u8>)> = None;
         // Decode each NAL; keep the latest picture (IDR/P).
