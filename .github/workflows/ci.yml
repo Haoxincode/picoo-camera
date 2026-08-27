@@ -9,7 +9,7 @@ jobs:
   rust-and-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - run: rustup component add rustfmt clippy
       - run: bash .cursor/install.sh
@@ -24,9 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-and-docs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -36,12 +36,12 @@ jobs:
       - name: Android unit tests
         run: ./apps/android/gradlew -p apps/android testDebugUnitTest
       - run: cargo run -p xtask -- package android
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: android-apk-debug
           path: apps/android/app/build/outputs/apk/debug/
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: android-release
           path: |
@@ -53,7 +53,7 @@ jobs:
     runs-on: windows-latest
     needs: rust-and-docs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: arduino/setup-protoc@v3
         with:
@@ -76,14 +76,14 @@ jobs:
       - name: Verify Windows bundle smoke (VCAM-001)
         shell: pwsh
         run: ./scripts/verify_windows_bundle.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-bundle
           path: |
             target/release/bundle/
             target/release/bundle/msi/*.msi
           if-no-files-found: error
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: windows-msi
           path: target/release/bundle/msi/PicooCamera.msi
