@@ -732,6 +732,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "picoo-frame-hub",
+ "picoo-metrics",
  "picoo-packet",
  "picoo-pairing",
  "picoo-protocol",
@@ -747,9 +748,12 @@ name = "picoo-sender"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "picoo-metrics",
  "picoo-packet",
  "picoo-pairing",
  "picoo-protocol",
+ "picoo-rate-control",
+ "picoo-session",
  "picoo-testkit",
  "picoo-transport",
  "prost",
