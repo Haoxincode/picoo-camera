@@ -130,6 +130,8 @@ fn package(platform: Platform) -> Result<()> {
                 "./apps/android/gradlew -p apps/android assembleRelease bundleRelease"
             )
             .run()?;
+            // Xiaomi 15 / Android 15: cold-start .so must be 16 KB page-aligned.
+            cmd!(sh, "bash scripts/check_android_so_16k.sh").run()?;
             eprintln!(
                 "android package: APK=apps/android/app/build/outputs/apk/release/ \
                  AAB=apps/android/app/build/outputs/bundle/release/"

@@ -72,11 +72,11 @@ class MainActivity : ComponentActivity() {
             val pending = pendingAfterCameraGrant
             pendingAfterCameraGrant = null
             if (granted) {
-                if (activeSenderHandle != 0L) {
+                if (activeSenderHandle != 0L && PicooNative.isAvailable) {
                     PicooNative.clearPermissionRequired(activeSenderHandle)
                 }
                 pending?.invoke()
-            } else if (activeSenderHandle != 0L) {
+            } else if (activeSenderHandle != 0L && PicooNative.isAvailable) {
                 // REQ-PICOO-SESSION-001: Permission Required when CAMERA denied.
                 PicooNative.markPermissionRequired(activeSenderHandle)
             }
@@ -98,7 +98,7 @@ class MainActivity : ComponentActivity() {
             PackageManager.PERMISSION_GRANTED
         ) {
             cameraGranted = true
-            if (activeSenderHandle != 0L) {
+            if (activeSenderHandle != 0L && PicooNative.isAvailable) {
                 PicooNative.clearPermissionRequired(activeSenderHandle)
             }
             then?.invoke()
@@ -157,24 +157,60 @@ class MainActivity : ComponentActivity() {
                     PackageManager.PERMISSION_GRANTED
         }
 
-        val protocolVersion = runCatching { PicooNative.getProtocolVersion() }
-            .getOrElse { "FFI unavailable: ${it.message}" }
+        // Load native before Compose so a dlopen failure shows UI instead of crashing
+        // (Xiaomi 15 / 16 KB page devices previously died in SenderHomeScreen remember{}).
+        val nativeOk = PicooNative.ensureLoaded()
+        val protocolVersion =
+            if (nativeOk) {
+                runCatching { PicooNative.getProtocolVersion() }
+                    .getOrElse { "FFI unavailable: ${it.message}" }
+            } else {
+                "Native load failed"
+            }
 
         setContent {
             PicooCameraTheme {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    SenderHomeScreen(
-                        protocolVersion = protocolVersion,
-                        cameraGranted = cameraGranted,
-                        nearbyWifiGranted = nearbyWifiGranted,
-                        onRequestCamera = { then -> requestCameraPermission(then) },
-                        onRequestNearbyWifi = { ensureNearbyWifiPermission() },
-                        onRequestNotifications = { ensureNotificationsPermission() },
-                        modifier = Modifier.padding(innerPadding),
-                    )
+                    if (!nativeOk) {
+                        NativeLoadFailedScreen(
+                            detail = PicooNative.loadError ?: "unknown",
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    } else {
+                        SenderHomeScreen(
+                            protocolVersion = protocolVersion,
+                            cameraGranted = cameraGranted,
+                            nearbyWifiGranted = nearbyWifiGranted,
+                            onRequestCamera = { then -> requestCameraPermission(then) },
+                            onRequestNearbyWifi = { ensureNearbyWifiPermission() },
+                            onRequestNotifications = { ensureNotificationsPermission() },
+                            modifier = Modifier.padding(innerPadding),
+                        )
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NativeLoadFailedScreen(
+    detail: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text("无法加载 Picoo 原生库", style = MaterialTheme.typography.headlineSmall)
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            "常见原因：设备使用 16KB 内存页，而旧版 APK 中的 .so 未按 16KB 对齐（小米 15 / Android 15）。请安装最新 CI 构建。",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(detail, style = MaterialTheme.typography.bodySmall)
     }
 }
 

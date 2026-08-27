@@ -1,6 +1,5 @@
 package com.picoo.camera.ui
 
-import android.util.Size
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
@@ -8,7 +7,6 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
@@ -68,7 +66,6 @@ fun QrCodeScanner(
                         val preview = Preview.Builder().build()
                         preview.setSurfaceProvider(previewView.surfaceProvider)
                         val analysis = ImageAnalysis.Builder()
-                            .setTargetResolution(Size(1280, 720))
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
                         analysis.setAnalyzer(executor) { imageProxy ->
@@ -93,13 +90,18 @@ fun QrCodeScanner(
                                 }
                                 .addOnCompleteListener { imageProxy.close() }
                         }
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            preview,
-                            analysis,
-                        )
+                        try {
+                            cameraProvider.unbindAll()
+                            cameraProvider.bindToLifecycle(
+                                lifecycleOwner,
+                                CameraSelector.DEFAULT_BACK_CAMERA,
+                                preview,
+                                analysis,
+                            )
+                        } catch (t: Throwable) {
+                            // CameraX 1.4+ may throw when camera is busy/unavailable.
+                            android.util.Log.w("QrCodeScanner", "bindToLifecycle failed", t)
+                        }
                     },
                     ContextCompat.getMainExecutor(context),
                 )

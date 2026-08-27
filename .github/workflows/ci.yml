@@ -36,6 +36,8 @@ jobs:
       - name: Android unit tests
         run: ./apps/android/gradlew -p apps/android testDebugUnitTest
       - run: cargo run -p xtask -- package android
+      - name: Verify arm64 .so 16KB page alignment
+        run: bash scripts/check_android_so_16k.sh
       - uses: actions/upload-artifact@v7
         with:
           name: android-apk-debug
