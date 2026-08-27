@@ -77,13 +77,13 @@
 
 ## 支撑的 Product Use Case
 
-- [PUC-001](product/puc-001-first-install-and-pairing.md)：首次安装、激活虚拟摄像头并完成设备配对
-- [PUC-002](product/puc-002-discover-and-connect-paired-receiver.md)：自动发现并连接已配对电脑
-- [PUC-003](product/puc-003-qr-code-fallback-connection.md)：通过二维码连接电脑
-- [PUC-004](product/puc-004-use-virtual-camera-in-meeting-apps.md)：在会议软件中使用虚拟摄像头
-- [PUC-005](product/puc-005-adjust-camera-during-streaming.md)：会议中调整摄像头、分辨率与镜像
-- [PUC-006](product/puc-006-auto-reconnect-after-network-interruption.md)：网络中断后自动恢复传输
-- [PUC-007](product/puc-007-manage-paired-devices.md)：管理已配对设备与撤销信任
+- [PUC-001](../product/puc-001-first-install-and-pairing.md)：首次安装、激活虚拟摄像头并完成设备配对
+- [PUC-002](../product/puc-002-discover-and-connect-paired-receiver.md)：自动发现并连接已配对电脑
+- [PUC-003](../product/puc-003-qr-code-fallback-connection.md)：通过二维码连接电脑
+- [PUC-004](../product/puc-004-use-virtual-camera-in-meeting-apps.md)：在会议软件中使用虚拟摄像头
+- [PUC-005](../product/puc-005-adjust-camera-during-streaming.md)：会议中调整摄像头、分辨率与镜像
+- [PUC-006](../product/puc-006-auto-reconnect-after-network-interruption.md)：网络中断后自动恢复传输
+- [PUC-007](../product/puc-007-manage-paired-devices.md)：管理已配对设备与撤销信任
 
 ## 相关 Architecture
 
