@@ -2869,3 +2869,214 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     }
     assert!(ok, "FrameHub must show post-downshift frames");
 }
+
+#[cfg(not(windows))]
+#[test]
+fn abr_upshift_updates_stream_config_and_framehub() {
+    // REQ-PICOO-MEDIA-010: after downshift, sustained health → UpshiftResolution → 1080p FrameHub.
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_packet::extract_sps_pps;
+    use picoo_pairing::TrustedDevice;
+    use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+    use prost::Message;
+
+    fn encode_pattern(w: usize, h: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let mut planes = vec![128u8; w * h * 3 / 2];
+        for y in 0..h {
+            for x in 0..w {
+                planes[y * w + x] =
+                    ((x as u8).wrapping_mul(5).wrapping_add(y as u8).wrapping_add(seed)) % 200 + 20;
+            }
+        }
+        let yuv = YUVBuffer::from_vec(planes, w, h);
+        let mut encoder = Encoder::new().expect("encoder");
+        let annex = encoder.encode(&yuv).expect("encode").to_vec();
+        let (sps, pps) = extract_sps_pps(&annex).expect("sps/pps");
+        (annex, sps, pps)
+    }
+
+    let (au_lo, sps_lo, pps_lo) = encode_pattern(160, 120, 3);
+    let (au_hi, sps_hi, pps_hi) = encode_pattern(320, 240, 11);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "abr-up-phone".into(),
+        device_name: "AbrUp".into(),
+        public_key: vec![6, 6, 6],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_preferred_height(1080);
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("abr-up-phone", "AbrUp", &[6, 6, 6])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    // Start at 1080 ladder then force congestion downshift (same as Android poll path).
+    sender.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        bitrate_bps: 6_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_hi.clone(),
+        pps: pps_hi.clone(),
+    });
+    for _ in 0..40 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let mut downshifted = false;
+    for _ in 0..40 {
+        let stats = ReceiverStatsMsg {
+            packet_loss: 0.05,
+            frame_age_ms: 250.0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        stats.encode(&mut buf).expect("encode");
+        sender
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        if sender.take_resolution_downshift() {
+            downshifted = true;
+            break;
+        }
+    }
+    assert!(downshifted, "need downshift before upshift path");
+    assert_eq!(sender.bitrate_active_height(), 720);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 2,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_lo,
+        pps: pps_lo,
+    });
+    for _ in 0..80 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.stream_config().is_some_and(|c| c.height == 720) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.ingest_and_flush(&au_lo, true, 2, 2).expect("lo");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.latest_frame().is_some_and(|f| f.width == 160) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    // Climb 720 ladder then request upshift (rate-control needs near-max + 8 healthy ticks).
+    let mut upshifted = false;
+    for _ in 0..200 {
+        let stats = ReceiverStatsMsg {
+            packet_loss: 0.0,
+            frame_age_ms: 40.0,
+            jitter_buffer_depth_ms: 40.0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        stats.encode(&mut buf).expect("encode");
+        sender
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        if sender.take_resolution_upshift() {
+            upshifted = true;
+            break;
+        }
+    }
+    assert!(upshifted, "ABR must request resolution upshift after sustained health");
+    assert_eq!(sender.bitrate_active_height(), 1080);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        bitrate_bps: 6_000_000,
+        stream_epoch: 3,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_hi,
+        pps: pps_hi,
+    });
+    for _ in 0..80 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.stream_config().is_some_and(|c| c.height == 1080) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        receiver.stream_config().map(|c| (c.width, c.height)),
+        Some((1920, 1080)),
+        "StreamConfig must return to 1920x1080 after ABR upshift"
+    );
+    sender.ingest_and_flush(&au_hi, true, 3, 3).expect("hi");
+    let mut ok = false;
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.width == 320 && frame.height == 240 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(320, 240));
+                ok = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(ok, "FrameHub must show post-upshift frames");
+}

@@ -11,4 +11,4 @@
 | REQ-PICOO-MEDIA-007 | implemented | PUC-006 | 动态码率 720p 3–5 Mbps / 1080p 3–10 Mbps | rate-control + Android MediaCodec PARAMETER_KEY_VIDEO_BITRATE |
 | REQ-PICOO-MEDIA-008 | implemented | PUC-005 | 手机端曝光补偿可调 | `Camera2MediaEncoder.setExposureCompensation` + Streaming EV±（真机验证仍待） |
 | REQ-PICOO-MEDIA-009 | implemented | PUC-005 | StreamConfig.rotation 驱动 FrameHub/VCam 朝向 | `nv12_rotate_clockwise` 在 publish 前直立像素；metadata 清零；dims 随 90/270 交换 |
-| REQ-PICOO-MEDIA-010 | implemented | PUC-006 | 持续拥塞降至 720p；健康后可回升 1080p；过热强制 720p | rate-control + Android；`abr_downshift_updates_stream_config_and_framehub`；`PowerHints.shouldForce720p` |
+| REQ-PICOO-MEDIA-010 | implemented | PUC-006 | 持续拥塞降至 720p；健康后可回升 1080p；过热强制 720p | rate-control + Android；`abr_downshift_updates_stream_config_and_framehub`；`abr_upshift_updates_stream_config_and_framehub`；`PowerHints.shouldForce720p` |
