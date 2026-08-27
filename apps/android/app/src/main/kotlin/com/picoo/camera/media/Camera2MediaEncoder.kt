@@ -124,6 +124,8 @@ class Camera2MediaEncoder(
             stopPreview()
             startPreview()
         }
+        // New epoch requires IDR for remote decoder recovery (REQ-PICOO-MEDIA-003).
+        requestSyncFrame()
     }
 
     override fun setResolution(width: Int, height: Int) {
@@ -135,6 +137,7 @@ class Camera2MediaEncoder(
             stopPreview()
             startPreview()
         }
+        requestSyncFrame()
     }
 
     override fun close() {

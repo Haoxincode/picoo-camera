@@ -77,6 +77,9 @@ object PicooNative {
     /** Adaptive bitrate target from ReceiverStats feedback (REQ-PICOO-MEDIA-007). */
     external fun getCurrentBitrateBps(handle: Long): Int
 
+    /** Max height from receiver Capabilities; 0 if unknown (REQ-PICOO-MEDIA-002). */
+    external fun getReceiverMaxHeight(handle: Long): Int
+
     /**
      * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
      * @return `[sps, pps]` or null when extraction fails.

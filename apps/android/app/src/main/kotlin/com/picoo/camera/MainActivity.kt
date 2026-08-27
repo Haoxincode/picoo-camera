@@ -261,6 +261,7 @@ private fun SenderHomeScreen(
     }
 
     LaunchedEffect(senderHandle, browserHandle) {
+        var previousStatus = PicooNative.STATUS_DISCONNECTED
         while (true) {
             if (senderHandle != 0L) {
                 PicooNative.pump(senderHandle)
@@ -272,6 +273,14 @@ private fun SenderHomeScreen(
                     adaptiveBitrateBps = bps
                     encoder.setTargetBitrateBps(bps)
                 }
+                if (previousStatus == PicooNative.STATUS_RECONNECTING &&
+                    senderStatus == PicooNative.STATUS_STREAMING
+                ) {
+                    // REQ-PICOO-SESSION-004: recover with IDR + refreshed StreamConfig.
+                    encoder.requestKeyFrame()
+                    streamConfigDirty.set(true)
+                }
+                previousStatus = senderStatus
                 if (streamConfigDirty.get() &&
                     (senderStatus == PicooNative.STATUS_STREAMING ||
                         senderStatus == PicooNative.STATUS_NEGOTIATING)
@@ -482,7 +491,13 @@ private fun SenderHomeScreen(
                     Text("Switch camera")
                 }
                 Button(onClick = {
-                    resolutionLabel = if (resolutionLabel == "720p") "1080p" else "720p"
+                    val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
+                    val want1080 = resolutionLabel == "720p"
+                    if (want1080 && maxH in 1 until 1080) {
+                        errorText = "Receiver caps at ${maxH}p — staying 720p"
+                        return@Button
+                    }
+                    resolutionLabel = if (want1080) "1080p" else "720p"
                     val (w, h) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
                     encoder.setResolution(w, h)
                     encoderState = encoder.state

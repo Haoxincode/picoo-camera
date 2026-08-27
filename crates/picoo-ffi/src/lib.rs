@@ -413,6 +413,20 @@ pub extern "C" fn picoo_sender_current_bitrate_bps(handle: *mut std::ffi::c_void
         .current_bitrate_bps()
 }
 
+/// Max height advertised by receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
+#[no_mangle]
+pub extern "C" fn picoo_sender_receiver_max_height(handle: *mut std::ffi::c_void) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let session = inner.session.lock().expect("sender lock");
+    session
+        .receiver_capabilities()
+        .map(|caps| caps.resolutions.iter().map(|r| r.height).max().unwrap_or(0))
+        .unwrap_or(0)
+}
+
 /// Attach trusted device store path to sender (load + auto-save on pairing).
 #[no_mangle]
 pub extern "C" fn picoo_sender_attach_trusted_store(
@@ -1016,5 +1030,13 @@ mod tests {
         );
         assert_eq!(&sps_out[..sps_len], &sps);
         assert_eq!(&pps_out[..pps_len], &pps);
+    }
+
+    #[test]
+    fn receiver_max_height_zero_before_capabilities() {
+        let handle = picoo_sender_create();
+        assert!(!handle.is_null());
+        assert_eq!(picoo_sender_receiver_max_height(handle), 0);
+        picoo_sender_destroy(handle);
     }
 }

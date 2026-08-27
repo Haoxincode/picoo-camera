@@ -282,6 +282,14 @@ Java_com_picoo_camera_jni_PicooNative_getCurrentBitrateBps(JNIEnv * /* env */, j
     return static_cast<jint>(picoo_sender_current_bitrate_bps(reinterpret_cast<void *>(handle)));
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_getReceiverMaxHeight(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return 0;
+    }
+    return static_cast<jint>(picoo_sender_receiver_max_height(reinterpret_cast<void *>(handle)));
+}
+
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_picoo_camera_jni_PicooNative_extractSpsPps(JNIEnv *env, jobject /* this */, jbyteArray data) {
     if (data == nullptr) {
