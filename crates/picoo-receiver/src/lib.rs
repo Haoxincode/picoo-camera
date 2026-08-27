@@ -137,6 +137,9 @@ pub struct ReceiverSession {
     current_stream_config: Option<StreamConfig>,
     receiver_capabilities_sent: Option<()>,
     decoder: Box<dyn AccessUnitDecoder>,
+    /// After peer disconnect, keep last frame this long before placeholder (REQ-PICOO-FRAME-005).
+    last_frame_hold: Duration,
+    placeholder_after: Option<Instant>,
 }
 
 impl Default for ReceiverSession {
@@ -165,6 +168,8 @@ impl ReceiverSession {
             current_stream_config: None,
             receiver_capabilities_sent: None,
             decoder: create_platform_decoder(),
+            last_frame_hold: Duration::from_millis(500),
+            placeholder_after: None,
         }
     }
 
@@ -318,15 +323,11 @@ impl ReceiverSession {
         while let Some(event) = self.transport.poll_event() {
             match event {
                 TransportEvent::Connected(_) => {
+                    self.placeholder_after = None;
                     self.status = ReceiverStatus::Connecting;
                 }
                 TransportEvent::Disconnected(_, _) => {
-                    self.status = ReceiverStatus::Disconnected;
-                    self.active_sender = None;
-                    self.pending_pairing = None;
-                    self.local_pairing_confirmed = false;
-                    self.reassembly = ReassemblyMap::new(8, 16);
-                    let _ = self.publish_waiting_placeholder();
+                    self.on_peer_disconnected();
                 }
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
@@ -348,8 +349,51 @@ impl ReceiverSession {
             }
         }
 
+        self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
 
+        Ok(())
+    }
+
+    fn on_peer_disconnected(&mut self) {
+        let had_live_frame = self.status == ReceiverStatus::Streaming
+            && self.frame_hub.latest_ready().is_some();
+        self.active_sender = None;
+        self.pending_pairing = None;
+        self.local_pairing_confirmed = false;
+        self.reassembly = ReassemblyMap::new(8, 16);
+        self.current_stream_config = None;
+        self.receiver_capabilities_sent = None;
+
+        if had_live_frame && !self.last_frame_hold.is_zero() {
+            // Briefly keep last frame for VCam/UI, then switch to placeholder.
+            self.status = ReceiverStatus::Reconnecting;
+            self.placeholder_after = Some(Instant::now() + self.last_frame_hold);
+        } else {
+            self.placeholder_after = None;
+            let _ = self.publish_waiting_placeholder();
+            self.status = if self.bind_addr().is_some() {
+                ReceiverStatus::Discovering
+            } else {
+                ReceiverStatus::Disconnected
+            };
+        }
+    }
+
+    fn maybe_finalize_disconnect_hold(&mut self) -> Result<(), ReceiverError> {
+        let Some(deadline) = self.placeholder_after else {
+            return Ok(());
+        };
+        if Instant::now() < deadline {
+            return Ok(());
+        }
+        self.placeholder_after = None;
+        self.publish_waiting_placeholder()?;
+        self.status = if self.bind_addr().is_some() {
+            ReceiverStatus::Discovering
+        } else {
+            ReceiverStatus::Disconnected
+        };
         Ok(())
     }
 
@@ -621,10 +665,24 @@ impl ReceiverSession {
             self.transport
                 .close(picoo_transport::SessionId(1), CloseReason::LocalClose);
         }
+        self.placeholder_after = None;
         self.status = ReceiverStatus::Disconnected;
         self.active_sender = None;
         self.pending_pairing = None;
         self.local_pairing_confirmed = false;
+        let _ = self.publish_waiting_placeholder();
+    }
+
+    /// Test-only: shorten/extend last-frame hold before placeholder (REQ-PICOO-FRAME-005).
+    #[cfg(test)]
+    pub fn set_last_frame_hold_for_test(&mut self, hold: Duration) {
+        self.last_frame_hold = hold;
+    }
+
+    /// Test-only: simulate peer disconnect without waiting on QUIC teardown.
+    #[cfg(test)]
+    pub fn inject_peer_disconnect_for_test(&mut self) {
+        self.on_peer_disconnected();
     }
 
     /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.

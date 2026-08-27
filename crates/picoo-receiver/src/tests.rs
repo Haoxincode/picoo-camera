@@ -501,3 +501,92 @@ fn remove_trusted_device_requires_repair() {
     let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload");
     assert!(!loaded.is_paired("phone-1"));
 }
+
+#[test]
+fn disconnect_holds_last_frame_then_shows_placeholder() {
+    use crate::ReceiverIdentity;
+
+    let identity = ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    receiver.set_last_frame_hold_for_test(Duration::from_millis(60));
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("hold-phone", "Hold Phone", &[3, 3, 3])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    receiver.confirm_pairing_locally();
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("confirm");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender
+        .ingest_and_flush(b"live-frame-before-disconnect", true, 1, 1)
+        .expect("ingest");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let live_ts = receiver
+        .latest_frame()
+        .expect("live frame")
+        .timestamp_us;
+    assert!(live_ts > 0);
+
+    receiver.inject_peer_disconnect_for_test();
+    assert_eq!(receiver.status(), ReceiverStatus::Reconnecting);
+    assert_eq!(
+        receiver.latest_frame().expect("held frame").timestamp_us,
+        live_ts
+    );
+
+    std::thread::sleep(Duration::from_millis(80));
+    receiver.pump().expect("finalize hold");
+    assert_eq!(receiver.status(), ReceiverStatus::Discovering);
+    assert_eq!(
+        receiver.latest_frame().expect("placeholder").timestamp_us,
+        0
+    );
+}
