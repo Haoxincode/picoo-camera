@@ -3,18 +3,22 @@
 mod model;
 mod qr_display;
 mod receiver_runtime;
+mod diagnostics_export;
+mod prefs;
 
 #[cfg(feature = "gpui-ui")]
 mod gpui_app;
 #[cfg(feature = "gpui-ui")]
 mod video_surface;
+#[cfg(feature = "gpui-ui")]
+mod vcam_status;
 
 use std::io::{self, BufRead};
 use std::sync::mpsc;
 use std::thread;
 
+use diagnostics_export::export_diagnostics_json;
 use model::DesktopAppState;
-use picoo_diagnostics::{build_report, export_json, DiagnosticInput, DiagnosticSessionSnapshot};
 use picoo_pairing::TrustedDeviceStore;
 use picoo_receiver::ReceiverSession;
 use receiver_runtime::{default_trusted_store_path, ReceiverRuntime, ReceiverRuntimeConfig};
@@ -144,35 +148,13 @@ fn run_remove_paired(device_id: &str) {
 }
 
 fn run_export_diagnostics(out_path: Option<&str>) {
-    let trusted_path = default_trusted_store_path();
-    let store = match TrustedDeviceStore::load_from_path(&trusted_path) {
-        Ok(store) => store,
-        Err(err) => {
-            eprintln!(
-                "Failed to load trusted store {}: {err}",
-                trusted_path.display()
-            );
-            std::process::exit(1);
-        }
-    };
-
-    let now_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-
-    let report = build_report(DiagnosticInput {
-        platform: std::env::consts::OS.into(),
-        app_version: env!("CARGO_PKG_VERSION").into(),
-        exported_at_ms: now_ms,
-        trusted_devices: store.list().cloned().collect(),
-        ..Default::default()
-    });
-
-    let json = match export_json(&report) {
+    let json = match export_diagnostics_json(
+        picoo_session::ReceiverStatus::Disconnected,
+        Default::default(),
+    ) {
         Ok(json) => json,
         Err(err) => {
-            eprintln!("Failed to serialize diagnostics: {err}");
+            eprintln!("{err}");
             std::process::exit(1);
         }
     };
@@ -249,25 +231,7 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
         }
         "export-diagnostics" | "export" => {
             let stats = receiver.ingress_stats();
-            let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(0);
-            let report = build_report(DiagnosticInput {
-                platform: std::env::consts::OS.into(),
-                app_version: env!("CARGO_PKG_VERSION").into(),
-                exported_at_ms: now_ms,
-                session: Some(DiagnosticSessionSnapshot {
-                    role: "receiver".into(),
-                    status: format!("{:?}", receiver.status()),
-                    ingress_access_units: stats.access_units,
-                    ingress_packets_received: stats.packets_received,
-                    ingress_packets_dropped_unpaired: stats.packets_dropped_unpaired,
-                }),
-                trusted_devices: receiver.trusted_devices().list().cloned().collect(),
-                ..Default::default()
-            });
-            match export_json(&report) {
+            match export_diagnostics_json(receiver.status(), stats) {
                 Ok(json) => println!("{json}"),
                 Err(err) => eprintln!("Export failed: {err}"),
             }

@@ -196,6 +196,23 @@ impl ReceiverSession {
         self
     }
 
+    pub fn set_display_name(&mut self, display_name: impl Into<String>) {
+        self.identity.display_name = display_name.into();
+    }
+
+    pub fn display_name(&self) -> &str {
+        &self.identity.display_name
+    }
+
+    pub fn active_sender_summary(&self) -> Option<(String, String)> {
+        self.active_sender.as_ref().map(|s| {
+            (
+                s.sender_id.clone(),
+                s.device_name.clone(),
+            )
+        })
+    }
+
     pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, ReceiverError> {
         let path = path.as_ref().to_path_buf();
         self.trusted = TrustedDeviceStore::load_from_path(&path)?;

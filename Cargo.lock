@@ -4956,6 +4956,7 @@ dependencies = [
  "picoo-transport",
  "qrcode",
  "serde",
+ "serde_json",
  "smallvec",
  "tracing",
  "tracing-subscriber",

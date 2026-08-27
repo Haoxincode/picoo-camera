@@ -14,9 +14,16 @@ use picoo_receiver::{IngressStats, ReceiverError, ReceiverIdentity, ReceiverSess
 use picoo_session::ReceiverStatus;
 use picoo_transport::Endpoint;
 
+use crate::prefs::DesktopPreferences;
 use crate::qr_display;
 
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
+
+#[derive(Debug, Clone)]
+pub struct ActiveSenderSummary {
+    pub sender_id: String,
+    pub device_name: String,
+}
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // GPUI settings reads fields when `gpui-ui` is enabled.
@@ -58,6 +65,8 @@ pub struct ReceiverSnapshot {
     pub trusted_device_count: usize,
     pub trusted_devices: Vec<TrustedDeviceSummary>,
     pub display_name: String,
+    pub active_sender: Option<ActiveSenderSummary>,
+    pub virtual_camera: crate::model::VirtualCameraStatus,
 }
 
 pub struct ReceiverRuntime {
@@ -68,6 +77,7 @@ pub struct ReceiverRuntime {
     qr_json: Option<String>,
     qr_ascii: Option<String>,
     display_name: String,
+    virtual_camera: crate::model::VirtualCameraStatus,
 }
 
 impl ReceiverRuntime {
@@ -121,7 +131,28 @@ impl ReceiverRuntime {
             qr_json,
             qr_ascii,
             display_name: config.identity.display_name,
+            virtual_camera: crate::model::VirtualCameraStatus::Unknown,
         })
+    }
+
+    pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
+        let mut config = ReceiverRuntimeConfig::default();
+        config.identity.display_name = prefs.display_name.clone();
+        Self::start(config)
+    }
+
+    pub fn set_display_name(&mut self, name: String) {
+        self.display_name = name.clone();
+        self.receiver.set_display_name(name);
+    }
+
+    pub fn set_virtual_camera_status(&mut self, status: crate::model::VirtualCameraStatus) {
+        self.virtual_camera = status;
+    }
+
+    pub fn disconnect(&mut self) {
+        self.receiver.close();
+        let _ = self.receiver.publish_waiting_placeholder();
     }
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
@@ -129,6 +160,13 @@ impl ReceiverRuntime {
     }
 
     pub fn snapshot(&self) -> ReceiverSnapshot {
+        let active_sender = self
+            .receiver
+            .active_sender_summary()
+            .map(|(sender_id, device_name)| ActiveSenderSummary {
+                sender_id,
+                device_name,
+            });
         ReceiverSnapshot {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
@@ -149,6 +187,8 @@ impl ReceiverRuntime {
                 })
                 .collect(),
             display_name: self.display_name.clone(),
+            active_sender,
+            virtual_camera: self.virtual_camera,
         }
     }
 

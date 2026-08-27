@@ -1,23 +1,33 @@
 //! GPUI desktop shell — ARCH-PICOO-UI-001.
 //!
-//! Waiting / Live / Settings pages driven by [`ReceiverRuntime`] snapshots.
+//! First launch / Waiting / Live / Settings pages driven by [`ReceiverRuntime`] snapshots.
 
+use std::path::PathBuf;
 use std::time::Duration;
 
+use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{button::*, group_box::*, *};
+use gpui_component::button::*;
+use gpui_component::group_box::*;
+use gpui_component::input::{Input, InputState};
+use gpui_component::switch::*;
+use gpui_component::*;
 use gpui_component_assets::Assets;
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 
+use crate::diagnostics_export::export_diagnostics_to_file;
 use crate::model::VirtualCameraStatus;
+use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
 use crate::receiver_runtime::{
-    ReceiverRuntime, ReceiverRuntimeConfig, ReceiverSnapshot, TrustedDeviceSummary,
+    ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary,
 };
+use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
 use crate::video_surface::VideoSurface;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DesktopPage {
+    FirstLaunch,
     Waiting,
     Live,
     Settings,
@@ -25,25 +35,114 @@ enum DesktopPage {
 
 pub struct PicooDesktopApp {
     runtime: ReceiverRuntime,
+    prefs: DesktopPreferences,
     page: DesktopPage,
     show_qr: bool,
     pump_started: bool,
     video_surface: VideoSurface,
+    display_name_input: Entity<InputState>,
+    vcam_status: VirtualCameraStatus,
+    diagnostics_message: Option<String>,
+    diagnostics_error: Option<String>,
 }
 
 impl PicooDesktopApp {
-    fn new(runtime: ReceiverRuntime) -> Self {
+    fn new(
+        runtime: ReceiverRuntime,
+        prefs: DesktopPreferences,
+        display_name_input: Entity<InputState>,
+        vcam_status: VirtualCameraStatus,
+    ) -> Self {
+        let page = if prefs.first_launch_completed {
+            DesktopPage::Waiting
+        } else {
+            DesktopPage::FirstLaunch
+        };
         Self {
             runtime,
-            page: DesktopPage::Waiting,
+            prefs,
+            page,
             show_qr: true,
             pump_started: false,
             video_surface: VideoSurface::default(),
+            display_name_input,
+            vcam_status,
+            diagnostics_message: None,
+            diagnostics_error: None,
         }
     }
 
     fn snapshot(&self) -> ReceiverSnapshot {
         self.runtime.snapshot()
+    }
+
+    fn persist_prefs(&mut self) -> Result<(), String> {
+        save_prefs(&self.prefs)
+    }
+
+    fn apply_log_level(&self) {
+        let _ = std::env::set_var("RUST_LOG", self.prefs.log_level.env_filter());
+    }
+
+    fn complete_first_launch(&mut self, cx: &mut Context<Self>) {
+        self.prefs.first_launch_completed = true;
+        let _ = self.persist_prefs();
+        self.page = DesktopPage::Waiting;
+        cx.notify();
+    }
+
+    fn refresh_vcam_status(&mut self) {
+        let status = detect_vcam_status();
+        self.vcam_status = status;
+        self.runtime.set_virtual_camera_status(status);
+    }
+
+    fn save_display_name(&mut self, cx: &mut Context<Self>) {
+        let name = self.display_name_input.read(cx).value().trim().to_string();
+        let name = if name.is_empty() {
+            "Picoo Camera".into()
+        } else {
+            name
+        };
+        self.prefs.display_name = name.clone();
+        self.runtime.set_display_name(name);
+        let _ = self.persist_prefs();
+        cx.notify();
+    }
+
+    fn export_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.snapshot();
+        let out_path = default_diagnostics_path();
+        match export_diagnostics_to_file(
+            &out_path.to_string_lossy(),
+            snapshot.status,
+            snapshot.ingress,
+        ) {
+            Ok(result) => {
+                self.diagnostics_error = None;
+                self.diagnostics_message = result.path;
+            }
+            Err(err) => {
+                self.diagnostics_message = None;
+                self.diagnostics_error = Some(err);
+            }
+        }
+        cx.notify();
+    }
+
+    fn status_label(status: ReceiverStatus) -> &'static str {
+        match status {
+            ReceiverStatus::Discovering => "等待连接",
+            ReceiverStatus::Pairing => "配对中",
+            ReceiverStatus::Connecting => "连接中",
+            ReceiverStatus::Negotiating => "协商中",
+            ReceiverStatus::Streaming => "直播中",
+            ReceiverStatus::Reconnecting => "重连中",
+            ReceiverStatus::Disconnected => "未连接",
+            ReceiverStatus::PermissionRequired => "需要权限",
+            ReceiverStatus::VirtualCameraUnavailable => "虚拟摄像头不可用",
+            ReceiverStatus::NetworkUnstable => "网络不稳定",
+        }
     }
 
     fn ensure_pump_loop(&mut self, cx: &mut Context<Self>) {
@@ -63,13 +162,21 @@ impl PicooDesktopApp {
                     }
                     let snapshot = this.runtime.snapshot();
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
-                        this.page = DesktopPage::Live;
+                        if this.page != DesktopPage::Settings && this.page != DesktopPage::FirstLaunch
+                        {
+                            this.page = DesktopPage::Live;
+                        }
                     } else if matches!(
                         snapshot.status,
                         ReceiverStatus::Disconnected | ReceiverStatus::Discovering
                     ) && this.page == DesktopPage::Live
                     {
                         this.page = DesktopPage::Waiting;
+                    }
+                    if matches!(snapshot.status, ReceiverStatus::Streaming) {
+                        this.vcam_status = VirtualCameraStatus::Active;
+                        this.runtime
+                            .set_virtual_camera_status(VirtualCameraStatus::Active);
                     }
                     cx.notify();
                 })
@@ -79,21 +186,6 @@ impl PicooDesktopApp {
             }
         })
         .detach();
-    }
-
-    fn status_label(status: ReceiverStatus) -> &'static str {
-        match status {
-            ReceiverStatus::Discovering => "等待连接",
-            ReceiverStatus::Pairing => "配对中",
-            ReceiverStatus::Connecting => "连接中",
-            ReceiverStatus::Negotiating => "协商中",
-            ReceiverStatus::Streaming => "直播中",
-            ReceiverStatus::Reconnecting => "重连中",
-            ReceiverStatus::Disconnected => "未连接",
-            ReceiverStatus::PermissionRequired => "需要权限",
-            ReceiverStatus::VirtualCameraUnavailable => "虚拟摄像头不可用",
-            ReceiverStatus::NetworkUnstable => "网络不稳定",
-        }
     }
 }
 
@@ -108,6 +200,7 @@ impl Render for PicooDesktopApp {
             .bg(cx.theme().background)
             .child(self.render_header(cx))
             .child(div().flex_1().child(match self.page {
+                DesktopPage::FirstLaunch => self.render_first_launch(cx).into_any_element(),
                 DesktopPage::Waiting => self.render_waiting(&snapshot, cx).into_any_element(),
                 DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
                 DesktopPage::Settings => self.render_settings(&snapshot, cx).into_any_element(),
@@ -132,9 +225,11 @@ impl PicooDesktopApp {
                     .child(format!("Picoo Camera — {}", self.snapshot().display_name)),
             )
             .child(div().flex_1())
-            .child(self.nav_button("等待连接", DesktopPage::Waiting, cx))
-            .child(self.nav_button("直播", DesktopPage::Live, cx))
-            .child(self.nav_button("设置", DesktopPage::Settings, cx))
+            .when(self.prefs.first_launch_completed, |this| {
+                this.child(self.nav_button("等待连接", DesktopPage::Waiting, cx))
+                    .child(self.nav_button("直播", DesktopPage::Live, cx))
+                    .child(self.nav_button("设置", DesktopPage::Settings, cx))
+            })
     }
 
     fn nav_button(
@@ -154,6 +249,48 @@ impl PicooDesktopApp {
         }))
     }
 
+    fn render_first_launch(&self, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .v_flex()
+            .gap_4()
+            .p_6()
+            .child(
+                GroupBox::new()
+                    .outline()
+                    .title("Picoo Camera")
+                    .child("Use your phone as a wireless camera")
+                    .child(format!(
+                        "Virtual Camera [ {} ]",
+                        vcam_label(self.vcam_status)
+                    ))
+                    .child(vcam_repair_hint(self.vcam_status)),
+            )
+            .child(
+                Button::new("refresh-vcam")
+                    .label("重新检测虚拟摄像头")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh_vcam_status();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("install-vcam")
+                    .label("Install Virtual Camera")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh_vcam_status();
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("continue-first-launch")
+                    .primary()
+                    .label("继续")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.complete_first_launch(cx);
+                    })),
+            )
+    }
+
     fn render_waiting(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
         let bind = snapshot
             .bind_addr
@@ -164,6 +301,7 @@ impl PicooDesktopApp {
             .pairing_short_code
             .clone()
             .unwrap_or_else(|| "—".into());
+        let vcam = vcam_label(snapshot.virtual_camera);
 
         div()
             .v_flex()
@@ -173,13 +311,11 @@ impl PicooDesktopApp {
                 GroupBox::new()
                     .outline()
                     .title("等待手机连接")
+                    .child("Open Picoo Camera on your phone and connect to this computer.")
                     .child(format!("状态：{status}"))
                     .child(format!("监听地址：{bind}"))
                     .child(format!("已配对设备：{}", snapshot.trusted_device_count))
-                    .child(format!(
-                        "虚拟摄像头：{}",
-                        vcam_label(VirtualCameraStatus::Unknown)
-                    )),
+                    .child(format!("Virtual Camera: {vcam}")),
             )
             .child(
                 GroupBox::new().outline().title("配对码").child(
@@ -226,7 +362,7 @@ impl PicooDesktopApp {
                     .into_any_element()]
             } else {
                 vec![Button::new("show-qr")
-                    .label("显示二维码")
+                    .label("Show QR Code")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.show_qr = true;
                         cx.notify();
@@ -247,6 +383,11 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|c| c.fps.to_string())
             .unwrap_or_else(|| "—".into());
+        let sender_name = snapshot
+            .active_sender
+            .as_ref()
+            .map(|s| s.device_name.clone())
+            .unwrap_or_else(|| "—".into());
 
         div().v_flex().gap_4().p_6().child(
             GroupBox::new().outline().title("直播预览").child(
@@ -262,12 +403,25 @@ impl PicooDesktopApp {
                             .overflow_hidden()
                             .child(self.video_surface.render_preview()),
                     )
-                    .child(format!("状态：{status}"))
-                    .child(format!("分辨率：{resolution} @ {fps} fps"))
+                    .child(format!("{sender_name} · {status}"))
+                    .child(format!("{resolution} · {fps} FPS"))
                     .child(format!(
                         "接收 AU：{} / 包：{}",
                         snapshot.ingress.access_units, snapshot.ingress.packets_received
-                    )),
+                    ))
+                    .child(format!(
+                        "Virtual Camera: {}",
+                        vcam_label(snapshot.virtual_camera)
+                    ))
+                    .child(
+                        Button::new("disconnect")
+                            .label("Disconnect")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.runtime.disconnect();
+                                this.page = DesktopPage::Waiting;
+                                cx.notify();
+                            })),
+                    ),
             ),
         )
     }
@@ -277,6 +431,86 @@ impl PicooDesktopApp {
             .v_flex()
             .gap_4()
             .p_6()
+            .child(
+                GroupBox::new()
+                    .outline()
+                    .title("常规")
+                    .child(
+                        div()
+                            .v_flex()
+                            .gap_2()
+                            .child("桌面显示名称")
+                            .child(Input::new(&self.display_name_input))
+                            .child(
+                                Button::new("save-display-name")
+                                    .label("保存显示名称")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.save_display_name(cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        Switch::new("auto-accept-paired")
+                            .checked(self.prefs.auto_accept_paired)
+                            .label("自动接受已配对设备")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.prefs.auto_accept_paired = *checked;
+                                let _ = this.persist_prefs();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Switch::new("launch-at-startup")
+                            .checked(self.prefs.launch_at_startup)
+                            .label("开机启动")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.prefs.launch_at_startup = *checked;
+                                let _ = this.persist_prefs();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Switch::new("minimize-to-tray")
+                            .checked(self.prefs.minimize_to_tray)
+                            .label("最小化到托盘")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.prefs.minimize_to_tray = *checked;
+                                let _ = this.persist_prefs();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Switch::new("default-placeholder")
+                            .checked(self.prefs.use_default_placeholder)
+                            .label("默认占位画面")
+                            .on_click(cx.listener(|this, checked, _, cx| {
+                                this.prefs.use_default_placeholder = *checked;
+                                let _ = this.persist_prefs();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                GroupBox::new()
+                    .outline()
+                    .title("日志级别")
+                    .children(LogLevel::ALL.iter().map(|level| {
+                        let selected = self.prefs.log_level == *level;
+                        let mut button = Button::new(format!("log-{level:?}")).label(level.label());
+                        if selected {
+                            button = button.primary();
+                        }
+                        let level = *level;
+                        button
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.prefs.log_level = level;
+                                this.apply_log_level();
+                                let _ = this.persist_prefs();
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    })),
+            )
             .child(
                 GroupBox::new()
                     .outline()
@@ -290,8 +524,43 @@ impl PicooDesktopApp {
             .child(
                 GroupBox::new()
                     .outline()
+                    .title("虚拟摄像头修复")
+                    .child(format!("状态：{}", vcam_label(self.vcam_status)))
+                    .child(vcam_repair_hint(self.vcam_status))
+                    .child(
+                        Button::new("repair-vcam")
+                            .label("重新检测 / 修复引导")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_vcam_status();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .child(
+                GroupBox::new()
+                    .outline()
                     .title("诊断")
-                    .child("CLI: picoo-desktop --export-diagnostics"),
+                    .child(
+                        Button::new("export-diagnostics")
+                            .label("导出诊断信息")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.export_diagnostics(cx);
+                            })),
+                    )
+                    .children(
+                        self.diagnostics_message
+                            .as_ref()
+                            .map(|path| {
+                                vec![format!("已导出至 {path}（已脱敏，不含视频）").into_any_element()]
+                            })
+                            .unwrap_or_default(),
+                    )
+                    .children(
+                        self.diagnostics_error
+                            .as_ref()
+                            .map(|err| vec![format!("导出失败：{err}").into_any_element()])
+                            .unwrap_or_default(),
+                    ),
             )
     }
 
@@ -329,16 +598,34 @@ impl PicooDesktopApp {
 fn vcam_label(status: VirtualCameraStatus) -> &'static str {
     match status {
         VirtualCameraStatus::Unknown => "检测中",
-        VirtualCameraStatus::Installed => "已安装",
-        VirtualCameraStatus::NotInstalled => "未安装",
-        VirtualCameraStatus::Active => "运行中",
+        VirtualCameraStatus::Installed => "Installed",
+        VirtualCameraStatus::NotInstalled => "Not Installed",
+        VirtualCameraStatus::Active => "Active",
+    }
+}
+
+fn default_diagnostics_path() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        std::env::var("TEMP")
+            .map(|t| PathBuf::from(t).join("picoo-diagnostics.json"))
+            .unwrap_or_else(|_| PathBuf::from("picoo-diagnostics.json"))
+    } else {
+        std::env::var("HOME")
+            .map(|h| PathBuf::from(h).join("picoo-diagnostics.json"))
+            .unwrap_or_else(|_| PathBuf::from("picoo-diagnostics.json"))
     }
 }
 
 pub fn run_gpui_app() -> Result<(), ReceiverError> {
-    let runtime = ReceiverRuntime::start(ReceiverRuntimeConfig::default())?;
+    let prefs = load_prefs();
+    let _ = std::env::set_var("RUST_LOG", prefs.log_level.env_filter());
+    let vcam_status = detect_vcam_status();
+    let runtime = ReceiverRuntime::from_prefs(&prefs)?;
+    let mut runtime = runtime;
+    runtime.set_virtual_camera_status(vcam_status);
 
     let app = gpui_platform::application().with_assets(Assets);
+    let prefs_for_window = prefs.clone();
     app.run(move |cx| {
         gpui_component::init(cx);
         cx.set_app_identity("com.picoo.camera", "Picoo Camera");
@@ -356,8 +643,15 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 })),
                 ..Default::default()
             },
-            |window, cx| {
-                let view = cx.new(|_| PicooDesktopApp::new(runtime));
+            move |window, cx| {
+                let display_name_input = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(prefs_for_window.display_name.clone())
+                        .placeholder("桌面显示名称")
+                });
+                let view = cx.new(|_| {
+                    PicooDesktopApp::new(runtime, prefs_for_window, display_name_input, vcam_status)
+                });
                 cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
             },
         )
