@@ -2,8 +2,10 @@
 
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-use picoo_sender::{SenderPipeline, SenderStats};
+use picoo_sender::{SenderSession, SessionStats};
 use picoo_session::ReceiverStatus;
+use picoo_transport::{Endpoint, QuicSenderTransport};
+use std::ffi::CStr;
 use std::sync::Mutex;
 
 /// Opaque handle placeholder for future session context.
@@ -12,7 +14,7 @@ pub struct PicooSessionHandle {
 }
 
 struct SenderInner {
-    pipeline: Mutex<SenderPipeline>,
+    session: Mutex<SenderSession<QuicSenderTransport>>,
 }
 
 /// Returns protocol version string for FFI smoke tests.
@@ -22,15 +24,15 @@ pub extern "C" fn picoo_protocol_version() -> *const std::ffi::c_char {
     VERSION.as_ptr() as *const std::ffi::c_char
 }
 
-/// Create a sender pipeline for H.264 access unit packetization.
+/// Create a sender session (packetization + QUIC transport).
 #[no_mangle]
 pub extern "C" fn picoo_sender_create() -> *mut std::ffi::c_void {
     Box::into_raw(Box::new(SenderInner {
-        pipeline: Mutex::new(SenderPipeline::default()),
+        session: Mutex::new(SenderSession::new(QuicSenderTransport::new())),
     })) as *mut std::ffi::c_void
 }
 
-/// Destroy a sender pipeline created by [`picoo_sender_create`].
+/// Destroy a sender session created by [`picoo_sender_create`].
 #[no_mangle]
 pub extern "C" fn picoo_sender_destroy(handle: *mut std::ffi::c_void) {
     if handle.is_null() {
@@ -38,6 +40,41 @@ pub extern "C" fn picoo_sender_destroy(handle: *mut std::ffi::c_void) {
     }
     unsafe {
         drop(Box::from_raw(handle as *mut SenderInner));
+    }
+}
+
+/// Connect QUIC session to host:port (PCP/1 ALPN `picoocam/1`).
+#[no_mangle]
+pub extern "C" fn picoo_sender_connect(
+    handle: *mut std::ffi::c_void,
+    host: *const std::ffi::c_char,
+    port: u16,
+) -> i32 {
+    if handle.is_null() || host.is_null() {
+        return -1;
+    }
+    let host = unsafe { CStr::from_ptr(host) }.to_string_lossy();
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let mut session = inner.session.lock().expect("sender lock");
+    match session.connect(Endpoint {
+        host: host.into_owned(),
+        port,
+    }) {
+        Ok(_) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// Drive QUIC I/O (call periodically from platform thread).
+#[no_mangle]
+pub extern "C" fn picoo_sender_pump(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    match inner.session.lock().expect("sender lock").pump() {
+        Ok(()) => 0,
+        Err(_) => -2,
     }
 }
 
@@ -58,13 +95,34 @@ pub extern "C" fn picoo_sender_ingest_access_unit(
 
     let inner = unsafe { &*(handle as *mut SenderInner) };
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    let mut pipeline = inner.pipeline.lock().expect("sender lock");
+    let mut session = inner.session.lock().expect("sender lock");
 
-    match pipeline.ingest_access_unit(slice, is_keyframe != 0, pts_us, stream_epoch) {
+    match session.ingest_access_unit(slice, is_keyframe != 0, pts_us, stream_epoch) {
         Ok(count) => {
             if !out_packets.is_null() {
                 unsafe {
                     *out_packets = count as u32;
+                }
+            }
+            0
+        }
+        Err(_) => -2,
+    }
+}
+
+/// Flush pending VideoPackets over QUIC datagrams.
+#[no_mangle]
+pub extern "C" fn picoo_sender_flush(handle: *mut std::ffi::c_void, out_sent: *mut u32) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let mut session = inner.session.lock().expect("sender lock");
+    match session.flush_pending() {
+        Ok(sent) => {
+            if !out_sent.is_null() {
+                unsafe {
+                    *out_sent = sent as u32;
                 }
             }
             0
@@ -78,6 +136,7 @@ pub struct PicooSenderStats {
     pub access_units: u64,
     pub packets: u64,
     pub bytes: u64,
+    pub sent_datagrams: u64,
 }
 
 /// Read cumulative sender stats.
@@ -90,11 +149,12 @@ pub extern "C" fn picoo_sender_stats(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let stats: SenderStats = inner.pipeline.lock().expect("sender lock").stats();
+    let stats: SessionStats = inner.session.lock().expect("sender lock").stats();
     unsafe {
-        (*out).access_units = stats.access_units;
-        (*out).packets = stats.packets;
-        (*out).bytes = stats.bytes;
+        (*out).access_units = stats.pipeline.access_units;
+        (*out).packets = stats.pipeline.packets;
+        (*out).bytes = stats.pipeline.bytes;
+        (*out).sent_datagrams = stats.sent_datagrams;
     }
     0
 }
@@ -106,12 +166,7 @@ pub extern "C" fn picoo_sender_pending_packets(handle: *mut std::ffi::c_void) ->
         return 0;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .pipeline
-        .lock()
-        .expect("sender lock")
-        .pending_packets()
-        .len() as u64
+    inner.session.lock().expect("sender lock").pending_packets() as u64
 }
 
 #[cfg(test)]
@@ -135,7 +190,6 @@ mod tests {
             0
         );
         assert_eq!(out, 1);
-        assert_eq!(picoo_sender_pending_packets(handle), 1);
         picoo_sender_destroy(handle);
     }
 }

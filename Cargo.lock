@@ -534,7 +534,9 @@ version = "0.1.0"
 dependencies = [
  "cbindgen",
  "picoo-protocol",
+ "picoo-sender",
  "picoo-session",
+ "picoo-transport",
 ]
 
 [[package]]
@@ -611,6 +613,18 @@ name = "picoo-rate-control"
 version = "0.1.0"
 dependencies = [
  "picoo-metrics",
+]
+
+[[package]]
+name = "picoo-sender"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "picoo-packet",
+ "picoo-protocol",
+ "picoo-testkit",
+ "picoo-transport",
+ "thiserror",
 ]
 
 [[package]]

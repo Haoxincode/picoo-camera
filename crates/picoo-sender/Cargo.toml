@@ -9,7 +9,10 @@ license.workspace = true
 bytes.workspace = true
 picoo-protocol.workspace = true
 picoo-packet.workspace = true
+picoo-transport.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 picoo-packet.workspace = true
+picoo-testkit.workspace = true
+picoo-transport.workspace = true

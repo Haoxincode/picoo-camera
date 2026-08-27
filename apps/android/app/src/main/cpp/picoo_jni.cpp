@@ -59,7 +59,7 @@ Java_com_picoo_camera_jni_PicooNative_ingestAccessUnit(
 
 extern "C" JNIEXPORT jlongArray JNICALL
 Java_com_picoo_camera_jni_PicooNative_getSenderStats(JNIEnv *env, jobject /* this */, jlong handle) {
-    jlongArray result = env->NewLongArray(4);
+    jlongArray result = env->NewLongArray(5);
     if (handle == 0 || result == nullptr) {
         return result;
     }
@@ -69,12 +69,53 @@ Java_com_picoo_camera_jni_PicooNative_getSenderStats(JNIEnv *env, jobject /* thi
         return result;
     }
 
-    jlong values[4] = {
+    jlong values[5] = {
         static_cast<jlong>(stats.access_units),
         static_cast<jlong>(stats.packets),
         static_cast<jlong>(stats.bytes),
+        static_cast<jlong>(stats.sent_datagrams),
         static_cast<jlong>(picoo_sender_pending_packets(reinterpret_cast<void *>(handle))),
     };
-    env->SetLongArrayRegion(result, 0, 4, values);
+    env->SetLongArrayRegion(result, 0, 5, values);
     return result;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_connect(
+    JNIEnv *env,
+    jobject /* this */,
+    jlong handle,
+    jstring host,
+    jint port) {
+    if (handle == 0 || host == nullptr) {
+        return -1;
+    }
+    const char *host_chars = env->GetStringUTFChars(host, nullptr);
+    if (host_chars == nullptr) {
+        return -1;
+    }
+    int32_t rc = picoo_sender_connect(
+        reinterpret_cast<void *>(handle),
+        host_chars,
+        static_cast<uint16_t>(port));
+    env->ReleaseStringUTFChars(host, host_chars);
+    return rc;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_flushPending(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return -1;
+    }
+    uint32_t sent = 0;
+    int32_t rc = picoo_sender_flush(reinterpret_cast<void *>(handle), &sent);
+    return rc == 0 ? static_cast<jint>(sent) : rc;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_pump(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return -1;
+    }
+    return picoo_sender_pump(reinterpret_cast<void *>(handle));
 }

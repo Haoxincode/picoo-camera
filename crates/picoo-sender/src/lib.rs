@@ -2,11 +2,16 @@
 //!
 //! REQ-PICOO-MEDIA-001, REQ-PICOO-STACK-001
 
+mod session;
+
 use bytes::Bytes;
 use picoo_protocol::{
     VideoPacket, VideoPacketError, VideoPacketFlags, MAX_DATAGRAM_SIZE, VIDEO_PACKET_HEADER_SIZE,
 };
+use picoo_transport::TransportError;
 use thiserror::Error;
+
+pub use session::{SenderSession, SessionStats};
 
 const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE;
 
@@ -14,6 +19,10 @@ const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE
 pub enum SenderError {
     #[error("empty access unit")]
     EmptyAccessUnit,
+    #[error("not connected")]
+    NotConnected,
+    #[error("transport: {0}")]
+    Transport(#[from] TransportError),
     #[error("packet error: {0}")]
     Packet(#[from] VideoPacketError),
 }

@@ -3,12 +3,14 @@
 //! REQ-PICOO-TRANSPORT-001
 
 mod quic;
+mod quic_sender;
 
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use thiserror::Error;
 
 pub use quic::{establish_loopback, QuicLoopback, QuicTransportError, CONTROL_STREAM_ID};
+pub use quic_sender::QuicSenderTransport;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
@@ -52,4 +54,9 @@ pub trait PicooTransport {
         -> Result<(), TransportError>;
     fn poll_event(&mut self) -> Option<TransportEvent>;
     fn close(&mut self, session: SessionId, reason: CloseReason);
+
+    /// Drive underlying I/O (QUIC timers, UDP recv/send). Default no-op.
+    fn pump(&mut self) -> Result<(), TransportError> {
+        Ok(())
+    }
 }

@@ -12,6 +12,7 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 picoo-protocol.workspace = true
 picoo-session.workspace = true
 picoo-sender.workspace = true
+picoo-transport.workspace = true
 
 [build-dependencies]
 cbindgen = "0.27"

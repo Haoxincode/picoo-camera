@@ -1,0 +1,195 @@
+//! QUIC client implementing [`PicooTransport`] for Android/iOS senders.
+
+use std::collections::VecDeque;
+use std::net::SocketAddr;
+use std::str::FromStr;
+use std::time::Duration;
+
+use bytes::Bytes;
+use picoo_protocol::VideoPacket;
+
+use crate::quic::{QuicClient, QuicTransportError, CONTROL_STREAM_ID};
+use crate::{CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent};
+
+pub struct QuicSenderTransport {
+    client: Option<QuicClient>,
+    session: Option<SessionId>,
+    events: VecDeque<TransportEvent>,
+    next_session: u64,
+}
+
+impl Default for QuicSenderTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl QuicSenderTransport {
+    pub fn new() -> Self {
+        Self {
+            client: None,
+            session: None,
+            events: VecDeque::new(),
+            next_session: 1,
+        }
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.client.as_ref().is_some_and(|c| c.is_established())
+    }
+
+    /// Wrap an already-established QUIC client (used in tests).
+    pub fn from_established(client: QuicClient) -> Result<Self, TransportError> {
+        if !client.is_established() {
+            return Err(TransportError::ConnectFailed(
+                "client not established".into(),
+            ));
+        }
+        let session = SessionId(1);
+        let mut events = VecDeque::new();
+        events.push_back(TransportEvent::Connected(session));
+        Ok(Self {
+            client: Some(client),
+            session: Some(session),
+            events,
+            next_session: 2,
+        })
+    }
+
+    fn map_err(err: QuicTransportError) -> TransportError {
+        TransportError::ConnectFailed(err.to_string())
+    }
+
+    fn map_send_err(err: QuicTransportError) -> TransportError {
+        TransportError::SendFailed(err.to_string())
+    }
+
+    fn poll_inbound(&mut self) -> Result<(), TransportError> {
+        let Some(client) = self.client.as_mut() else {
+            return Ok(());
+        };
+        let session = self.session.expect("session set when client exists");
+
+        while let Some((stream_id, data)) = client.recv_stream().map_err(Self::map_send_err)? {
+            if stream_id == CONTROL_STREAM_ID {
+                self.events
+                    .push_back(TransportEvent::ControlMessage(session, Bytes::from(data)));
+            }
+        }
+
+        while let Some(raw) = client.recv_dgram().map_err(Self::map_send_err)? {
+            if let Ok(packet) = VideoPacket::decode(&raw) {
+                self.events
+                    .push_back(TransportEvent::VideoPacket(session, packet));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl PicooTransport for QuicSenderTransport {
+    fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, TransportError> {
+        let addr = SocketAddr::from_str(&format!("{}:{}", endpoint.host, endpoint.port))
+            .map_err(|e| TransportError::ConnectFailed(e.to_string()))?;
+
+        let mut client = QuicClient::connect(addr).map_err(Self::map_err)?;
+        for _ in 0..500 {
+            client.drive().map_err(Self::map_err)?;
+            self.poll_inbound()?;
+            if client.is_established() {
+                let session = SessionId(self.next_session);
+                self.next_session += 1;
+                self.client = Some(client);
+                self.session = Some(session);
+                self.events.push_back(TransportEvent::Connected(session));
+                return Ok(session);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        Err(TransportError::ConnectFailed(
+            "QUIC handshake timeout".into(),
+        ))
+    }
+
+    fn send_control(&mut self, session: SessionId, message: Bytes) -> Result<(), TransportError> {
+        if self.session != Some(session) {
+            return Err(TransportError::NotConnected);
+        }
+        let client = self.client.as_mut().ok_or(TransportError::NotConnected)?;
+        client
+            .send_stream(CONTROL_STREAM_ID, &message)
+            .map_err(Self::map_send_err)?;
+        Ok(())
+    }
+
+    fn send_video(
+        &mut self,
+        session: SessionId,
+        packet: VideoPacket,
+    ) -> Result<(), TransportError> {
+        if self.session != Some(session) {
+            return Err(TransportError::NotConnected);
+        }
+        let client = self.client.as_mut().ok_or(TransportError::NotConnected)?;
+        let encoded = packet
+            .encode()
+            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+        client.send_dgram(&encoded).map_err(Self::map_send_err)?;
+        Ok(())
+    }
+
+    fn poll_event(&mut self) -> Option<TransportEvent> {
+        self.events.pop_front()
+    }
+
+    fn close(&mut self, session: SessionId, reason: CloseReason) {
+        if self.session == Some(session) {
+            self.client = None;
+            self.session = None;
+            self.events
+                .push_back(TransportEvent::Disconnected(session, reason));
+        }
+    }
+
+    fn pump(&mut self) -> Result<(), TransportError> {
+        if let Some(client) = self.client.as_mut() {
+            client.drive().map_err(Self::map_send_err)?;
+        }
+        self.poll_inbound()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use picoo_protocol::VideoPacketFlags;
+
+    use crate::quic::establish_loopback;
+
+    #[test]
+    fn quic_sender_transport_sends_video_datagram() {
+        let pair = establish_loopback().expect("loopback");
+        let mut server = pair.server;
+        let mut transport = QuicSenderTransport::from_established(pair.client).expect("wrap");
+        let session = SessionId(1);
+
+        let packet = VideoPacket {
+            version: VideoPacket::VERSION,
+            flags: VideoPacketFlags::KEYFRAME,
+            stream_epoch: 1,
+            frame_id: 1,
+            pts_us: 0,
+            fragment_index: 0,
+            fragment_count: 1,
+            payload: Bytes::from_static(b"h264"),
+        };
+        transport.send_video(session, packet).expect("send");
+        transport.pump().expect("pump");
+        server.drive().expect("server drive");
+        let raw = server.recv_dgram().expect("recv").expect("video");
+        let decoded = VideoPacket::decode(&raw).expect("decode");
+        assert_eq!(decoded.payload.as_ref(), b"h264");
+    }
+}

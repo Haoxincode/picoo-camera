@@ -104,6 +104,8 @@ private fun SenderHomeScreen(
                 )
                 if (fragments > 0) {
                     rustPackets += fragments
+                    PicooNative.flushPending(senderHandle)
+                    PicooNative.pump(senderHandle)
                 }
             },
         )
@@ -157,7 +159,7 @@ private fun SenderHomeScreen(
                         append("~${encoder.stats.lastBitrateEstimateKbps}kbps ")
                         append("epoch=${encoder.streamEpoch}\n")
                         append("rust AU=${rust.accessUnits} pkts=${rust.packets} ")
-                        append("pending=${rust.pendingPackets}")
+                        append("sent=${rust.sentDatagrams} pending=${rust.pendingPackets}")
                     }
                     encoderState = encoder.state
                     errorText = encoder.lastError

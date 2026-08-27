@@ -32,13 +32,20 @@ object PicooNative {
         streamEpoch: Int,
     ): Int
 
-    /** [accessUnits, packets, bytes, pendingPackets] */
+    /** [accessUnits, packets, bytes, sentDatagrams, pendingPackets] */
     external fun getSenderStats(handle: Long): LongArray
+
+    external fun connect(handle: Long, host: String, port: Int): Int
+
+    external fun flushPending(handle: Long): Int
+
+    external fun pump(handle: Long): Int
 
     data class SenderStats(
         val accessUnits: Long,
         val packets: Long,
         val bytes: Long,
+        val sentDatagrams: Long,
         val pendingPackets: Long,
     )
 
@@ -48,7 +55,8 @@ object PicooNative {
             accessUnits = values.getOrElse(0) { 0 },
             packets = values.getOrElse(1) { 0 },
             bytes = values.getOrElse(2) { 0 },
-            pendingPackets = values.getOrElse(3) { 0 },
+            sentDatagrams = values.getOrElse(3) { 0 },
+            pendingPackets = values.getOrElse(4) { 0 },
         )
     }
 }
