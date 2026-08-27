@@ -7,6 +7,7 @@
 #include "picoo_vcam_ids.h"
 
 #include <cstring>
+#include <ksmedia.h>
 #include <mferror.h>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -49,8 +50,7 @@ HRESULT PicooMediaStream::Initialize(PicooMediaSource* source, DWORD stream_id) 
     RETURN_IF_FAILED(CreateNv12MediaType(&media_type, PICOO_VCAM_DEFAULT_WIDTH, PICOO_VCAM_DEFAULT_HEIGHT));
     current_type_ = media_type;
 
-    ComPtr<IMFMediaType> types[1];
-    types[0] = media_type;
+    IMFMediaType* types[1] = {media_type.Get()};
     RETURN_IF_FAILED(MFCreateStreamDescriptor(stream_id, 1, types, &descriptor_));
 
     ComPtr<IMFMediaTypeHandler> handler;
