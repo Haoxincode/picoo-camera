@@ -16,6 +16,10 @@ namespace {
 
 constexpr uint32_t kDefaultMaxFrameBytes = PICOO_RING_DEFAULT_MAX_FRAME_BYTES;
 
+static_assert(sizeof(PicooRingMeta) == PICOO_RING_META_SIZE, "PicooRingMeta layout mismatch");
+static_assert(sizeof(PicooRingSlotMeta) == PICOO_RING_SLOT_META_SIZE,
+              "PicooRingSlotMeta layout mismatch");
+
 size_t RingLayoutSize(uint32_t max_frame_bytes) {
     return PICOO_RING_META_SIZE +
            static_cast<size_t>(PICOO_RING_SLOT_COUNT) *
