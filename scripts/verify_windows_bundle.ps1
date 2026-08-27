@@ -2,11 +2,15 @@
 # Runs on windows-latest after `xtask package windows`. Does NOT replace Win11 meeting-app acceptance (VCAM-005).
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+# scripts/ → repo root (one level up). Do NOT double-parent like installers/windows/*.ps1.
+$Root = Split-Path -Parent $PSScriptRoot
 $Bundle = Join-Path $Root "target/release/bundle"
 $Dll = Join-Path $Bundle "PicooVirtualCameraSource.dll"
 $Exe = Join-Path $Bundle "picoo-desktop.exe"
 $Msi = Join-Path $Bundle "msi/PicooCamera.msi"
+
+Write-Host "Repo root: $Root"
+Write-Host "Bundle:    $Bundle"
 
 foreach ($path in @($Exe, $Dll)) {
     if (-not (Test-Path $path)) {

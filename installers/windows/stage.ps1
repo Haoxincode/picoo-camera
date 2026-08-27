@@ -54,6 +54,12 @@ $BuildMsi = Join-Path $Root "installers/windows/build-msi.ps1"
 if (Test-Path $BuildMsi) {
     Write-Host "Attempting MSI build (optional; requires WiX)"
     & powershell -ExecutionPolicy Bypass -File $BuildMsi
+    if ($LASTEXITCODE -ne 0) {
+        if ($env:PICOO_REQUIRE_MSI -eq "1") {
+            Write-Error "build-msi.ps1 failed with exit code $LASTEXITCODE (PICOO_REQUIRE_MSI=1)"
+        }
+        Write-Warning "build-msi.ps1 failed with exit code $LASTEXITCODE"
+    }
 }
 
 Write-Host "Bundle ready: $Bundle"

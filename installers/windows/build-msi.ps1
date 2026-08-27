@@ -23,10 +23,16 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 }
 
 # Ensure Firewall extension for fw:FirewallException (REQ-PICOO-VCAM-004).
-# Prefer 5.0.2 to match CI; fall back to unpinned if pin unavailable.
-& wix extension add WixToolset.Firewall.wixext/5.0.2 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    & wix extension add WixToolset.Firewall.wixext 2>$null | Out-Null
+# Prefer 5.0.2 to match CI. Treat "already installed" as success; do not fall back
+# to an unpinned extension under PICOO_REQUIRE_MSI=1 (avoids WiX 7 major skew).
+$extOut = & wix extension add WixToolset.Firewall.wixext/5.0.2 2>&1 | Out-String
+$extOk = ($LASTEXITCODE -eq 0) -or ($extOut -match '(?i)already|exists|installed')
+if (-not $extOk) {
+    if ($RequireMsi) {
+        Write-Error "Failed to ensure WixToolset.Firewall.wixext/5.0.2: $extOut"
+    }
+    Write-Warning "Firewall.wixext/5.0.2 unavailable; trying unpinned extension"
+    & wix extension add WixToolset.Firewall.wixext 2>&1 | Out-Null
 }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null

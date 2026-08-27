@@ -141,7 +141,7 @@ STDAPI DllRegisterServer() {
     if (status != ERROR_SUCCESS) {
         return HRESULT_FROM_WIN32(status);
     }
-    const wchar_t friendly[] = L"Picoo Camera Virtual Media Source";
+    const wchar_t friendly[] = PICOO_VCAM_FRIENDLY_NAME;
     status = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(friendly),
                             static_cast<DWORD>((wcslen(friendly) + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
