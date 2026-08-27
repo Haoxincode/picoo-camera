@@ -100,6 +100,15 @@ impl<T: PicooTransport> SenderSession<T> {
         self.status
     }
 
+    /// Access the underlying transport (loss injection / diagnostics in tests).
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+
     /// Surface camera/mic permission gate to UI (REQ-PICOO-SESSION-001).
     pub fn mark_permission_required(&mut self) {
         self.status = SenderStatus::PermissionRequired;

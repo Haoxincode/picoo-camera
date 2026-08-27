@@ -21,14 +21,16 @@
         ExeCommand="regsvr32 /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
         Execute="deferred"
         Impersonate="no"
-        Return="ignore" />
+        Return="check" />
     <CustomAction
         Id="UnregisterVcamDll"
         Directory="INSTALLFOLDER"
         ExeCommand="regsvr32 /u /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
         Execute="deferred"
         Impersonate="no"
-        Return="ignore" />
+        Return="check" />
+
+    <!-- MFCreateVirtualCamera Session is started by picoo-desktop on first launch (REQ-PICOO-VCAM-002). -->
 
     <InstallExecuteSequence>
       <Custom Action="RegisterVcamDll" After="InstallFiles" Condition="NOT REMOVE" />
@@ -40,12 +42,30 @@
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Picoo Camera" />
     </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="ApplicationProgramsFolder" Name="Picoo Camera" />
+    </StandardDirectory>
   </Fragment>
 
   <Fragment>
     <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
       <Component Id="DesktopExe" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E71">
         <File Id="PicooDesktop" Source="!(bindpath.Bundle)\picoo-desktop.exe" KeyPath="yes" />
+        <Shortcut
+            Id="StartMenuDesktop"
+            Directory="ApplicationProgramsFolder"
+            Name="Picoo Camera"
+            Target="[#PicooDesktop]"
+            WorkingDirectory="INSTALLFOLDER"
+            Advertise="no" />
+        <RemoveFolder Id="RemoveProgramMenu" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\Picoo\PicooCamera"
+            Name="installed"
+            Type="integer"
+            Value="1"
+            KeyPath="no" />
       </Component>
       <Component Id="VcamDll" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E72">
         <File Id="PicooVcamDll" Source="!(bindpath.Bundle)\PicooVirtualCameraSource.dll" KeyPath="yes" />

@@ -1,8 +1,10 @@
 //! Protocol simulation over real QUIC loopback — Goal step 2.
 
+mod lossy;
 mod memory;
 mod quic_sim;
 
+pub use lossy::LossyVideoTransport;
 pub use memory::MemoryTransport;
 pub use quic_sim::{run_quic_protocol_simulation, QuicSimulationError};
 

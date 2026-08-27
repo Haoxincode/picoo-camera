@@ -1135,6 +1135,130 @@ fn soak_paired_loopback_memory_stable() {
     }
 }
 
+#[test]
+fn paired_loopback_remains_usable_under_five_percent_loss() {
+    // PRD §21 / REQ-PICOO-SESSION-006: ~5% video datagram loss must not stall the session.
+    use picoo_pairing::TrustedDevice;
+    use picoo_session::ReceiverStatus;
+    use picoo_testkit::LossyVideoTransport;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let loss_ratio: f64 = std::env::var("LOSS_RATIO")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.05);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "lossy-phone".into(),
+        device_name: "Lossy".into(),
+        public_key: vec![7, 7, 7],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let lossy = LossyVideoTransport::new(QuicSenderTransport::new(), loss_ratio);
+    let mut sender = SenderSession::new(lossy);
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("lossy-phone", "Lossy", &[7, 7, 7])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    let mut frames_seen = 0u64;
+    let mut last_au = receiver.stats().access_units;
+    let mut stalled_rounds = 0u32;
+    for frame_id in 1..=400u64 {
+        // Prefer keyframes so a drop does not permanently break the stub decode chain.
+        let is_key = frame_id % 5 == 1;
+        let payload = format!("lossy-au-{frame_id}");
+        sender
+            .ingest_and_flush(payload.as_bytes(), is_key, frame_id, 1)
+            .expect("ingest");
+        for _ in 0..12 {
+            receiver.pump().expect("rx");
+            sender.pump().ok();
+        }
+        if receiver.latest_frame().is_some() {
+            frames_seen += 1;
+        }
+        let au = receiver.stats().access_units;
+        if au == last_au {
+            stalled_rounds += 1;
+        } else {
+            stalled_rounds = 0;
+            last_au = au;
+        }
+        // Allow brief stalls under loss, but not a permanent hang.
+        assert!(
+            stalled_rounds < 80,
+            "session stalled under {loss_ratio} loss after frame_id={frame_id} au={au}"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let observed = sender.transport().observed_drop_ratio();
+    assert!(
+        frames_seen > 20,
+        "expected many FrameHub updates under loss, got {frames_seen}"
+    );
+    assert!(
+        receiver.stats().access_units > 30,
+        "expected reassembled AUs under loss, got {}",
+        receiver.stats().access_units
+    );
+    assert!(
+        (0.02..0.12).contains(&observed),
+        "expected ~{loss_ratio} observed drops, got {observed}"
+    );
+
+    // After stopping lossy sends, frame_age should not stay pathologically high forever.
+    // (Stub decode uses wall clock timestamps; require stats reporter to still function.)
+    for _ in 0..50 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if let Some(stats) = receiver.last_stats() {
+        assert!(
+            stats.frame_age_ms < 5_000.0,
+            "frame age piled up after loss window: {}ms",
+            stats.frame_age_ms
+        );
+    }
+}
+
 fn linux_vm_rss_kb() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {

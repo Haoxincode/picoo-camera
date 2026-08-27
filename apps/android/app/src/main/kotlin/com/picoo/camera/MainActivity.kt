@@ -54,6 +54,7 @@ import android.view.WindowManager
 
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
+    private var nearbyWifiGranted by mutableStateOf(true)
     private var pendingAfterCameraGrant: (() -> Unit)? = null
     private var activeSenderHandle: Long = 0L
 
@@ -73,6 +74,11 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val nearbyWifiLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            nearbyWifiGranted = granted
+        }
+
     /** REQ-PICOO-UI-006: request CAMERA only when an action needs it. */
     fun requestCameraPermission(then: (() -> Unit)? = null) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
@@ -89,6 +95,20 @@ class MainActivity : ComponentActivity() {
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
+    /** PUC-001 / DISCOVERY-005: request Nearby Wi-Fi Devices on API 33+ before NSD. */
+    fun ensureNearbyWifiPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            nearbyWifiGranted = true
+            return
+        }
+        val perm = Manifest.permission.NEARBY_WIFI_DEVICES
+        if (ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED) {
+            nearbyWifiGranted = true
+            return
+        }
+        nearbyWifiLauncher.launch(perm)
+    }
+
     fun bindSenderHandle(handle: Long) {
         activeSenderHandle = handle
     }
@@ -101,6 +121,11 @@ class MainActivity : ComponentActivity() {
         cameraGranted =
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            nearbyWifiGranted =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) ==
+                    PackageManager.PERMISSION_GRANTED
+        }
 
         val protocolVersion = runCatching { PicooNative.getProtocolVersion() }
             .getOrElse { "FFI unavailable: ${it.message}" }
@@ -111,7 +136,9 @@ class MainActivity : ComponentActivity() {
                     SenderHomeScreen(
                         protocolVersion = protocolVersion,
                         cameraGranted = cameraGranted,
+                        nearbyWifiGranted = nearbyWifiGranted,
                         onRequestCamera = { then -> requestCameraPermission(then) },
+                        onRequestNearbyWifi = { ensureNearbyWifiPermission() },
                         modifier = Modifier.padding(innerPadding),
                     )
                 }
@@ -124,7 +151,9 @@ class MainActivity : ComponentActivity() {
 private fun SenderHomeScreen(
     protocolVersion: String,
     cameraGranted: Boolean,
+    nearbyWifiGranted: Boolean,
     onRequestCamera: (then: (() -> Unit)?) -> Unit,
+    onRequestNearbyWifi: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -191,9 +220,17 @@ private fun SenderHomeScreen(
             }
         }
 
-    DisposableEffect(nsdBrowser) {
+    LaunchedEffect(nearbyWifiGranted) {
+        if (!nearbyWifiGranted) {
+            onRequestNearbyWifi()
+        }
+    }
+
+    DisposableEffect(nsdBrowser, nearbyWifiGranted) {
         // REQ-PICOO-DISCOVERY-005 / ARCH-PICOO-DISCOVERY-001: Android uses NSD, not Rust mDNS.
-        nsdBrowser.start()
+        if (nearbyWifiGranted) {
+            nsdBrowser.start()
+        }
         onDispose { nsdBrowser.stop() }
     }
 
