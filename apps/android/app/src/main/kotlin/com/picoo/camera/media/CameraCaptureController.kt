@@ -38,6 +38,8 @@ interface CameraCaptureController {
     fun startPreview()
     fun stopPreview()
     fun switchCamera()
+    /** Switch to a specific lens (desktop CameraCommand SWITCH_FRONT/BACK). */
+    fun setLensFacing(facing: LensFacing)
     fun setResolution(width: Int, height: Int)
     fun setTargetBitrateBps(bitrateBps: Int)
     fun requestKeyFrame()

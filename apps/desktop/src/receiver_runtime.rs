@@ -13,7 +13,7 @@ use picoo_discovery::{
 use picoo_pairing::{
     public_key_fingerprint, public_key_fingerprint_prefix, DeviceIdentity,
 };
-use picoo_protocol::control::StreamConfig;
+use picoo_protocol::control::{CameraCommand, StreamConfig};
 use picoo_receiver::{IngressStats, ReceiverError, ReceiverIdentity, ReceiverSession};
 use picoo_session::ReceiverStatus;
 use picoo_transport::Endpoint;
@@ -261,6 +261,12 @@ impl ReceiverRuntime {
     pub fn disconnect(&mut self) {
         self.receiver.close();
         let _ = self.receiver.publish_waiting_placeholder();
+    }
+
+    /// Desktop → phone remote camera control while streaming (PUC-005 / REQ-PICOO-UI-009).
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+    pub fn send_camera_command(&mut self, command: CameraCommand) -> Result<(), ReceiverError> {
+        self.receiver.send_camera_command(command)
     }
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {

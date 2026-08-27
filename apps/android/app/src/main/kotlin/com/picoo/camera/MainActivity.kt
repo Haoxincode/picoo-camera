@@ -479,6 +479,41 @@ private fun SenderHomeScreen(
                 if (PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                     encoder.requestKeyFrame()
                 }
+                // PUC-005 / REQ-PICOO-UI-009: desktop CameraCommand → local capture.
+                run {
+                    val camOut = IntArray(3)
+                    when (PicooNative.takeCameraCommand(senderHandle, camOut)) {
+                        1 -> { // SWITCH_FRONT
+                            encoder.setLensFacing(LensFacing.Front)
+                            localPreviewMirrored =
+                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
+                            streamConfigDirty.set(true)
+                        }
+                        2 -> { // SWITCH_BACK
+                            encoder.setLensFacing(LensFacing.Back)
+                            localPreviewMirrored =
+                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
+                            streamConfigDirty.set(true)
+                        }
+                        3 -> { // SET_RESOLUTION
+                            val w = camOut[0]
+                            val h = camOut[1]
+                            if (w > 0 && h > 0) {
+                                resolutionLabel = if (h >= 1080) "1080p" else "720p"
+                                preferredResolutionLabel = resolutionLabel
+                                encoder.setResolution(w, h)
+                                PicooNative.setPreferredHeight(senderHandle, h)
+                                PicooNative.syncEncodeHeight(senderHandle, h)
+                                streamConfigDirty.set(true)
+                                encoder.requestKeyFrame()
+                            }
+                        }
+                        4 -> { // SET_MIRROR — remote output (MEDIA-004)
+                            remoteMirrored = camOut[2] != 0
+                            streamConfigDirty.set(true)
+                        }
+                    }
+                }
                 if (PicooNative.takeResolutionDownshift(senderHandle) == 1 &&
                     resolutionLabel != "720p"
                 ) {

@@ -102,6 +102,16 @@ object PicooNative {
     /** 1 if receiver requested IDR (consumes flag). REQ-PICOO-SESSION-003. */
     external fun takeKeyframeRequest(handle: Long): Int
 
+    /**
+     * Desktop CameraCommand (PUC-005 / REQ-PICOO-UI-009).
+     * @return 0=none, 1=SWITCH_FRONT, 2=SWITCH_BACK, 3=SET_RESOLUTION, 4=SET_MIRROR
+     * For SET_RESOLUTION / SET_MIRROR, [out] holds `[width, height, mirrored]` (0/1).
+     */
+    external fun takeCameraCommand(handle: Long, out: IntArray?): Int
+
+    /** Last SessionError code (e.g. PUBLIC_KEY_CHANGED), or empty. */
+    external fun lastSessionError(handle: Long): String
+
     /** 1 if ABR asks to drop 1080p→720p (consumes flag). REQ-PICOO-MEDIA-010. */
     external fun takeResolutionDownshift(handle: Long): Int
 

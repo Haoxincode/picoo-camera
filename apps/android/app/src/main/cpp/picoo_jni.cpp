@@ -356,6 +356,46 @@ Java_com_picoo_camera_jni_PicooNative_takeKeyframeRequest(JNIEnv * /* env */, jo
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_takeCameraCommand(
+    JNIEnv *env,
+    jobject /* this */,
+    jlong handle,
+    jintArray out) {
+    if (handle == 0) {
+        return -1;
+    }
+    uint32_t width = 0;
+    uint32_t height = 0;
+    int32_t mirrored = 0;
+    int32_t cmd = picoo_sender_take_camera_command(
+        reinterpret_cast<void *>(handle),
+        &width,
+        &height,
+        &mirrored);
+    if (out != nullptr && env->GetArrayLength(out) >= 3) {
+        jint vals[3] = {
+            static_cast<jint>(width),
+            static_cast<jint>(height),
+            static_cast<jint>(mirrored)};
+        env->SetIntArrayRegion(out, 0, 3, vals);
+    }
+    return cmd;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_picoo_camera_jni_PicooNative_lastSessionError(
+    JNIEnv *env,
+    jobject /* this */,
+    jlong handle) {
+    if (handle == 0) {
+        return env->NewStringUTF("");
+    }
+    char buf[64] = {0};
+    picoo_sender_last_session_error(reinterpret_cast<void *>(handle), buf, sizeof(buf));
+    return env->NewStringUTF(buf);
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_com_picoo_camera_jni_PicooNative_takeResolutionDownshift(
     JNIEnv * /* env */,
     jobject /* this */,

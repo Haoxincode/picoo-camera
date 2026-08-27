@@ -502,6 +502,32 @@ pub extern "C" fn picoo_sender_take_keyframe_request(handle: *mut std::ffi::c_vo
     }
 }
 
+/// Copy last SessionError code (e.g. PUBLIC_KEY_CHANGED). Returns bytes written
+/// excluding NUL, 0 if none, -1 on error.
+#[no_mangle]
+pub extern "C" fn picoo_sender_last_session_error(
+    handle: *mut std::ffi::c_void,
+    out: *mut std::os::raw::c_char,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() || out.is_null() || out_len == 0 {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let session = inner.session.lock().expect("sender lock");
+    let Some(code) = session.last_session_error() else {
+        unsafe { *out = 0 };
+        return 0;
+    };
+    let bytes = code.as_bytes();
+    let copy = bytes.len().min(out_len.saturating_sub(1));
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy);
+        *out.add(copy) = 0;
+    }
+    copy as i32
+}
+
 /// Returns 1 if ABR asks the host to drop resolution (consumes the flag). REQ-PICOO-MEDIA-010.
 #[no_mangle]
 pub extern "C" fn picoo_sender_take_resolution_downshift(handle: *mut std::ffi::c_void) -> i32 {
@@ -538,6 +564,55 @@ pub extern "C" fn picoo_sender_take_resolution_upshift(handle: *mut std::ffi::c_
     } else {
         0
     }
+}
+
+/// Consume a desktop-originated CameraCommand (PUC-005 / REQ-PICOO-UI-009).
+///
+/// Returns the command enum value (`1` SWITCH_FRONT … `4` SET_MIRROR), or `0` when
+/// none pending. Optional outs: `out_width`/`out_height` for SET_RESOLUTION,
+/// `out_mirrored` (0/1) for SET_MIRROR.
+#[no_mangle]
+pub extern "C" fn picoo_sender_take_camera_command(
+    handle: *mut std::ffi::c_void,
+    out_width: *mut u32,
+    out_height: *mut u32,
+    out_mirrored: *mut i32,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let Some(cmd) = inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .take_camera_command()
+    else {
+        return 0;
+    };
+    if !out_width.is_null() || !out_height.is_null() {
+        let (w, h) = cmd
+            .resolution
+            .as_ref()
+            .map(|r| (r.width, r.height))
+            .unwrap_or((0, 0));
+        if !out_width.is_null() {
+            unsafe {
+                *out_width = w;
+            }
+        }
+        if !out_height.is_null() {
+            unsafe {
+                *out_height = h;
+            }
+        }
+    }
+    if !out_mirrored.is_null() {
+        unsafe {
+            *out_mirrored = i32::from(cmd.mirrored);
+        }
+    }
+    cmd.command
 }
 
 /// Set preferred capture height for ABR upshift decisions (720 or 1080).
@@ -1242,6 +1317,14 @@ mod tests {
             picoo_sender_last_receiver_stats(handle, stats.as_mut_ptr(), stats.len()),
             1,
             "no ReceiverStats yet"
+        );
+        let mut w = 0u32;
+        let mut h = 0u32;
+        let mut mirrored = 0i32;
+        assert_eq!(
+            picoo_sender_take_camera_command(handle, &mut w, &mut h, &mut mirrored),
+            0,
+            "no CameraCommand pending"
         );
         assert_eq!(picoo_sender_disconnect(handle), 0);
         assert_eq!(

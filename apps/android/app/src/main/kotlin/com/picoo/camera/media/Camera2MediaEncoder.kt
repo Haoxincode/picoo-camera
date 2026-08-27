@@ -125,12 +125,19 @@ class Camera2MediaEncoder(
     }
 
     override fun switchCamera() {
-        profile = profile.copy(
-            lensFacing = when (profile.lensFacing) {
+        setLensFacing(
+            when (profile.lensFacing) {
                 LensFacing.Back -> LensFacing.Front
                 LensFacing.Front -> LensFacing.Back
             },
         )
+    }
+
+    override fun setLensFacing(facing: LensFacing) {
+        if (profile.lensFacing == facing) {
+            return
+        }
+        profile = profile.copy(lensFacing = facing)
         streamEpoch = StreamEpoch.bump(streamEpoch)
         if (_state.get() == CaptureState.Previewing) {
             stopPreview()

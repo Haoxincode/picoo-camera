@@ -59,7 +59,7 @@ struct DesktopAppState {
 
 - **首次启动页**：虚拟摄像头安装状态与引导。
 - **等待连接页**：等待 Sender、Show QR Code、虚拟摄像头 Ready 状态。
-- **直播页**：VideoSurface 预览、设备名、分辨率/帧率/码率/延迟、网络质量、断开。
+- **直播页**：VideoSurface 预览、设备名、分辨率/帧率/码率/延迟、网络质量、远程摄像头控制（前后摄 / 远端镜像）、断开。
 - **设置页**：显示名称、自动接受已配对设备、开机启动、托盘、占位画面、日志级别、已配对设备、虚拟摄像头修复、诊断导出。
 
 手机端主要页面：
@@ -111,4 +111,5 @@ struct DesktopAppState {
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICOO-UI-*`
+- `REQ-PICOO-UI-*`（见 [requirements/ui.md](../requirements/ui.md)）
+- 桌面远程摄像头控制：`REQ-PICOO-UI-009`（PUC-005）

@@ -15,6 +15,7 @@ use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
 use image::{Frame, ImageBuffer, Rgba};
+use picoo_protocol::control::{camera_command, CameraCommand};
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 use smallvec::smallvec;
@@ -488,8 +489,15 @@ impl PicooDesktopApp {
             })
     }
 
+    fn send_live_camera_command(&mut self, command: CameraCommand) {
+        if let Err(err) = self.runtime.send_camera_command(command) {
+            tracing::warn!("CameraCommand failed: {err}");
+        }
+    }
+
     fn render_live(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
         let status = Self::status_label(snapshot.status);
+        let streaming = matches!(snapshot.status, ReceiverStatus::Streaming);
         let resolution = snapshot
             .stream_config
             .as_ref()
@@ -505,6 +513,11 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|s| s.device_name.clone())
             .unwrap_or_else(|| "—".into());
+        let remote_mirrored = snapshot
+            .stream_config
+            .as_ref()
+            .map(|c| c.mirrored)
+            .unwrap_or(false);
 
         div().v_flex().gap_4().p_6().child(
             GroupBox::new().outline().title("直播预览").child(
@@ -536,9 +549,55 @@ impl PicooDesktopApp {
                         "Virtual Camera: {}",
                         vcam_label(snapshot.virtual_camera)
                     ))
+                    .when(streaming, |el| {
+                        el.child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("cam-front")
+                                        .label("前置摄像头")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.send_live_camera_command(CameraCommand {
+                                                command: camera_command::Command::SwitchFront
+                                                    as i32,
+                                                resolution: None,
+                                                mirrored: false,
+                                            });
+                                            cx.notify();
+                                        })),
+                                )
+                                .child(
+                                    Button::new("cam-back")
+                                        .label("后置摄像头")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.send_live_camera_command(CameraCommand {
+                                                command: camera_command::Command::SwitchBack
+                                                    as i32,
+                                                resolution: None,
+                                                mirrored: false,
+                                            });
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                        .child(
+                            Switch::new("remote-mirror")
+                                .checked(remote_mirrored)
+                                .label("远端镜像")
+                                .on_click(cx.listener(|this, checked, _, cx| {
+                                    this.send_live_camera_command(CameraCommand {
+                                        command: camera_command::Command::SetMirror as i32,
+                                        resolution: None,
+                                        mirrored: *checked,
+                                    });
+                                    cx.notify();
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("disconnect")
-                            .label("Disconnect")
+                            .label("断开连接")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.runtime.disconnect();
                                 this.page = DesktopPage::Waiting;
