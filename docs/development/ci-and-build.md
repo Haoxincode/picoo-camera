@@ -66,7 +66,7 @@ jobs:
   rust-and-docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --workspace
       - run: cargo clippy --workspace -- -D warnings
@@ -76,10 +76,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: rust-and-docs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # 固定 NDK / Java 版本，与 xtask 和 rust-toolchain.toml 一致
       - run: cargo xtask build android
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: android-apk
           path: apps/android/app/build/outputs/
@@ -88,11 +88,11 @@ jobs:
     runs-on: windows-latest
     needs: rust-and-docs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo xtask build windows
       - run: cargo xtask package windows
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-installer
           path: target/release/bundle/
