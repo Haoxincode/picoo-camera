@@ -7,9 +7,10 @@ Independent IMFMediaSource DLL (`PicooVirtualCameraSource.dll`) consuming Shared
 | Artifact | Status | Description |
 | --- | --- | --- |
 | `picoo-vcam-ring-reader` | implemented | Polls Shared Frame Ring; validates VCam consumer path on Linux CI |
-| `PicooVirtualCameraSource.dll` | ring-reader | CMake DLL + Shared Frame Ring C++ consumer; IMFMediaSource pending |
+| `PicooVirtualCameraSource.dll` | imf-media-source | IMFActivate + IMFMediaSourceEx + NV12 stream from Shared Frame Ring |
+| `register-vcam.ps1` | scaffold | `regsvr32` COM registration + MFCreateVirtualCamera bootstrap |
 
-## Requirement 映射
+## Requirement mapping
 
 - REQ-PICOO-VCAM-001..005
 - REQ-PICOO-FRAME-003, REQ-PICOO-FRAME-004
@@ -26,8 +27,20 @@ Expect NV12 placeholder frames (`1280x720`) until live H.264 decode lands.
 
 Built on `windows-latest` for MF DLL — see [ci-and-build.md](../../docs/development/ci-and-build.md).
 
-### DLL exports (dev / VCam bootstrap)
+### Windows registration (Win11)
+
+```powershell
+cargo xtask build windows
+cargo xtask package windows
+powershell -ExecutionPolicy Bypass -File target/release/bundle/register-vcam.ps1
+picoo-desktop --register-vcam
+```
+
+COM CLSID: `{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}` — friendly name **Picoo Camera**.
+
+### DLL exports (dev / diagnostics)
 
 - `PicooVcamSourceVersion()` — build label
-- `PicooVcamAttachRing(name)` — open `%TEMP%\\picoo-frame-ring-{name}.link` mapping (same flink as Rust)
-- `PicooVcamPollFrame(out)` — latest NV12 frame view for IMFMediaSource sample path
+- `PicooVcamAttachRing(name)` — probe Shared Frame Ring mapping
+- `PicooVcamPollFrame(out)` — latest NV12 frame view
+- Standard COM: `DllGetClassObject`, `DllRegisterServer`, `DllUnregisterServer`

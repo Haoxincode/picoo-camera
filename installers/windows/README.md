@@ -1,9 +1,11 @@
 # Windows staging bundle — REQ-PICOO-VCAM-004 scaffold
 
-Creates `target/release/bundle/` with desktop exe, ring-reader, and VCam DLL when built.
+Creates `target/release/bundle/` with desktop exe, ring-reader, VCam DLL, and registration script.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File installers/windows/stage.ps1
+cargo xtask package windows
+powershell -ExecutionPolicy Bypass -File target/release/bundle/register-vcam.ps1
+picoo-desktop --register-vcam
 ```
 
-MSI/COM registration is not yet implemented; this script only stages release artifacts for CI upload.
+MSI/WiX installer is not yet implemented; `register-vcam.ps1` performs COM registration via `regsvr32`.

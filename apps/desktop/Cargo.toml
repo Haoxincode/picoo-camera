@@ -12,6 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets", "dep:image", "dep:smallvec"]
+windows-vcam = ["dep:windows"]
 
 [dependencies]
 picoo-discovery.workspace = true
@@ -35,5 +36,12 @@ gpui-component = { workspace = true, optional = true }
 gpui-component-assets = { workspace = true, optional = true }
 image = { version = "0.25", optional = true }
 smallvec = { version = "1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
 
 [dev-dependencies]

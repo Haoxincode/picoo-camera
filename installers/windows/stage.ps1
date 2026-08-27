@@ -41,4 +41,10 @@ if ($null -ne $VcamDll) {
     Write-Warning "PicooVirtualCameraSource.dll not found - mf-source CMake build skipped or failed"
 }
 
+$RegisterScript = Join-Path $Root "installers/windows/register-vcam.ps1"
+if (Test-Path $RegisterScript) {
+    Copy-Item -Force $RegisterScript (Join-Path $Bundle "register-vcam.ps1")
+    Write-Host "Staged register-vcam.ps1"
+}
+
 Write-Host "Bundle ready: $Bundle"

@@ -8,6 +8,8 @@ mod receiver_runtime;
 
 #[cfg(feature = "gpui-ui")]
 mod gpui_app;
+#[cfg(all(windows, feature = "windows-vcam"))]
+mod vcam_register;
 #[cfg(feature = "gpui-ui")]
 mod vcam_status;
 #[cfg(feature = "gpui-ui")]
@@ -78,6 +80,18 @@ fn main() {
         return;
     }
 
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    if args.iter().any(|arg| arg == "--register-vcam") {
+        run_register_vcam();
+        return;
+    }
+
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    if args.iter().any(|arg| arg == "--unregister-vcam") {
+        run_unregister_vcam();
+        return;
+    }
+
     #[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
     if args.len() <= 1 {
         if let Err(err) = gpui_app::run_gpui_app() {
@@ -98,6 +112,47 @@ fn main() {
     println!("Run with --list-paired / --remove-paired <id> to manage trusted devices.");
     println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    println!("Run with --register-vcam / --unregister-vcam on Windows 11 for MF virtual camera.");
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn run_register_vcam() {
+    match vcam_register::VirtualCameraRegistration::register_and_start() {
+        Ok(registration) => {
+            println!("Picoo Camera virtual camera registered and started.");
+            println!("Press Enter to remove the virtual camera and exit.");
+            let mut line = String::new();
+            let _ = std::io::stdin().read_line(&mut line);
+            if let Err(err) = registration.remove() {
+                eprintln!("Failed to remove virtual camera: {err}");
+                std::process::exit(1);
+            }
+            println!("Virtual camera removed.");
+        }
+        Err(err) => {
+            eprintln!("Virtual camera registration failed: {err}");
+            eprintln!("Ensure PicooVirtualCameraSource.dll is registered (regsvr32) and reachable by Frame Server.");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn run_unregister_vcam() {
+    match vcam_register::VirtualCameraRegistration::register_and_start() {
+        Ok(registration) => match registration.remove() {
+            Ok(()) => println!("Virtual camera removed."),
+            Err(err) => {
+                eprintln!("Failed to remove virtual camera: {err}");
+                std::process::exit(1);
+            }
+        },
+        Err(err) => {
+            eprintln!("Could not attach to virtual camera for removal: {err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn run_list_paired() {
