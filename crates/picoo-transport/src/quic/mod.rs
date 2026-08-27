@@ -166,7 +166,7 @@ impl QuicServer {
     pub fn send_stream(&mut self, stream_id: u64, data: &[u8]) -> Result<(), QuicTransportError> {
         let peer = {
             let client = self.established_client()?;
-            client.conn.stream_send(stream_id, data, true)?;
+            client.conn.stream_send(stream_id, data, false)?;
             client.peer_addr
         };
         let socket = self.socket.try_clone()?;
@@ -269,7 +269,7 @@ impl QuicClient {
     }
 
     pub fn send_stream(&mut self, stream_id: u64, data: &[u8]) -> Result<(), QuicTransportError> {
-        self.conn.stream_send(stream_id, data, true)?;
+        self.conn.stream_send(stream_id, data, false)?;
         flush_connection(&self.socket, &mut self.conn, self.server_addr)?;
         Ok(())
     }
