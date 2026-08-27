@@ -1,4 +1,4 @@
-# Stage Windows release artifacts into target/release/bundle — REQ-PICOO-STACK-004
+# Stage Windows release artifacts into target/release/bundle - REQ-PICOO-STACK-004
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -21,12 +21,24 @@ foreach ($name in $Artifacts) {
     Write-Host "Staged $name"
 }
 
-$VcamDll = Join-Path $Root "target/vcam-build/bin/PicooVirtualCameraSource.dll"
-if (Test-Path $VcamDll) {
+$VcamCandidates = @(
+    (Join-Path $Root "target/vcam-build/bin/Release/PicooVirtualCameraSource.dll"),
+    (Join-Path $Root "target/vcam-build/bin/PicooVirtualCameraSource.dll")
+)
+
+$VcamDll = $null
+foreach ($candidate in $VcamCandidates) {
+    if (Test-Path $candidate) {
+        $VcamDll = $candidate
+        break
+    }
+}
+
+if ($null -ne $VcamDll) {
     Copy-Item -Force $VcamDll (Join-Path $Bundle "PicooVirtualCameraSource.dll")
     Write-Host "Staged PicooVirtualCameraSource.dll"
 } else {
-    Write-Warning "PicooVirtualCameraSource.dll not found — mf-source CMake build skipped or failed"
+    Write-Warning "PicooVirtualCameraSource.dll not found - mf-source CMake build skipped or failed"
 }
 
 Write-Host "Bundle ready: $Bundle"
