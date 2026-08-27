@@ -226,15 +226,15 @@ fn run_export_diagnostics(out_path: Option<&str>) {
 }
 
 fn run_loopback_demo() {
-    match picoo_receiver::run_loopback_access_unit(b"desktop-loopback-au") {
+    match picoo_receiver::run_paired_loopback_access_unit(b"desktop-loopback-au") {
         Ok(frame) => {
             println!(
-                "Loopback OK — FrameHub received {} bytes, status=Streaming path verified",
+                "Paired loopback OK — FrameHub received {} bytes (pairing path, no unpaired bypass)",
                 frame.len()
             );
         }
         Err(err) => {
-            eprintln!("Loopback demo failed: {err}");
+            eprintln!("Paired loopback demo failed: {err}");
             std::process::exit(1);
         }
     }

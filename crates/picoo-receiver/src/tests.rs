@@ -5,13 +5,80 @@ use picoo_sender::SenderSession;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
 
-use crate::{run_loopback_access_unit, ReceiverSession};
+use crate::{run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession};
 
 #[test]
 fn loopback_sender_to_receiver_frame_hub() {
     let payload = b"test-access-unit";
     let frame = run_loopback_access_unit(payload).expect("loopback");
     assert_eq!(&frame.as_ref()[..payload.len()], payload);
+}
+
+#[test]
+fn paired_loopback_reaches_frame_hub_without_unpaired_bypass() {
+    let payload = b"paired-product-path-au";
+    let frame = run_paired_loopback_access_unit(payload).expect("paired loopback");
+    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+}
+
+#[test]
+fn public_key_change_rejects_auto_connect() {
+    let mut receiver = ReceiverSession::new();
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    // Same device_id, different public key → pairing required again (PUC-007).
+    sender
+        .send_client_hello("android-sender", "Pixel", &[9, 9, 9])
+        .expect("client hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_required() || receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert!(receiver.pairing_required() || receiver.pairing_short_code().is_some());
+    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender
+        .ingest_and_flush(b"should-drop", true, 1, 1)
+        .expect("send video");
+    receiver.pump().expect("receiver pump");
+    assert_eq!(receiver.stats().access_units, 0);
 }
 
 #[test]

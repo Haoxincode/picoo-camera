@@ -662,6 +662,9 @@ impl ReceiverSession {
 }
 
 /// Run sender→receiver loopback until one access unit reaches FrameHub.
+///
+/// Uses the unpaired test bypass — prefer [`run_paired_loopback_access_unit`] for
+/// product-path validation (REQ-PICOO-PAIRING-003).
 pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
     use picoo_sender::SenderSession;
     use picoo_transport::{Endpoint, QuicSenderTransport};
@@ -690,6 +693,81 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     }
 
     if !receiver.is_connected() {
+        return Err(ReceiverError::LoopbackTimeout);
+    }
+
+    sender.ingest_and_flush(payload, true, 1, 1)?;
+
+    for _ in 0..200 {
+        receiver.pump()?;
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            return Ok(frame.pixel_data.clone());
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    Err(ReceiverError::LoopbackTimeout)
+}
+
+/// Full product-path loopback: first-time pairing (short code) then video → FrameHub.
+///
+/// Does **not** use `permit_unpaired_video` (REQ-PICOO-PAIRING-003).
+pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
+    use picoo_sender::SenderSession;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let identity = ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    let bind = receiver.listen(Endpoint {
+        host: "127.0.0.1".into(),
+        port: 0,
+    })?;
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.connect(Endpoint {
+        host: bind.ip().to_string(),
+        port: bind.port(),
+    })?;
+
+    for _ in 0..500 {
+        receiver.pump()?;
+        sender.pump()?;
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if !receiver.is_connected() {
+        return Err(ReceiverError::LoopbackTimeout);
+    }
+
+    sender.send_client_hello("loopback-phone", "Loopback Sender", &[0xAAu8, 0xBB, 0xCC])?;
+
+    for _ in 0..200 {
+        receiver.pump()?;
+        sender.pump()?;
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if receiver.pairing_short_code().is_none() {
+        return Err(ReceiverError::LoopbackTimeout);
+    }
+
+    receiver.confirm_pairing_locally();
+    sender.send_pairing_confirm(&identity.receiver_id)?;
+
+    for _ in 0..200 {
+        receiver.pump()?;
+        sender.pump()?;
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    if receiver.status() != ReceiverStatus::Streaming {
         return Err(ReceiverError::LoopbackTimeout);
     }
 
