@@ -1,5 +1,7 @@
 //! Shared diagnostics export for CLI and GPUI — REQ-PICOO-PRIVACY-003 / PUC-007.
 
+#![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+
 use picoo_diagnostics::{build_report, export_json, DiagnosticInput, DiagnosticSessionSnapshot};
 use picoo_pairing::TrustedDeviceStore;
 use picoo_receiver::IngressStats;
@@ -32,10 +34,7 @@ pub fn export_diagnostics_json(
     build_diagnostics_json(status, ingress)
 }
 
-fn build_diagnostics_json(
-    status: ReceiverStatus,
-    ingress: IngressStats,
-) -> Result<String, String> {
+fn build_diagnostics_json(status: ReceiverStatus, ingress: IngressStats) -> Result<String, String> {
     let trusted_path = default_trusted_store_path();
     let store = TrustedDeviceStore::load_from_path(&trusted_path)
         .map_err(|err| format!("load trusted store {}: {err}", trusted_path.display()))?;

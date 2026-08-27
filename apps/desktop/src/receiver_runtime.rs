@@ -20,6 +20,7 @@ use crate::qr_display;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
 #[derive(Debug, Clone)]
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub struct ActiveSenderSummary {
     pub sender_id: String,
     pub device_name: String,
@@ -65,7 +66,9 @@ pub struct ReceiverSnapshot {
     pub trusted_device_count: usize,
     pub trusted_devices: Vec<TrustedDeviceSummary>,
     pub display_name: String,
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub active_sender: Option<ActiveSenderSummary>,
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub virtual_camera: crate::model::VirtualCameraStatus,
 }
 
@@ -77,6 +80,7 @@ pub struct ReceiverRuntime {
     qr_json: Option<String>,
     qr_ascii: Option<String>,
     display_name: String,
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
 }
 
@@ -135,21 +139,25 @@ impl ReceiverRuntime {
         })
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
         let mut config = ReceiverRuntimeConfig::default();
         config.identity.display_name = prefs.display_name.clone();
         Self::start(config)
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_display_name(&mut self, name: String) {
         self.display_name = name.clone();
         self.receiver.set_display_name(name);
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_virtual_camera_status(&mut self, status: crate::model::VirtualCameraStatus) {
         self.virtual_camera = status;
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn disconnect(&mut self) {
         self.receiver.close();
         let _ = self.receiver.publish_waiting_placeholder();
@@ -160,13 +168,13 @@ impl ReceiverRuntime {
     }
 
     pub fn snapshot(&self) -> ReceiverSnapshot {
-        let active_sender = self
-            .receiver
-            .active_sender_summary()
-            .map(|(sender_id, device_name)| ActiveSenderSummary {
-                sender_id,
-                device_name,
-            });
+        let active_sender =
+            self.receiver
+                .active_sender_summary()
+                .map(|(sender_id, device_name)| ActiveSenderSummary {
+                    sender_id,
+                    device_name,
+                });
         ReceiverSnapshot {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,

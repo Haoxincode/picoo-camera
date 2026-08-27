@@ -204,13 +204,12 @@ impl ReceiverSession {
         &self.identity.display_name
     }
 
+    /// Used by GPUI desktop shell for live page sender label.
+    #[allow(dead_code)]
     pub fn active_sender_summary(&self) -> Option<(String, String)> {
-        self.active_sender.as_ref().map(|s| {
-            (
-                s.sender_id.clone(),
-                s.device_name.clone(),
-            )
-        })
+        self.active_sender
+            .as_ref()
+            .map(|s| (s.sender_id.clone(), s.device_name.clone()))
     }
 
     pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, ReceiverError> {

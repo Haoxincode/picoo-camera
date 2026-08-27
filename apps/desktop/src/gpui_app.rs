@@ -19,9 +19,7 @@ use picoo_session::ReceiverStatus;
 use crate::diagnostics_export::export_diagnostics_to_file;
 use crate::model::VirtualCameraStatus;
 use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
-use crate::receiver_runtime::{
-    ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary,
-};
+use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary};
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
 use crate::video_surface::VideoSurface;
 
@@ -162,7 +160,8 @@ impl PicooDesktopApp {
                     }
                     let snapshot = this.runtime.snapshot();
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
-                        if this.page != DesktopPage::Settings && this.page != DesktopPage::FirstLaunch
+                        if this.page != DesktopPage::Settings
+                            && this.page != DesktopPage::FirstLaunch
                         {
                             this.page = DesktopPage::Live;
                         }
@@ -551,7 +550,8 @@ impl PicooDesktopApp {
                         self.diagnostics_message
                             .as_ref()
                             .map(|path| {
-                                vec![format!("已导出至 {path}（已脱敏，不含视频）").into_any_element()]
+                                vec![format!("已导出至 {path}（已脱敏，不含视频）")
+                                    .into_any_element()]
                             })
                             .unwrap_or_default(),
                     )

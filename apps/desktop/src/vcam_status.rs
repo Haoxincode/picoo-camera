@@ -42,7 +42,9 @@ fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
             paths.push(dir.join("extensions").join("PicooVirtualCameraSource.dll"));
         }
     }
-    paths.push(PathBuf::from("extensions/windows-virtual-camera/mf-source/build/PicooVirtualCameraSource.dll"));
+    paths.push(PathBuf::from(
+        "extensions/windows-virtual-camera/mf-source/build/PicooVirtualCameraSource.dll",
+    ));
     paths
 }
 

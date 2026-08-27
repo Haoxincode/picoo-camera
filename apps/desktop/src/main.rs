@@ -1,17 +1,17 @@
 //! Picoo Camera desktop Receiver — ARCH-PICOO-UI-001 shell.
 
+mod diagnostics_export;
 mod model;
+mod prefs;
 mod qr_display;
 mod receiver_runtime;
-mod diagnostics_export;
-mod prefs;
 
 #[cfg(feature = "gpui-ui")]
 mod gpui_app;
 #[cfg(feature = "gpui-ui")]
-mod video_surface;
-#[cfg(feature = "gpui-ui")]
 mod vcam_status;
+#[cfg(feature = "gpui-ui")]
+mod video_surface;
 
 use std::io::{self, BufRead};
 use std::sync::mpsc;

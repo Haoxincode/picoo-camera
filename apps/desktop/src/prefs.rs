@@ -1,23 +1,20 @@
 //! Desktop preferences persistence — REQ-PICOO-UI-002 / PRD §16.
 
+#![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+
 use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LogLevel {
     Error,
     Warn,
+    #[default]
     Info,
     Debug,
     Trace,
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 impl LogLevel {
@@ -81,7 +78,11 @@ pub fn prefs_path() -> PathBuf {
         .unwrap_or_else(|_| {
             if cfg!(target_os = "windows") {
                 std::env::var("APPDATA")
-                    .map(|appdata| PathBuf::from(appdata).join("picoo-camera").join("prefs.json"))
+                    .map(|appdata| {
+                        PathBuf::from(appdata)
+                            .join("picoo-camera")
+                            .join("prefs.json")
+                    })
                     .unwrap_or_else(|_| PathBuf::from("prefs.json"))
             } else {
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -106,7 +107,8 @@ pub fn save_prefs(prefs: &DesktopPreferences) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create prefs dir: {err}"))?;
     }
-    let json = serde_json::to_string_pretty(prefs).map_err(|err| format!("serialize prefs: {err}"))?;
+    let json =
+        serde_json::to_string_pretty(prefs).map_err(|err| format!("serialize prefs: {err}"))?;
     fs::write(&path, json).map_err(|err| format!("write prefs: {err}"))
 }
 
