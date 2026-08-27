@@ -48,6 +48,7 @@ pub struct ReassemblyMap {
     max_fragments: u16,
     current_epoch: u32,
     frames: HashMap<FrameKey, PartialFrame>,
+    drops: u64,
 }
 
 impl ReassemblyMap {
@@ -57,7 +58,12 @@ impl ReassemblyMap {
             max_fragments,
             current_epoch: 0,
             frames: HashMap::new(),
+            drops: 0,
         }
+    }
+
+    pub fn drop_count(&self) -> u64 {
+        self.drops
     }
 
     pub fn ingest(&mut self, packet: VideoPacket) -> Result<Option<Bytes>, ReassemblyError> {
@@ -70,6 +76,7 @@ impl ReassemblyMap {
         }
 
         if packet.stream_epoch > self.current_epoch {
+            self.drops += self.frames.len() as u64;
             self.current_epoch = packet.stream_epoch;
             self.frames.clear();
         }
@@ -134,6 +141,7 @@ impl ReassemblyMap {
     fn drop_oldest(&mut self) {
         if let Some(key) = self.frames.keys().next().copied() {
             self.frames.remove(&key);
+            self.drops += 1;
         }
     }
 }

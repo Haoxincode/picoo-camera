@@ -186,3 +186,76 @@ fn first_time_pairing_flow_enables_video() {
     receiver.pump().expect("receiver pump");
     assert_eq!(receiver.stats().access_units, 1);
 }
+
+#[test]
+fn receiver_sends_stats_to_paired_sender() {
+    use picoo_sender::BitrateAction;
+    use picoo_session::ReceiverStatus;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("android-sender", "Pixel Test", &[1, 2, 3])
+        .expect("client hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .ingest_and_flush(&[0u8; 1200], true, 1, 1)
+        .expect("send video");
+    receiver.pump().expect("receiver pump");
+
+    std::thread::sleep(Duration::from_millis(1100));
+
+    for _ in 0..20 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.last_receiver_stats().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    assert!(sender.last_receiver_stats().is_some());
+    assert!(sender.last_receiver_stats().unwrap().receive_bitrate > 0);
+    assert_eq!(sender.last_bitrate_action(), BitrateAction::Hold);
+}

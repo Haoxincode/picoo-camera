@@ -7,9 +7,12 @@ license.workspace = true
 
 [dependencies]
 bytes.workspace = true
+picoo-metrics.workspace = true
 picoo-pairing.workspace = true
 picoo-protocol.workspace = true
 picoo-packet.workspace = true
+picoo-rate-control.workspace = true
+picoo-session.workspace = true
 picoo-transport.workspace = true
 prost.workspace = true
 thiserror.workspace = true

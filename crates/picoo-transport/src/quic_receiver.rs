@@ -47,6 +47,10 @@ impl QuicReceiverTransport {
             .is_some_and(|server| server.is_established())
     }
 
+    pub fn active_session(&self) -> Option<SessionId> {
+        self.session
+    }
+
     fn map_err(err: QuicTransportError) -> TransportError {
         TransportError::ConnectFailed(err.to_string())
     }

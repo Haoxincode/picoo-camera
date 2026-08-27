@@ -11,6 +11,7 @@ use picoo_protocol::{
 use picoo_transport::TransportError;
 use thiserror::Error;
 
+pub use picoo_rate_control::BitrateAction;
 pub use session::{SenderSession, SessionStats};
 
 const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE;

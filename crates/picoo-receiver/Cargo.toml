@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 bytes.workspace = true
 picoo-frame-hub.workspace = true
+picoo-metrics.workspace = true
 picoo-packet.workspace = true
 picoo-pairing.workspace = true
 picoo-protocol.workspace = true
@@ -19,3 +20,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 picoo-protocol.workspace = true
+picoo-sender.workspace = true

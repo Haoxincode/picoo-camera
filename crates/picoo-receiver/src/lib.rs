@@ -3,7 +3,7 @@
 //! REQ-PICOO-FRAME-001, REQ-PICOO-MEDIA-005/006 (decode placeholder until MF/VT).
 //! REQ-PICOO-PAIRING-*: ClientHello/ServerHello gate before video ingress.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use picoo_frame_hub::{
@@ -16,7 +16,7 @@ use picoo_pairing::{
     verify_pairing_confirm, PairingError, PairingHandshakeError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm, ServerHello,
+    ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm, ReceiverStats as ReceiverStatsMsg, ServerHello,
 };
 use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
@@ -64,10 +64,37 @@ impl Default for ReceiverIdentity {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ReceiverStats {
+pub struct IngressStats {
     pub access_units: u64,
     pub packets_received: u64,
     pub packets_dropped_unpaired: u64,
+}
+
+struct StatsReporter {
+    last_sent: Instant,
+    window_packets: u64,
+    window_bytes: u64,
+    last_reassembly_drops: u64,
+}
+
+impl StatsReporter {
+    fn new() -> Self {
+        Self {
+            last_sent: Instant::now(),
+            window_packets: 0,
+            window_bytes: 0,
+            last_reassembly_drops: 0,
+        }
+    }
+
+    fn record_packet(&mut self, payload_len: usize) {
+        self.window_packets += 1;
+        self.window_bytes += payload_len as u64;
+    }
+
+    fn due(&self) -> bool {
+        self.last_sent.elapsed() >= Duration::from_secs(1)
+    }
 }
 
 struct ActiveSender {
@@ -93,7 +120,8 @@ pub struct ReceiverSession {
     pending_pairing: Option<PendingPairing>,
     local_pairing_confirmed: bool,
     status: ReceiverStatus,
-    stats: ReceiverStats,
+    ingress: IngressStats,
+    stats_reporter: StatsReporter,
     permit_unpaired_video: bool,
     shared_ring: Option<SharedFrameRingProducer>,
 }
@@ -116,7 +144,8 @@ impl ReceiverSession {
             pending_pairing: None,
             local_pairing_confirmed: false,
             status: ReceiverStatus::Disconnected,
-            stats: ReceiverStats::default(),
+            ingress: IngressStats::default(),
+            stats_reporter: StatsReporter::new(),
             permit_unpaired_video: false,
             shared_ring: None,
         }
@@ -167,8 +196,13 @@ impl ReceiverSession {
         self.status
     }
 
-    pub fn stats(&self) -> ReceiverStats {
-        self.stats
+    pub fn ingress_stats(&self) -> IngressStats {
+        self.ingress
+    }
+
+    /// Backward-compatible alias for ingress counters.
+    pub fn stats(&self) -> IngressStats {
+        self.ingress
     }
 
     pub fn is_connected(&self) -> bool {
@@ -227,18 +261,77 @@ impl ReceiverSession {
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
                 }
-                TransportEvent::VideoPacket(_, packet) => {
-                    self.stats.packets_received += 1;
+                TransportEvent::VideoPacket(_session, packet) => {
+                    self.ingress.packets_received += 1;
                     if !self.video_allowed() {
-                        self.stats.packets_dropped_unpaired += 1;
+                        self.ingress.packets_dropped_unpaired += 1;
                         continue;
                     }
+                    self.stats_reporter
+                        .record_packet(packet.payload.len());
                     if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
                         self.publish_access_unit(access_unit)?;
                     }
                 }
             }
         }
+
+        self.maybe_send_receiver_stats()?;
+
+        Ok(())
+    }
+
+    fn maybe_send_receiver_stats(&mut self) -> Result<(), ReceiverError> {
+        if self.status != ReceiverStatus::Streaming {
+            return Ok(());
+        }
+        if !self.stats_reporter.due() {
+            return Ok(());
+        }
+
+        let session = self
+            .transport
+            .active_session()
+            .ok_or(ReceiverError::NotListening)?;
+
+        let elapsed = self.stats_reporter.last_sent.elapsed().as_secs_f64().max(0.001);
+        let receive_bitrate =
+            ((self.stats_reporter.window_bytes as f64 * 8.0) / elapsed) as u32;
+        let reassembly_drop = self
+            .reassembly
+            .drop_count()
+            .saturating_sub(self.stats_reporter.last_reassembly_drops);
+
+        let frame_age_ms = self
+            .frame_hub
+            .latest_ready()
+            .map(|frame| {
+                let now_us = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_micros() as u64)
+                    .unwrap_or(0);
+                now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0
+            })
+            .unwrap_or(0.0);
+
+        let stats = ReceiverStatsMsg {
+            rtt_ms: 0.0,
+            packet_loss: 0.0,
+            jitter_ms: 0.0,
+            reassembly_drop,
+            decoder_drop: 0,
+            frame_age_ms,
+            receive_bitrate,
+            jitter_buffer_depth_ms: 0.0,
+        };
+
+        self.send_control_message(session, &stats)?;
+        self.transport.pump()?;
+
+        self.stats_reporter.last_sent = Instant::now();
+        self.stats_reporter.window_packets = 0;
+        self.stats_reporter.window_bytes = 0;
+        self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
 
         Ok(())
     }
@@ -402,7 +495,7 @@ impl ReceiverSession {
 
     /// Placeholder decode path: store NV12 until MF/VT H.264 decoder lands.
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
-        self.stats.access_units += 1;
+        self.ingress.access_units += 1;
         // Until MF decoder exists, treat small loopback payloads as opaque test bytes mapped into NV12 buffer.
         let nv12 = if access_unit.len() <= 64 {
             let mut frame = waiting_placeholder();
@@ -412,7 +505,7 @@ impl ReceiverSession {
         } else {
             access_unit.to_vec()
         };
-        self.publish_nv12_frame(1280, 720, 1280, 0, self.stats.access_units, &nv12)
+        self.publish_nv12_frame(1280, 720, 1280, 0, self.ingress.access_units, &nv12)
     }
 
     fn publish_nv12_frame(
