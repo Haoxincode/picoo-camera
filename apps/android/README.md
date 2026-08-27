@@ -25,6 +25,16 @@ cargo xtask package android   # 含 scripts/check_android_so_16k.sh
 > 小米 15 / Android 15 等 16KB 页设备：`libpicoo_jni.so` / `libpicoo_ffi.so` 必须 16KB 对齐，
 > 且 `DT_NEEDED` 为 `libpicoo_ffi.so`（不可含构建机绝对路径）。默认 NDK **28.0.12674087**。
 
+### 跨机型兼容（16KB 页）
+
+| 平台 | 说明 |
+| --- | --- |
+| Android 15+ 16KB 页旗舰（如小米 15） | 需要本仓库对齐后的 APK；未对齐会冷启动闪退 |
+| 传统 4KB 页 Android 机 | **兼容**：16KB 对齐的 `.so` 可在 4KB 页上加载 |
+| iPhone / iOS | **不适用**：Mach-O 体系，无 Android ELF 16KB 对齐问题；iOS 不在 V1 范围 |
+
+扫码路径依赖 CameraX **1.4.2+**（其 native 亦需 16KB）；预览/推流仍走 Camera2 + MediaCodec。
+
 ## 架构
 
 ```text
