@@ -5,6 +5,8 @@ mod model;
 mod prefs;
 mod qr_display;
 mod receiver_runtime;
+mod startup;
+mod tray;
 
 #[cfg(feature = "gpui-ui")]
 mod gpui_app;

@@ -49,6 +49,9 @@ pub struct PicooDesktopApp {
     /// Cached QR bitmap for waiting page (PUC-003).
     qr_image: Option<Arc<RenderImage>>,
     qr_payload_key: Option<String>,
+    /// Holds Session-lifetime MF virtual camera while the UI is open.
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    vcam_registration: Option<crate::vcam_register::VirtualCameraRegistration>,
 }
 
 impl PicooDesktopApp {
@@ -76,6 +79,8 @@ impl PicooDesktopApp {
             diagnostics_error: None,
             qr_image: None,
             qr_payload_key: None,
+            #[cfg(all(windows, feature = "windows-vcam"))]
+            vcam_registration: None,
         }
     }
 
@@ -128,6 +133,28 @@ impl PicooDesktopApp {
         let status = detect_vcam_status();
         self.vcam_status = status;
         self.runtime.set_virtual_camera_status(status);
+    }
+
+    fn try_register_vcam(&mut self) {
+        #[cfg(all(windows, feature = "windows-vcam"))]
+        {
+            match crate::vcam_register::VirtualCameraRegistration::register_and_start() {
+                Ok(reg) => {
+                    self.vcam_registration = Some(reg);
+                    self.vcam_status = VirtualCameraStatus::Active;
+                    self.runtime
+                        .set_virtual_camera_status(VirtualCameraStatus::Active);
+                }
+                Err(err) => {
+                    tracing::warn!("Install Virtual Camera failed: {err}");
+                    self.refresh_vcam_status();
+                }
+            }
+        }
+        #[cfg(not(all(windows, feature = "windows-vcam")))]
+        {
+            self.refresh_vcam_status();
+        }
     }
 
     fn save_display_name(&mut self, cx: &mut Context<Self>) {
@@ -319,7 +346,7 @@ impl PicooDesktopApp {
                 Button::new("install-vcam")
                     .label("Install Virtual Camera")
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.refresh_vcam_status();
+                        this.try_register_vcam();
                         cx.notify();
                     })),
             )
@@ -535,6 +562,11 @@ impl PicooDesktopApp {
                             .label("开机启动")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.launch_at_startup = *checked;
+                                if let Err(err) =
+                                    crate::startup::sync_launch_at_startup(*checked)
+                                {
+                                    tracing::warn!("launch-at-startup sync failed: {err}");
+                                }
                                 let _ = this.persist_prefs();
                                 cx.notify();
                             })),
@@ -546,6 +578,8 @@ impl PicooDesktopApp {
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.minimize_to_tray = *checked;
                                 let _ = this.persist_prefs();
+                                // Policy is consulted on close; Win32 notify icon lands with shell.
+                                let _ = crate::tray::TrayPolicy::from_pref(*checked);
                                 cx.notify();
                             })),
                     )
@@ -602,7 +636,7 @@ impl PicooDesktopApp {
                         Button::new("repair-vcam")
                             .label("重新检测 / 修复引导")
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.refresh_vcam_status();
+                                this.try_register_vcam();
                                 cx.notify();
                             })),
                     ),
@@ -698,10 +732,29 @@ fn default_diagnostics_path() -> PathBuf {
 pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let prefs = load_prefs();
     let _ = std::env::set_var("RUST_LOG", prefs.log_level.env_filter());
+    // REQ-PICOO-UI-007: apply persisted startup preference at launch.
+    if let Err(err) = crate::startup::sync_launch_at_startup(prefs.launch_at_startup) {
+        tracing::warn!("startup sync on launch: {err}");
+    }
     let vcam_status = detect_vcam_status();
     let runtime = ReceiverRuntime::from_prefs(&prefs)?;
     let mut runtime = runtime;
     runtime.set_virtual_camera_status(vcam_status);
+
+    // REQ-PICOO-VCAM-002: keep Session-lifetime MF virtual camera for the desktop process.
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    let _vcam_registration = match crate::vcam_register::VirtualCameraRegistration::register_and_start()
+    {
+        Ok(reg) => {
+            tracing::info!("Picoo Camera virtual camera started for this session");
+            runtime.set_virtual_camera_status(VirtualCameraStatus::Active);
+            Some(reg)
+        }
+        Err(err) => {
+            tracing::warn!("MF virtual camera start deferred: {err}");
+            None
+        }
+    };
 
     let app = gpui_platform::application().with_assets(Assets);
     let prefs_for_window = prefs.clone();

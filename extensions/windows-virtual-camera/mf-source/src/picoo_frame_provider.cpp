@@ -190,9 +190,22 @@ bool PicooFrameProvider::AcquireNv12(std::vector<uint8_t>* out,
     if (reader != nullptr && picoo_ring_reader_poll(reader, &frame) && frame.nv12 != nullptr &&
         frame.nv12_length > 0 && frame.width > 0 && frame.height > 0) {
         out->assign(frame.nv12, frame.nv12 + frame.nv12_length);
+        last_live_ = *out;
+        has_last_live_ = true;
+        last_live_at_ = std::chrono::steady_clock::now();
         last_width_ = frame.width;
         last_height_ = frame.height;
         last_stride_ = frame.stride > 0 ? frame.stride : frame.width;
+        *width = last_width_;
+        *height = last_height_;
+        *stride = last_stride_;
+        return true;
+    }
+
+    // REQ-PICOO-FRAME-005: briefly hold last live frame before branded placeholder.
+    if (has_last_live_ &&
+        (std::chrono::steady_clock::now() - last_live_at_) < kLastFrameHold) {
+        *out = last_live_;
         *width = last_width_;
         *height = last_height_;
         *stride = last_stride_;

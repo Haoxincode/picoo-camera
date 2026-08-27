@@ -85,9 +85,29 @@ IFACEMETHODIMP PicooMediaSource::CreatePresentationDescriptor(IMFPresentationDes
 IFACEMETHODIMP PicooMediaSource::Start(IMFPresentationDescriptor* descriptor,
                                        const GUID* /*time_format*/,
                                        const PROPVARIANT* /*start_position*/) {
-    if (shutdown_ || !stream_) {
+    if (shutdown_ || !stream_ || !queue_) {
         return MF_E_SHUTDOWN;
     }
+
+    // Ensure stream 0 is selected on the caller's presentation descriptor (Frame Server).
+    if (descriptor != nullptr) {
+        BOOL selected = FALSE;
+        ComPtr<IMFStreamDescriptor> selected_sd;
+        RETURN_IF_FAILED(descriptor->GetStreamDescriptorByIndex(0, &selected, &selected_sd));
+        if (!selected) {
+            RETURN_IF_FAILED(descriptor->SelectStream(0));
+        }
+    }
+
+    // MENewStream on first Start; MEUpdatedStream on subsequent Starts (REQ-PICOO-VCAM-002).
+    if (!stream_presented_) {
+        RETURN_IF_FAILED(queue_->QueueEventParamUnk(MENewStream, GUID_NULL, S_OK, stream_.Get()));
+        stream_presented_ = true;
+    } else {
+        RETURN_IF_FAILED(
+            queue_->QueueEventParamUnk(MEUpdatedStream, GUID_NULL, S_OK, stream_.Get()));
+    }
+
     RETURN_IF_FAILED(stream_->SetStreamState(MF_STREAM_STATE_RUNNING));
     RETURN_IF_FAILED(queue_->QueueEventParamVar(MESourceStarted, GUID_NULL, S_OK, nullptr));
     return S_OK;
@@ -111,6 +131,7 @@ IFACEMETHODIMP PicooMediaSource::Shutdown() {
         return S_OK;
     }
     shutdown_ = true;
+    stream_presented_ = false;
     if (stream_) {
         stream_->Shutdown();
         stream_.Reset();

@@ -44,16 +44,18 @@ HRESULT PicooMediaStream::Initialize(PicooMediaSource* source, DWORD stream_id) 
 
     RETURN_IF_FAILED(MFCreateEventQueue(&queue_));
 
-    ComPtr<IMFMediaType> media_type;
-    RETURN_IF_FAILED(CreateNv12MediaType(&media_type, PICOO_VCAM_DEFAULT_WIDTH, PICOO_VCAM_DEFAULT_HEIGHT));
-    current_type_ = media_type;
+    ComPtr<IMFMediaType> type_720;
+    ComPtr<IMFMediaType> type_1080;
+    RETURN_IF_FAILED(CreateNv12MediaType(&type_720, PICOO_VCAM_DEFAULT_WIDTH, PICOO_VCAM_DEFAULT_HEIGHT));
+    RETURN_IF_FAILED(CreateNv12MediaType(&type_1080, 1920, 1080));
+    current_type_ = type_720;
 
-    IMFMediaType* types[1] = {media_type.Get()};
-    RETURN_IF_FAILED(MFCreateStreamDescriptor(stream_id, 1, types, &descriptor_));
+    IMFMediaType* types[2] = {type_720.Get(), type_1080.Get()};
+    RETURN_IF_FAILED(MFCreateStreamDescriptor(stream_id, 2, types, &descriptor_));
 
     ComPtr<IMFMediaTypeHandler> handler;
     RETURN_IF_FAILED(descriptor_->GetMediaTypeHandler(&handler));
-    RETURN_IF_FAILED(handler->SetCurrentMediaType(media_type.Get()));
+    RETURN_IF_FAILED(handler->SetCurrentMediaType(type_720.Get()));
 
     ComPtr<IMFAttributes> attrs;
     RETURN_IF_FAILED(descriptor_->GetAttributes(&attrs));

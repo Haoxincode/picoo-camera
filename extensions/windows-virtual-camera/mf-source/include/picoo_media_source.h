@@ -55,4 +55,5 @@ private:
     Microsoft::WRL::ComPtr<IMFAttributes> source_attributes_;
     Microsoft::WRL::ComPtr<PicooMediaStream> stream_;
     bool shutdown_ = false;
+    bool stream_presented_ = false;
 };
