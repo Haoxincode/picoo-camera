@@ -187,6 +187,7 @@ private fun SenderHomeScreen(
     var powerHint by remember { mutableStateOf("") }
     var linkStatsText by remember { mutableStateOf("") }
     var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
+    var exposureEv by remember { mutableIntStateOf(0) }
     var senderTab by remember { mutableStateOf(SenderTab.Devices) }
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
     val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
@@ -779,14 +780,16 @@ private fun SenderHomeScreen(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("EV ${encoder.exposureCompensation}", style = MaterialTheme.typography.bodySmall)
+                            Text("EV $exposureEv", style = MaterialTheme.typography.bodySmall)
                             Button(onClick = {
-                                encoder.setExposureCompensation(encoder.exposureCompensation - 1)
+                                encoder.setExposureCompensation(exposureEv - 1)
+                                exposureEv = encoder.exposureCompensation
                             }) {
                                 Text("EV -")
                             }
                             Button(onClick = {
-                                encoder.setExposureCompensation(encoder.exposureCompensation + 1)
+                                encoder.setExposureCompensation(exposureEv + 1)
+                                exposureEv = encoder.exposureCompensation
                             }) {
                                 Text("EV +")
                             }
