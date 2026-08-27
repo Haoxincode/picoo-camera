@@ -43,6 +43,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - run: cargo run -p xtask -- build windows
       - run: cargo run -p xtask -- package windows
       # GPUI/MF/VCam artifacts uploaded when implemented
