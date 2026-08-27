@@ -536,7 +536,11 @@ impl PicooDesktopApp {
                     .child(format!("{sender_name} · {status}"))
                     .child(format!("{resolution} · {fps} FPS"))
                     .child(format!(
-                        "码率 {:.1} Mbps · 延迟 {:.0} ms · 丢包 {:.1}%",
+                        "Network Quality: {} · 码率 {:.1} Mbps · 延迟 {:.0} ms · 丢包 {:.1}%",
+                        crate::network_quality::network_quality_label(
+                            snapshot.stream_metrics.packet_loss,
+                            snapshot.stream_metrics.latency_ms,
+                        ),
                         snapshot.stream_metrics.bitrate_bps as f64 / 1_000_000.0,
                         snapshot.stream_metrics.latency_ms,
                         snapshot.stream_metrics.packet_loss * 100.0
@@ -801,17 +805,14 @@ impl PicooDesktopApp {
             .child(
                 div()
                     .v_flex()
-                    .child(format!(
-                        "{} ({})",
-                        picoo_diagnostics::redact_device_name(&device.device_name),
-                        picoo_diagnostics::redact_device_id(&device.device_id)
-                    ))
+                    .child(format!("{} ({})", device.device_name, device.device_id))
                     .child(format!(
                         "{} · last {} · fp={}",
                         device.platform,
                         crate::receiver_runtime::format_last_connected_ms(
                             device.last_connected_at_ms,
                         ),
+                        // Fingerprint remains abbreviated in UI; full redaction is for export only.
                         picoo_diagnostics::redact_fingerprint(&device.certificate_fingerprint)
                     )),
             )

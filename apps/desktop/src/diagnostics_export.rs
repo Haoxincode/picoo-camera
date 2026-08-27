@@ -76,3 +76,75 @@ fn build_diagnostics_json(
 
     export_json(&report).map_err(|err| format!("serialize diagnostics: {err}"))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use picoo_pairing::TrustedDevice;
+    use std::path::PathBuf;
+
+    fn temp_paths(tag: &str) -> (PathBuf, PathBuf) {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("picoo-diag-{tag}-{nanos}"));
+        let _ = std::fs::create_dir_all(&dir);
+        (dir.join("trusted.json"), dir.join("out.json"))
+    }
+
+    #[test]
+    fn export_redacts_hosts_and_device_names_never_includes_video() {
+        let (store_path, out_path) = temp_paths("export");
+        let mut store = TrustedDeviceStore::new();
+        store.upsert(TrustedDevice {
+            device_id: "pixel-9-pro-id".into(),
+            device_name: "Pixel 9 Pro".into(),
+            public_key: vec![1, 2, 3, 4],
+            certificate_fingerprint: "abcdef0123456789deadbeef".into(),
+            paired_at_ms: 1,
+            last_connected_at_ms: Some(2),
+        });
+        store.save_to_path(&store_path).expect("save store");
+        std::env::set_var("PICOO_TRUSTED_STORE", &store_path);
+
+        let ingress = IngressStats {
+            access_units: 10,
+            packets_received: 20,
+            packets_dropped_unpaired: 1,
+            decode_invocations: 10,
+            control_rejected_unpaired: 0,
+        };
+        let result = export_diagnostics_to_file_with_hosts(
+            out_path.to_str().unwrap(),
+            ReceiverStatus::Streaming,
+            ingress,
+            &["192.168.1.42".into()],
+        )
+        .expect("export");
+
+        assert!(
+            result.json.contains("\"includes_video\": false")
+                || result.json.contains("\"includes_video\":false"),
+            "includes_video must be false: {}",
+            result.json
+        );
+        assert!(
+            !result.json.contains("Pixel 9 Pro"),
+            "device name must be redacted: {}",
+            result.json
+        );
+        assert!(
+            !result.json.contains("192.168.1.42"),
+            "LAN IP must be redacted: {}",
+            result.json
+        );
+        assert!(
+            result.json.contains("192.168.xxx.xxx"),
+            "expected redacted host form: {}",
+            result.json
+        );
+        let on_disk = std::fs::read_to_string(&out_path).expect("read out");
+        assert_eq!(on_disk, result.json);
+    }
+}

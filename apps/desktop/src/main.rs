@@ -2,6 +2,7 @@
 
 mod diagnostics_export;
 mod model;
+mod network_quality;
 mod prefs;
 mod qr_display;
 mod receiver_runtime;

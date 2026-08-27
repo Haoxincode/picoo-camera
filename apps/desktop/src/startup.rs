@@ -94,12 +94,20 @@ mod windows_run {
 
     const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 
-    pub struct WindowsRunKeyStore {
-        key: HKEY,
-    }
+    /// Stateless Run-key accessor. Opens/closes HKEY per call so the type is `Send`
+    /// (raw `HKEY` is `!Send` under `windows` 0.58, which broke `gpui-ui` Windows builds).
+    #[derive(Debug, Default)]
+    pub struct WindowsRunKeyStore;
 
     impl WindowsRunKeyStore {
         pub fn open() -> Result<Self, String> {
+            // Probe that the Run key is reachable at construction time.
+            let store = Self;
+            store.with_key(|_| Ok(()))?;
+            Ok(store)
+        }
+
+        fn with_key<R>(&self, f: impl FnOnce(HKEY) -> Result<R, String>) -> Result<R, String> {
             let subkey = wide(RUN_SUBKEY);
             let mut key = HKEY::default();
             let status = unsafe {
@@ -114,83 +122,87 @@ mod windows_run {
             if status != ERROR_SUCCESS {
                 return Err(format!("RegOpenKeyExW Run failed: {status:?}"));
             }
-            Ok(Self { key })
-        }
-    }
-
-    impl Drop for WindowsRunKeyStore {
-        fn drop(&mut self) {
+            let result = f(key);
             unsafe {
-                let _ = RegCloseKey(self.key);
+                let _ = RegCloseKey(key);
             }
+            result
         }
     }
 
     impl StartupStore for WindowsRunKeyStore {
         fn get(&self, name: &str) -> Option<String> {
-            let name_w = wide(name);
-            let mut ty = REG_SZ;
-            let mut size = 0u32;
-            let status = unsafe {
-                RegQueryValueExW(
-                    self.key,
-                    PCWSTR(name_w.as_ptr()),
-                    None,
-                    Some(&mut ty),
-                    None,
-                    Some(&mut size),
-                )
-            };
-            if status != ERROR_SUCCESS || size == 0 {
-                return None;
-            }
-            let mut buf = vec![0u16; (size as usize / 2).max(1)];
-            let status = unsafe {
-                RegQueryValueExW(
-                    self.key,
-                    PCWSTR(name_w.as_ptr()),
-                    None,
-                    Some(&mut ty),
-                    Some(buf.as_mut_ptr().cast()),
-                    Some(&mut size),
-                )
-            };
-            if status != ERROR_SUCCESS {
-                return None;
-            }
-            let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
-            Some(String::from_utf16_lossy(&buf[..len]))
+            self.with_key(|key| {
+                let name_w = wide(name);
+                let mut ty = REG_SZ;
+                let mut size = 0u32;
+                let status = unsafe {
+                    RegQueryValueExW(
+                        key,
+                        PCWSTR(name_w.as_ptr()),
+                        None,
+                        Some(&mut ty),
+                        None,
+                        Some(&mut size),
+                    )
+                };
+                if status != ERROR_SUCCESS || size == 0 {
+                    return Ok(None);
+                }
+                let mut buf = vec![0u16; (size as usize / 2).max(1)];
+                let status = unsafe {
+                    RegQueryValueExW(
+                        key,
+                        PCWSTR(name_w.as_ptr()),
+                        None,
+                        Some(&mut ty),
+                        Some(buf.as_mut_ptr().cast()),
+                        Some(&mut size),
+                    )
+                };
+                if status != ERROR_SUCCESS {
+                    return Ok(None);
+                }
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                Ok(Some(String::from_utf16_lossy(&buf[..len])))
+            })
+            .ok()
+            .flatten()
         }
 
         fn set(&mut self, name: &str, command: &str) -> Result<(), String> {
-            let name_w = wide(name);
-            let value_w = wide(command);
-            let bytes = (value_w.len() * 2) as u32;
-            let status = unsafe {
-                RegSetValueExW(
-                    self.key,
-                    PCWSTR(name_w.as_ptr()),
-                    0,
-                    REG_SZ,
-                    Some(std::slice::from_raw_parts(
-                        value_w.as_ptr().cast::<u8>(),
-                        bytes as usize,
-                    )),
-                )
-            };
-            if status != ERROR_SUCCESS {
-                return Err(format!("RegSetValueExW failed: {status:?}"));
-            }
-            Ok(())
+            self.with_key(|key| {
+                let name_w = wide(name);
+                let value_w = wide(command);
+                let bytes = (value_w.len() * 2) as u32;
+                let status = unsafe {
+                    RegSetValueExW(
+                        key,
+                        PCWSTR(name_w.as_ptr()),
+                        0,
+                        REG_SZ,
+                        Some(std::slice::from_raw_parts(
+                            value_w.as_ptr().cast::<u8>(),
+                            bytes as usize,
+                        )),
+                    )
+                };
+                if status != ERROR_SUCCESS {
+                    return Err(format!("RegSetValueExW failed: {status:?}"));
+                }
+                Ok(())
+            })
         }
 
         fn remove(&mut self, name: &str) -> Result<(), String> {
-            let name_w = wide(name);
-            let status = unsafe { RegDeleteValueW(self.key, PCWSTR(name_w.as_ptr())) };
-            if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
-                return Ok(());
-            }
-            Err(format!("RegDeleteValueW failed: {status:?}"))
+            self.with_key(|key| {
+                let name_w = wide(name);
+                let status = unsafe { RegDeleteValueW(key, PCWSTR(name_w.as_ptr())) };
+                if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+                    return Ok(());
+                }
+                Err(format!("RegDeleteValueW failed: {status:?}"))
+            })
         }
     }
 

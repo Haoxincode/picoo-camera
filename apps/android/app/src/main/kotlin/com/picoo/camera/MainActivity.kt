@@ -62,6 +62,7 @@ import android.view.WindowManager
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
     private var nearbyWifiGranted by mutableStateOf(true)
+    private var notificationsGranted by mutableStateOf(true)
     private var pendingAfterCameraGrant: (() -> Unit)? = null
     private var activeSenderHandle: Long = 0L
 
@@ -84,6 +85,11 @@ class MainActivity : ComponentActivity() {
     private val nearbyWifiLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             nearbyWifiGranted = granted
+        }
+
+    private val notificationsLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            notificationsGranted = granted
         }
 
     /** REQ-PICOO-UI-006: request CAMERA only when an action needs it. */
@@ -116,6 +122,20 @@ class MainActivity : ComponentActivity() {
         nearbyWifiLauncher.launch(perm)
     }
 
+    /** REQ-PICOO-UI-005: Android 13+ needs POST_NOTIFICATIONS for camera FGS. */
+    fun ensureNotificationsPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            notificationsGranted = true
+            return
+        }
+        val perm = Manifest.permission.POST_NOTIFICATIONS
+        if (ContextCompat.checkSelfPermission(this, perm) == PackageManager.PERMISSION_GRANTED) {
+            notificationsGranted = true
+            return
+        }
+        notificationsLauncher.launch(perm)
+    }
+
     fun bindSenderHandle(handle: Long) {
         activeSenderHandle = handle
     }
@@ -132,6 +152,9 @@ class MainActivity : ComponentActivity() {
             nearbyWifiGranted =
                 ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) ==
                     PackageManager.PERMISSION_GRANTED
+            notificationsGranted =
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
         }
 
         val protocolVersion = runCatching { PicooNative.getProtocolVersion() }
@@ -146,6 +169,7 @@ class MainActivity : ComponentActivity() {
                         nearbyWifiGranted = nearbyWifiGranted,
                         onRequestCamera = { then -> requestCameraPermission(then) },
                         onRequestNearbyWifi = { ensureNearbyWifiPermission() },
+                        onRequestNotifications = { ensureNotificationsPermission() },
                         modifier = Modifier.padding(innerPadding),
                     )
                 }
@@ -161,6 +185,7 @@ private fun SenderHomeScreen(
     nearbyWifiGranted: Boolean,
     onRequestCamera: (then: (() -> Unit)?) -> Unit,
     onRequestNearbyWifi: () -> Unit,
+    onRequestNotifications: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -412,7 +437,10 @@ private fun SenderHomeScreen(
             PicooNative.STATUS_CONNECTING,
             PicooNative.STATUS_NETWORK_UNSTABLE,
             PicooNative.STATUS_RECONNECTING,
-            -> StreamingForegroundService.start(context)
+            -> {
+                onRequestNotifications()
+                StreamingForegroundService.start(context)
+            }
             else -> StreamingForegroundService.stop(context)
         }
     }
