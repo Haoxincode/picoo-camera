@@ -22,8 +22,9 @@ use picoo_pairing::{
     verify_pairing_confirm, PairingError, PairingHandshakeError, StoreError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    Capabilities, ClientHello, EncoderCommand, PairingChallenge as PairingChallengeMsg,
-    PairingConfirm, ReceiverStats as ReceiverStatsMsg, Resolution, ServerHello, StreamConfig,
+    camera_command, Capabilities, CameraCommand, ClientHello, EncoderCommand,
+    PairingChallenge as PairingChallengeMsg, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
+    Resolution, ServerHello, SessionError, StartStream, StopStream, StreamConfig,
 };
 use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
@@ -81,6 +82,8 @@ pub struct IngressStats {
     pub packets_dropped_unpaired: u64,
     /// Times the decoder was invoked (REQ-PICOO-MEDIA-006: once per AU).
     pub decode_invocations: u64,
+    /// StartStream / CameraCommand rejected while unpaired (PAIRING-003).
+    pub control_rejected_unpaired: u64,
 }
 
 struct StatsReporter {
@@ -725,15 +728,86 @@ impl ReceiverSession {
                     return self.handle_pairing_confirm(session, msg);
                 }
             }
+            // PAIRING-003: StartStream during pending pairing must be rejected explicitly.
+            if let Ok(start) = StartStream::decode(msg.as_ref()) {
+                if start.magic == 1 {
+                    return self.handle_start_stream(session);
+                }
+            }
             return Ok(());
         }
         if self.active_sender.is_none() {
             return self.handle_client_hello(session, msg);
         }
+        // Discriminated control messages (magic/command != 0) before StreamConfig try-decode.
+        if let Ok(start) = StartStream::decode(msg.as_ref()) {
+            if start.magic == 1 {
+                return self.handle_start_stream(session);
+            }
+        }
+        if let Ok(stop) = StopStream::decode(msg.as_ref()) {
+            if stop.magic == 2 {
+                return self.handle_stop_stream(session);
+            }
+        }
         if let Ok(config) = StreamConfig::decode(msg.as_ref()) {
-            return self.handle_stream_config(session, config);
+            // Require at least codec or dimensions so empty blobs are ignored.
+            if !config.codec.is_empty() || config.width > 0 || config.height > 0 {
+                return self.handle_stream_config(session, config);
+            }
         }
         Ok(())
+    }
+
+    fn handle_start_stream(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        if !self.video_allowed() {
+            self.ingress.control_rejected_unpaired += 1;
+            let err = SessionError {
+                code: "UNPAIRED".into(),
+                message: "StartStream rejected until pairing completes".into(),
+            };
+            let _ = self.send_control_message(session, &err);
+            return Ok(());
+        }
+        self.begin_streaming(session)
+    }
+
+    fn handle_stop_stream(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        // Sender-initiated stop: tear down session video without auto-reconnect wait.
+        self.active_sender = None;
+        self.pending_pairing = None;
+        self.current_stream_config = None;
+        self.receiver_capabilities_sent = None;
+        self.reassembly = ReassemblyMap::new(8, 16);
+        self.jitter.clear();
+        self.jitter_timeline = None;
+        self.placeholder_after = None;
+        let _ = self.publish_waiting_placeholder();
+        self.transport.close(session, CloseReason::LocalClose);
+        self.status = if self.bind_addr().is_some() {
+            ReceiverStatus::Discovering
+        } else {
+            ReceiverStatus::Disconnected
+        };
+        Ok(())
+    }
+
+    /// Desktop → phone remote camera control (PUC-005).
+    pub fn send_camera_command(&mut self, command: CameraCommand) -> Result<(), ReceiverError> {
+        let session = self
+            .transport
+            .active_session()
+            .ok_or(ReceiverError::NotListening)?;
+        if !self.video_allowed() {
+            self.ingress.control_rejected_unpaired += 1;
+            return Err(ReceiverError::Protocol(
+                "CameraCommand requires paired streaming session".into(),
+            ));
+        }
+        if command.command == camera_command::Command::Unspecified as i32 {
+            return Err(ReceiverError::Protocol("CameraCommand unspecified".into()));
+        }
+        self.send_control_message(session, &command)
     }
 
     fn handle_stream_config(
@@ -839,6 +913,31 @@ impl ReceiverSession {
         // One-shot: consumed nonce cannot be reused after a successful hello.
         if !hello.qr_nonce.is_empty() {
             self.active_qr = None;
+        }
+
+        // PAIRING-004 / PUC-007: known device_id with changed public key → hard reject
+        // (no pending re-pair, trust store unchanged; peer must remove + re-pair).
+        if self.trusted.is_paired(&hello.sender_id)
+            && self
+                .trusted
+                .verify_paired_key(&hello.sender_id, &hello.public_key)
+                .is_err()
+        {
+            let err = SessionError {
+                code: "PUBLIC_KEY_CHANGED".into(),
+                message: "paired device public key changed; remove and re-pair".into(),
+            };
+            let _ = self.send_control_message(session, &err);
+            self.transport.close(session, CloseReason::LocalClose);
+            self.active_sender = None;
+            self.pending_pairing = None;
+            self.local_pairing_confirmed = false;
+            self.status = if self.bind_addr().is_some() {
+                ReceiverStatus::Discovering
+            } else {
+                ReceiverStatus::Disconnected
+            };
+            return Ok(());
         }
 
         let paired = self

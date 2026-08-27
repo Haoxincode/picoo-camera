@@ -60,8 +60,14 @@ message StreamConfig {
   uint32 stream_epoch = 13;
 }
 
-message StartStream {}
-message StopStream {}
+message StartStream {
+  // Discriminator — empty protobufs must not false-positive decode (ARCH-PICOO-PROTOCOL-001).
+  // Wire-identical to StopStream except magic value: Start=1, Stop=2.
+  uint32 magic = 1; // must be 1
+}
+message StopStream {
+  uint32 magic = 1; // must be 2
+}
 
 message CameraCommand {
   enum Command {

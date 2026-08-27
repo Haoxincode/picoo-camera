@@ -206,6 +206,21 @@ fn test_suite(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
+                "cargo test -p picoo-receiver --lib public_key_change_rejects_auto_connect"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib unpaired_start_stream_is_rejected"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib paired_start_stop_stream_and_camera_command_roundtrip"
+            )
+            .run()?;
+            cmd!(
+                sh,
                 "cargo test -p picoo-discovery --lib synthetic_advertise_to_list_p50_under_two_seconds"
             )
             .run()?;

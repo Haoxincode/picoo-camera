@@ -102,6 +102,8 @@ fn paired_loopback_reaches_frame_hub_without_unpaired_bypass() {
 
 #[test]
 fn public_key_change_rejects_auto_connect() {
+    // REQ-PICOO-PAIRING-004: same device_id + different public key → hard reject
+    // (SessionError PUBLIC_KEY_CHANGED), trust entry unchanged, no pending re-pair.
     let mut receiver = ReceiverSession::new();
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "android-sender".into(),
@@ -136,7 +138,6 @@ fn public_key_change_rejects_auto_connect() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    // Same device_id, different public key → pairing required again (PUC-007).
     sender
         .send_client_hello("android-sender", "Pixel", &[9, 9, 9])
         .expect("client hello");
@@ -144,19 +145,25 @@ fn public_key_change_rejects_auto_connect() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
-        if receiver.pairing_required() || receiver.pairing_short_code().is_some() {
+        if sender.last_session_error() == Some("PUBLIC_KEY_CHANGED") {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    assert!(receiver.pairing_required() || receiver.pairing_short_code().is_some());
+    assert_eq!(sender.last_session_error(), Some("PUBLIC_KEY_CHANGED"));
+    assert!(!receiver.pairing_required());
+    assert!(receiver.pairing_short_code().is_none());
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+    assert!(receiver.trusted_devices().is_paired("android-sender"));
+    assert!(receiver
+        .trusted_devices()
+        .verify_paired_key("android-sender", &[1, 2, 3])
+        .is_ok());
 
-    sender
-        .ingest_and_flush(b"should-drop", true, 1, 1)
-        .expect("send video");
-    receiver.pump().expect("receiver pump");
+    // Video must not reach FrameHub after key-mismatch reject.
+    let _ = sender.ingest_and_flush(b"should-drop", true, 1, 1);
+    let _ = receiver.pump();
     assert_eq!(receiver.stats().access_units, 0);
 }
 
@@ -214,6 +221,247 @@ fn unpaired_sender_video_is_dropped() {
     assert_eq!(receiver.stats().access_units, 0);
     assert!(receiver.stats().packets_dropped_unpaired > 0);
     assert_eq!(receiver.status(), ReceiverStatus::Connecting);
+}
+
+#[test]
+fn unpaired_start_stream_is_rejected() {
+    // REQ-PICOO-PAIRING-003: StartStream before pairing completes → SessionError UNPAIRED.
+    let mut receiver = ReceiverSession::new();
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("unpaired-phone", "Unpaired", &[4, 4, 4])
+        .expect("hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.pairing_short_code().is_some());
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+
+    let rejected_before = receiver.stats().control_rejected_unpaired;
+    sender.send_start_stream().expect("start stream");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.last_session_error() == Some("UNPAIRED") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(sender.last_session_error(), Some("UNPAIRED"));
+    assert!(receiver.stats().control_rejected_unpaired > rejected_before);
+    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+}
+
+#[test]
+fn paired_start_stop_stream_and_camera_command_roundtrip() {
+    // Control-plane: paired StartStream, CameraCommand (SWITCH_FRONT), StopStream.
+    use picoo_protocol::control::{camera_command, CameraCommand};
+
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("ctrl-phone", "Ctrl", &[5, 5, 5])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    receiver.confirm_pairing_locally();
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("confirm");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    // Explicit StartStream while already paired/streaming is idempotent.
+    sender.send_start_stream().expect("start");
+    for _ in 0..40 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert_eq!(receiver.stats().control_rejected_unpaired, 0);
+
+    let cmd = CameraCommand {
+        command: camera_command::Command::SwitchFront as i32,
+        resolution: None,
+        mirrored: false,
+    };
+    receiver.send_camera_command(cmd).expect("camera cmd");
+    for _ in 0..40 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.take_camera_command().is_some() {
+            // Re-fetch: take already consumed — assert via flag below.
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // send again to assert payload (previous take may have raced)
+    receiver
+        .send_camera_command(CameraCommand {
+            command: camera_command::Command::SwitchBack as i32,
+            resolution: None,
+            mirrored: false,
+        })
+        .expect("camera cmd 2");
+    let mut got = None;
+    for _ in 0..40 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if let Some(c) = sender.take_camera_command() {
+            got = Some(c);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let got = got.expect("CameraCommand delivered to sender");
+    assert_eq!(got.command, camera_command::Command::SwitchBack as i32);
+
+    sender.send_stop_stream().expect("stop");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().ok();
+        if matches!(
+            receiver.status(),
+            ReceiverStatus::Discovering
+                | ReceiverStatus::Disconnected
+                | ReceiverStatus::Reconnecting
+        ) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        matches!(
+            receiver.status(),
+            ReceiverStatus::Discovering
+                | ReceiverStatus::Disconnected
+                | ReceiverStatus::Reconnecting
+        ),
+        "after StopStream status={:?}",
+        receiver.status()
+    );
+}
+
+#[test]
+fn camera_command_rejected_while_unpaired() {
+    // REQ-PICOO-PAIRING-003: CameraCommand requires paired video path.
+    let mut receiver = ReceiverSession::new();
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("cam-rej", "CamRej", &[1, 1, 1])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+
+    use picoo_protocol::control::{camera_command, CameraCommand};
+    let err = receiver
+        .send_camera_command(CameraCommand {
+            command: camera_command::Command::SwitchFront as i32,
+            resolution: None,
+            mirrored: false,
+        })
+        .expect_err("must reject");
+    assert!(
+        err.to_string().contains("paired") || err.to_string().contains("CameraCommand"),
+        "unexpected err: {err}"
+    );
+    assert!(receiver.stats().control_rejected_unpaired >= 1);
 }
 
 #[test]

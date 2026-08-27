@@ -8,8 +8,9 @@ use std::time::{Duration, Instant};
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_pairing::{pairing_confirm_signature, trusted_device_from_pairing, TrustedDeviceStore};
 use picoo_protocol::control::{
-    encoder_command, Capabilities, ClientHello, EncoderCommand, PairingChallenge, PairingConfirm,
-    ReceiverStats as ReceiverStatsMsg, ServerHello,
+    camera_command, encoder_command, CameraCommand, Capabilities, ClientHello, EncoderCommand,
+    PairingChallenge, PairingConfirm, ReceiverStats as ReceiverStatsMsg, ServerHello, SessionError,
+    StartStream, StopStream,
 };
 use picoo_protocol::VideoPacket;
 use picoo_protocol::ALPN;
@@ -69,6 +70,10 @@ pub struct SenderSession<T: PicooTransport> {
     resolution_downshift_requested: bool,
     /// ABR recovery: host may restore preferred height (typically 720→1080).
     resolution_upshift_requested: bool,
+    /// Latest CameraCommand from receiver (PUC-005 desktop remote control).
+    pending_camera_command: Option<CameraCommand>,
+    /// Last SessionError code from receiver (e.g. PUBLIC_KEY_CHANGED).
+    last_session_error: Option<String>,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -102,6 +107,8 @@ impl<T: PicooTransport> SenderSession<T> {
             keyframe_requested: false,
             resolution_downshift_requested: false,
             resolution_upshift_requested: false,
+            pending_camera_command: None,
+            last_session_error: None,
         }
     }
 
@@ -231,6 +238,45 @@ impl<T: PicooTransport> SenderSession<T> {
         let pending = self.keyframe_requested;
         self.keyframe_requested = false;
         pending
+    }
+
+    /// Consume a desktop-originated CameraCommand (PUC-005).
+    pub fn take_camera_command(&mut self) -> Option<CameraCommand> {
+        self.pending_camera_command.take()
+    }
+
+    pub fn last_session_error(&self) -> Option<&str> {
+        self.last_session_error.as_deref()
+    }
+
+    /// Sender → Receiver StartStream (PAIRING-003 / PROTOCOL control plane).
+    pub fn send_start_stream(&mut self) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let msg = StartStream { magic: 1 };
+        let mut buf = Vec::new();
+        msg.encode(&mut buf)
+            .map_err(|e| SenderError::Protocol(e.to_string()))?;
+        self.transport
+            .send_control(session, bytes::Bytes::from(buf))
+            .map_err(SenderError::Transport)?;
+        self.transport.pump().map_err(SenderError::Transport)?;
+        self.drain_events();
+        Ok(())
+    }
+
+    /// Sender → Receiver StopStream.
+    pub fn send_stop_stream(&mut self) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let msg = StopStream { magic: 2 };
+        let mut buf = Vec::new();
+        msg.encode(&mut buf)
+            .map_err(|e| SenderError::Protocol(e.to_string()))?;
+        self.transport
+            .send_control(session, bytes::Bytes::from(buf))
+            .map_err(SenderError::Transport)?;
+        self.transport.pump().map_err(SenderError::Transport)?;
+        self.drain_events();
+        Ok(())
     }
 
     /// Consume ABR resolution downshift hint (REQ-PICOO-MEDIA-010 / PUC-006).
@@ -438,6 +484,12 @@ impl<T: PicooTransport> SenderSession<T> {
                 return;
             }
         }
+        if let Ok(cam) = CameraCommand::decode(msg.as_ref()) {
+            if cam.command != camera_command::Command::Unspecified as i32 {
+                self.pending_camera_command = Some(cam);
+                return;
+            }
+        }
         if let Ok(capabilities) = Capabilities::decode(msg.as_ref()) {
             // Empty Capabilities is a prost false-positive for almost any blob.
             if !capabilities.codecs.is_empty() {
@@ -470,8 +522,16 @@ impl<T: PicooTransport> SenderSession<T> {
                 return;
             }
         }
+        // Known SessionError codes before ServerHello — both use string field 1.
+        if let Ok(err) = SessionError::decode(msg.as_ref()) {
+            if matches!(err.code.as_str(), "UNPAIRED" | "PUBLIC_KEY_CHANGED") {
+                self.last_session_error = Some(err.code);
+                return;
+            }
+        }
         if let Ok(hello) = ServerHello::decode(msg.as_ref()) {
-            if hello.receiver_id.is_empty() {
+            // Real Hello needs non-empty id + PCP version (empty ver = false positive).
+            if hello.receiver_id.is_empty() || hello.protocol_version.is_empty() {
                 return;
             }
             // ARCH-PICOO-PROTOCOL-001: reject mismatched PCP version fail-fast.
@@ -1167,7 +1227,7 @@ mod tests {
 
         let challenge = PairingChallenge {
             short_code: "123456".into(),
-            challenge_nonce: b"nonce".to_vec(),
+            challenge_nonce: vec![0xABu8; 32],
         };
         let mut buf = Vec::new();
         challenge.encode(&mut buf).expect("encode challenge");
