@@ -11,6 +11,7 @@
 #include <mferror.h>
 #include <mfapi.h>
 #include <mfidl.h>
+#include <vector>
 
 namespace {
 

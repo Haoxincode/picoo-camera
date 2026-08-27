@@ -3,6 +3,7 @@
 #include "picoo_frame_provider.h"
 
 #include <mfidl.h>
+#include <mftransform.h>
 #include <wrl/implements.h>
 
 class PicooMediaSource;
@@ -11,7 +12,6 @@ class PicooMediaStream
     : public Microsoft::WRL::RuntimeClass<
           Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
           IMFMediaStream2,
-          IMFMediaEventGenerator,
           IMFSampleAllocatorControl> {
 public:
     PicooMediaStream();

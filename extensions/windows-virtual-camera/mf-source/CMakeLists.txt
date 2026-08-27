@@ -34,6 +34,7 @@ if(MSVC)
         mfplat
         mfuuid
         ole32
+        strmiids
         uuid
     )
 endif()

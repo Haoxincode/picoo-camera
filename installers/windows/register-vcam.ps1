@@ -1,9 +1,9 @@
-# Register Picoo Camera virtual camera (COM + MFCreateVirtualCamera) — REQ-PICOO-VCAM-004
-$ErrorActionPreference = "Stop"
-
+# Register Picoo Camera virtual camera (COM + MFCreateVirtualCamera) - REQ-PICOO-VCAM-004
 param(
     [switch]$Unregister
 )
+
+$ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Bundle = Join-Path $Root "target/release/bundle"
@@ -56,6 +56,4 @@ if (-not (Test-Path $Desktop)) {
 
 Write-Host "Starting MF virtual camera via picoo-desktop --register-vcam"
 Write-Host "Note: on Windows 11, Frame Server must be able to read the DLL path (prefer Program Files install)."
-
-# Non-interactive registration: spawn and send Enter after brief delay is brittle; use dedicated mode later.
 Write-Host "For interactive session registration run: $Desktop --register-vcam"

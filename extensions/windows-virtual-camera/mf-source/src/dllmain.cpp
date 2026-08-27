@@ -122,6 +122,14 @@ STDAPI DllRegisterServer() {
     status = RegSetValueExW(key, nullptr, 0, REG_SZ,
                             reinterpret_cast<const BYTE*>(module_path),
                             static_cast<DWORD>((wcslen(module_path) + 1) * sizeof(wchar_t)));
+    if (status != ERROR_SUCCESS) {
+        RegCloseKey(key);
+        return HRESULT_FROM_WIN32(status);
+    }
+    const wchar_t threading[] = L"Both";
+    status = RegSetValueExW(key, L"ThreadingModel", 0, REG_SZ,
+                            reinterpret_cast<const BYTE*>(threading),
+                            static_cast<DWORD>((wcslen(threading) + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
     if (status != ERROR_SUCCESS) {
         return HRESULT_FROM_WIN32(status);
@@ -135,19 +143,6 @@ STDAPI DllRegisterServer() {
     const wchar_t friendly[] = L"Picoo Camera Virtual Media Source";
     status = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(friendly),
                             static_cast<DWORD>((wcslen(friendly) + 1) * sizeof(wchar_t)));
-    RegCloseKey(key);
-    if (status != ERROR_SUCCESS) {
-        return HRESULT_FROM_WIN32(status);
-    }
-
-    status = RegCreateKeyExW(HKEY_LOCAL_MACHINE, (inproc_key + L"\\ThreadingModel").c_str(), 0,
-                             nullptr, 0, KEY_WRITE, nullptr, &key, nullptr);
-    if (status != ERROR_SUCCESS) {
-        return HRESULT_FROM_WIN32(status);
-    }
-    const wchar_t threading[] = L"Both";
-    status = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(threading),
-                            static_cast<DWORD>((wcslen(threading) + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
     if (status != ERROR_SUCCESS) {
         return HRESULT_FROM_WIN32(status);

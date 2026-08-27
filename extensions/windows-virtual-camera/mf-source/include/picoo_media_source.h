@@ -9,7 +9,6 @@ class PicooMediaSource
     : public Microsoft::WRL::RuntimeClass<
           Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>,
           IMFMediaSourceEx,
-          IMFMediaEventGenerator,
           IMFGetService,
           IMFSampleAllocatorControl> {
 public:
