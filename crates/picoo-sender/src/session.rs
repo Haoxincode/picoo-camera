@@ -171,6 +171,20 @@ impl<T: PicooTransport> SenderSession<T> {
         self.bitrate.set_preferred_height(height);
     }
 
+    /// Host thermal policy — block ABR upshift while overheating (MEDIA-010).
+    pub fn set_thermal_hold(&mut self, hold: bool) {
+        self.bitrate.set_thermal_hold(hold);
+    }
+
+    pub fn thermal_hold(&self) -> bool {
+        self.bitrate.thermal_hold()
+    }
+
+    /// Host applied encode height (thermal / user / ABR). Syncs ABR ladder.
+    pub fn sync_encode_height(&mut self, height: u32) {
+        self.bitrate.sync_encode_height(height);
+    }
+
     pub fn stream_config_sent(&self) -> bool {
         self.stream_config_sent
     }

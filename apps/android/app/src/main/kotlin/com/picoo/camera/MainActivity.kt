@@ -431,11 +431,16 @@ private fun SenderHomeScreen(
         }
         while (true) {
             powerHint = PowerHints.readHint(context)
-            if (PowerHints.shouldForce720p(PowerHints.readThermalStatus(context)) &&
-                resolutionLabel != "720p"
-            ) {
+            val force720 = PowerHints.shouldForce720p(PowerHints.readThermalStatus(context))
+            if (senderHandle != 0L) {
+                PicooNative.setThermalHold(senderHandle, force720)
+            }
+            if (force720 && resolutionLabel != "720p") {
                 resolutionLabel = "720p"
                 encoder.setResolution(1280, 720)
+                if (senderHandle != 0L) {
+                    PicooNative.syncEncodeHeight(senderHandle, 720)
+                }
                 streamConfigDirty.set(true)
                 encoder.requestKeyFrame()
             }
@@ -479,7 +484,9 @@ private fun SenderHomeScreen(
                     streamConfigDirty.set(true)
                     encoder.requestKeyFrame()
                 }
-                if (PicooNative.takeResolutionUpshift(senderHandle) == 1 &&
+                // MEDIA-010: never apply ABR upshift while thermal hold is active.
+                if (!PowerHints.shouldForce720p(PowerHints.readThermalStatus(context)) &&
+                    PicooNative.takeResolutionUpshift(senderHandle) == 1 &&
                     preferredResolutionLabel == "1080p" &&
                     resolutionLabel != "1080p"
                 ) {
@@ -487,6 +494,7 @@ private fun SenderHomeScreen(
                     if (maxH == 0 || maxH >= 1080) {
                         resolutionLabel = "1080p"
                         encoder.setResolution(1920, 1080)
+                        PicooNative.syncEncodeHeight(senderHandle, 1080)
                         streamConfigDirty.set(true)
                         encoder.requestKeyFrame()
                     }
@@ -864,6 +872,7 @@ private fun SenderHomeScreen(
                             preferredResolutionLabel = resolutionLabel
                             val (w, h) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
                             PicooNative.setPreferredHeight(senderHandle, h)
+                            PicooNative.syncEncodeHeight(senderHandle, h)
                             encoder.setResolution(w, h)
                             encoderState = encoder.state
                             applyStreamConfigToSender()

@@ -46,6 +46,8 @@ pub struct BitrateController {
     congested_at_floor_ticks: u32,
     downshift_armed: bool,
     upshift_armed: bool,
+    /// Host thermal policy: block ABR upshift while true (REQ-PICOO-MEDIA-010).
+    thermal_hold: bool,
     /// Currently encoded height (720 or 1080).
     active_height: u32,
     /// User / capability preferred height (may be 1080 while active is 720).
@@ -62,6 +64,7 @@ impl BitrateController {
             congested_at_floor_ticks: 0,
             downshift_armed: true,
             upshift_armed: false,
+            thermal_hold: false,
             active_height: 1080,
             preferred_height: 1080,
         }
@@ -101,6 +104,34 @@ impl BitrateController {
         self.preferred_height = h;
         if self.active_height == h {
             self.apply_ladder(BitrateLadder::for_height(h), /*reset_current*/ false);
+        }
+    }
+
+    /// Host thermal overheat: block ABR 720→1080 until cleared (MEDIA-010).
+    pub fn set_thermal_hold(&mut self, hold: bool) {
+        self.thermal_hold = hold;
+        if hold {
+            self.upshift_armed = self.active_height < self.preferred_height;
+        }
+    }
+
+    pub fn thermal_hold(&self) -> bool {
+        self.thermal_hold
+    }
+
+    /// Host applied encode height (thermal force, user toggle, or ABR apply).
+    pub fn sync_encode_height(&mut self, height: u32) {
+        let h = if height >= 1080 { 1080 } else { 720 };
+        if h == self.active_height {
+            return;
+        }
+        if h < self.active_height {
+            self.acknowledge_resolution_downshift();
+        } else {
+            if self.preferred_height < h {
+                self.preferred_height = h;
+            }
+            self.acknowledge_resolution_upshift();
         }
     }
 
@@ -171,6 +202,7 @@ impl BitrateController {
             let near_max = self.current_bitrate_bps >= (self.max_bps * 9) / 10;
             // Prefer climbing back to preferred height before further bitrate increases.
             if self.upshift_armed
+                && !self.thermal_hold
                 && self.active_height < self.preferred_height
                 && self.preferred_height >= 1080
                 && near_max
@@ -281,5 +313,44 @@ mod tests {
         for _ in 0..20 {
             assert_ne!(ctrl.update(&good), BitrateAction::UpshiftResolution);
         }
+    }
+
+    #[test]
+    fn thermal_hold_blocks_upshift_until_cleared() {
+        let mut ctrl = BitrateController::for_height(1080);
+        ctrl.acknowledge_resolution_downshift();
+        ctrl.set_thermal_hold(true);
+        ctrl.set_current_bitrate_bps_for_test(LADDER_720_MAX_BPS);
+        let good = ReceiverStats {
+            packet_loss: 0.0,
+            jitter_buffer_depth_ms: 40.0,
+            ..Default::default()
+        };
+        for _ in 0..30 {
+            assert_ne!(
+                ctrl.update(&good),
+                BitrateAction::UpshiftResolution,
+                "thermal hold must block ABR upshift"
+            );
+        }
+        assert_eq!(ctrl.active_height(), 720);
+        ctrl.set_thermal_hold(false);
+        let mut saw = BitrateAction::Hold;
+        for _ in 0..20 {
+            saw = ctrl.update(&good);
+            if saw == BitrateAction::UpshiftResolution {
+                break;
+            }
+        }
+        assert_eq!(saw, BitrateAction::UpshiftResolution);
+    }
+
+    #[test]
+    fn sync_encode_height_forces_ladder_down() {
+        let mut ctrl = BitrateController::for_height(1080);
+        ctrl.sync_encode_height(720);
+        assert_eq!(ctrl.active_height(), 720);
+        assert_eq!(ctrl.preferred_height(), 1080);
+        assert_eq!(ctrl.max_bps(), LADDER_720_MAX_BPS);
     }
 }

@@ -111,6 +111,12 @@ object PicooNative {
     /** User preferred height for ABR upshift (720 or 1080). */
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
+    /** Host applied encode height — sync ABR ladder (MEDIA-010). */
+    external fun syncEncodeHeight(handle: Long, height: Int): Int
+
+    /** Thermal hold blocks ABR upshift while overheating (MEDIA-010). */
+    external fun setThermalHold(handle: Long, hold: Boolean): Int
+
     /**
      * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
      * @return `[sps, pps]` or null when extraction fails.

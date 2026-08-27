@@ -558,6 +558,39 @@ pub extern "C" fn picoo_sender_set_preferred_height(
     0
 }
 
+/// Host applied encode height — sync ABR ladder (thermal / user toggle). MEDIA-010.
+#[no_mangle]
+pub extern "C" fn picoo_sender_sync_encode_height(
+    handle: *mut std::ffi::c_void,
+    height: u32,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .sync_encode_height(height);
+    0
+}
+
+/// Thermal hold: block ABR 720→1080 while overheating (MEDIA-010).
+#[no_mangle]
+pub extern "C" fn picoo_sender_set_thermal_hold(handle: *mut std::ffi::c_void, hold: i32) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .set_thermal_hold(hold != 0);
+    0
+}
+
 /// Max height advertised by receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
 #[no_mangle]
 pub extern "C" fn picoo_sender_receiver_max_height(handle: *mut std::ffi::c_void) -> u32 {
