@@ -90,7 +90,10 @@ impl ReassemblyMap {
         pending
     }
 
-    pub fn ingest(&mut self, packet: VideoPacket) -> Result<Option<AssembledAccessUnit>, ReassemblyError> {
+    pub fn ingest(
+        &mut self,
+        packet: VideoPacket,
+    ) -> Result<Option<AssembledAccessUnit>, ReassemblyError> {
         if packet.fragment_count > self.max_fragments {
             return Err(ReassemblyError::TooManyFragments);
         }
@@ -232,7 +235,10 @@ mod tests {
         let mut map = ReassemblyMap::new(8, 16);
         assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
         let assembled = map.ingest(fragment(1, 10, 1, 2, b"cd")).unwrap();
-        assert_eq!(assembled.as_ref().map(|a| a.data.as_ref()), Some(&b"abcd"[..]));
+        assert_eq!(
+            assembled.as_ref().map(|a| a.data.as_ref()),
+            Some(&b"abcd"[..])
+        );
     }
 
     #[test]

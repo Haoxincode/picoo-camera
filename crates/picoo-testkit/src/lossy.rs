@@ -13,9 +13,7 @@ use picoo_transport::{
 /// Deterministic LCG so loss patterns are reproducible in CI.
 fn next_u64(state: &mut u64) -> u64 {
     // Numerical Recipes LCG
-    *state = state
-        .wrapping_mul(6364136223846793005)
-        .wrapping_add(1);
+    *state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
     *state
 }
 

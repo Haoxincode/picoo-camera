@@ -65,7 +65,10 @@ impl DeviceIdentity {
         self.device_name = name.to_string();
     }
 
-    pub fn load_or_create(path: impl AsRef<Path>, default_name: &str) -> Result<Self, IdentityError> {
+    pub fn load_or_create(
+        path: impl AsRef<Path>,
+        default_name: &str,
+    ) -> Result<Self, IdentityError> {
         let path = path.as_ref();
         if path.exists() {
             Self::load_from_path(path)
@@ -78,8 +81,7 @@ impl DeviceIdentity {
 
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
         let raw = fs::read_to_string(path).map_err(StoreError::from)?;
-        let persisted: PersistedIdentity =
-            serde_json::from_str(&raw).map_err(StoreError::from)?;
+        let persisted: PersistedIdentity = serde_json::from_str(&raw).map_err(StoreError::from)?;
         if persisted.version != IDENTITY_VERSION {
             return Err(IdentityError::Invalid(format!(
                 "unsupported version {}",

@@ -269,10 +269,7 @@ mod tests {
         let avcc = annex_b_to_length_prefixed(&annex).expect("to avcc");
         assert!(is_length_prefixed_access_unit(&avcc));
         let back = length_prefixed_to_annex_b(&avcc).expect("to annex");
-        assert_eq!(
-            split_annex_b_nals(&annex),
-            split_annex_b_nals(&back)
-        );
+        assert_eq!(split_annex_b_nals(&annex), split_annex_b_nals(&back));
     }
 
     #[test]

@@ -554,32 +554,26 @@ impl PicooDesktopApp {
                             div()
                                 .h_flex()
                                 .gap_2()
-                                .child(
-                                    Button::new("cam-front")
-                                        .label("前置摄像头")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.send_live_camera_command(CameraCommand {
-                                                command: camera_command::Command::SwitchFront
-                                                    as i32,
-                                                resolution: None,
-                                                mirrored: false,
-                                            });
-                                            cx.notify();
-                                        })),
-                                )
-                                .child(
-                                    Button::new("cam-back")
-                                        .label("后置摄像头")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.send_live_camera_command(CameraCommand {
-                                                command: camera_command::Command::SwitchBack
-                                                    as i32,
-                                                resolution: None,
-                                                mirrored: false,
-                                            });
-                                            cx.notify();
-                                        })),
-                                ),
+                                .child(Button::new("cam-front").label("前置摄像头").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SwitchFront as i32,
+                                            resolution: None,
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(Button::new("cam-back").label("后置摄像头").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SwitchBack as i32,
+                                            resolution: None,
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    }),
+                                )),
                         )
                         .child(
                             Switch::new("remote-mirror")
@@ -648,9 +642,7 @@ impl PicooDesktopApp {
                             .label("开机启动")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.launch_at_startup = *checked;
-                                if let Err(err) =
-                                    crate::startup::sync_launch_at_startup(*checked)
-                                {
+                                if let Err(err) = crate::startup::sync_launch_at_startup(*checked) {
                                     tracing::warn!("launch-at-startup sync failed: {err}");
                                 }
                                 let _ = this.persist_prefs();
@@ -842,18 +834,18 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
 
     // REQ-PICOO-VCAM-002: keep Session-lifetime MF virtual camera for the desktop process.
     #[cfg(all(windows, feature = "windows-vcam"))]
-    let _vcam_registration = match crate::vcam_register::VirtualCameraRegistration::register_and_start()
-    {
-        Ok(reg) => {
-            tracing::info!("Picoo Camera virtual camera started for this session");
-            runtime.set_virtual_camera_status(VirtualCameraStatus::Active);
-            Some(reg)
-        }
-        Err(err) => {
-            tracing::warn!("MF virtual camera start deferred: {err}");
-            None
-        }
-    };
+    let _vcam_registration =
+        match crate::vcam_register::VirtualCameraRegistration::register_and_start() {
+            Ok(reg) => {
+                tracing::info!("Picoo Camera virtual camera started for this session");
+                runtime.set_virtual_camera_status(VirtualCameraStatus::Active);
+                Some(reg)
+            }
+            Err(err) => {
+                tracing::warn!("MF virtual camera start deferred: {err}");
+                None
+            }
+        };
 
     let app = gpui_platform::application().with_assets(Assets);
     let prefs_for_window = prefs.clone();

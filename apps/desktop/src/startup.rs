@@ -208,7 +208,9 @@ mod tests {
 
     #[test]
     fn quotes_paths_with_spaces() {
-        let cmd = startup_command_line(Path::new(r"C:\Program Files\Picoo Camera\picoo-desktop.exe"));
+        let cmd = startup_command_line(Path::new(
+            r"C:\Program Files\Picoo Camera\picoo-desktop.exe",
+        ));
         assert!(cmd.starts_with('"'));
         assert!(cmd.ends_with('"'));
     }

@@ -141,7 +141,9 @@ impl BitrateController {
         if reset_current {
             self.current_bitrate_bps = ladder.initial_bps;
         } else {
-            self.current_bitrate_bps = self.current_bitrate_bps.clamp(ladder.min_bps, ladder.max_bps);
+            self.current_bitrate_bps = self
+                .current_bitrate_bps
+                .clamp(ladder.min_bps, ladder.max_bps);
         }
     }
 

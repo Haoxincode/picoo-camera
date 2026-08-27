@@ -11,8 +11,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use picoo_frame_hub::{
     nv12_black, reconnecting_placeholder, waiting_placeholder, FrameHub, FrameSlot,
-    SharedFrameRingProducer,
-    PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
+    SharedFrameRingProducer, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
 use picoo_jitter::{Frame as JitterFrame, JitterBuffer};
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError};
@@ -22,7 +21,7 @@ use picoo_pairing::{
     verify_pairing_confirm, PairingError, PairingHandshakeError, StoreError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    camera_command, Capabilities, CameraCommand, ClientHello, EncoderCommand,
+    camera_command, CameraCommand, Capabilities, ClientHello, EncoderCommand,
     PairingChallenge as PairingChallengeMsg, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
     Resolution, ServerHello, SessionError, StartStream, StopStream, StreamConfig,
 };
@@ -223,9 +222,7 @@ impl ReceiverSession {
     }
 
     pub fn active_qr_nonce(&self) -> Option<(&str, u64)> {
-        self.active_qr
-            .as_ref()
-            .map(|(n, exp)| (n.as_str(), *exp))
+        self.active_qr.as_ref().map(|(n, exp)| (n.as_str(), *exp))
     }
 
     fn validate_qr_nonce(&self, qr_nonce: &str) -> Result<(), ReceiverError> {
@@ -521,8 +518,7 @@ impl ReceiverSession {
                     if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
                         if self.jitter_timeline.is_none() {
                             // Anchor media clock to this AU's PTS at wall arrival.
-                            self.jitter_timeline =
-                                Some((Instant::now(), access_unit.pts_us));
+                            self.jitter_timeline = Some((Instant::now(), access_unit.pts_us));
                         }
                         self.jitter.push(JitterFrame {
                             pts_us: access_unit.pts_us,
@@ -574,8 +570,8 @@ impl ReceiverSession {
     }
 
     fn on_peer_disconnected(&mut self) {
-        let had_live_frame = self.status == ReceiverStatus::Streaming
-            && self.frame_hub.latest_ready().is_some();
+        let had_live_frame =
+            self.status == ReceiverStatus::Streaming && self.frame_hub.latest_ready().is_some();
         self.active_sender = None;
         self.pending_pairing = None;
         self.local_pairing_confirmed = false;
@@ -815,10 +811,7 @@ impl ReceiverSession {
         session: SessionId,
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
-        let previous_epoch = self
-            .current_stream_config
-            .as_ref()
-            .map(|c| c.stream_epoch);
+        let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
         self.current_stream_config = Some(config);
 
@@ -900,8 +893,7 @@ impl ReceiverSession {
 
         // ARCH-PICOO-PROTOCOL-001: version negotiation must fail fast.
         if hello.protocol_version != picoo_protocol::ALPN {
-            self.transport
-                .close(session, CloseReason::LocalClose);
+            self.transport.close(session, CloseReason::LocalClose);
             return Err(ReceiverError::Protocol(format!(
                 "unsupported protocol_version {:?} (expected {})",
                 hello.protocol_version,

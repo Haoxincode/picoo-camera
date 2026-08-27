@@ -10,9 +10,7 @@ use picoo_discovery::{
     generate_nonce, MdnsAdvertiser, PairingState, QrConnectPayload, ReceiverAdvertisement,
     DEFAULT_QR_TTL_MS,
 };
-use picoo_pairing::{
-    public_key_fingerprint, public_key_fingerprint_prefix, DeviceIdentity,
-};
+use picoo_pairing::{public_key_fingerprint, public_key_fingerprint_prefix, DeviceIdentity};
 use picoo_protocol::control::{CameraCommand, StreamConfig};
 use picoo_receiver::{IngressStats, ReceiverError, ReceiverIdentity, ReceiverSession};
 use picoo_session::ReceiverStatus;
@@ -162,7 +160,8 @@ impl ReceiverRuntime {
         let mut config = ReceiverRuntimeConfig::default();
         config.identity.display_name = prefs.display_name.clone();
         // Persist renamed display name into durable identity file.
-        if let Ok(mut identity) = DeviceIdentity::load_or_create(default_identity_path(), &prefs.display_name)
+        if let Ok(mut identity) =
+            DeviceIdentity::load_or_create(default_identity_path(), &prefs.display_name)
         {
             if identity.device_name != prefs.display_name {
                 identity.set_device_name(&prefs.display_name);
@@ -187,9 +186,7 @@ impl ReceiverRuntime {
         self.display_name = name.clone();
         self.receiver.set_display_name(name.clone());
         // Persist renamed display name into durable identity (REQ-PICOO-UI-002 / DISCOVERY-001).
-        if let Ok(mut identity) =
-            DeviceIdentity::load_or_create(default_identity_path(), &name)
-        {
+        if let Ok(mut identity) = DeviceIdentity::load_or_create(default_identity_path(), &name) {
             if identity.device_name != name {
                 identity.set_device_name(&name);
                 let _ = identity.save_to_path(default_identity_path());
@@ -291,8 +288,7 @@ impl ReceiverRuntime {
             display_name: self.display_name.clone(),
             public_key: self.receiver.identity().public_key.clone(),
         };
-        let (qr_json, qr_ascii, expires) =
-            build_qr_payload(&identity, bind, &mut self.receiver);
+        let (qr_json, qr_ascii, expires) = build_qr_payload(&identity, bind, &mut self.receiver);
         self.qr_json = qr_json;
         self.qr_ascii = qr_ascii;
         self.qr_expires_at_ms = expires;

@@ -5,7 +5,9 @@ use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use openh264::nal_units;
 use picoo_frame_hub::nv12_byte_size;
-use picoo_packet::{access_unit_to_annex_b, annex_b_parameter_sets, is_length_prefixed_access_unit};
+use picoo_packet::{
+    access_unit_to_annex_b, annex_b_parameter_sets, is_length_prefixed_access_unit,
+};
 use picoo_protocol::control::StreamConfig;
 
 use crate::stub::StubDecoder;
@@ -31,7 +33,10 @@ impl OpenH264Decoder {
         })
     }
 
-    fn ensure_param_sets(&mut self, stream_config: Option<&StreamConfig>) -> Result<(), DecodeError> {
+    fn ensure_param_sets(
+        &mut self,
+        stream_config: Option<&StreamConfig>,
+    ) -> Result<(), DecodeError> {
         let Some(cfg) = stream_config else {
             return Ok(());
         };
@@ -99,14 +104,8 @@ impl OpenH264Decoder {
         let chroma_w = (width as usize + 1) / 2;
         for row in 0..chroma_h {
             for col in 0..chroma_w {
-                let u = u_plane
-                    .get(row * u_stride + col)
-                    .copied()
-                    .unwrap_or(128);
-                let v = v_plane
-                    .get(row * v_stride + col)
-                    .copied()
-                    .unwrap_or(128);
+                let u = u_plane.get(row * u_stride + col).copied().unwrap_or(128);
+                let v = v_plane.get(row * v_stride + col).copied().unwrap_or(128);
                 let dst = uv_offset + row * width as usize + col * 2;
                 if dst + 1 >= nv12.len() {
                     return Err(DecodeError::Platform("UV plane bounds".into()));

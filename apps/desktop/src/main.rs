@@ -116,7 +116,9 @@ fn main() {
     println!("Run with --loopback-demo to exercise QUIC → FrameHub on Linux CI.");
     println!("Run with --serve to listen, advertise mDNS, and print QR JSON.");
     println!("Run with --gpui for the GPUI desktop shell (requires gpui-ui feature).");
-    println!("Run with --list-paired / --remove-paired <id> / --clear-paired to manage trusted devices.");
+    println!(
+        "Run with --list-paired / --remove-paired <id> / --clear-paired to manage trusted devices."
+    );
     println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
     #[cfg(all(windows, feature = "windows-vcam"))]

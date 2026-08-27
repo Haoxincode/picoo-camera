@@ -268,7 +268,9 @@ pub extern "C" fn picoo_sender_send_client_hello(
     let qr_nonce = if qr_nonce.is_null() {
         String::new()
     } else {
-        unsafe { CStr::from_ptr(qr_nonce) }.to_string_lossy().into_owned()
+        unsafe { CStr::from_ptr(qr_nonce) }
+            .to_string_lossy()
+            .into_owned()
     };
     let key = if public_key.is_null() || public_key_len == 0 {
         &[][..]
@@ -1079,13 +1081,7 @@ fn export_diagnostics_from_trusted_path(
     platform: &str,
     app_version: &str,
 ) -> Result<String, i32> {
-    export_diagnostics_with_session(
-        trusted_store_path,
-        platform,
-        app_version,
-        None,
-        &[],
-    )
+    export_diagnostics_with_session(trusted_store_path, platform, app_version, None, &[])
 }
 
 fn export_diagnostics_with_session(
@@ -1445,11 +1441,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let store_path = dir.path().join("trusted.json");
         let out_path = dir.path().join("diag.json");
-        fs::write(
-            &store_path,
-            r#"{"version":1,"devices":[]}"#,
-        )
-        .expect("empty store");
+        fs::write(&store_path, r#"{"version":1,"devices":[]}"#).expect("empty store");
 
         let store = CString::new(store_path.to_str().unwrap()).unwrap();
         let platform = CString::new("android").unwrap();

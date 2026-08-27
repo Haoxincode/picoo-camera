@@ -68,8 +68,14 @@ mod tests {
         assert_eq!(w, h);
         assert!(w >= 64);
         assert_eq!(rgba.len(), (w as usize) * (h as usize) * 4);
-        let dark_pixels = rgba.chunks_exact(4).filter(|p| p[0] == 0 && p[3] == 255).count();
-        let light_pixels = rgba.chunks_exact(4).filter(|p| p[0] == 255 && p[3] == 255).count();
+        let dark_pixels = rgba
+            .chunks_exact(4)
+            .filter(|p| p[0] == 0 && p[3] == 255)
+            .count();
+        let light_pixels = rgba
+            .chunks_exact(4)
+            .filter(|p| p[0] == 255 && p[3] == 255)
+            .count();
         assert!(dark_pixels > 100);
         assert!(light_pixels > dark_pixels);
     }

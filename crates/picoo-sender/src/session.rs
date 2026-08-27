@@ -333,9 +333,9 @@ impl<T: PicooTransport> SenderSession<T> {
 
     /// Display name from ServerHello (empty until hello arrives).
     pub fn connected_receiver_display_name(&self) -> Option<&str> {
-        self.pairing.as_ref().and_then(|p| {
-            (!p.display_name.is_empty()).then_some(p.display_name.as_str())
-        })
+        self.pairing
+            .as_ref()
+            .and_then(|p| (!p.display_name.is_empty()).then_some(p.display_name.as_str()))
     }
 
     fn persist_trusted(&self) -> Result<(), SenderError> {
@@ -1017,7 +1017,10 @@ mod tests {
                 break;
             }
         }
-        assert!(saw, "expected resolution downshift after sustained floor congestion");
+        assert!(
+            saw,
+            "expected resolution downshift after sustained floor congestion"
+        );
         assert!(!session.take_resolution_downshift());
     }
 
@@ -1171,8 +1174,8 @@ mod tests {
 
     #[test]
     fn encoder_command_request_keyframe_sets_flag() {
-        use picoo_protocol::control::EncoderCommand;
         use picoo_protocol::control::encoder_command;
+        use picoo_protocol::control::EncoderCommand;
 
         let mut session = SenderSession::new(MemoryTransport::new());
         session

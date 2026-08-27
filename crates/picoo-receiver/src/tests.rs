@@ -32,10 +32,7 @@ fn session_status_markers_cover_vcam_permission_and_network() {
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
 
     receiver.mark_virtual_camera_unavailable();
-    assert_eq!(
-        receiver.status(),
-        ReceiverStatus::VirtualCameraUnavailable
-    );
+    assert_eq!(receiver.status(), ReceiverStatus::VirtualCameraUnavailable);
     receiver.clear_virtual_camera_unavailable();
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
 
@@ -467,7 +464,9 @@ fn camera_command_rejected_while_unpaired() {
 #[test]
 fn unpaired_video_keeps_shared_ring_on_placeholder() {
     // REQ-PICOO-PAIRING-003 / VCAM-003: unpaired datagrams must not drive VCam ring.
-    use picoo_frame_hub::{SharedFrameRingConsumer, SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES};
+    use picoo_frame_hub::{
+        SharedFrameRingConsumer, SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES,
+    };
 
     let ring_name = format!(
         "picoo-unpaired-ring-{}",
@@ -815,9 +814,7 @@ fn receiver_sends_stats_to_paired_sender() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(
-        receiver
-            .latest_frame()
-            .is_some_and(|f| f.timestamp_us > 0),
+        receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0),
         "expected decoded frame before stats interval"
     );
 
@@ -996,10 +993,7 @@ fn stream_epoch_bump_requests_keyframe() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(got_idr, "epoch bump must request IDR");
-    assert_eq!(
-        receiver.stream_config().map(|c| c.stream_epoch),
-        Some(2)
-    );
+    assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 }
 
 #[test]
@@ -1090,7 +1084,11 @@ fn remote_mirrored_flips_framehub_nv12() {
     assert_eq!(frame.width, width);
     assert_eq!(frame.height, height);
     let y = &frame.pixel_data.as_ref()[..4];
-    assert_eq!(y, &[40, 30, 20, 10], "Y plane must be horizontally mirrored");
+    assert_eq!(
+        y,
+        &[40, 30, 20, 10],
+        "Y plane must be horizontally mirrored"
+    );
 }
 
 #[test]
@@ -1378,10 +1376,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    let live_ts = receiver
-        .latest_frame()
-        .expect("live frame")
-        .timestamp_us;
+    let live_ts = receiver.latest_frame().expect("live frame").timestamp_us;
     assert!(live_ts > 0);
 
     receiver.inject_peer_disconnect_for_test();
@@ -2163,11 +2158,7 @@ fn paired_connect_to_streaming_under_three_seconds() {
             std::thread::sleep(Duration::from_millis(2));
         }
         sender
-            .send_client_hello(
-                &format!("conn-phone-{round}"),
-                "Conn",
-                &[4, 4, 4],
-            )
+            .send_client_hello(&format!("conn-phone-{round}"), "Conn", &[4, 4, 4])
             .expect("hello");
         for _ in 0..400 {
             receiver.pump().ok();
@@ -2186,9 +2177,7 @@ fn paired_connect_to_streaming_under_three_seconds() {
     }
     samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let p50 = samples_ms[samples_ms.len() / 2];
-    eprintln!(
-        "paired connect→Streaming latency_ms samples={samples_ms:?} p50={p50:.2}"
-    );
+    eprintln!("paired connect→Streaming latency_ms samples={samples_ms:?} p50={p50:.2}");
     assert!(
         p50 < 3_000.0,
         "paired connect P50 {p50}ms exceeds 3s budget"
@@ -2420,7 +2409,9 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::{annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit};
+    use picoo_packet::{
+        annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
+    };
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -2503,7 +2494,9 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender.ingest_and_flush(&avcc, true, 1, 1).expect("ingest avcc");
+    sender
+        .ingest_and_flush(&avcc, true, 1, 1)
+        .expect("ingest avcc");
     for _ in 0..300 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -2519,7 +2512,10 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    panic!("AVCC AU did not reach FrameHub; stats={:?}", receiver.stats());
+    panic!(
+        "AVCC AU did not reach FrameHub; stats={:?}",
+        receiver.stats()
+    );
 }
 
 #[cfg(not(windows))]
@@ -2690,9 +2686,7 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .ingest_and_flush(&annex, true, 1, 1)
-        .expect("ingest");
+    sender.ingest_and_flush(&annex, true, 1, 1).expect("ingest");
     for _ in 0..300 {
         receiver.pump().expect("rx");
         sender.pump().ok();
@@ -2719,7 +2713,9 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     let _ = std::fs::remove_file(&flink);
     panic!(
         "decoded H.264 did not appear on Shared Frame Ring; hub={:?} stats={:?}",
-        receiver.latest_frame().map(|f| (f.width, f.height, f.rotation)),
+        receiver
+            .latest_frame()
+            .map(|f| (f.width, f.height, f.rotation)),
         receiver.stats()
     );
 }
@@ -3513,10 +3509,7 @@ fn midstream_resolution_change_openh264_updates_framehub() {
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
             if frame.width == 320 && frame.height == 240 {
-                assert_eq!(
-                    frame.pixel_data.len(),
-                    nv12_byte_size(320, 240)
-                );
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(320, 240));
                 ok = true;
                 break;
             }
@@ -3576,7 +3569,10 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         }
     }
     let recovery_yuv = YUVBuffer::from_vec(recovery_planes, width, height);
-    let recovery_au = encoder.encode(&recovery_yuv).expect("recovery encode").to_vec();
+    let recovery_au = encoder
+        .encode(&recovery_yuv)
+        .expect("recovery encode")
+        .to_vec();
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -3710,7 +3706,10 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(recovered, "FrameHub did not recover after RequestKeyframe IDR");
+    assert!(
+        recovered,
+        "FrameHub did not recover after RequestKeyframe IDR"
+    );
 }
 
 #[cfg(not(windows))]
@@ -3732,7 +3731,12 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         let mut planes = vec![128u8; w * h * 3 / 2];
         for y in 0..h {
             for x in 0..w {
-                planes[y * w + x] = ((x as u8).wrapping_mul(3).wrapping_add(y as u8).wrapping_add(seed)) % 200 + 20;
+                planes[y * w + x] = ((x as u8)
+                    .wrapping_mul(3)
+                    .wrapping_add(y as u8)
+                    .wrapping_add(seed))
+                    % 200
+                    + 20;
             }
         }
         let yuv = YUVBuffer::from_vec(planes, w, h);
@@ -3858,8 +3862,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     for _ in 0..80 {
         receiver.pump().ok();
         sender.pump().ok();
-        if sender.stream_config_sent()
-            && receiver.stream_config().is_some_and(|c| c.height == 720)
+        if sender.stream_config_sent() && receiver.stream_config().is_some_and(|c| c.height == 720)
         {
             break;
         }
@@ -3906,8 +3909,12 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         let mut planes = vec![128u8; w * h * 3 / 2];
         for y in 0..h {
             for x in 0..w {
-                planes[y * w + x] =
-                    ((x as u8).wrapping_mul(5).wrapping_add(y as u8).wrapping_add(seed)) % 200 + 20;
+                planes[y * w + x] = ((x as u8)
+                    .wrapping_mul(5)
+                    .wrapping_add(y as u8)
+                    .wrapping_add(seed))
+                    % 200
+                    + 20;
             }
         }
         let yuv = YUVBuffer::from_vec(planes, w, h);
@@ -4054,7 +4061,10 @@ fn abr_upshift_updates_stream_config_and_framehub() {
             break;
         }
     }
-    assert!(upshifted, "ABR must request resolution upshift after sustained health");
+    assert!(
+        upshifted,
+        "ABR must request resolution upshift after sustained health"
+    );
     assert_eq!(sender.bitrate_active_height(), 1080);
 
     sender.set_stream_config(StreamConfigParams {

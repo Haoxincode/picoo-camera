@@ -31,8 +31,7 @@ const DEFAULT_HEIGHT: u32 = 720;
 const MIN_H264_AU_BYTES: usize = 65;
 
 /// MF_MT_MPEG_SEQUENCE_HEADER — H.264 SPS/PPS with Annex-B start codes.
-const MF_MT_MPEG_SEQUENCE_HEADER: GUID =
-    GUID::from_u128(0x05f4_6766_f1a9_44e5_b82a_e4df_c2ea_2873);
+const MF_MT_MPEG_SEQUENCE_HEADER: GUID = GUID::from_u128(0x05f4_6766_f1a9_44e5_b82a_e4df_c2ea_2873);
 
 pub struct MfH264Decoder {
     transform: IMFTransform,
@@ -126,8 +125,7 @@ impl MfH264Decoder {
         let owned;
         let payload = if self.inject_sequence_header && !self.sequence_header.is_empty() {
             self.inject_sequence_header = false;
-            let mut combined =
-                Vec::with_capacity(self.sequence_header.len() + access_unit.len());
+            let mut combined = Vec::with_capacity(self.sequence_header.len() + access_unit.len());
             combined.extend_from_slice(&self.sequence_header);
             combined.extend_from_slice(access_unit);
             owned = combined;
@@ -369,9 +367,6 @@ mod tests {
             ..Default::default()
         };
         let header = MfH264Decoder::sequence_header_from_config(Some(&cfg));
-        assert_eq!(
-            header,
-            vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce]
-        );
+        assert_eq!(header, vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce]);
     }
 }

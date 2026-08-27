@@ -214,7 +214,8 @@ impl NotifyIconController {
     fn apply_shell_notify_icon(&self, op: NotifyIconOp) {
         use std::mem::size_of;
         use windows::Win32::UI::Shell::{
-            Shell_NotifyIconW, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+            Shell_NotifyIconW, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+            NOTIFYICONDATAW,
         };
 
         let Some(hwnd) = self.resolve_hwnd() else {

@@ -134,7 +134,9 @@ mod tests {
             .register("127.0.0.1", &first)
             .expect("register first");
         let first_fullname = advertiser.fullname().unwrap().to_string();
-        assert!(first_fullname.contains("Old Name") || first_fullname.to_lowercase().contains("old"));
+        assert!(
+            first_fullname.contains("Old Name") || first_fullname.to_lowercase().contains("old")
+        );
 
         let second = ReceiverAdvertisement::new("picoo-rename-recv", "New Name", 4433, "abcd1234");
         advertiser
