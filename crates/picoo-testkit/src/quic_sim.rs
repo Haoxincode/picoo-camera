@@ -46,6 +46,7 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
         device_name: "Pixel Test".into(),
         protocol_version: ALPN.into(),
         public_key: vec![1, 2, 3],
+        qr_nonce: String::new(),
     };
     let mut hello_bytes = Vec::new();
     client_hello

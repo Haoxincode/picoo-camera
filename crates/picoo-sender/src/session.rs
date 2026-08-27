@@ -560,14 +560,27 @@ impl<T: PicooTransport> SenderSession<T> {
         device_name: &str,
         public_key: &[u8],
     ) -> Result<(), SenderError> {
+        self.send_client_hello_with_qr(sender_id, device_name, public_key, "")
+    }
+
+    /// ClientHello carrying QR nonce (PUC-003). Empty `qr_nonce` = mDNS / trusted reconnect path.
+    pub fn send_client_hello_with_qr(
+        &mut self,
+        sender_id: &str,
+        device_name: &str,
+        public_key: &[u8],
+        qr_nonce: &str,
+    ) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
         let hello = ClientHello {
             sender_id: sender_id.into(),
             device_name: device_name.into(),
             protocol_version: ALPN.into(),
             public_key: public_key.to_vec(),
+            qr_nonce: qr_nonce.into(),
         };
         self.sender_id = Some(sender_id.into());
+        // Reconnects omit QR nonce so an expired one-shot code cannot block recovery.
         self.hello_params = Some((
             sender_id.to_string(),
             device_name.to_string(),

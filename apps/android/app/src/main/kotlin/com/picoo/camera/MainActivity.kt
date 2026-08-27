@@ -293,7 +293,7 @@ private fun SenderHomeScreen(
         streamConfigDirty.set(false)
     }
 
-    fun connectToReceiver(host: String, port: Int, receiverId: String) {
+    fun connectToReceiver(host: String, port: Int, receiverId: String, qrNonce: String = "") {
         suppressAutoConnect = false
         applyStreamConfigToSender()
         val rc = PicooNative.connect(senderHandle, host.trim(), port)
@@ -304,6 +304,7 @@ private fun SenderHomeScreen(
                 senderId = senderDeviceId,
                 deviceName = senderDeviceName,
                 publicKey = senderPublicKey,
+                qrNonce = qrNonce,
             )
             errorText = null
         } else {
@@ -320,7 +321,7 @@ private fun SenderHomeScreen(
         hostText = payload.host
         portText = payload.quicPort.toString()
         selectedReceiverId = payload.receiverId
-        connectToReceiver(payload.host, payload.quicPort, payload.receiverId)
+        connectToReceiver(payload.host, payload.quicPort, payload.receiverId, payload.nonce)
     }
 
     fun reloadTrustedStore() {

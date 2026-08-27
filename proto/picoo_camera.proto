@@ -10,6 +10,8 @@ message ClientHello {
   string device_name = 2;
   string protocol_version = 3;
   bytes public_key = 4;
+  // Present when connecting via QR (PUC-003 / REQ-PICOO-DISCOVERY-004). Empty for mDNS.
+  string qr_nonce = 5;
 }
 
 message ServerHello {

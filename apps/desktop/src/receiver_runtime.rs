@@ -83,6 +83,8 @@ pub struct ReceiverRuntime {
     bind_addr: Option<SocketAddr>,
     qr_json: Option<String>,
     qr_ascii: Option<String>,
+    /// Wall-clock expiry of the currently advertised QR payload.
+    qr_expires_at_ms: u64,
     display_name: String,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
@@ -131,7 +133,8 @@ impl ReceiverRuntime {
             }
         }
 
-        let (qr_json, qr_ascii) = build_qr_payload(&config.identity, bind);
+        let (qr_json, qr_ascii, qr_expires_at_ms) =
+            build_qr_payload(&config.identity, bind, &mut receiver);
 
         Ok(Self {
             receiver,
@@ -139,6 +142,7 @@ impl ReceiverRuntime {
             bind_addr: Some(bind),
             qr_json,
             qr_ascii,
+            qr_expires_at_ms,
             display_name: config.identity.display_name,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
         })
@@ -209,7 +213,32 @@ impl ReceiverRuntime {
     }
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
+        self.refresh_qr_if_expired();
         self.receiver.pump()
+    }
+
+    /// Rotate QR payload when the short-lived nonce expires (REQ-PICOO-DISCOVERY-004).
+    fn refresh_qr_if_expired(&mut self) {
+        let Some(bind) = self.bind_addr else {
+            return;
+        };
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        if self.qr_json.is_some() && now_ms < self.qr_expires_at_ms {
+            return;
+        }
+        let identity = ReceiverIdentity {
+            receiver_id: self.receiver.identity().receiver_id.clone(),
+            display_name: self.display_name.clone(),
+            public_key: self.receiver.identity().public_key.clone(),
+        };
+        let (qr_json, qr_ascii, expires) =
+            build_qr_payload(&identity, bind, &mut self.receiver);
+        self.qr_json = qr_json;
+        self.qr_ascii = qr_ascii;
+        self.qr_expires_at_ms = expires;
     }
 
     pub fn snapshot(&self) -> ReceiverSnapshot {
@@ -284,29 +313,32 @@ impl ReceiverRuntime {
 fn build_qr_payload(
     identity: &ReceiverIdentity,
     bind: SocketAddr,
-) -> (Option<String>, Option<String>) {
+    receiver: &mut ReceiverSession,
+) -> (Option<String>, Option<String>, u64) {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     let fingerprint = public_key_fingerprint(&identity.public_key);
+    let nonce = generate_nonce();
     let qr = QrConnectPayload::new(
         bind.ip().to_string(),
         bind.port(),
         identity.receiver_id.clone(),
         fingerprint,
-        generate_nonce(),
+        nonce.clone(),
         now_ms,
         DEFAULT_QR_TTL_MS,
     );
+    receiver.set_active_qr_nonce(nonce, qr.expires_at_ms);
     match qr.encode_json() {
         Ok(json) => {
             let ascii = qr_display::render_qr_ascii(&json).ok();
-            (Some(json), ascii)
+            (Some(json), ascii, qr.expires_at_ms)
         }
         Err(err) => {
             tracing::warn!("QR encode failed: {err}");
-            (None, None)
+            (None, None, 0)
         }
     }
 }

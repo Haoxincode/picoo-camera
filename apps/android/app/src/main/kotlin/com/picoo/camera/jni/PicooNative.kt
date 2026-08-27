@@ -67,6 +67,7 @@ object PicooNative {
         senderId: String,
         deviceName: String,
         publicKey: ByteArray?,
+        qrNonce: String = "",
     ): Int
 
     external fun sendPairingConfirm(handle: Long, receiverId: String): Int
@@ -190,6 +191,7 @@ object PicooNative {
         val quicPort: Int,
         val receiverId: String,
         val expiresAtMs: Long,
+        val nonce: String = "",
     )
 
     fun readSenderStats(handle: Long): SenderStats {

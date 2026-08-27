@@ -2023,3 +2023,452 @@ fn paired_loopback_binds_lan_only_without_wan() {
     }
     panic!("LAN loopback video path failed without WAN");
 }
+
+#[test]
+fn qr_nonce_mismatch_or_expired_rejects_hello() {
+    // REQ-PICOO-DISCOVERY-004 / PUC-003: QR nonce is one-shot and short-lived.
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.set_active_qr_nonce("live-nonce", u64::MAX);
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello_with_qr("qr-phone", "QR", &[2, 2, 2], "stale-nonce")
+        .expect("send hello");
+    let mut saw_reject = false;
+    for _ in 0..50 {
+        if receiver.pump().is_err() {
+            saw_reject = true;
+            break;
+        }
+        sender.pump().ok();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // Either pump errors or hello is ignored without entering Pairing/Streaming.
+    assert!(
+        saw_reject
+            || receiver.pairing_short_code().is_none()
+                && !matches!(
+                    receiver.status(),
+                    picoo_session::ReceiverStatus::Streaming
+                        | picoo_session::ReceiverStatus::Pairing
+                ),
+        "mismatched QR nonce must not start pairing; status={:?}",
+        receiver.status()
+    );
+
+    // Expired nonce.
+    let mut receiver2 = ReceiverSession::new();
+    receiver2.set_active_qr_nonce("expired-nonce", 1); // already expired vs now_ms
+    let bind2 = receiver2
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender2 = SenderSession::new(QuicSenderTransport::new());
+    sender2
+        .connect(Endpoint {
+            host: bind2.ip().to_string(),
+            port: bind2.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver2.pump().ok();
+        sender2.pump().ok();
+        if sender2.is_connected() && receiver2.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender2
+        .send_client_hello_with_qr("qr-phone", "QR", &[2, 2, 2], "expired-nonce")
+        .expect("send");
+    let mut expired_reject = false;
+    for _ in 0..50 {
+        if receiver2.pump().is_err() {
+            expired_reject = true;
+            break;
+        }
+        sender2.pump().ok();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        expired_reject
+            || !matches!(
+                receiver2.status(),
+                picoo_session::ReceiverStatus::Streaming | picoo_session::ReceiverStatus::Pairing
+            ),
+        "expired QR nonce must be rejected"
+    );
+}
+
+#[test]
+fn matching_qr_nonce_allows_hello_and_consumes_nonce() {
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.set_active_qr_nonce("one-shot", u64::MAX);
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello_with_qr("qr-ok", "QR OK", &[3, 3, 3], "one-shot")
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.pairing_short_code().is_some());
+    assert!(
+        receiver.active_qr_nonce().is_none(),
+        "successful QR hello must consume the nonce"
+    );
+}
+
+#[cfg(not(windows))]
+fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_packet::extract_sps_pps;
+
+    let mut planes = vec![128u8; width * height * 3 / 2];
+    for y in 0..height {
+        for x in 0..width {
+            planes[y * width + x] = ((x as u8).wrapping_mul(seed).wrapping_add(y as u8)) % 200 + 20;
+        }
+    }
+    let yuv = YUVBuffer::from_vec(planes, width, height);
+    let mut encoder = Encoder::new().expect("encoder");
+    let annex = encoder.encode(&yuv).expect("encode").to_vec();
+    let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
+    (annex, sps, pps)
+}
+
+#[cfg(not(windows))]
+#[test]
+fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
+    // PUC-005 / REQ-PICOO-MEDIA-003: camera/epoch switch → new IDR in FrameHub <3s.
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+    use std::time::Instant;
+
+    let (au1, sps1, pps1) = openh264_au(160, 120, 3);
+    let (au2, sps2, pps2) = openh264_au(160, 120, 9);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "epoch-phone".into(),
+        device_name: "Epoch".into(),
+        public_key: vec![8, 8, 8],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("epoch-phone", "Epoch", &[8, 8, 8])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: 160,
+        height: 120,
+        fps: 30,
+        bitrate_bps: 500_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps: sps1,
+        pps: pps1,
+    });
+    for _ in 0..40 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.ingest_and_flush(&au1, true, 1, 1).expect("au1");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some_and(|f| f.width == 160) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.latest_frame().is_some());
+    let before_au = receiver.stats().access_units;
+
+    // Camera switch: epoch bump + new IDR.
+    let t0 = Instant::now();
+    sender.set_stream_config(StreamConfigParams {
+        width: 160,
+        height: 120,
+        fps: 30,
+        bitrate_bps: 500_000,
+        stream_epoch: 2,
+        mirrored: false,
+        rotation: 0,
+        sps: sps2,
+        pps: pps2,
+    });
+    for _ in 0..40 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    // Sender should observe RequestKeyframe from epoch bump.
+    let mut keyed = false;
+    for _ in 0..30 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.take_keyframe_request() {
+            keyed = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(keyed, "epoch bump must request IDR");
+
+    sender.ingest_and_flush(&au2, true, 2, 2).expect("au2");
+    let mut recovered = false;
+    for _ in 0..400 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.stats().access_units > before_au
+            && receiver.latest_frame().is_some_and(|f| {
+                f.width == 160
+                    && f.pixel_data.len() == nv12_byte_size(160, 120)
+                    && f.pixel_data.iter().any(|b| *b != 16 && *b != 128)
+            })
+        {
+            recovered = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("epoch_switch recovery_ms={elapsed_ms:.2} recovered={recovered}");
+    assert!(recovered, "new-epoch frame missing after switch");
+    assert!(
+        elapsed_ms < 3_000.0,
+        "epoch switch recovery {elapsed_ms}ms exceeds 3s PUC-005 budget"
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn midstream_resolution_change_openh264_updates_framehub() {
+    // REQ-PICOO-MEDIA-002/010: mid-stream 160x120 → 320x240 with new SPS/PPS.
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+    use std::time::Instant;
+
+    let (au_lo, sps_lo, pps_lo) = openh264_au(160, 120, 5);
+    let (au_hi, sps_hi, pps_hi) = openh264_au(320, 240, 11);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "res-phone".into(),
+        device_name: "Res".into(),
+        public_key: vec![6, 6, 6],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("res-phone", "Res", &[6, 6, 6])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender.set_stream_config(StreamConfigParams {
+        width: 160,
+        height: 120,
+        fps: 30,
+        bitrate_bps: 400_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_lo,
+        pps: pps_lo,
+    });
+    for _ in 0..40 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.ingest_and_flush(&au_lo, true, 1, 1).expect("lo");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some_and(|f| f.width == 160) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.latest_frame().map(|f| f.width), Some(160));
+
+    let t0 = Instant::now();
+    sender.set_stream_config(StreamConfigParams {
+        width: 320,
+        height: 240,
+        fps: 30,
+        bitrate_bps: 1_200_000,
+        stream_epoch: 2,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_hi,
+        pps: pps_hi,
+    });
+    for _ in 0..40 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.ingest_and_flush(&au_hi, true, 2, 2).expect("hi");
+    let mut ok = false;
+    for _ in 0..400 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.width == 320 && frame.height == 240 {
+                assert_eq!(
+                    frame.pixel_data.len(),
+                    nv12_byte_size(320, 240)
+                );
+                ok = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("resolution_switch recovery_ms={elapsed_ms:.2} ok={ok}");
+    assert!(ok, "FrameHub did not update to 320x240");
+    assert!(
+        elapsed_ms < 3_000.0,
+        "resolution switch {elapsed_ms}ms exceeds 3s budget"
+    );
+}

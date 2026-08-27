@@ -160,6 +160,8 @@ pub struct ReceiverSession {
     jitter_timeline: Option<(Instant, u64)>,
     /// Last ReceiverStats payload sent to the sender (REQ-PICOO-PROTOCOL-006).
     last_stats: Option<picoo_metrics::ReceiverStats>,
+    /// Active QR connect nonce + expiry (REQ-PICOO-DISCOVERY-004 / PUC-003).
+    active_qr: Option<(String, u64)>,
 }
 
 impl Default for ReceiverSession {
@@ -195,7 +197,44 @@ impl ReceiverSession {
             jitter: JitterBuffer::new(50, 120),
             jitter_timeline: None,
             last_stats: None,
+            active_qr: None,
         }
+    }
+
+    /// Publish / rotate the QR nonce currently shown on Waiting (REQ-PICOO-DISCOVERY-004).
+    pub fn set_active_qr_nonce(&mut self, nonce: impl Into<String>, expires_at_ms: u64) {
+        self.active_qr = Some((nonce.into(), expires_at_ms));
+    }
+
+    pub fn clear_active_qr_nonce(&mut self) {
+        self.active_qr = None;
+    }
+
+    pub fn active_qr_nonce(&self) -> Option<(&str, u64)> {
+        self.active_qr
+            .as_ref()
+            .map(|(n, exp)| (n.as_str(), *exp))
+    }
+
+    fn validate_qr_nonce(&self, qr_nonce: &str) -> Result<(), ReceiverError> {
+        if qr_nonce.is_empty() {
+            return Ok(());
+        }
+        let Some((active, expires_at_ms)) = self.active_qr.as_ref() else {
+            return Err(ReceiverError::Protocol(
+                "QR nonce presented but receiver has no active QR".into(),
+            ));
+        };
+        let now_ms = self.now_ms();
+        if now_ms >= *expires_at_ms {
+            return Err(ReceiverError::Protocol("QR nonce expired".into()));
+        }
+        if qr_nonce != active {
+            return Err(ReceiverError::Protocol(
+                "QR nonce mismatch or already rotated".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
@@ -228,6 +267,10 @@ impl ReceiverSession {
     pub fn with_identity(mut self, identity: ReceiverIdentity) -> Self {
         self.identity = identity;
         self
+    }
+
+    pub fn identity(&self) -> &ReceiverIdentity {
+        &self.identity
     }
 
     /// Prefer branded waiting frame (`true`) or solid black (`false`) — PRD §16.
@@ -743,6 +786,12 @@ impl ReceiverSession {
     fn handle_client_hello(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         let hello = ClientHello::decode(msg.as_ref())
             .map_err(|e| ReceiverError::Protocol(format!("ClientHello decode: {e}")))?;
+
+        self.validate_qr_nonce(&hello.qr_nonce)?;
+        // One-shot: consumed nonce cannot be reused after a successful hello.
+        if !hello.qr_nonce.is_empty() {
+            self.active_qr = None;
+        }
 
         let paired = self
             .trusted

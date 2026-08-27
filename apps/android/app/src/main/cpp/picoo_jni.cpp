@@ -181,7 +181,8 @@ Java_com_picoo_camera_jni_PicooNative_sendClientHello(
     jlong handle,
     jstring senderId,
     jstring deviceName,
-    jbyteArray publicKey) {
+    jbyteArray publicKey,
+    jstring qrNonce) {
     if (handle == 0 || senderId == nullptr || deviceName == nullptr) {
         return -1;
     }
@@ -197,6 +198,11 @@ Java_com_picoo_camera_jni_PicooNative_sendClientHello(
         return -1;
     }
 
+    const char *qr_chars = nullptr;
+    if (qrNonce != nullptr) {
+        qr_chars = env->GetStringUTFChars(qrNonce, nullptr);
+    }
+
     const uint8_t *key_ptr = nullptr;
     jsize key_len = 0;
     if (publicKey != nullptr) {
@@ -209,10 +215,14 @@ Java_com_picoo_camera_jni_PicooNative_sendClientHello(
         sender_chars,
         device_chars,
         key_ptr,
-        static_cast<size_t>(key_len));
+        static_cast<size_t>(key_len),
+        qr_chars);
 
     env->ReleaseStringUTFChars(senderId, sender_chars);
     env->ReleaseStringUTFChars(deviceName, device_chars);
+    if (qrNonce != nullptr && qr_chars != nullptr) {
+        env->ReleaseStringUTFChars(qrNonce, qr_chars);
+    }
     if (publicKey != nullptr && key_ptr != nullptr) {
         env->ReleaseByteArrayElements(publicKey, reinterpret_cast<jbyte *>(const_cast<uint8_t *>(key_ptr)), JNI_ABORT);
     }
@@ -643,6 +653,7 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
     }
     char host_buf[128] = {0};
     char receiver_buf[128] = {0};
+    char nonce_buf[128] = {0};
     uint16_t port = 0;
     uint64_t expires_at_ms = 0;
     int32_t rc = picoo_qr_connect_parse(
@@ -652,7 +663,9 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
         &port,
         receiver_buf,
         sizeof(receiver_buf),
-        &expires_at_ms);
+        &expires_at_ms,
+        nonce_buf,
+        sizeof(nonce_buf));
     env->ReleaseStringUTFChars(json, json_chars);
     if (rc != 0) {
         return nullptr;
@@ -665,7 +678,7 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
     jmethodID ctor = env->GetMethodID(
         cls,
         "<init>",
-        "(Ljava/lang/String;ILjava/lang/String;J)V");
+        "(Ljava/lang/String;ILjava/lang/String;JLjava/lang/String;)V");
     if (ctor == nullptr) {
         return nullptr;
     }
@@ -675,7 +688,8 @@ Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* thi
         makeJString(env, host_buf),
         static_cast<jint>(port),
         makeJString(env, receiver_buf),
-        static_cast<jlong>(expires_at_ms));
+        static_cast<jlong>(expires_at_ms),
+        makeJString(env, nonce_buf));
 }
 
 extern "C" JNIEXPORT jlong JNICALL

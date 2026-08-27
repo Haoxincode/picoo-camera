@@ -249,6 +249,8 @@ pub extern "C" fn picoo_sender_clear_permission_required(handle: *mut std::ffi::
 }
 
 /// Send ClientHello after QUIC connect (PUC-001).
+///
+/// `qr_nonce` may be null/empty for mDNS; required to match receiver active QR for QR path.
 #[no_mangle]
 pub extern "C" fn picoo_sender_send_client_hello(
     handle: *mut std::ffi::c_void,
@@ -256,12 +258,18 @@ pub extern "C" fn picoo_sender_send_client_hello(
     device_name: *const std::ffi::c_char,
     public_key: *const u8,
     public_key_len: usize,
+    qr_nonce: *const std::ffi::c_char,
 ) -> i32 {
     if handle.is_null() || sender_id.is_null() || device_name.is_null() {
         return -1;
     }
     let sender_id = unsafe { CStr::from_ptr(sender_id) }.to_string_lossy();
     let device_name = unsafe { CStr::from_ptr(device_name) }.to_string_lossy();
+    let qr_nonce = if qr_nonce.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(qr_nonce) }.to_string_lossy().into_owned()
+    };
     let key = if public_key.is_null() || public_key_len == 0 {
         &[][..]
     } else {
@@ -272,7 +280,7 @@ pub extern "C" fn picoo_sender_send_client_hello(
         .session
         .lock()
         .expect("sender lock")
-        .send_client_hello(&sender_id, &device_name, key)
+        .send_client_hello_with_qr(&sender_id, &device_name, key, &qr_nonce)
     {
         Ok(()) => 0,
         Err(_) => -2,
@@ -1006,7 +1014,7 @@ pub extern "C" fn picoo_export_diagnostics_json(
     copy_str_to_buf(&json, out, out_len)
 }
 
-/// QR JSON connect payload parse helper — returns host/port/receiver_id or negative on error.
+/// QR JSON connect payload parse helper — returns host/port/receiver_id/nonce or negative on error.
 /// Returns -4 if payload is expired (REQ-PICOO-DISCOVERY-004).
 #[no_mangle]
 pub extern "C" fn picoo_qr_connect_parse(
@@ -1017,6 +1025,8 @@ pub extern "C" fn picoo_qr_connect_parse(
     out_receiver_id: *mut std::ffi::c_char,
     out_receiver_id_len: usize,
     out_expires_at_ms: *mut u64,
+    out_nonce: *mut std::ffi::c_char,
+    out_nonce_len: usize,
 ) -> i32 {
     if json.is_null() {
         return -1;
@@ -1048,6 +1058,11 @@ pub extern "C" fn picoo_qr_connect_parse(
     }
     if copy_str_to_buf(&payload.receiver_id, out_receiver_id, out_receiver_id_len) < 0 {
         return -3;
+    }
+    if !out_nonce.is_null() && out_nonce_len > 0 {
+        if copy_str_to_buf(&payload.nonce, out_nonce, out_nonce_len) < 0 {
+            return -3;
+        }
     }
     0
 }
@@ -1114,6 +1129,8 @@ mod tests {
                 receiver_id.as_mut_ptr() as *mut std::ffi::c_char,
                 receiver_id.len(),
                 &mut expires,
+                std::ptr::null_mut(),
+                0,
             ),
             -4
         );
