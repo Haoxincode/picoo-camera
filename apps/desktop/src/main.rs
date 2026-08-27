@@ -1,6 +1,7 @@
 //! Picoo Camera desktop Receiver — ARCH-PICOO-UI-001 shell.
 
 mod diagnostics_export;
+mod logging;
 mod model;
 mod network_quality;
 mod prefs;
@@ -26,13 +27,12 @@ use diagnostics_export::export_diagnostics_json;
 use model::DesktopAppState;
 use picoo_pairing::TrustedDeviceStore;
 use picoo_receiver::ReceiverSession;
+use prefs::load_prefs;
 use receiver_runtime::{default_trusted_store_path, ReceiverRuntime, ReceiverRuntimeConfig};
-use tracing_subscriber::EnvFilter;
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let prefs = load_prefs();
+    crate::logging::init_logging(prefs.log_level.env_filter());
 
     let args: Vec<String> = std::env::args().collect();
 

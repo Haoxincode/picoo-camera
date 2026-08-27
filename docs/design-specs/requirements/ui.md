@@ -3,7 +3,7 @@
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-UI-001 | implemented | ARCH-PICOO-UI-001 | GPUI View 不直接持有 QUIC/Decoder/Frame Buffer | `ReceiverRuntime` + `ReceiverSnapshot`；View 只观察 |
-| REQ-PICOO-UI-002 | implemented | PRD §16 | 桌面四页：首次启动/等待连接(含QR)/直播/设置 | `DesktopPage`；设置改名 → 身份持久化 + mDNS re-advertise |
+| REQ-PICOO-UI-002 | implemented | PRD §16 | 桌面四页：首次启动/等待连接(含QR)/直播/设置；日志级别运行时可 reload | `DesktopPage`；改名→mDNS；`logging.rs` EnvFilter reload |
 | REQ-PICOO-UI-003 | implemented | PRD §17 | 手机三页：设备列表/配对/传输 | Devices `Windows · Ready/Paired`；Pairing/Streaming 显示 Receiver 名；Cancel 取消配对 |
 | REQ-PICOO-UI-004 | implemented | ARCH-PICOO-UI-001 | VideoSurface 只渲染纹理，不拥有解码器；Live 显示 Network Quality | `video_surface.rs`；`network_quality.rs` 与 Android `LinkQuality` 阈值对齐 |
 | REQ-PICOO-UI-005 | implemented | PUC-005 | Sender 前台、防锁屏、深色低亮度、过热/低电量提示；API33+ 通知权限 | FGS + `POST_NOTIFICATIONS` + `FLAG_KEEP_SCREEN_ON` + Streaming `screenBrightness` 调暗 + `PowerHints`（真机验证仍待） |

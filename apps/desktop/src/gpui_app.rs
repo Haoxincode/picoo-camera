@@ -127,7 +127,11 @@ impl PicooDesktopApp {
     }
 
     fn apply_log_level(&self) {
-        let _ = std::env::set_var("RUST_LOG", self.prefs.log_level.env_filter());
+        let filter = self.prefs.log_level.env_filter();
+        let _ = std::env::set_var("RUST_LOG", filter);
+        if let Err(err) = crate::logging::reload_filter(filter) {
+            tracing::warn!("log level reload failed: {err}");
+        }
     }
 
     fn complete_first_launch(&mut self, cx: &mut Context<Self>) {
@@ -854,7 +858,10 @@ fn default_diagnostics_path() -> PathBuf {
 
 pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let prefs = load_prefs();
+    // Ensure subscriber exists even if main skipped prefs-aware init paths.
+    crate::logging::init_logging(prefs.log_level.env_filter());
     let _ = std::env::set_var("RUST_LOG", prefs.log_level.env_filter());
+    let _ = crate::logging::reload_filter(prefs.log_level.env_filter());
     // REQ-PICOO-UI-007: apply persisted startup preference at launch.
     if let Err(err) = crate::startup::sync_launch_at_startup(prefs.launch_at_startup) {
         tracing::warn!("startup sync on launch: {err}");
