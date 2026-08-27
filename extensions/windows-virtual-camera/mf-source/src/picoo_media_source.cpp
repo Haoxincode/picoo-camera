@@ -4,6 +4,7 @@
 
 #include "picoo_com_macros.h"
 
+#include <ksmedia.h>
 #include <mferror.h>
 #include <mfapi.h>
 
