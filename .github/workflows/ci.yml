@@ -6,11 +6,13 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   rust-and-docs:
+    # cursor/** branches already CI on push; skip duplicate pull_request runs.
+    if: github.event_name == 'push' || !startsWith(github.head_ref, 'cursor/')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

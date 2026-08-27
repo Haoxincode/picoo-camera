@@ -9,6 +9,7 @@
 
 #include <mfapi.h>
 #include <objbase.h>
+#include <string>
 #include <strsafe.h>
 #include <wrl/implements.h>
 
