@@ -1,10 +1,7 @@
 #pragma once
 
 #include "picoo_frame_provider.h"
-
-#include <mfidl.h>
-#include <mftransform.h>
-#include <wrl/implements.h>
+#include "picoo_mf_headers.h"
 
 class PicooMediaSource;
 
@@ -26,7 +23,7 @@ public:
     IFACEMETHOD(QueueEvent)(MediaEventType type,
                             REFGUID extended_type,
                             HRESULT status,
-                            const PROPVARIANT* value) override;
+                            const PROPVARIANT* event_value) override;
 
     // IMFMediaStream
     IFACEMETHOD(GetMediaSource)(IMFMediaSource** source) override;
@@ -58,5 +55,4 @@ private:
     Microsoft::WRL::ComPtr<IMFMediaType> current_type_;
     Microsoft::WRL::ComPtr<IMFSampleAllocatorEx> allocator_;
     PicooFrameProvider frames_;
-    GUID subtype_ = MFVideoFormat_NV12;
 };

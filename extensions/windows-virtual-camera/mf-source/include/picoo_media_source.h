@@ -1,9 +1,8 @@
 #pragma once
 
-#include "picoo_media_stream.h"
+#include "picoo_mf_headers.h"
 
-#include <mfidl.h>
-#include <wrl/implements.h>
+class PicooMediaStream;
 
 class PicooMediaSource
     : public Microsoft::WRL::RuntimeClass<
@@ -24,7 +23,7 @@ public:
     IFACEMETHOD(QueueEvent)(MediaEventType type,
                             REFGUID extended_type,
                             HRESULT status,
-                            const PROPVARIANT* value) override;
+                            const PROPVARIANT* event_value) override;
 
     // IMFMediaSource
     IFACEMETHOD(GetCharacteristics)(DWORD* characteristics) override;
@@ -40,7 +39,6 @@ public:
     IFACEMETHOD(GetSourceAttributes)(IMFAttributes** attributes) override;
     IFACEMETHOD(GetStreamAttributes)(DWORD stream_id, IMFAttributes** attributes) override;
     IFACEMETHOD(SetD3DManager)(IUnknown* manager) override;
-    IFACEMETHOD(SetMediaType)(DWORD stream_id, IMFMediaType* media_type) override;
 
     // IMFGetService
     IFACEMETHOD(GetService)(REFGUID service, REFIID riid, LPVOID* object) override;

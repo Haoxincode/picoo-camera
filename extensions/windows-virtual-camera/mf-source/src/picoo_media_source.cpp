@@ -3,10 +3,9 @@
 #include "picoo_media_source.h"
 
 #include "picoo_com_macros.h"
+#include "picoo_media_stream.h"
 
-#include <ksmedia.h>
 #include <mferror.h>
-#include <mfapi.h>
 
 using Microsoft::WRL::ComPtr;
 
@@ -58,11 +57,11 @@ IFACEMETHODIMP PicooMediaSource::GetEvent(DWORD flags, IMFMediaEvent** event) {
 IFACEMETHODIMP PicooMediaSource::QueueEvent(MediaEventType type,
                                             REFGUID extended_type,
                                             HRESULT status,
-                                            const PROPVARIANT* value) {
+                                            const PROPVARIANT* event_value) {
     if (shutdown_ || !queue_) {
         return MF_E_SHUTDOWN;
     }
-    return queue_->QueueEventParamVar(type, extended_type, status, value);
+    return queue_->QueueEventParamVar(type, extended_type, status, event_value);
 }
 
 IFACEMETHODIMP PicooMediaSource::GetCharacteristics(DWORD* characteristics) {
@@ -149,13 +148,6 @@ IFACEMETHODIMP PicooMediaSource::GetStreamAttributes(DWORD stream_id, IMFAttribu
 }
 
 IFACEMETHODIMP PicooMediaSource::SetD3DManager(IUnknown* /*manager*/) {
-    return S_OK;
-}
-
-IFACEMETHODIMP PicooMediaSource::SetMediaType(DWORD stream_id, IMFMediaType* /*media_type*/) {
-    if (stream_id != 0) {
-        return MF_E_INVALIDSTREAMNUMBER;
-    }
     return S_OK;
 }
 

@@ -7,10 +7,7 @@
 #include "picoo_vcam_ids.h"
 
 #include <cstring>
-#include <ksmedia.h>
 #include <mferror.h>
-#include <mfapi.h>
-#include <mfidl.h>
 #include <vector>
 
 namespace {
@@ -104,11 +101,11 @@ IFACEMETHODIMP PicooMediaStream::GetEvent(DWORD flags, IMFMediaEvent** event) {
 IFACEMETHODIMP PicooMediaStream::QueueEvent(MediaEventType type,
                                             REFGUID extended_type,
                                             HRESULT status,
-                                            const PROPVARIANT* value) {
+                                            const PROPVARIANT* event_value) {
     if (!queue_) {
         return MF_E_SHUTDOWN;
     }
-    return queue_->QueueEventParamVar(type, extended_type, status, value);
+    return queue_->QueueEventParamVar(type, extended_type, status, event_value);
 }
 
 IFACEMETHODIMP PicooMediaStream::GetMediaSource(IMFMediaSource** source) {
