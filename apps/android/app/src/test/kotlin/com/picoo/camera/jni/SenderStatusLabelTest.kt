@@ -10,20 +10,20 @@ import org.junit.Test
 class SenderStatusLabelTest {
     @Test
     fun statusLabelsMatchRustAsLabel() {
-        assertEquals("Disconnected", PicooNative.statusLabel(PicooNative.STATUS_DISCONNECTED))
-        assertEquals("Discovering", PicooNative.statusLabel(PicooNative.STATUS_DISCOVERING))
-        assertEquals("Pairing", PicooNative.statusLabel(PicooNative.STATUS_PAIRING))
-        assertEquals("Connecting", PicooNative.statusLabel(PicooNative.STATUS_CONNECTING))
-        assertEquals("Negotiating", PicooNative.statusLabel(PicooNative.STATUS_NEGOTIATING))
-        assertEquals("Streaming", PicooNative.statusLabel(PicooNative.STATUS_STREAMING))
-        assertEquals("Reconnecting", PicooNative.statusLabel(PicooNative.STATUS_RECONNECTING))
+        assertEquals("Disconnected", SenderStatusCodes.label(SenderStatusCodes.DISCONNECTED))
+        assertEquals("Discovering", SenderStatusCodes.label(SenderStatusCodes.DISCOVERING))
+        assertEquals("Pairing", SenderStatusCodes.label(SenderStatusCodes.PAIRING))
+        assertEquals("Connecting", SenderStatusCodes.label(SenderStatusCodes.CONNECTING))
+        assertEquals("Negotiating", SenderStatusCodes.label(SenderStatusCodes.NEGOTIATING))
+        assertEquals("Streaming", SenderStatusCodes.label(SenderStatusCodes.STREAMING))
+        assertEquals("Reconnecting", SenderStatusCodes.label(SenderStatusCodes.RECONNECTING))
         assertEquals(
             "Permission Required",
-            PicooNative.statusLabel(PicooNative.STATUS_PERMISSION_REQUIRED),
+            SenderStatusCodes.label(SenderStatusCodes.PERMISSION_REQUIRED),
         )
         assertEquals(
             "Network Unstable",
-            PicooNative.statusLabel(PicooNative.STATUS_NETWORK_UNSTABLE),
+            SenderStatusCodes.label(SenderStatusCodes.NETWORK_UNSTABLE),
         )
     }
 }

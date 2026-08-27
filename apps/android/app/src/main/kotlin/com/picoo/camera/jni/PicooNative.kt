@@ -11,15 +11,15 @@ object PicooNative {
         System.loadLibrary("picoo_jni")
     }
 
-    const val STATUS_DISCONNECTED = 0
-    const val STATUS_DISCOVERING = 1
-    const val STATUS_PAIRING = 2
-    const val STATUS_CONNECTING = 3
-    const val STATUS_NEGOTIATING = 4
-    const val STATUS_STREAMING = 5
-    const val STATUS_RECONNECTING = 6
-    const val STATUS_PERMISSION_REQUIRED = 7
-    const val STATUS_NETWORK_UNSTABLE = 8
+    const val STATUS_DISCONNECTED = SenderStatusCodes.DISCONNECTED
+    const val STATUS_DISCOVERING = SenderStatusCodes.DISCOVERING
+    const val STATUS_PAIRING = SenderStatusCodes.PAIRING
+    const val STATUS_CONNECTING = SenderStatusCodes.CONNECTING
+    const val STATUS_NEGOTIATING = SenderStatusCodes.NEGOTIATING
+    const val STATUS_STREAMING = SenderStatusCodes.STREAMING
+    const val STATUS_RECONNECTING = SenderStatusCodes.RECONNECTING
+    const val STATUS_PERMISSION_REQUIRED = SenderStatusCodes.PERMISSION_REQUIRED
+    const val STATUS_NETWORK_UNSTABLE = SenderStatusCodes.NETWORK_UNSTABLE
 
     /** Returns PCP/1 protocol version from Rust Core. */
     external fun getProtocolVersion(): String
@@ -223,16 +223,5 @@ object PicooNative {
         )
     }
 
-    fun statusLabel(status: Int): String =
-        when (status) {
-            STATUS_DISCOVERING -> "Discovering"
-            STATUS_PAIRING -> "Pairing"
-            STATUS_CONNECTING -> "Connecting"
-            STATUS_NEGOTIATING -> "Negotiating"
-            STATUS_STREAMING -> "Streaming"
-            STATUS_RECONNECTING -> "Reconnecting"
-            STATUS_PERMISSION_REQUIRED -> "Permission Required"
-            STATUS_NETWORK_UNSTABLE -> "Network Unstable"
-            else -> "Disconnected"
-        }
+    fun statusLabel(status: Int): String = SenderStatusCodes.label(status)
 }
