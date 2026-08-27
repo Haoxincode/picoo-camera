@@ -3,8 +3,10 @@ project(PicooVirtualCameraSource LANGUAGES CXX)
 
 add_library(PicooVirtualCameraSource SHARED
     src/dllmain.cpp
+    src/ring_reader.cpp
 )
 
+target_include_directories(PicooVirtualCameraSource PRIVATE include)
 target_compile_features(PicooVirtualCameraSource PRIVATE cxx_std_17)
 set_target_properties(PicooVirtualCameraSource PROPERTIES
     OUTPUT_NAME "PicooVirtualCameraSource"
