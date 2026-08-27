@@ -593,6 +593,180 @@ fn stream_config_and_capabilities_after_paired_hello() {
 }
 
 #[test]
+fn stream_epoch_bump_requests_keyframe() {
+    // PUC-005 / REQ-PICOO-MEDIA-003 — Receiver half: epoch↑ → IDR request.
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
+        .expect("hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let mut cfg = StreamConfigParams::default();
+    cfg.stream_epoch = 1;
+    sender.send_stream_config(&cfg).expect("cfg1");
+    for _ in 0..50 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+    }
+    // Drain any initial keyframe request from enter_streaming.
+    let _ = sender.take_keyframe_request();
+
+    cfg.stream_epoch = 2;
+    sender.send_stream_config(&cfg).expect("cfg2");
+    let mut got_idr = false;
+    for _ in 0..80 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.take_keyframe_request() {
+            got_idr = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(got_idr, "epoch bump must request IDR");
+    assert_eq!(
+        receiver.stream_config().map(|c| c.stream_epoch),
+        Some(2)
+    );
+}
+
+#[test]
+fn remote_mirrored_flips_framehub_nv12() {
+    // REQ-PICOO-MEDIA-004 — remote StreamConfig.mirrored applied before FrameHub.
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+
+    let width = 4u32;
+    let height = 2u32;
+    let mut pattern = vec![128u8; nv12_byte_size(width, height)];
+    pattern[0] = 10;
+    pattern[1] = 20;
+    pattern[2] = 30;
+    pattern[3] = 40;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![9, 9, 9],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("android-sender", "Pixel", &[9, 9, 9])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let cfg = StreamConfigParams {
+        width,
+        height,
+        mirrored: true,
+        stream_epoch: 1,
+        ..Default::default()
+    };
+    sender.send_stream_config(&cfg).expect("mirrored cfg");
+    for _ in 0..50 {
+        receiver.pump().ok();
+        sender.pump().ok();
+    }
+
+    sender
+        .ingest_access_unit(&pattern, true, 1, 1)
+        .expect("ingest");
+    sender.flush_pending().expect("flush");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.latest_frame().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let frame = receiver.latest_frame().expect("frame in hub");
+    assert_eq!(frame.width, width);
+    assert_eq!(frame.height, height);
+    let y = &frame.pixel_data.as_ref()[..4];
+    assert_eq!(y, &[40, 30, 20, 10], "Y plane must be horizontally mirrored");
+}
+
+#[test]
 fn trusted_store_persists_after_pairing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store_path = dir.path().join("trusted.json");

@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.picoo.camera.discovery.NsdReceiverBrowser
@@ -49,6 +50,7 @@ import com.picoo.camera.ui.QrCodeScanner
 import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.ui.theme.PicooCameraTheme
 import java.util.concurrent.atomic.AtomicReference
+import android.view.WindowManager
 
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
@@ -294,23 +296,55 @@ private fun SenderHomeScreen(
         reloadTrustedStore()
     }
 
-    LaunchedEffect(senderStatus) {
-        val filter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
-        val battery = context.registerReceiver(null, filter)
-        val level = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
-        val scale = battery?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
-        if (level >= 0 && scale > 0) {
-            val pct = level * 100 / scale
-            powerHint = if (pct < 20) "Low battery ($pct%) — streaming may stop" else ""
+    val keepScreenOn = when (senderStatus) {
+        PicooNative.STATUS_STREAMING,
+        PicooNative.STATUS_NEGOTIATING,
+        PicooNative.STATUS_RECONNECTING,
+        PicooNative.STATUS_NETWORK_UNSTABLE,
+        -> true
+        else -> false
+    }
+    val view = LocalView.current
+    androidx.compose.runtime.SideEffect {
+        // REQ-PICOO-UI-005: prevent lock screen while actively streaming.
+        val window = (view.context as? android.app.Activity)?.window
+        if (keepScreenOn) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
+    }
+
+    LaunchedEffect(senderStatus) {
         when (senderStatus) {
             PicooNative.STATUS_STREAMING,
             PicooNative.STATUS_NEGOTIATING,
             PicooNative.STATUS_PAIRING,
             PicooNative.STATUS_CONNECTING,
             PicooNative.STATUS_NETWORK_UNSTABLE,
+            PicooNative.STATUS_RECONNECTING,
             -> StreamingForegroundService.start(context)
             else -> StreamingForegroundService.stop(context)
+        }
+    }
+
+    // Continuous battery + thermal polling while the session is live (REQ-PICOO-UI-005).
+    LaunchedEffect(senderStatus) {
+        val live = when (senderStatus) {
+            PicooNative.STATUS_STREAMING,
+            PicooNative.STATUS_NEGOTIATING,
+            PicooNative.STATUS_RECONNECTING,
+            PicooNative.STATUS_NETWORK_UNSTABLE,
+            -> true
+            else -> false
+        }
+        if (!live) {
+            powerHint = ""
+            return@LaunchedEffect
+        }
+        while (true) {
+            powerHint = PowerHints.readHint(context)
+            delay(5_000)
         }
     }
 
@@ -376,6 +410,7 @@ private fun SenderHomeScreen(
         }
     }
 
+    PicooCameraTheme(darkTheme = senderTab == SenderTab.Streaming) {
     Box(
         modifier = modifier.fillMaxSize(),
     ) {
@@ -668,5 +703,6 @@ private fun SenderHomeScreen(
             onClose = { showQrScanner = false },
         )
     }
-    }
+    } // Box
+    } // PicooCameraTheme(darkTheme=Streaming)
 }

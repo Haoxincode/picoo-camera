@@ -38,13 +38,14 @@ impl AccessUnitDecoder for StubDecoder {
     ) -> Result<Option<DecodedFrame>, DecodeError> {
         let (width, height) = Self::dimensions(stream_config);
 
-        let nv12 = if access_unit.len() <= 64 {
+        let nv12 = if picoo_frame_hub::nv12_byte_size(width, height) == access_unit.len() {
+            // Exact NV12 payload (tests / passthrough).
+            access_unit.to_vec()
+        } else if access_unit.len() <= 64 {
             let mut frame = waiting_placeholder();
             let copy_len = access_unit.len().min(frame.len());
             frame[..copy_len].copy_from_slice(&access_unit[..copy_len]);
             frame
-        } else if picoo_frame_hub::nv12_byte_size(width, height) == access_unit.len() {
-            access_unit.to_vec()
         } else {
             // Raw H.264 AU before MF lands: publish waiting placeholder so VCam/UI stay alive.
             waiting_placeholder()

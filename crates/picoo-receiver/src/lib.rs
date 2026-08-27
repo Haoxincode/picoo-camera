@@ -662,7 +662,13 @@ impl ReceiverSession {
         session: SessionId,
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
+        let previous_epoch = self
+            .current_stream_config
+            .as_ref()
+            .map(|c| c.stream_epoch);
+        let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
         self.current_stream_config = Some(config);
+
         // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.
         if self.video_allowed()
             && matches!(
@@ -671,9 +677,13 @@ impl ReceiverSession {
                     | ReceiverStatus::Pairing
                     | ReceiverStatus::Negotiating
                     | ReceiverStatus::Streaming
+                    | ReceiverStatus::NetworkUnstable
             )
         {
-            if self.status != ReceiverStatus::Streaming {
+            if !matches!(
+                self.status,
+                ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
+            ) {
                 self.status = ReceiverStatus::Negotiating;
             }
         }
@@ -684,6 +694,15 @@ impl ReceiverSession {
         // After capabilities, paired receivers are ready to stream.
         if self.video_allowed() && self.status == ReceiverStatus::Negotiating {
             self.status = ReceiverStatus::Streaming;
+        }
+
+        // PUC-005 / REQ-PICOO-MEDIA-003: epoch bump → drop old epoch state and request IDR.
+        if epoch_bumped && self.video_allowed() {
+            self.jitter.clear();
+            self.jitter_timeline = None;
+            self.reassembly = ReassemblyMap::new(8, 16);
+            let _ = self.decoder.flush();
+            self.send_request_keyframe(session)?;
         }
         Ok(())
     }
@@ -916,6 +935,23 @@ impl ReceiverSession {
         timestamp_us: u64,
         nv12: &[u8],
     ) -> Result<(), ReceiverError> {
+        // REQ-PICOO-MEDIA-004: apply remote StreamConfig.mirrored before FrameHub/ring.
+        let mirrored = self
+            .current_stream_config
+            .as_ref()
+            .is_some_and(|c| c.mirrored);
+        let mirrored_owned;
+        let pixels = if mirrored {
+            mirrored_owned = {
+                let mut buf = nv12.to_vec();
+                picoo_frame_hub::nv12_mirror_horizontal(width, height, stride, &mut buf);
+                buf
+            };
+            mirrored_owned.as_slice()
+        } else {
+            nv12
+        };
+
         let index = self.frame_hub.begin_write()?;
         self.frame_hub.commit_write(
             index,
@@ -924,10 +960,10 @@ impl ReceiverSession {
             stride,
             rotation,
             timestamp_us,
-            Bytes::copy_from_slice(nv12),
+            Bytes::copy_from_slice(pixels),
         );
         if let Some(ring) = self.shared_ring.as_mut() {
-            ring.publish_nv12(width, height, stride, rotation, timestamp_us, nv12)?;
+            ring.publish_nv12(width, height, stride, rotation, timestamp_us, pixels)?;
         }
         Ok(())
     }

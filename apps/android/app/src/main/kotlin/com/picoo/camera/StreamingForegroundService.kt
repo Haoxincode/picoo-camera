@@ -14,7 +14,10 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 
 /**
- * Keeps the sender alive while streaming — REQ-PICOO-SESSION-002 / PUC-005.
+ * Keeps the sender process alive while streaming — REQ-PICOO-UI-005 / PUC-005.
+ *
+ * Uses PARTIAL_WAKE_LOCK for CPU; screen-on is handled by the Activity
+ * (`FLAG_KEEP_SCREEN_ON`) so the FGS does not force a bright display.
  */
 class StreamingForegroundService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
