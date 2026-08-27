@@ -550,6 +550,7 @@ impl PicooDesktopApp {
                             .label("默认占位画面")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.use_default_placeholder = *checked;
+                                this.runtime.set_use_default_placeholder(*checked);
                                 let _ = this.persist_prefs();
                                 cx.notify();
                             })),

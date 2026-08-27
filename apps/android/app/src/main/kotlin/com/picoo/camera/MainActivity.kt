@@ -46,6 +46,7 @@ import com.picoo.camera.media.EncodedFrameListener
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.QrCodeScanner
+import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.ui.theme.PicooCameraTheme
 import java.util.concurrent.atomic.AtomicReference
 
@@ -135,6 +136,7 @@ private fun SenderHomeScreen(
     var resolutionLabel by remember { mutableStateOf("720p") }
     var powerHint by remember { mutableStateOf("") }
     var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
+    var senderTab by remember { mutableStateOf(SenderTab.Devices) }
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
     val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
@@ -329,6 +331,16 @@ private fun SenderHomeScreen(
         }
     }
 
+    LaunchedEffect(senderStatus, pairingCode) {
+        senderTab = when {
+            senderStatus == PicooNative.STATUS_STREAMING ||
+                senderStatus == PicooNative.STATUS_NEGOTIATING ||
+                senderStatus == PicooNative.STATUS_RECONNECTING -> SenderTab.Streaming
+            pairingCode.isNotEmpty() || senderStatus == PicooNative.STATUS_PAIRING -> SenderTab.Pairing
+            else -> senderTab
+        }
+    }
+
     DisposableEffect(encoder, senderHandle, trustedStoreHandle, identityHandle) {
         onDispose {
             encoder.close()
@@ -362,238 +374,265 @@ private fun SenderHomeScreen(
             text = "Session: ${PicooNative.statusLabel(senderStatus)}",
             style = MaterialTheme.typography.bodyMedium,
         )
-        if (pairingCode.isNotEmpty()) {
-            Text(text = "Pairing code: $pairingCode", style = MaterialTheme.typography.bodyLarge)
+        // REQ-PICOO-UI-003 — Devices / Pairing / Streaming pages (PRD §17).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf(
+                SenderTab.Devices to "Devices",
+                SenderTab.Pairing to "Pairing",
+                SenderTab.Streaming to "Streaming",
+            ).forEach { (tab, label) ->
+                Button(onClick = { senderTab = tab }) {
+                    Text(if (senderTab == tab) "[$label]" else label)
+                }
+            }
         }
-        if (discoveredList.isNotEmpty()) {
-            Text(text = "Discovered (NSD):", style = MaterialTheme.typography.bodySmall)
-            discoveredList.forEach { receiver ->
-                Button(
-                    onClick = {
-                        hostText = receiver.host
-                        portText = receiver.quicPort.toString()
-                        selectedReceiverId = receiver.receiverId
-                        connectToReceiver(receiver.host, receiver.quicPort, receiver.receiverId)
-                    },
+
+        when (senderTab) {
+            SenderTab.Devices -> {
+                if (discoveredList.isNotEmpty()) {
+                    Text(text = "Discovered (NSD):", style = MaterialTheme.typography.bodySmall)
+                    discoveredList.forEach { receiver ->
+                        Button(
+                            onClick = {
+                                hostText = receiver.host
+                                portText = receiver.quicPort.toString()
+                                selectedReceiverId = receiver.receiverId
+                                connectToReceiver(receiver.host, receiver.quicPort, receiver.receiverId)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("${receiver.displayName} (${receiver.host}:${receiver.quicPort})")
+                        }
+                    }
+                } else {
+                    Text(
+                        text = "Searching for receivers via NSD (_picoocam._udp)…",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                if (pairedDevicesText.isNotEmpty()) {
+                    Text(text = "Paired receivers:\n$pairedDevicesText", style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedTextField(
+                    value = hostText,
+                    onValueChange = { hostText = it },
+                    label = { Text("Receiver host") },
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("${receiver.displayName} (${receiver.host}:${receiver.quicPort})")
-                }
-            }
-        } else {
-            Text(
-                text = "Searching for receivers via NSD (_picoocam._udp)…",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        if (pairedDevicesText.isNotEmpty()) {
-            Text(text = "Paired receivers:\n$pairedDevicesText", style = MaterialTheme.typography.bodySmall)
-        }
-        if (connectedReceiverId.isNotEmpty()) {
-            Text(text = "Connected receiver: $connectedReceiverId", style = MaterialTheme.typography.bodySmall)
-        }
-        if (powerHint.isNotEmpty()) {
-            Text(
-                text = powerHint,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Remote mirror (sent to PC)")
-            Switch(checked = remoteMirrored, onCheckedChange = {
-                remoteMirrored = it
-                applyStreamConfigToSender()
-            })
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Local preview mirror")
-            Switch(
-                checked = localPreviewMirrored,
-                onCheckedChange = { localPreviewMirrored = it },
-            )
-        }
-
-        OutlinedTextField(
-            value = hostText,
-            onValueChange = { hostText = it },
-            label = { Text("Receiver host") },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = portText,
-            onValueChange = { portText = it },
-            label = { Text("QUIC port") },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            modifier = Modifier.fillMaxWidth(),
-        )
-        OutlinedTextField(
-            value = qrJsonText,
-            onValueChange = { qrJsonText = it },
-            label = { Text("QR JSON (paste or scan)") },
-            modifier = Modifier.fillMaxWidth(),
-            minLines = 2,
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val port = portText.toIntOrNull() ?: return@Button
-                connectToReceiver(hostText, port, selectedReceiverId.ifEmpty { "windows-receiver" })
-            }) {
-                Text("Connect")
-            }
-            Button(onClick = {
-                if (qrJsonText.isBlank()) {
-                    errorText = "Paste QR JSON or scan first"
-                    return@Button
-                }
-                connectFromQrJson(qrJsonText)
-            }) {
-                Text("Connect from QR")
-            }
-            Button(onClick = {
-                onRequestCamera {
-                    showQrScanner = true
-                }
-            }) {
-                Text("Scan QR")
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val receiverId = connectedReceiverId.ifEmpty { selectedReceiverId.ifEmpty { "windows-receiver" } }
-                val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
-                if (rc == 0) {
-                    errorText = null
-                    reloadTrustedStore()
-                } else {
-                    errorText = "Pairing confirm failed: $rc"
-                }
-            }) {
-                Text("Confirm pairing")
-            }
-            Button(onClick = {
-                val deviceId = selectedReceiverId.ifEmpty { pairedDevicesText.lines().firstOrNull()?.substringAfter("(")?.substringBefore(")") ?: "" }
-                if (deviceId.isEmpty()) {
-                    errorText = "Select a paired device to remove"
-                    return@Button
-                }
-                val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, deviceId)
-                if (rc == 1) {
-                    PicooNative.saveTrustedStore(trustedStoreHandle)
-                    PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
-                    reloadTrustedStore()
-                    errorText = null
-                } else {
-                    errorText = "Remove failed: $rc"
-                }
-            }) {
-                Text("Remove paired")
-            }
-            Button(onClick = {
-                val outFile = java.io.File(context.cacheDir, "picoo-diagnostics.json")
-                val rc = PicooNative.exportDiagnosticsToPath(
-                    trustedStorePath,
-                    platform = "android",
-                    appVersion = "0.1.0",
-                    outPath = outFile.absolutePath,
                 )
-                diagnosticExportPath = if (rc == 0) {
-                    errorText = null
-                    outFile.absolutePath
+                OutlinedTextField(
+                    value = portText,
+                    onValueChange = { portText = it },
+                    label = { Text("QUIC port") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = qrJsonText,
+                    onValueChange = { qrJsonText = it },
+                    label = { Text("QR JSON (paste or scan)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val port = portText.toIntOrNull() ?: return@Button
+                        connectToReceiver(hostText, port, selectedReceiverId.ifEmpty { "windows-receiver" })
+                    }) {
+                        Text("Connect")
+                    }
+                    Button(onClick = {
+                        if (qrJsonText.isBlank()) {
+                            errorText = "Paste QR JSON or scan first"
+                            return@Button
+                        }
+                        connectFromQrJson(qrJsonText)
+                    }) {
+                        Text("Connect from QR")
+                    }
+                    Button(onClick = {
+                        onRequestCamera { showQrScanner = true }
+                    }) {
+                        Text("Scan QR")
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        val deviceId = selectedReceiverId.ifEmpty {
+                            pairedDevicesText.lines().firstOrNull()?.substringAfter("(")?.substringBefore(")") ?: ""
+                        }
+                        if (deviceId.isEmpty()) {
+                            errorText = "Select a paired device to remove"
+                            return@Button
+                        }
+                        val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, deviceId)
+                        if (rc == 1) {
+                            PicooNative.saveTrustedStore(trustedStoreHandle)
+                            PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+                            reloadTrustedStore()
+                            errorText = null
+                        } else {
+                            errorText = "Remove failed: $rc"
+                        }
+                    }) {
+                        Text("Remove paired")
+                    }
+                    Button(onClick = {
+                        val outFile = java.io.File(context.cacheDir, "picoo-diagnostics.json")
+                        val rc = PicooNative.exportDiagnosticsToPath(
+                            trustedStorePath,
+                            platform = "android",
+                            appVersion = "0.1.0",
+                            outPath = outFile.absolutePath,
+                        )
+                        diagnosticExportPath = if (rc == 0) {
+                            errorText = null
+                            outFile.absolutePath
+                        } else {
+                            errorText = "Diagnostics export failed: $rc"
+                            ""
+                        }
+                    }) {
+                        Text("Export diagnostics")
+                    }
+                }
+                if (diagnosticExportPath.isNotEmpty()) {
+                    Text(
+                        text = "Diagnostics: $diagnosticExportPath (redacted, no video)",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                errorText?.let {
+                    Text(text = "Error: $it", color = MaterialTheme.colorScheme.error)
+                }
+            }
+            SenderTab.Pairing -> {
+                Text(
+                    text = if (pairingCode.isNotEmpty()) "Confirm Pairing" else "Waiting for pairing…",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (connectedReceiverId.isNotEmpty()) {
+                    Text(text = "Receiver: $connectedReceiverId")
+                }
+                if (pairingCode.isNotEmpty()) {
+                    Text(text = pairingCode, style = MaterialTheme.typography.headlineMedium)
+                    Text(text = "Make sure the same number appears on your computer.")
+                }
+                Button(onClick = {
+                    val receiverId = connectedReceiverId.ifEmpty { selectedReceiverId.ifEmpty { "windows-receiver" } }
+                    val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
+                    if (rc == 0) {
+                        errorText = null
+                        reloadTrustedStore()
+                        senderTab = SenderTab.Streaming
+                    } else {
+                        errorText = "Pairing confirm failed: $rc"
+                    }
+                }) {
+                    Text("Confirm pairing")
+                }
+                errorText?.let {
+                    Text(text = "Error: $it", color = MaterialTheme.colorScheme.error)
+                }
+            }
+            SenderTab.Streaming -> {
+                if (powerHint.isNotEmpty()) {
+                    Text(
+                        text = powerHint,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Remote mirror (sent to PC)")
+                    Switch(checked = remoteMirrored, onCheckedChange = {
+                        remoteMirrored = it
+                        applyStreamConfigToSender()
+                    })
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("Local preview mirror")
+                    Switch(
+                        checked = localPreviewMirrored,
+                        onCheckedChange = { localPreviewMirrored = it },
+                    )
+                }
+                if (cameraGranted) {
+                    CameraPreviewSurface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp),
+                        mirrorLocal = localPreviewMirrored,
+                        onSurfaceAvailable = { surface ->
+                            encoder.bindPreviewSurface(surface)
+                            encoderState = encoder.state
+                            errorText = encoder.lastError
+                        },
+                        onSurfaceDestroyed = { encoder.unbindPreviewSurface() },
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = {
+                            encoder.switchCamera()
+                            encoderState = encoder.state
+                            applyStreamConfigToSender()
+                        }) {
+                            Text("Switch camera")
+                        }
+                        Button(onClick = {
+                            val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
+                            val want1080 = resolutionLabel == "720p"
+                            if (want1080 && maxH in 1 until 1080) {
+                                errorText = "Receiver caps at ${maxH}p — staying 720p"
+                                return@Button
+                            }
+                            resolutionLabel = if (want1080) "1080p" else "720p"
+                            val (w, h) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
+                            encoder.setResolution(w, h)
+                            encoderState = encoder.state
+                            applyStreamConfigToSender()
+                        }) {
+                            Text("Resolution: $resolutionLabel")
+                        }
+                        Button(onClick = {
+                            val rust = PicooNative.readSenderStats(senderHandle)
+                            statsText = buildString {
+                                append("enc=$encodedFrames keys=$keyFrames ")
+                                append("~${encoder.stats.lastBitrateEstimateKbps}kbps ")
+                                append("epoch=${encoder.streamEpoch}\n")
+                                append("rust AU=${rust.accessUnits} pkts=${rust.packets} ")
+                                append("sent=${rust.sentDatagrams} pending=${rust.pendingPackets}")
+                            }
+                            encoderState = encoder.state
+                            errorText = encoder.lastError
+                        }) {
+                            Text("Refresh stats")
+                        }
+                    }
+                    Text(text = "State: $encoderState", style = MaterialTheme.typography.bodySmall)
+                    Text(text = statsText, style = MaterialTheme.typography.bodySmall)
+                    errorText?.let {
+                        Text(text = "Error: $it", color = MaterialTheme.colorScheme.error)
+                    }
                 } else {
-                    errorText = "Diagnostics export failed: $rc"
-                    ""
-                }
-            }) {
-                Text("Export diagnostics")
-            }
-        }
-        if (diagnosticExportPath.isNotEmpty()) {
-            Text(
-                text = "Diagnostics: $diagnosticExportPath (redacted, no video)",
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-
-        if (cameraGranted) {
-            CameraPreviewSurface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(240.dp),
-                mirrorLocal = localPreviewMirrored,
-                onSurfaceAvailable = { surface ->
-                    encoder.bindPreviewSurface(surface)
-                    encoderState = encoder.state
-                    errorText = encoder.lastError
-                },
-                onSurfaceDestroyed = { encoder.unbindPreviewSurface() },
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
-                    encoder.switchCamera()
-                    encoderState = encoder.state
-                    applyStreamConfigToSender()
-                }) {
-                    Text("Switch camera")
-                }
-                Button(onClick = {
-                    val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
-                    val want1080 = resolutionLabel == "720p"
-                    if (want1080 && maxH in 1 until 1080) {
-                        errorText = "Receiver caps at ${maxH}p — staying 720p"
-                        return@Button
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Camera access is requested only when you enable preview or scan QR.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = { onRequestCamera(null) }) {
+                        Text("Enable camera")
                     }
-                    resolutionLabel = if (want1080) "1080p" else "720p"
-                    val (w, h) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
-                    encoder.setResolution(w, h)
-                    encoderState = encoder.state
-                    applyStreamConfigToSender()
-                }) {
-                    Text("Resolution: $resolutionLabel")
                 }
-                Button(onClick = {
-                    val rust = PicooNative.readSenderStats(senderHandle)
-                    statsText = buildString {
-                        append("enc=$encodedFrames keys=$keyFrames ")
-                        append("~${encoder.stats.lastBitrateEstimateKbps}kbps ")
-                        append("epoch=${encoder.streamEpoch}\n")
-                        append("rust AU=${rust.accessUnits} pkts=${rust.packets} ")
-                        append("sent=${rust.sentDatagrams} pending=${rust.pendingPackets}")
-                    }
-                    encoderState = encoder.state
-                    errorText = encoder.lastError
-                }) {
-                    Text("Refresh stats")
-                }
-            }
-
-            Text(text = "State: $encoderState", style = MaterialTheme.typography.bodySmall)
-            Text(text = statsText, style = MaterialTheme.typography.bodySmall)
-            errorText?.let {
-                Text(text = "Error: $it", color = MaterialTheme.colorScheme.error)
-            }
-        } else {
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "Camera access is requested only when you enable preview or scan QR.",
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-                style = MaterialTheme.typography.bodySmall,
-            )
-            Button(
-                onClick = { onRequestCamera(null) },
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            ) {
-                Text("Enable camera")
             }
         }
     }

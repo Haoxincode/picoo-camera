@@ -131,6 +131,25 @@ fn public_key_change_rejects_auto_connect() {
 }
 
 #[test]
+fn default_placeholder_toggle_switches_waiting_frame() {
+    // PRD §16: "默认占位画面" — branded waiting vs solid black.
+    let mut receiver = ReceiverSession::new();
+    receiver
+        .publish_waiting_placeholder()
+        .expect("branded placeholder");
+    let branded = receiver.latest_frame().expect("frame").pixel_data.clone();
+    assert!(branded.iter().any(|&b| b != 0 && b != 128));
+
+    receiver.set_use_default_placeholder(false);
+    receiver
+        .publish_waiting_placeholder()
+        .expect("black placeholder");
+    let black = receiver.latest_frame().expect("frame").pixel_data.clone();
+    let y_plane = &black[..1280 * 720];
+    assert!(y_plane.iter().all(|&b| b == 0));
+}
+
+#[test]
 fn unpaired_sender_video_is_dropped() {
     let mut receiver = ReceiverSession::new();
     let bind = receiver
