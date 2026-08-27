@@ -123,11 +123,12 @@ mod tests {
     }
 
     /// Requires working mDNS on the host — run manually on LAN (`cargo test -- --ignored`).
+    /// REQ-PICOO-DISCOVERY-006: advertise→browse should land under P50 < 2s on healthy LAN.
     #[test]
     #[ignore = "mDNS loopback is unreliable in CI/cloud VMs"]
-    fn browser_discovers_local_advertiser() {
+    fn browser_discovers_local_advertiser_under_two_seconds() {
         use std::thread;
-        use std::time::Duration;
+        use std::time::{Duration, Instant};
 
         use crate::MdnsAdvertiser;
 
@@ -138,20 +139,27 @@ mod tests {
             .expect("register localhost");
 
         let mut browser = MdnsBrowser::new().expect("browser");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            browser.poll(Duration::from_millis(200)).expect("poll");
+        let t0 = Instant::now();
+        let deadline = t0 + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            browser.poll(Duration::from_millis(50)).expect("poll");
             if browser.find("browse-test-recv").is_some() {
                 break;
             }
-            thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(20));
         }
 
         let discovered = browser
             .find("browse-test-recv")
             .expect("discovered receiver");
+        let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        eprintln!("mdns advertise→browse latency_ms={elapsed_ms:.2}");
         assert_eq!(discovered.advertisement.display_name, "Browse Test PC");
         assert_eq!(discovered.host, "127.0.0.1");
+        assert!(
+            elapsed_ms < 2_000.0,
+            "discovery {elapsed_ms}ms exceeds 2s P50 budget"
+        );
 
         advertiser.unregister().expect("unregister");
     }

@@ -1353,6 +1353,159 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
     assert!(p95 < 250.0, "P95 {p95}ms exceeds 250ms budget");
 }
 
+#[test]
+fn paired_connect_to_streaming_under_three_seconds() {
+    // PUC-002 / REQ-PICOO-DISCOVERY-006: paired connect establish < 3s (QUIC hello→Streaming).
+    use std::time::Instant;
+
+    let mut samples_ms = Vec::new();
+    for round in 0..5u32 {
+        let mut receiver = ReceiverSession::new();
+        receiver.trusted_devices_mut().upsert(TrustedDevice {
+            device_id: format!("conn-phone-{round}"),
+            device_name: "Conn".into(),
+            public_key: vec![4, 4, 4],
+            certificate_fingerprint: "fp".into(),
+            paired_at_ms: 0,
+            last_connected_at_ms: None,
+        });
+        let bind = receiver
+            .listen(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 0,
+            })
+            .expect("listen");
+        let mut sender = SenderSession::new(QuicSenderTransport::new());
+        let t0 = Instant::now();
+        sender
+            .connect(Endpoint {
+                host: bind.ip().to_string(),
+                port: bind.port(),
+            })
+            .expect("connect");
+        for _ in 0..400 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if sender.is_connected() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        sender
+            .send_client_hello(
+                &format!("conn-phone-{round}"),
+                "Conn",
+                &[4, 4, 4],
+            )
+            .expect("hello");
+        for _ in 0..400 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if receiver.status() == ReceiverStatus::Streaming {
+                samples_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            receiver.status(),
+            ReceiverStatus::Streaming,
+            "round {round} never reached Streaming"
+        );
+    }
+    samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p50 = samples_ms[samples_ms.len() / 2];
+    eprintln!(
+        "paired connect→Streaming latency_ms samples={samples_ms:?} p50={p50:.2}"
+    );
+    assert!(
+        p50 < 3_000.0,
+        "paired connect P50 {p50}ms exceeds 3s budget"
+    );
+    for ms in &samples_ms {
+        assert!(*ms < 3_000.0, "sample {ms}ms exceeds 3s budget");
+    }
+}
+
+#[test]
+fn brief_disconnect_recovers_streaming_under_five_seconds() {
+    // PRD §8.1 / PUC-006: brief disconnect recovery < 5s on healthy loopback.
+    use picoo_transport::CloseReason;
+    use std::time::Instant;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "recov-phone".into(),
+        device_name: "Recov".into(),
+        public_key: vec![5, 5, 5],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("recov-phone", "Recov", &[5, 5, 5])
+        .expect("hello");
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender.disconnect_for_test(CloseReason::Timeout);
+    let t0 = Instant::now();
+    let mut recovered = false;
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming && sender.is_connected() {
+            // Wait until sender also reports Streaming (ServerHello after reconnect).
+            if sender.status() == picoo_session::SenderStatus::Streaming
+                || sender.status() == picoo_session::SenderStatus::Negotiating
+            {
+                // Prefer full Streaming when possible.
+            }
+            if sender.status() == picoo_session::SenderStatus::Streaming {
+                recovered = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    eprintln!("brief disconnect recovery_ms={elapsed_ms:.2} recovered={recovered}");
+    assert!(recovered, "did not recover Streaming after disconnect");
+    assert!(
+        elapsed_ms < 5_000.0,
+        "recovery {elapsed_ms}ms exceeds 5s budget"
+    );
+}
+
 fn linux_vm_rss_kb() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {
