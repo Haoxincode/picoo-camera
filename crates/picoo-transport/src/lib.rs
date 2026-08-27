@@ -2,9 +2,15 @@
 //!
 //! REQ-PICOO-TRANSPORT-001
 
+mod quic;
+
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use thiserror::Error;
+
+pub use quic::{
+    establish_loopback, QuicLoopback, QuicTransportError, CONTROL_STREAM_ID,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {

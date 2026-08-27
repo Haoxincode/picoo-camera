@@ -6,6 +6,7 @@ members = [
   "crates/picoo-pairing",
   "crates/picoo-session",
   "crates/picoo-transport",
+  "crates/picoo-quiche",
   "crates/picoo-jitter",
   "crates/picoo-rate-control",
   "crates/picoo-metrics",
@@ -38,6 +39,7 @@ picoo-packet = { path = "crates/picoo-packet" }
 picoo-pairing = { path = "crates/picoo-pairing" }
 picoo-session = { path = "crates/picoo-session" }
 picoo-transport = { path = "crates/picoo-transport" }
+picoo-quiche = { path = "crates/picoo-quiche" }
 picoo-jitter = { path = "crates/picoo-jitter" }
 picoo-rate-control = { path = "crates/picoo-rate-control" }
 picoo-metrics = { path = "crates/picoo-metrics" }

@@ -88,7 +88,7 @@ fn test_suite(suite: TestSuite) -> Result<()> {
     let sh = Shell::new()?;
     match suite {
         TestSuite::Protocol => {
-            cmd!(sh, "cargo test -p picoo-protocol -p picoo-packet -p picoo-testkit").run()?;
+            cmd!(sh, "cargo test -p picoo-protocol -p picoo-packet -p picoo-transport -p picoo-testkit").run()?;
         }
     }
     Ok(())

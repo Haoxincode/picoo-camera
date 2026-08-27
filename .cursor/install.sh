@@ -43,6 +43,13 @@ if command -v rustup >/dev/null 2>&1; then
   rustup component add rustfmt clippy >/dev/null 2>&1 || log "rustfmt/clippy 组件补齐失败（可忽略）"
 fi
 
+# quiche/BoringSSL 构建依赖
+if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1 || ! command -v g++ >/dev/null 2>&1; then
+  log "安装 quiche 构建依赖（cmake/nasm/g++）"
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq cmake nasm g++ libstdc++-13-dev pkg-config
+fi
+
 if ! command -v protoc >/dev/null 2>&1; then
   log "安装 protobuf-compiler（prost-build 需要）"
   sudo apt-get update -qq

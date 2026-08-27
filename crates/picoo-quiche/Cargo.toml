@@ -1,0 +1,13 @@
+[package]
+name = "picoo-quiche"
+description = "quiche and BoringSSL build adaptation for Picoo Camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+quiche = "0.23.2"
+rcgen = "0.13"
+ring = "0.17"
+thiserror.workspace = true
+picoo-protocol.workspace = true

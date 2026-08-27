@@ -8,4 +8,6 @@ license.workspace = true
 [dependencies]
 bytes.workspace = true
 picoo-protocol.workspace = true
+picoo-quiche.workspace = true
+ring = "0.17"
 thiserror.workspace = true
