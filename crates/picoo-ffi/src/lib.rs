@@ -93,6 +93,17 @@ pub extern "C" fn picoo_sender_connect(
     }
 }
 
+/// User-initiated disconnect (no auto-reconnect until the next connect). PUC-005.
+#[no_mangle]
+pub extern "C" fn picoo_sender_disconnect(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner.session.lock().expect("sender lock").disconnect();
+    0
+}
+
 /// Drive QUIC I/O (call periodically from platform thread).
 #[no_mangle]
 pub extern "C" fn picoo_sender_pump(handle: *mut std::ffi::c_void) -> i32 {
@@ -1009,6 +1020,11 @@ mod tests {
             picoo_sender_last_receiver_stats(handle, stats.as_mut_ptr(), stats.len()),
             1,
             "no ReceiverStats yet"
+        );
+        assert_eq!(picoo_sender_disconnect(handle), 0);
+        assert_eq!(
+            picoo_sender_status(handle),
+            picoo_session::SenderStatus::Disconnected.as_code()
         );
         picoo_sender_destroy(handle);
     }

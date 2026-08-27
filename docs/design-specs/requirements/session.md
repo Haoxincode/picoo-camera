@@ -10,3 +10,4 @@
 | REQ-PICOO-SESSION-006 | implemented | PRD §21 | 丢包约 5% 时会话仍可用、延迟不无限堆积 | `LossyVideoTransport` + `paired_loopback_remains_usable_under_five_percent_loss` / `scripts/loss_loopback.sh` |
 | REQ-PICOO-SESSION-007 | implemented | PRD §21 | 健康网络 E2E P50&lt;150ms / P95&lt;250ms（传输路径） | `paired_loopback_e2e_latency_p50_under_budget`（真机 camera→VCam 仍待） |
 | REQ-PICOO-SESSION-008 | implemented | PRD §8.1 / PUC-006 | 短暂断网后恢复 &lt;5s | `brief_disconnect_recovers_streaming_under_five_seconds` |
+| REQ-PICOO-SESSION-009 | implemented | PUC-005 | 用户主动断开后保持 Disconnected，不自动重连 | `user_disconnect_stays_disconnected_without_reconnect` + Android Disconnect |

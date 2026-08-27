@@ -47,6 +47,9 @@ object PicooNative {
 
     external fun connect(handle: Long, host: String, port: Int): Int
 
+    /** User-initiated stop; does not auto-reconnect until the next connect (PUC-005). */
+    external fun disconnect(handle: Long): Int
+
     external fun flushPending(handle: Long): Int
 
     external fun pump(handle: Long): Int

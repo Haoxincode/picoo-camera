@@ -179,6 +179,7 @@ private fun SenderHomeScreen(
     var trustedStoreHandle by remember { mutableLongStateOf(0L) }
     val pairedReceiverIds = remember { mutableStateOf<Set<String>>(emptySet()) }
     val autoConnectAttemptedIds = remember { mutableStateOf<Set<String>>(emptySet()) }
+    var suppressAutoConnect by remember { mutableStateOf(false) }
     var qrJsonText by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
     var remoteMirrored by remember { mutableStateOf(false) }
@@ -289,6 +290,7 @@ private fun SenderHomeScreen(
     }
 
     fun connectToReceiver(host: String, port: Int, receiverId: String) {
+        suppressAutoConnect = false
         applyStreamConfigToSender()
         val rc = PicooNative.connect(senderHandle, host.trim(), port)
         if (rc == 0) {
@@ -343,7 +345,8 @@ private fun SenderHomeScreen(
     }
 
     // PUC-002: once a paired receiver appears in NSD, connect without requiring a tap.
-    LaunchedEffect(discoveredList, pairedReceiverIds.value, senderStatus) {
+    LaunchedEffect(discoveredList, pairedReceiverIds.value, senderStatus, suppressAutoConnect) {
+        if (suppressAutoConnect) return@LaunchedEffect
         val sessionBusy = when (senderStatus) {
             PicooNative.STATUS_DISCONNECTED,
             PicooNative.STATUS_DISCOVERING,
@@ -449,9 +452,11 @@ private fun SenderHomeScreen(
                     encoder.requestKeyFrame()
                     streamConfigDirty.set(true)
                 }
-                // Allow NSD auto-connect to retry after a full disconnect.
+                // Allow NSD auto-connect to retry after unexpected disconnect,
+                // but not after an intentional user stop (PUC-005 Disconnect).
                 if (senderStatus == PicooNative.STATUS_DISCONNECTED &&
-                    previousStatus != PicooNative.STATUS_DISCONNECTED
+                    previousStatus != PicooNative.STATUS_DISCONNECTED &&
+                    !suppressAutoConnect
                 ) {
                     autoConnectAttemptedIds.value = emptySet()
                 }
@@ -771,6 +776,16 @@ private fun SenderHomeScreen(
                             errorText = encoder.lastError
                         }) {
                             Text("Refresh stats")
+                        }
+                        Button(onClick = {
+                            // PUC-005: intentional stop — stay disconnected, no NSD auto-rejoin.
+                            suppressAutoConnect = true
+                            PicooNative.disconnect(senderHandle)
+                            senderStatus = PicooNative.getSenderStatus(senderHandle)
+                            senderTab = SenderTab.Devices
+                            errorText = null
+                        }) {
+                            Text("Disconnect")
                         }
                     }
                     val evRange = encoder.exposureCompensationRange

@@ -425,6 +425,9 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, SenderError> {
+        // Explicit connect re-enables automatic recovery after a user disconnect.
+        self.auto_reconnect = true;
+        self.reconnect_after = None;
         self.last_endpoint = Some(endpoint.clone());
         self.status = SenderStatus::Connecting;
         let session = self
@@ -433,6 +436,23 @@ impl<T: PicooTransport> SenderSession<T> {
             .map_err(SenderError::Transport)?;
         self.drain_events();
         Ok(session)
+    }
+
+    /// User-initiated stop: do not enter Reconnecting (PUC-005 live control).
+    pub fn disconnect(&mut self) {
+        self.auto_reconnect = false;
+        self.reconnect_after = None;
+        self.last_endpoint = None;
+        if let Some(session) = self.session.take() {
+            self.transport
+                .close(session, picoo_transport::CloseReason::LocalClose);
+        }
+        // Drain local Disconnected without scheduling reconnect.
+        self.drain_events();
+        self.session = None;
+        self.pairing = None;
+        self.stream_config_sent = false;
+        self.status = SenderStatus::Disconnected;
     }
 
     pub fn pump(&mut self) -> Result<(), SenderError> {
@@ -653,6 +673,39 @@ mod tests {
         }
         assert!(session.is_connected());
         assert_ne!(session.status(), SenderStatus::Disconnected);
+    }
+
+    #[test]
+    fn user_disconnect_stays_disconnected_without_reconnect() {
+        // PUC-005: intentional stop must not bounce into Reconnecting.
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        assert!(session.is_connected());
+
+        session.disconnect();
+        assert_eq!(session.status(), SenderStatus::Disconnected);
+        assert!(!session.is_connected());
+
+        for _ in 0..10 {
+            session.pump().expect("pump");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(session.status(), SenderStatus::Disconnected);
+        assert!(!session.is_connected());
+
+        // Explicit connect must work again after user stop.
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("reconnect after user stop");
+        assert!(session.is_connected());
     }
 
     #[test]

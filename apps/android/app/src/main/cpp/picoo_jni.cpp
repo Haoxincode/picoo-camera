@@ -123,6 +123,14 @@ Java_com_picoo_camera_jni_PicooNative_connect(
 }
 
 extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_disconnect(JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return -1;
+    }
+    return picoo_sender_disconnect(reinterpret_cast<void *>(handle));
+}
+
+extern "C" JNIEXPORT jint JNICALL
 Java_com_picoo_camera_jni_PicooNative_flushPending(JNIEnv * /* env */, jobject /* this */, jlong handle) {
     if (handle == 0) {
         return -1;
