@@ -17,7 +17,6 @@ import android.util.Size
 import android.view.Surface
 import java.io.Closeable
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.math.abs
 
 /**
  * Camera2 capture session → MediaCodec InputSurface hardware H.264 (REQ-PICOO-MEDIA-001).
@@ -482,11 +481,24 @@ class Camera2MediaEncoder(
         val map = cameraManager.getCameraCharacteristics(cameraId)
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return target
-        val choices = map.getOutputSizes(SurfaceTexture::class.java)?.toList().orEmpty()
-        if (choices.isEmpty()) return target
-        return choices.minByOrNull { size ->
-            abs(size.width - target.width) + abs(size.height - target.height)
-        } ?: target
+        val choices = map.getOutputSizes(SurfaceTexture::class.java)
+            ?.map { CaptureSizeSelector.Dim(it.width, it.height) }
+            .orEmpty()
+        val selected = CaptureSizeSelector.select(
+            choices,
+            CaptureSizeSelector.Dim(target.width, target.height),
+        )
+        if (selected.fellBackFrom1080) {
+            val encode = CaptureSizeSelector.encodeSizeFor(
+                selected,
+                CaptureSizeSelector.Dim(target.width, target.height),
+            )
+            val encodeSize = Size(encode.width, encode.height)
+            if (profile.resolution != encodeSize) {
+                profile = profile.copy(resolution = encodeSize)
+            }
+        }
+        return Size(selected.size.width, selected.size.height)
     }
 
     private fun closeCaptureSession() {
