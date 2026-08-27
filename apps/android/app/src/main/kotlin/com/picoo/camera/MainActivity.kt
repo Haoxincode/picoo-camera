@@ -45,7 +45,9 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
+import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.pairing.TrustedDeviceList
@@ -185,7 +187,10 @@ private fun SenderHomeScreen(
     var qrJsonText by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
     var remoteMirrored by remember { mutableStateOf(false) }
-    var localPreviewMirrored by remember { mutableStateOf(true) }
+    // Default lens is Back → local preview not mirrored (REQ-PICOO-MEDIA-004).
+    var localPreviewMirrored by remember {
+        mutableStateOf(LocalPreviewMirror.defaultFor(LensFacing.Back))
+    }
     var resolutionLabel by remember { mutableStateOf("720p") }
     var preferredResolutionLabel by remember { mutableStateOf("1080p") }
     var powerHint by remember { mutableStateOf("") }
@@ -805,6 +810,8 @@ private fun SenderHomeScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = {
                             encoder.switchCamera()
+                            localPreviewMirrored =
+                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
                             encoderState = encoder.state
                             applyStreamConfigToSender()
                         }) {
