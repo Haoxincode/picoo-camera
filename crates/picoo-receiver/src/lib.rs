@@ -825,13 +825,12 @@ impl ReceiverSession {
                     | ReceiverStatus::Streaming
                     | ReceiverStatus::NetworkUnstable
             )
-        {
-            if !matches!(
+            && !matches!(
                 self.status,
                 ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
-            ) {
-                self.status = ReceiverStatus::Negotiating;
-            }
+            )
+        {
+            self.status = ReceiverStatus::Negotiating;
         }
         if self.receiver_capabilities_sent.is_none() {
             self.send_capabilities(session)?;
@@ -1149,10 +1148,7 @@ impl ReceiverSession {
         } else {
             None
         };
-        let pixels = mirrored_owned
-            .as_ref()
-            .map(|b| b.as_slice())
-            .unwrap_or(base_pixels);
+        let pixels = mirrored_owned.as_deref().unwrap_or(base_pixels);
 
         // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
         let published_rotation = 0u32;

@@ -100,8 +100,8 @@ impl OpenH264Decoder {
         }
         // Interleave UV.
         let uv_offset = (width as usize) * (height as usize);
-        let chroma_h = (height as usize + 1) / 2;
-        let chroma_w = (width as usize + 1) / 2;
+        let chroma_h = (height as usize).div_ceil(2);
+        let chroma_w = (width as usize).div_ceil(2);
         for row in 0..chroma_h {
             for col in 0..chroma_w {
                 let u = u_plane.get(row * u_stride + col).copied().unwrap_or(128);

@@ -156,7 +156,7 @@ mod tests {
                 *byte = (state >> 33) as u8;
                 if i == 0 {
                     // Mix in valid version occasionally.
-                    if state % 7 == 0 {
+                    if state.is_multiple_of(7) {
                         *byte = VideoPacket::VERSION;
                     }
                 }

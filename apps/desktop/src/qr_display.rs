@@ -14,6 +14,7 @@ pub fn render_qr_ascii(payload: &str) -> Result<String, String> {
 /// RGBA8 bitmap suitable for GPUI `RenderImage` (REQ-PICOO-DISCOVERY-003 / PUC-003).
 ///
 /// `module_px` is the pixel size of one QR module (including quiet zone modules).
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub fn render_qr_rgba(payload: &str, module_px: u32) -> Result<(u32, u32, Vec<u8>), String> {
     if module_px == 0 {
         return Err("module_px must be > 0".into());
@@ -69,11 +70,15 @@ mod tests {
         assert!(w >= 64);
         assert_eq!(rgba.len(), (w as usize) * (h as usize) * 4);
         let dark_pixels = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[0] == 0 && p[3] == 255)
             .count();
         let light_pixels = rgba
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|p| p[0] == 255 && p[3] == 255)
             .count();
         assert!(dark_pixels > 100);

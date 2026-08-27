@@ -472,6 +472,7 @@ pub fn default_trusted_store_path() -> PathBuf {
 }
 
 /// UTC `yyyy-MM-dd` for paired-device rows (PUC-007); em dash when unknown.
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub fn format_last_connected_ms(ms: u64) -> String {
     if ms == 0 {
         return "—".into();

@@ -189,8 +189,8 @@ mod tests {
         for i in 0..TRIALS {
             let mut browser = MdnsBrowser::new().expect("browser");
             let ad = ReceiverAdvertisement::new(
-                &format!("recv-{i}"),
-                &format!("PC {i}"),
+                format!("recv-{i}"),
+                format!("PC {i}"),
                 4433,
                 "abcd1234",
             );

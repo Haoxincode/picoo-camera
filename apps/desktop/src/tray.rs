@@ -5,6 +5,8 @@
 //! exposes one, [`NotifyIconController`] records ADD/MODIFY/DELETE intent so
 //! the product path is unit-tested on Linux and ready for HWND injection.
 
+#![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+
 use std::sync::Mutex;
 
 use picoo_session::ReceiverStatus;

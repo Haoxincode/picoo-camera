@@ -970,8 +970,10 @@ fn stream_epoch_bump_requests_keyframe() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    let mut cfg = StreamConfigParams::default();
-    cfg.stream_epoch = 1;
+    let mut cfg = StreamConfigParams {
+        stream_epoch: 1,
+        ..Default::default()
+    };
     sender.send_stream_config(&cfg).expect("cfg1");
     for _ in 0..50 {
         receiver.pump().expect("rx");
@@ -1962,7 +1964,6 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         rotation: 0,
         sps,
         pps,
-        ..Default::default()
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -2069,7 +2070,6 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
         rotation: 0,
         sps,
         pps,
-        ..Default::default()
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -2970,15 +2970,12 @@ fn mismatched_protocol_version_rejects_client_hello() {
         .expect("send hello");
     let mut saw_protocol_err = false;
     for _ in 0..50 {
-        match receiver.pump() {
-            Err(err) => {
-                let msg = err.to_string();
-                if msg.contains("protocol_version") || msg.contains("unsupported") {
-                    saw_protocol_err = true;
-                    break;
-                }
+        if let Err(err) = receiver.pump() {
+            let msg = err.to_string();
+            if msg.contains("protocol_version") || msg.contains("unsupported") {
+                saw_protocol_err = true;
+                break;
             }
-            Ok(()) => {}
         }
         sender.pump().ok();
         std::thread::sleep(Duration::from_millis(2));

@@ -15,7 +15,7 @@ use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
 use image::{Frame, ImageBuffer, Rgba};
-use picoo_protocol::control::{camera_command, CameraCommand};
+use picoo_protocol::control::{camera_command, CameraCommand, Resolution};
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 use smallvec::smallvec;
@@ -569,6 +569,37 @@ impl PicooDesktopApp {
                                         this.send_live_camera_command(CameraCommand {
                                             command: camera_command::Command::SwitchBack as i32,
                                             resolution: None,
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    }),
+                                )),
+                        )
+                        .child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .child(Button::new("res-720").label("720p").on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SetResolution as i32,
+                                            resolution: Some(Resolution {
+                                                width: 1280,
+                                                height: 720,
+                                            }),
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    },
+                                )))
+                                .child(Button::new("res-1080").label("1080p").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SetResolution as i32,
+                                            resolution: Some(Resolution {
+                                                width: 1920,
+                                                height: 1080,
+                                            }),
                                             mirrored: false,
                                         });
                                         cx.notify();

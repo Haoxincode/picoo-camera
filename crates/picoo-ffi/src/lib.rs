@@ -1279,10 +1279,11 @@ pub extern "C" fn picoo_qr_connect_parse(
     if copy_str_to_buf(&payload.receiver_id, out_receiver_id, out_receiver_id_len) < 0 {
         return -3;
     }
-    if !out_nonce.is_null() && out_nonce_len > 0 {
-        if copy_str_to_buf(&payload.nonce, out_nonce, out_nonce_len) < 0 {
-            return -3;
-        }
+    if !out_nonce.is_null()
+        && out_nonce_len > 0
+        && copy_str_to_buf(&payload.nonce, out_nonce, out_nonce_len) < 0
+    {
+        return -3;
     }
     0
 }

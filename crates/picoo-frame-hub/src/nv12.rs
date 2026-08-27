@@ -84,7 +84,12 @@ pub fn nv12_rotate_clockwise(
     if rot == 0 {
         return None;
     }
-    if width < 2 || height < 2 || width % 2 != 0 || height % 2 != 0 || stride < width {
+    if width < 2
+        || height < 2
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+        || stride < width
+    {
         return None;
     }
     let expected = (stride as usize) * (height as usize) * 3 / 2;

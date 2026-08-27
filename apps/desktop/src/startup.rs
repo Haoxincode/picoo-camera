@@ -9,6 +9,7 @@ pub const RUN_VALUE_NAME: &str = "PicooCamera";
 
 /// Abstraction over OS startup registration (unit-testable).
 pub trait StartupStore {
+    #[allow(dead_code)] // used by unit tests / future prefs UI introspection
     fn get(&self, name: &str) -> Option<String>;
     fn set(&mut self, name: &str, command: &str) -> Result<(), String>;
     fn remove(&mut self, name: &str) -> Result<(), String>;
