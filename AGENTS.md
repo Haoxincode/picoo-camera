@@ -35,3 +35,33 @@ Agent 在开始设计或实现前，应先读取这份 context，并按其中的
 ## 语言
 
 项目设计规范和内部推理文档默认使用中文。只有当来源材料是英文 API、标准或外部规范，并且保留原始术语更重要时，才使用英文。
+
+## Cloud Agent 与跨平台构建
+
+Cloud Agent 运行在 Linux 环境，**不能**在本机构建 Windows 桌面程序、MF 虚拟摄像头 DLL、macOS Camera Extension 或 iOS App。各平台最终二进制由 **GitHub Actions** 在对应 runner 上编译。
+
+完整分工、runner 矩阵、workflow 约定与 Agent 工作流见 [docs/development/ci-and-build.md](docs/development/ci-and-build.md)。实现与修改 CI 时请遵循该文档，并与 [ARCH-PICOO-STACK-001](docs/design-specs/architecture/0001-rust-core-monorepo-boundary.md) 中的 xtask 边界一致。
+
+### Agent 在 Cloud 中的职责
+
+- Rust Core 开发、`cargo test`、协议测试与 `picoo-testkit` 模拟。
+- Android Sender 构建（NDK + Gradle，可在 Linux 完成）。
+- 维护 `.github/workflows/`，通过 `cargo xtask` 调用各平台构建，不在 workflow 中重复平台细节。
+- 变更 push 后使用 **cursor-subscriptions** 的 `subscribe_github_ci` 等待 CI 结果，根据 Actions 日志迭代修复。
+
+### 必须通过 GitHub Actions 构建的产物
+
+| 平台 | Runner | 说明 |
+| --- | --- | --- |
+| Windows Receiver（GPUI + MF + VCam + 安装包） | `windows-latest` | 禁止在 Linux 上交叉编译整条 Receiver 链路 |
+| macOS Receiver / Camera Extension | `macos-latest` | 后续阶段启用 |
+| iOS Sender | `macos-latest` + Xcode | 后续阶段启用 |
+| Android Sender | `ubuntu-latest` | Cloud 与 CI 均可构建 |
+
+当前实现优先级为 **Android + Windows**。macOS/iOS job 在代码就绪前可暂不启用，但 workflow 设计应预留扩展位置。
+
+### CI 变更原则
+
+- 新增平台构建时，先扩展 `xtask` 命令，再在 workflow 中增加对应 job。
+- Windows/macOS/iOS 的签名与公证仅引用 GitHub Secrets，不在仓库中提交证书。
+- CI 失败时优先阅读 Actions 日志；不要为通过 CI 而破坏 Architecture 边界（例如把 VCam 逻辑移入 Linux 可编译的 crate）。

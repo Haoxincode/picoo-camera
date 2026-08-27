@@ -89,6 +89,8 @@ FFI 边界只允许：
 
 `xtask` 是本仓库任务组合入口，不是产品引擎。适合放置构建 Android/iOS/Windows/macOS、协议测试、打包和 cbindgen 编排；不适合放置 parser、会话状态机或码率算法。
 
+各平台最终二进制由 GitHub Actions 在对应 runner 上调用 `cargo xtask …` 产出；Cloud Agent（Linux）负责 Rust Core 与 Android 构建，Windows/macOS/iOS 原生产物不在 Linux 上交叉编译。见 [CI 与跨平台构建](../../development/ci-and-build.md)。
+
 ## 不采用的方案
 
 ### Flutter / React Native / Electron / Tauri / WebView 作为跨端 UI

@@ -18,6 +18,10 @@ Picoo Camera 是一套局域网无线摄像头系统。用户在 Android 或 iPh
 - [Use Cases](docs/design-specs/use-cases/)
 - [Architecture](docs/design-specs/architecture/)
 
+### 开发与构建
+
+- [CI 与跨平台构建](docs/development/ci-and-build.md) — Cloud Agent 与 GitHub Actions 分工、各平台 runner 矩阵
+
 ## 平台支持
 
 | 平台 | 最低版本 | 角色 |
