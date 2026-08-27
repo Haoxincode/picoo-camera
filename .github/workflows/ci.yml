@@ -17,6 +17,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: bash scripts/check-docs.sh
+      - run: bash scripts/validate_wix_scaffold.sh
+      - run: bash scripts/test_vcam_format.sh
       - run: cargo run -p xtask -- test protocol
 
   android:
