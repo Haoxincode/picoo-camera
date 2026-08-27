@@ -33,6 +33,8 @@ REQUIRED = {
     "libpicoo_ffi.so",
     "libpicoo_jni.so",
 }
+# Fail any arm64 .so with <16KiB LOAD align (CameraX / ML Kit included).
+REQUIRE_ALL_ARM64 = True
 
 def load_aligns(path: str):
     with open(path, "rb") as f:
@@ -69,7 +71,7 @@ with zipfile.ZipFile(apk) as z:
         tag = "OK" if ok else "FAIL"
         print(f"{tag} {base} PT_LOAD={aligns}")
         checked += 1
-        if base in REQUIRED and not ok:
+        if not ok and (REQUIRE_ALL_ARM64 or base in REQUIRED):
             fail += 1
         if base.startswith("libquiche-"):
             print(f"WARN unexpected orphan {base} in APK")
