@@ -5,7 +5,7 @@ mod h264;
 use std::collections::HashMap;
 
 use bytes::{Bytes, BytesMut};
-pub use h264::{extract_sps_pps, split_annex_b_nals};
+pub use h264::{annex_b_parameter_sets, extract_sps_pps, split_annex_b_nals};
 use picoo_protocol::{VideoPacket, VideoPacketFlags};
 use thiserror::Error;
 

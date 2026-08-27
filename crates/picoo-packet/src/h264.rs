@@ -31,6 +31,16 @@ pub fn split_annex_b_nals(data: &[u8]) -> Vec<&[u8]> {
     nals
 }
 
+/// Build Annex-B blob containing SPS then PPS (with start codes).
+pub fn annex_b_parameter_sets(sps: &[u8], pps: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + sps.len() + pps.len());
+    out.extend_from_slice(&[0, 0, 0, 1]);
+    out.extend_from_slice(sps);
+    out.extend_from_slice(&[0, 0, 0, 1]);
+    out.extend_from_slice(pps);
+    out
+}
+
 /// Extract SPS (type 7) and PPS (type 8) from Annex-B or AVCC `csd-0` style blobs.
 ///
 /// Returns NAL payloads without start codes.
@@ -149,6 +159,16 @@ mod tests {
         avcc.extend_from_slice(&pps);
 
         let (got_sps, got_pps) = extract_sps_pps(&avcc).expect("pair");
+        assert_eq!(got_sps, sps);
+        assert_eq!(got_pps, pps);
+    }
+
+    #[test]
+    fn annex_b_parameter_sets_round_trip() {
+        let sps = [0x67u8, 0x42];
+        let pps = [0x68u8, 0xce];
+        let blob = annex_b_parameter_sets(&sps, &pps);
+        let (got_sps, got_pps) = extract_sps_pps(&blob).expect("pair");
         assert_eq!(got_sps, sps);
         assert_eq!(got_pps, pps);
     }

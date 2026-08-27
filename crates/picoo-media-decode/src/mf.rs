@@ -2,11 +2,16 @@
 //!
 //! CMSH264DecoderMFT IMFTransform pipeline: H.264 access unit → NV12.
 //! Falls back to [`StubDecoder`] for short test AUs or MF errors.
+//! When StreamConfig carries SPS/PPS, they are applied as
+//! `MF_MT_MPEG_SEQUENCE_HEADER` and injected ahead of the first AU after
+//! (re)configure — REQ-PICOO-PROTOCOL-005 / REQ-PICOO-SESSION-004.
 
 use std::mem::ManuallyDrop;
 
 use bytes::Bytes;
+use picoo_packet::annex_b_parameter_sets;
 use picoo_protocol::control::StreamConfig;
+use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::{
     CMSH264DecoderMFT, IMFMediaBuffer, IMFSample, IMFTransform, MFCreateMediaType,
     MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFVideoFormat_H264,
@@ -25,11 +30,17 @@ const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
 const MIN_H264_AU_BYTES: usize = 65;
 
+/// MF_MT_MPEG_SEQUENCE_HEADER — H.264 SPS/PPS with Annex-B start codes.
+const MF_MT_MPEG_SEQUENCE_HEADER: GUID =
+    GUID::from_u128(0x05f4_6766_f1a9_44e5_b82a_e4df_c2ea_2873);
+
 pub struct MfH264Decoder {
     transform: IMFTransform,
     configured: bool,
     width: u32,
     height: u32,
+    sequence_header: Vec<u8>,
+    inject_sequence_header: bool,
     fallback: StubDecoder,
 }
 
@@ -58,6 +69,8 @@ impl MfH264Decoder {
             configured: false,
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
+            sequence_header: Vec::new(),
+            inject_sequence_header: false,
             fallback: StubDecoder::new(),
         })
     }
@@ -69,21 +82,35 @@ impl MfH264Decoder {
             .unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT))
     }
 
+    fn sequence_header_from_config(stream_config: Option<&StreamConfig>) -> Vec<u8> {
+        stream_config
+            .filter(|cfg| !cfg.sps.is_empty() && !cfg.pps.is_empty())
+            .map(|cfg| annex_b_parameter_sets(&cfg.sps, &cfg.pps))
+            .unwrap_or_default()
+    }
+
     fn ensure_configured(
         &mut self,
         stream_config: Option<&StreamConfig>,
     ) -> Result<(), DecodeError> {
         let (width, height) = Self::dimensions(stream_config);
-        if self.configured && self.width == width && self.height == height {
+        let sequence_header = Self::sequence_header_from_config(stream_config);
+        if self.configured
+            && self.width == width
+            && self.height == height
+            && self.sequence_header == sequence_header
+        {
             return Ok(());
         }
 
         unsafe {
-            configure_transform(&self.transform, width, height)?;
+            configure_transform(&self.transform, width, height, sequence_header.as_slice())?;
         }
         self.configured = true;
         self.width = width;
         self.height = height;
+        self.inject_sequence_header = !sequence_header.is_empty();
+        self.sequence_header = sequence_header;
         Ok(())
     }
 
@@ -93,8 +120,20 @@ impl MfH264Decoder {
         stream_config: Option<&StreamConfig>,
     ) -> Result<Option<DecodedFrame>, DecodeError> {
         self.ensure_configured(stream_config)?;
+        let owned;
+        let payload = if self.inject_sequence_header && !self.sequence_header.is_empty() {
+            self.inject_sequence_header = false;
+            let mut combined =
+                Vec::with_capacity(self.sequence_header.len() + access_unit.len());
+            combined.extend_from_slice(&self.sequence_header);
+            combined.extend_from_slice(access_unit);
+            owned = combined;
+            owned.as_slice()
+        } else {
+            access_unit
+        };
         unsafe {
-            feed_access_unit(&self.transform, access_unit)?;
+            feed_access_unit(&self.transform, payload)?;
             drain_output(&self.transform, self.width, self.height)
         }
     }
@@ -136,6 +175,7 @@ unsafe fn configure_transform(
     transform: &IMFTransform,
     width: u32,
     height: u32,
+    sequence_header: &[u8],
 ) -> Result<(), DecodeError> {
     let in_type = MFCreateMediaType()
         .map_err(|e| DecodeError::Platform(format!("MFCreateMediaType input: {e}")))?;
@@ -145,6 +185,11 @@ unsafe fn configure_transform(
     in_type
         .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)
         .map_err(|e| DecodeError::Platform(format!("input subtype: {e}")))?;
+    if !sequence_header.is_empty() {
+        in_type
+            .SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, sequence_header)
+            .map_err(|e| DecodeError::Platform(format!("sequence header blob: {e}")))?;
+    }
     transform
         .SetInputType(0, &in_type, 0)
         .map_err(|e| DecodeError::Platform(format!("SetInputType: {e}")))?;
@@ -309,5 +354,21 @@ mod tests {
     #[test]
     fn pack_frame_size_matches_mf_convention() {
         assert_eq!(pack_frame_size(1280, 720), (1280u64 << 32) | 720);
+    }
+
+    #[test]
+    fn sequence_header_from_config_builds_annex_b() {
+        let cfg = StreamConfig {
+            sps: vec![0x67, 0x42],
+            pps: vec![0x68, 0xce],
+            width: 1280,
+            height: 720,
+            ..Default::default()
+        };
+        let header = MfH264Decoder::sequence_header_from_config(Some(&cfg));
+        assert_eq!(
+            header,
+            vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce]
+        );
     }
 }

@@ -12,6 +12,7 @@ windows-mf = ["dep:windows"]
 [dependencies]
 bytes.workspace = true
 picoo-frame-hub.workspace = true
+picoo-packet.workspace = true
 picoo-protocol.workspace = true
 thiserror.workspace = true
 tracing = "0.1"

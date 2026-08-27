@@ -5025,6 +5025,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "picoo-frame-hub",
+ "picoo-packet",
  "picoo-protocol",
  "thiserror 2.0.20",
  "tracing",
