@@ -73,6 +73,16 @@
       <Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73">
         <File Id="PicooRingReader" Source="!(bindpath.Bundle)\picoo-vcam-ring-reader.exe" KeyPath="yes" />
       </Component>
+      <!-- REQ-PICOO-VCAM-004 / PRD §19.3: UDP firewall for QUIC (MSI build needs Firewall extension). -->
+      <Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74">
+        <FirewallException
+            Id="PicooQuicUdp"
+            Name="Picoo Camera QUIC"
+            Protocol="udp"
+            Port="4433"
+            Scope="any"
+            IgnoreFailure="yes" />
+      </Component>
     </ComponentGroup>
   </Fragment>
 </Wix>

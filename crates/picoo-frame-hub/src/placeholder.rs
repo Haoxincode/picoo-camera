@@ -1,6 +1,6 @@
-//! Placeholder NV12 frames — REQ-PICOO-FRAME-004.
+//! Placeholder NV12 frames — REQ-PICOO-FRAME-004 / FRAME-005.
 //!
-//! Black background + brand mark + "Waiting for phone..." text drawn into the Y plane.
+//! Black background + brand mark + status text drawn into the Y plane.
 
 pub const PLACEHOLDER_WIDTH: u32 = 1280;
 pub const PLACEHOLDER_HEIGHT: u32 = 720;
@@ -16,8 +16,17 @@ pub fn nv12_black(width: u32, height: u32) -> Vec<u8> {
 
 /// Waiting-for-phone placeholder used when no sender is connected.
 pub fn waiting_placeholder() -> Vec<u8> {
+    branded_status_placeholder(b"Waiting for phone...")
+}
+
+/// Reconnect placeholder after last-frame hold (REQ-PICOO-FRAME-005 / FR-VCAM-004).
+pub fn reconnecting_placeholder() -> Vec<u8> {
+    branded_status_placeholder(b"Reconnecting...")
+}
+
+fn branded_status_placeholder(status: &[u8]) -> Vec<u8> {
     let mut buf = nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT);
-    draw_branded_text(&mut buf, PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT);
+    draw_branded_text(&mut buf, PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT, status);
     buf
 }
 
@@ -41,7 +50,7 @@ fn glyph(c: u8) -> [u8; 7] {
         b'n' => [0x00, 0x00, 0x1E, 0x11, 0x11, 0x11, 0x11],
         b'o' => [0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E],
         b'P' | b'p' => [0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10],
-        b'r' => [0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10],
+        b'R' | b'r' => [0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11],
         b't' => [0x08, 0x08, 0x1E, 0x08, 0x08, 0x09, 0x06],
         b'W' | b'w' => [0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11],
         b'y' => [0x00, 0x00, 0x11, 0x11, 0x0F, 0x01, 0x0E],
@@ -49,20 +58,19 @@ fn glyph(c: u8) -> [u8; 7] {
     }
 }
 
-fn draw_branded_text(nv12: &mut [u8], width: u32, height: u32) {
+fn draw_branded_text(nv12: &mut [u8], width: u32, height: u32, status: &[u8]) {
     let scale = if width >= 1280 { 4u32 } else { 2u32 };
     let brand = b"Picoo Camera";
-    let waiting = b"Waiting for phone...";
 
     let brand_w = text_pixel_width(brand, scale);
-    let wait_w = text_pixel_width(waiting, scale);
+    let status_w = text_pixel_width(status, scale);
     let brand_x = width.saturating_sub(brand_w) / 2;
-    let wait_x = width.saturating_sub(wait_w) / 2;
+    let status_x = width.saturating_sub(status_w) / 2;
     let brand_y = height / 2 - 10 * scale;
-    let wait_y = height / 2 + 4 * scale;
+    let status_y = height / 2 + 4 * scale;
 
     blit_text(nv12, width, brand, brand_x, brand_y, scale, 220);
-    blit_text(nv12, width, waiting, wait_x, wait_y, scale, 180);
+    blit_text(nv12, width, status, status_x, status_y, scale, 180);
 }
 
 fn text_pixel_width(text: &[u8], scale: u32) -> u32 {
@@ -141,5 +149,18 @@ mod tests {
         );
         let uv = &frame[PLACEHOLDER_WIDTH as usize * PLACEHOLDER_HEIGHT as usize..];
         assert!(uv.iter().all(|&u| u == 128));
+    }
+
+    #[test]
+    fn reconnecting_placeholder_differs_from_waiting() {
+        let wait = waiting_placeholder();
+        let recon = reconnecting_placeholder();
+        assert_eq!(wait.len(), recon.len());
+        assert_ne!(
+            wait, recon,
+            "reconnect copy must differ from idle waiting text"
+        );
+        let y = &recon[..PLACEHOLDER_WIDTH as usize * PLACEHOLDER_HEIGHT as usize];
+        assert!(y.iter().any(|&v| v > 0));
     }
 }

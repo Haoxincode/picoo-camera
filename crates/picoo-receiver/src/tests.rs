@@ -217,6 +217,85 @@ fn unpaired_sender_video_is_dropped() {
 }
 
 #[test]
+fn unpaired_video_keeps_shared_ring_on_placeholder() {
+    // REQ-PICOO-PAIRING-003 / VCAM-003: unpaired datagrams must not drive VCam ring.
+    use picoo_frame_hub::{SharedFrameRingConsumer, SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES};
+
+    let ring_name = format!(
+        "picoo-unpaired-ring-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let flink = SharedFrameRingProducer::flink_path(&ring_name);
+    let _ = std::fs::remove_file(&flink);
+
+    let mut receiver = ReceiverSession::new();
+    receiver
+        .attach_shared_ring(&ring_name)
+        .expect("attach shared ring");
+    let consumer =
+        SharedFrameRingConsumer::open(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("consumer");
+    let before = consumer.latest_frame().expect("placeholder");
+    assert_eq!(before.timestamp_us, 0);
+    assert!(before.width >= 640);
+    let before_seq = before.sequence;
+    let before_y0 = before.nv12.first().copied().unwrap_or(0);
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    for frame_id in 1..=20u64 {
+        sender
+            .ingest_and_flush(format!("unpaired-{frame_id}").as_bytes(), true, frame_id, 1)
+            .expect("ingest");
+        for _ in 0..8 {
+            receiver.pump().expect("rx");
+            sender.pump().ok();
+        }
+    }
+
+    assert_eq!(receiver.stats().access_units, 0);
+    assert!(receiver.stats().packets_dropped_unpaired > 0);
+    let after = consumer.latest_frame().expect("still placeholder");
+    assert_eq!(after.timestamp_us, 0, "ring must stay on placeholder ts=0");
+    assert_eq!(after.width, before.width);
+    assert_eq!(after.height, before.height);
+    // Sequence may bump if placeholder republished; pixels must not become a live frame.
+    assert!(
+        after.sequence >= before_seq,
+        "seq regresses: before={before_seq} after={}",
+        after.sequence
+    );
+    // Branded placeholder has non-zero Y near brand; a solid live stub would differ — ensure
+    // we did not publish a tiny decoded frame.
+    assert!(after.nv12.len() >= before.nv12.len().saturating_sub(0));
+    assert_eq!(after.nv12.len(), before.nv12.len());
+    let _ = before_y0;
+    let _ = std::fs::remove_file(&flink);
+}
+
+#[test]
 fn paired_sender_enters_streaming_after_client_hello() {
     let mut receiver = ReceiverSession::new();
     receiver.trusted_devices_mut().upsert(TrustedDevice {
@@ -1067,10 +1146,11 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     std::thread::sleep(Duration::from_millis(80));
     receiver.pump().expect("finalize hold");
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
-    assert_eq!(
-        receiver.latest_frame().expect("placeholder").timestamp_us,
-        0
-    );
+    let placeholder = receiver.latest_frame().expect("placeholder");
+    assert_eq!(placeholder.timestamp_us, 0);
+    // FRAME-005: reconnect copy (not idle waiting) after last-frame hold.
+    let recon = picoo_frame_hub::reconnecting_placeholder();
+    assert_eq!(placeholder.pixel_data, recon);
 }
 
 #[test]
@@ -1567,6 +1647,233 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
     // Healthy LAN budgets from PRD (transport path only on loopback should be far below).
     assert!(p50 < 150.0, "P50 {p50}ms exceeds 150ms budget");
     assert!(p95 < 250.0, "P95 {p95}ms exceeds 250ms budget");
+}
+
+#[cfg(not(windows))]
+#[test]
+fn paired_openh264_remains_usable_under_five_percent_loss() {
+    // SESSION-006 with real H.264 → FrameHub (not stub AUs).
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_testkit::LossyVideoTransport;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let loss_ratio: f64 = std::env::var("LOSS_RATIO")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0.05);
+    let (au, sps, pps) = openh264_au(160, 120, 17);
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "lossy-h264".into(),
+        device_name: "LossyH264".into(),
+        public_key: vec![7, 7, 7],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let lossy = LossyVideoTransport::new(QuicSenderTransport::new(), loss_ratio);
+    let mut sender = SenderSession::new(lossy);
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("lossy-h264", "LossyH264", &[7, 7, 7])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    sender.set_stream_config(StreamConfigParams {
+        width: 160,
+        height: 120,
+        fps: 30,
+        bitrate_bps: 400_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps,
+        pps,
+        ..Default::default()
+    });
+    for _ in 0..50 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let mut frames_seen = 0u64;
+    let mut last_au = receiver.stats().access_units;
+    let mut stalled = 0u32;
+    for frame_id in 1..=120u64 {
+        let is_key = frame_id % 5 == 1;
+        sender
+            .ingest_and_flush(&au, is_key, frame_id, 1)
+            .expect("ingest");
+        for _ in 0..16 {
+            receiver.pump().ok();
+            sender.pump().ok();
+        }
+        if receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0) {
+            frames_seen += 1;
+        }
+        let au_n = receiver.stats().access_units;
+        if au_n == last_au {
+            stalled += 1;
+        } else {
+            stalled = 0;
+            last_au = au_n;
+        }
+        assert!(
+            stalled < 60,
+            "openh264 path stalled under {loss_ratio} loss at frame={frame_id}"
+        );
+    }
+    assert!(
+        frames_seen >= 20,
+        "need usable decoded frames under loss, got {frames_seen}"
+    );
+}
+
+#[cfg(not(windows))]
+#[test]
+fn paired_openh264_e2e_latency_p50_under_budget() {
+    // SESSION-007: OpenH264 ingest→FrameHub P50/P95.
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+    use std::time::Instant;
+
+    let (au, sps, pps) = openh264_au(160, 120, 21);
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "lat-h264".into(),
+        device_name: "LatH264".into(),
+        public_key: vec![3, 3, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("lat-h264", "LatH264", &[3, 3, 3])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.set_stream_config(StreamConfigParams {
+        width: 160,
+        height: 120,
+        fps: 30,
+        bitrate_bps: 400_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps,
+        pps,
+        ..Default::default()
+    });
+    for _ in 0..50 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let mut samples_ms = Vec::new();
+    let mut last_seq = 0u64;
+    for frame_id in 1..=40u64 {
+        let t0 = Instant::now();
+        sender
+            .ingest_and_flush(&au, true, frame_id, 1)
+            .expect("ingest");
+        let mut observed = None;
+        for _ in 0..300 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if let Some(frame) = receiver.latest_frame() {
+                if frame.sequence > last_seq && frame.timestamp_us > 0 {
+                    last_seq = frame.sequence;
+                    observed = Some(t0.elapsed().as_secs_f64() * 1000.0);
+                    break;
+                }
+            }
+        }
+        if let Some(ms) = observed {
+            samples_ms.push(ms);
+        }
+    }
+    assert!(
+        samples_ms.len() >= 20,
+        "need enough openh264 latency samples, got {}",
+        samples_ms.len()
+    );
+    samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p50 = samples_ms[samples_ms.len() / 2];
+    let p95 = samples_ms[(samples_ms.len() as f64 * 0.95) as usize];
+    eprintln!(
+        "openh264 ingest→FrameHub latency_ms p50={p50:.2} p95={p95:.2} n={}",
+        samples_ms.len()
+    );
+    assert!(p50 < 150.0, "openh264 P50 {p50}ms exceeds 150ms");
+    assert!(p95 < 250.0, "openh264 P95 {p95}ms exceeds 250ms");
 }
 
 #[test]

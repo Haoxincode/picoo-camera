@@ -5,6 +5,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Must match picoo_vcam_ids.h / vcam_register.rs (REQ-PICOO-VCAM-002/004).
+$VcamClsid = "A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F"
+Write-Host "Picoo Camera VCam CLSID: {$VcamClsid}"
+
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Bundle = Join-Path $Root "target/release/bundle"
 $Dll = Join-Path $Bundle "PicooVirtualCameraSource.dll"

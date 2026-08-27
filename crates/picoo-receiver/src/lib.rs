@@ -10,7 +10,8 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use picoo_frame_hub::{
-    nv12_black, waiting_placeholder, FrameHub, FrameSlot, SharedFrameRingProducer,
+    nv12_black, reconnecting_placeholder, waiting_placeholder, FrameHub, FrameSlot,
+    SharedFrameRingProducer,
     PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
 use picoo_jitter::{Frame as JitterFrame, JitterBuffer};
@@ -251,6 +252,23 @@ impl ReceiverSession {
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = if self.use_default_placeholder {
             waiting_placeholder()
+        } else {
+            nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
+        };
+        self.publish_nv12_frame(
+            PLACEHOLDER_WIDTH,
+            PLACEHOLDER_HEIGHT,
+            PLACEHOLDER_WIDTH,
+            0,
+            0,
+            &nv12,
+        )
+    }
+
+    /// Publish reconnect-branded placeholder (REQ-PICOO-FRAME-005).
+    pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
+        let nv12 = if self.use_default_placeholder {
+            reconnecting_placeholder()
         } else {
             nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
         };
@@ -580,7 +598,8 @@ impl ReceiverSession {
             return Ok(());
         }
         self.placeholder_after = None;
-        self.publish_waiting_placeholder()?;
+        // After last-frame hold, show reconnect copy before returning to idle Discovering.
+        self.publish_reconnecting_placeholder()?;
         self.status = if self.bind_addr().is_some() {
             ReceiverStatus::Discovering
         } else {

@@ -150,13 +150,38 @@ fn test_suite(suite: TestSuite) -> Result<()> {
             .run()?;
         }
         TestSuite::Linux => {
-            // REQ-PICOO-VCAM-004 / DISCOVERY-005 / SESSION-005 — runnable without Win11.
+            // REQ-PICOO-VCAM-004 / DISCOVERY-005 / SESSION-005..007 / PAIRING-003 — no Win11 GUI.
             cmd!(sh, "bash scripts/validate_wix_scaffold.sh").run()?;
             cmd!(sh, "bash scripts/test_vcam_format.sh").run()?;
             cmd!(sh, "bash scripts/check_discovery_txt_keys.sh").run()?;
             cmd!(
                 sh,
                 "cargo test -p picoo-receiver --lib soak_harness_smoke_five_seconds"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib unpaired_video_keeps_shared_ring_on_placeholder"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib paired_loopback_remains_usable_under_five_percent_loss"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib paired_loopback_e2e_latency_p50_under_budget"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib paired_openh264_remains_usable_under_five_percent_loss"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib paired_openh264_e2e_latency_p50_under_budget"
             )
             .run()?;
             cmd!(
