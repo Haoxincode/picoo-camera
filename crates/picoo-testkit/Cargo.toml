@@ -1,0 +1,15 @@
+[package]
+name = "picoo-testkit"
+description = "In-memory protocol simulation for Sender/Receiver testing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+picoo-packet.workspace = true
+picoo-protocol.workspace = true
+picoo-transport.workspace = true
+
+[dev-dependencies]
+proptest = "=1.6.0"

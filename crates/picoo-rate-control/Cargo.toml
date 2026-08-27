@@ -1,0 +1,12 @@
+[package]
+name = "picoo-rate-control"
+description = "Adaptive bitrate control based on ReceiverStats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+picoo-metrics.workspace = true
+
+[dev-dependencies]
+picoo-metrics = { path = "../picoo-metrics" }

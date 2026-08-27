@@ -1,0 +1,14 @@
+[package]
+name = "picoo-packet"
+description = "H.264 access unit fragmentation and reassembly with stream_epoch isolation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+picoo-protocol.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest = "=1.6.0"

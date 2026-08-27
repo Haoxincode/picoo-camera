@@ -1,0 +1,13 @@
+[package]
+name = "picoo-frame-hub"
+description = "Three-slot decoded frame ring for preview and virtual camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest = "=1.6.0"

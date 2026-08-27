@@ -1,0 +1,19 @@
+[package]
+name = "picoo-protocol"
+description = "PCP/1 protocol types: Protobuf control messages and VideoPacket binary format"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+bitflags = { workspace = true }
+prost.workspace = true
+prost-types.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+prost-build = "0.13"
+
+[dev-dependencies]
+proptest = "1.6"

@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package picoo.camera.v1;
+
+// PCP/1 control messages — transported over QUIC reliable streams.
+// See ARCH-PICOO-PROTOCOL-001.
+
+message ClientHello {
+  string sender_id = 1;
+  string device_name = 2;
+  string protocol_version = 3;
+  bytes public_key = 4;
+}
+
+message ServerHello {
+  string receiver_id = 1;
+  string display_name = 2;
+  string protocol_version = 3;
+  bytes public_key = 4;
+  bool pairing_required = 5;
+}
+
+message Capabilities {
+  repeated string codecs = 1;
+  repeated Resolution resolutions = 2;
+  repeated uint32 fps = 3;
+  bool front_camera = 4;
+  bool back_camera = 5;
+}
+
+message Resolution {
+  uint32 width = 1;
+  uint32 height = 2;
+}
+
+message PairingChallenge {
+  string short_code = 1;
+  bytes challenge_nonce = 2;
+}
+
+message PairingConfirm {
+  bytes confirm_signature = 1;
+}
+
+message StreamConfig {
+  string codec = 1;
+  string profile = 2;
+  string level = 3;
+  uint32 width = 4;
+  uint32 height = 5;
+  uint32 fps = 6;
+  uint32 bitrate = 7;
+  uint32 rotation = 8;
+  bool mirrored = 9;
+  string color_range = 10;
+  bytes sps = 11;
+  bytes pps = 12;
+  uint32 stream_epoch = 13;
+}
+
+message StartStream {}
+message StopStream {}
+
+message CameraCommand {
+  enum Command {
+    COMMAND_UNSPECIFIED = 0;
+    SWITCH_FRONT = 1;
+    SWITCH_BACK = 2;
+    SET_RESOLUTION = 3;
+    SET_MIRROR = 4;
+  }
+  Command command = 1;
+  Resolution resolution = 2;
+  bool mirrored = 3;
+}
+
+message EncoderCommand {
+  enum Command {
+    COMMAND_UNSPECIFIED = 0;
+    REQUEST_KEYFRAME = 1;
+  }
+  Command command = 1;
+}
+
+message ReceiverStats {
+  double rtt_ms = 1;
+  double packet_loss = 2;
+  double jitter_ms = 3;
+  uint64 reassembly_drop = 4;
+  uint64 decoder_drop = 5;
+  double frame_age_ms = 6;
+  uint32 receive_bitrate = 7;
+  double jitter_buffer_depth_ms = 8;
+}
+
+message RequestKeyframe {}
+message Heartbeat {}
+message SessionError {
+  string code = 1;
+  string message = 2;
+}

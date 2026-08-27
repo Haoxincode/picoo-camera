@@ -1,0 +1,16 @@
+[package]
+name = "picoo-ffi"
+description = "Stable C ABI for Android and iOS — cbindgen output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+picoo-protocol.workspace = true
+picoo-session.workspace = true
+
+[build-dependencies]
+cbindgen = "0.27"

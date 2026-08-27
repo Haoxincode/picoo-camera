@@ -1,0 +1,12 @@
+[package]
+name = "picoo-metrics"
+description = "Runtime metrics and ReceiverStats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json = "1.0"

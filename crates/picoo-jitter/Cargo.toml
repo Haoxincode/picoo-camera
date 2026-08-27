@@ -1,0 +1,12 @@
+[package]
+name = "picoo-jitter"
+description = "Jitter buffer for complete video frames"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+
+[dev-dependencies]
+proptest = "=1.6.0"
