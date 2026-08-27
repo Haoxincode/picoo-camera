@@ -60,7 +60,8 @@ private:
     Microsoft::WRL::ComPtr<IMFMediaEventQueue> queue_;
     Microsoft::WRL::ComPtr<IMFStreamDescriptor> descriptor_;
     Microsoft::WRL::ComPtr<IMFMediaType> current_type_;
-    Microsoft::WRL::ComPtr<IMFSampleAllocatorEx> allocator_;
+    // Match Microsoft VirtualCamera sample: Frame Server provides IMFVideoSampleAllocator.
+    Microsoft::WRL::ComPtr<IMFVideoSampleAllocator> allocator_;
     PicooFrameProvider frames_;
     uint32_t output_width_ = PICOO_VCAM_DEFAULT_WIDTH;
     uint32_t output_height_ = PICOO_VCAM_DEFAULT_HEIGHT;

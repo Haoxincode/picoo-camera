@@ -26,8 +26,7 @@ HRESULT PicooMediaSource::Initialize(IMFAttributes* source_attributes) {
         descriptors[0]->Release();
     }
 
-    // IMFPresentationDescriptor inherits IMFAttributes — set keys directly.
-    RETURN_IF_FAILED(presentation_->SetUINT32(MF_PD_TOTAL_FILE_DURATION, 0));
+    // Live sources do not need MF_PD_TOTAL_FILE_DURATION.
 
     return S_OK;
 }
@@ -99,12 +98,16 @@ IFACEMETHODIMP PicooMediaSource::Start(IMFPresentationDescriptor* descriptor,
     }
 
     // MENewStream on first Start; MEUpdatedStream on subsequent Starts (REQ-PICOO-VCAM-002).
+    // Cast through IMFMediaStream to avoid WRL multi-inheritance IUnknown ambiguity.
+    ComPtr<IMFMediaStream> stream_unk;
+    RETURN_IF_FAILED(stream_.As(&stream_unk));
     if (!stream_presented_) {
-        RETURN_IF_FAILED(queue_->QueueEventParamUnk(MENewStream, GUID_NULL, S_OK, stream_.Get()));
+        RETURN_IF_FAILED(
+            queue_->QueueEventParamUnk(MENewStream, GUID_NULL, S_OK, stream_unk.Get()));
         stream_presented_ = true;
     } else {
         RETURN_IF_FAILED(
-            queue_->QueueEventParamUnk(MEUpdatedStream, GUID_NULL, S_OK, stream_.Get()));
+            queue_->QueueEventParamUnk(MEUpdatedStream, GUID_NULL, S_OK, stream_unk.Get()));
     }
 
     RETURN_IF_FAILED(stream_->SetStreamState(MF_STREAM_STATE_RUNNING));
