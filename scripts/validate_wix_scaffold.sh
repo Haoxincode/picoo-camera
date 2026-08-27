@@ -75,12 +75,6 @@ need "$REG_PS1" 'regsvr32 /u /s'
 need "$REG_PS1" '--register-vcam'
 need "$REG_PS1" '--unregister-vcam'
 
-if [[ "$fail" -ne 0 ]]; then
-  echo "WiX scaffold validation failed"
-  exit 1
-fi
-echo "ok picoo-camera.wxs + CLSID sync scaffold"
-
 # Bundle smoke script must resolve repo root as parent of scripts/ (not grandparent).
 VERIFY_PS1="$ROOT/scripts/verify_windows_bundle.ps1"
 need "$VERIFY_PS1" 'Split-Path -Parent $PSScriptRoot'
@@ -90,3 +84,9 @@ if grep -qF 'Split-Path -Parent (Split-Path -Parent $PSScriptRoot)' "$VERIFY_PS1
 else
   echo "ok: verify_windows_bundle.ps1 repo root depth"
 fi
+
+if [[ "$fail" -ne 0 ]]; then
+  echo "WiX scaffold validation failed"
+  exit 1
+fi
+echo "ok picoo-camera.wxs + CLSID sync scaffold"
