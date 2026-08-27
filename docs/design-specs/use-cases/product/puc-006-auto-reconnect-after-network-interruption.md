@@ -42,10 +42,10 @@ Receiver 每秒向 Sender 发送 RTT、丢包、抖动、重组丢弃、解码�
 
 ## 相关 Architecture
 
-- [ARCH-PICO-SESSION-001](../../architecture/0005-session-reconnect-jitter-bitrate-boundary.md)
-- [ARCH-PICO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICO-PROTOCOL-001](../../architecture/0003-pico-camera-protocol-boundary.md)
+- [ARCH-PICOO-SESSION-001](../../architecture/0005-session-reconnect-jitter-bitrate-boundary.md)
+- [ARCH-PICOO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](../../architecture/0003-picoo-camera-protocol-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-SESSION-*`、`REQ-PICO-TRANSPORT-*`
+- 待分解：`REQ-PICOO-SESSION-*`、`REQ-PICOO-TRANSPORT-*`

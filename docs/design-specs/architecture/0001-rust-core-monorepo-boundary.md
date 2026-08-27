@@ -1,11 +1,11 @@
-# ARCH-PICO-STACK-001: Rust Core 与 Monorepo 边界
+# ARCH-PICOO-STACK-001: Rust Core 与 Monorepo 边界
 
 Status: planned
 Source: product PRD V1.0 / architecture baseline
 
 ## 背景
 
-Pico Camera 需要在 Android、iOS、Windows 和 macOS 四端保持统一的协议、传输、会话、配对、视频分包、重连和码率控制语义。若将这些能力分散在各平台 UI 或原生胶水层中重复实现，会导致行为漂移、测试矩阵爆炸和后续演进困难。
+Picoo Camera 需要在 Android、iOS、Windows 和 macOS 四端保持统一的协议、传输、会话、配对、视频分包、重连和码率控制语义。若将这些能力分散在各平台 UI 或原生胶水层中重复实现，会导致行为漂移、测试矩阵爆炸和后续演进困难。
 
 因此产品采用 **Rust Core + 平台原生媒体 + 平台原生 UI** 的分层：共享业务逻辑统一进入 Rust crate；摄像头、编解码、虚拟摄像头和系统权限保留在各平台原生层。
 
@@ -17,19 +17,19 @@ Pico Camera 需要在 Android、iOS、Windows 和 macOS 四端保持统一的协
 
 ```text
 picoo-camera/                    # 本仓库根目录
-  proto/pico_camera.proto
-  crates/pico-protocol/
-  crates/pico-transport/
-  crates/pico-quiche/
-  crates/pico-session/
-  crates/pico-pairing/
-  crates/pico-packet/
-  crates/pico-jitter/
-  crates/pico-rate-control/
-  crates/pico-metrics/
-  crates/pico-frame-hub/
-  crates/pico-ffi/
-  crates/pico-testkit/
+  proto/picoo_camera.proto
+  crates/picoo-protocol/
+  crates/picoo-transport/
+  crates/picoo-quiche/
+  crates/picoo-session/
+  crates/picoo-pairing/
+  crates/picoo-packet/
+  crates/picoo-jitter/
+  crates/picoo-rate-control/
+  crates/picoo-metrics/
+  crates/picoo-frame-hub/
+  crates/picoo-ffi/
+  crates/picoo-testkit/
   apps/android/
   apps/ios/
   apps/desktop/
@@ -51,13 +51,13 @@ picoo-camera/                    # 本仓库根目录
 Rust Core 负责：
 
 - PCP/1 协议类型与控制消息编解码。
-- QUIC 传输封装（基于 quiche，经 `pico-transport` 隔离）。
+- QUIC 传输封装（基于 quiche，经 `picoo-transport` 隔离）。
 - 会话状态机、重连退避与能力协商。
 - 配对、公钥固定与设备模型。
 - 视频分包、重组、`stream_epoch` 隔离与抖动缓冲策略接口。
 - 自适应码率控制与运行指标。
 - FrameHub 与共享帧环的抽象与一致性规则。
-- 通过 cbindgen 生成 `pico_camera.h` 的稳定 FFI。
+- 通过 cbindgen 生成 `picoo_camera.h` 的稳定 FFI。
 
 Rust Core 不负责：
 
@@ -97,7 +97,7 @@ FFI 边界只允许：
 
 ### 业务层直接调用 quiche::Connection
 
-不采用。quiche 是低层协议状态机，应用必须提供 UDP I/O、定时器、连接表和发送节奏。所有平台只依赖 `pico-transport` trait，不直接感知 quiche 细节。
+不采用。quiche 是低层协议状态机，应用必须提供 UDP I/O、定时器、连接表和发送节奏。所有平台只依赖 `picoo-transport` trait，不直接感知 quiche 细节。
 
 ### 在虚拟摄像头进程内持有网络会话
 
@@ -118,9 +118,9 @@ FFI 边界只允许：
 
 ## 相关 Architecture
 
-- [ARCH-PICO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICO-FFI 边界见本文件 FFI 节]
+- [ARCH-PICOO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-FFI 边界见本文件 FFI 节]
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-STACK-*`
+- 待分解：`REQ-PICOO-STACK-*`

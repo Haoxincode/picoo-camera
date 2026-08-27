@@ -1,11 +1,11 @@
-# ARCH-PICO-UI-001: 桌面 GPUI 与手机原生 UI 边界
+# ARCH-PICOO-UI-001: 桌面 GPUI 与手机原生 UI 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-001 / PUC-005
 
 ## 背景
 
-Pico Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发现、配对、预览和控制；桌面端 UI 负责预览、状态、设置和虚拟摄像头管理。UI 不应持有视频处理或协议逻辑。
+Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发现、配对、预览和控制；桌面端 UI 负责预览、状态、设置和虚拟摄像头管理。UI 不应持有视频处理或协议逻辑。
 
 ## 架构决策
 
@@ -105,10 +105,10 @@ struct DesktopAppState {
 
 ## 相关 Architecture
 
-- [ARCH-PICO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
-- [ARCH-PICO-STACK-001](0001-rust-core-monorepo-boundary.md)
-- [ARCH-PICO-VCAM-001](0007-virtual-camera-platform-boundary.md)
+- [ARCH-PICOO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
+- [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-VCAM-001](0007-virtual-camera-platform-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-UI-*`
+- 待分解：`REQ-PICOO-UI-*`

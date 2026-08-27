@@ -8,7 +8,7 @@
 
 ## 场景
 
-用户先在 Windows 或 macOS 上安装 Pico Camera Desktop。首次启动时，应用检查虚拟摄像头是否已安装或激活：Windows 需完成 Media Source 组件安装与注册；macOS 需引导用户批准随附的 Camera Extension 系统扩展。
+用户先在 Windows 或 macOS 上安装 Picoo Camera Desktop。首次启动时，应用检查虚拟摄像头是否已安装或激活：Windows 需完成 Media Source 组件安装与注册；macOS 需引导用户批准随附的 Camera Extension 系统扩展。
 
 用户在 Android 或 iPhone 上安装 Sender 应用。当用户尝试发现或连接电脑时，系统按平台要求请求摄像头、局域网和 Bonjour/NSD 相关权限；权限必须在相应操作触发时请求，而不是应用启动后一次性弹出全部权限。
 
@@ -19,8 +19,8 @@
 ## 可观察结果
 
 - 桌面端首次启动能明确显示虚拟摄像头状态：`Installed` / `Not Installed`，并提供安装或修复入口。
-- macOS 首次使用时能引导用户完成 Camera Extension 批准；Windows 安装器能注册 `Pico Camera` 虚拟摄像头。
-- 手机端授予必要权限后，能浏览 `_picocam._udp.local` 服务或扫描桌面端二维码。
+- macOS 首次使用时能引导用户完成 Camera Extension 批准；Windows 安装器能注册 `Picoo Camera` 虚拟摄像头。
+- 手机端授予必要权限后，能浏览 `_picoocam._udp.local` 服务或扫描桌面端二维码。
 - 首次配对时，手机与电脑显示相同六位配对码；用户确认后，双方保存 `device_id`、`device_name`、`public_key`、`certificate_fingerprint`、`paired_at`。
 - 未完成配对的连接尝试不能接收视频、不能驱动虚拟摄像头、不能读取对方设备详细信息。
 - 配对成功后，Receiver 进入等待连接或直播就绪状态；Sender 可将该 Receiver 记为已配对设备。
@@ -34,10 +34,10 @@
 
 ## 相关 Architecture
 
-- [ARCH-PICO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
-- [ARCH-PICO-VCAM-001](../../architecture/0007-virtual-camera-platform-boundary.md)
-- [ARCH-PICO-UI-001](../../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
+- [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
+- [ARCH-PICOO-VCAM-001](../../architecture/0007-virtual-camera-platform-boundary.md)
+- [ARCH-PICOO-UI-001](../../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-PAIRING-*`、`REQ-PICO-VCAM-*`、`REQ-PICO-DISCOVERY-*`
+- 待分解：`REQ-PICOO-PAIRING-*`、`REQ-PICOO-VCAM-*`、`REQ-PICOO-DISCOVERY-*`

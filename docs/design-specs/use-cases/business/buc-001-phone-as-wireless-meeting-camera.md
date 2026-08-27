@@ -14,8 +14,8 @@
 用户只需要：
 
 - 电脑与手机连接同一 Wi-Fi；
-- 安装并打开 Pico Camera 桌面端与手机端；
-- 在会议软件中选择名为 `Pico Camera` 的摄像头。
+- 安装并打开 Picoo Camera 桌面端与手机端；
+- 在会议软件中选择名为 `Picoo Camera` 的摄像头。
 
 ## 业务价值
 
@@ -51,7 +51,7 @@
 ## 完成标准
 
 - 用户能在 Android 或 iPhone 与 Windows 或 macOS 的任意一种组合上完成从安装到会议选用的完整流程。
-- 会议软件中能看到并选用 `Pico Camera`，画面来自当前连接的手机摄像头。
+- 会议软件中能看到并选用 `Picoo Camera`，画面来自当前连接的手机摄像头。
 - 用户能在手机端切换前后摄像头、720p/1080p 和镜像，并在数秒内恢复可用画面。
 - Wi-Fi 短暂中断后，用户无需重新走完整首次配对流程即可恢复传输。
 - 未配对的陌生设备不能向会议软件输出视频。
@@ -87,6 +87,6 @@
 
 ## 相关 Architecture
 
-- [ARCH-PICO-STACK-001](../../architecture/0001-rust-core-monorepo-boundary.md)
-- [ARCH-PICO-VCAM-001](../../architecture/0007-virtual-camera-platform-boundary.md)
-- [ARCH-PICO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
+- [ARCH-PICOO-STACK-001](../../architecture/0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-VCAM-001](../../architecture/0007-virtual-camera-platform-boundary.md)
+- [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)

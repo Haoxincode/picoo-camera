@@ -1,11 +1,11 @@
-# ARCH-PICO-MEDIA-001: 跨平台媒体采集、编码与解码边界
+# ARCH-PICOO-MEDIA-001: 跨平台媒体采集、编码与解码边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-004 / PUC-005
 
 ## 背景
 
-Pico Camera 第一版固定 H.264 720p30 / 1080p30。媒体路径涉及四套平台原生 API，但语义必须一致：硬件优先、低延迟、动态码率、正确方向、镜像分离，以及 Receiver 侧单次解码、多路消费。
+Picoo Camera 第一版固定 H.264 720p30 / 1080p30。媒体路径涉及四套平台原生 API，但语义必须一致：硬件优先、低延迟、动态码率、正确方向、镜像分离，以及 Receiver 侧单次解码、多路消费。
 
 ## 架构决策
 
@@ -99,7 +99,7 @@ H.264 Access Units
 
 ### Receiver 在 GPUI 或虚拟摄像头进程内重复解码
 
-不采用。见 [ARCH-PICO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)。
+不采用。见 [ARCH-PICOO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)。
 
 ## 约束
 
@@ -115,10 +115,10 @@ H.264 Access Units
 
 ## 相关 Architecture
 
-- [ARCH-PICO-PROTOCOL-001](0003-pico-camera-protocol-boundary.md)
-- [ARCH-PICO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
-- [ARCH-PICO-STACK-001](0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](0003-picoo-camera-protocol-boundary.md)
+- [ARCH-PICOO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
+- [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-MEDIA-*`
+- 待分解：`REQ-PICOO-MEDIA-*`

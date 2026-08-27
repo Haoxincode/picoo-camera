@@ -34,11 +34,11 @@
 
 ## 相关 Architecture
 
-- [ARCH-PICO-MEDIA-001](../../architecture/0004-cross-platform-media-pipeline-boundary.md)
-- [ARCH-PICO-PROTOCOL-001](../../architecture/0003-pico-camera-protocol-boundary.md)
-- [ARCH-PICO-SESSION-001](../../architecture/0005-session-reconnect-jitter-bitrate-boundary.md)
-- [ARCH-PICO-UI-001](../../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
+- [ARCH-PICOO-MEDIA-001](../../architecture/0004-cross-platform-media-pipeline-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](../../architecture/0003-picoo-camera-protocol-boundary.md)
+- [ARCH-PICOO-SESSION-001](../../architecture/0005-session-reconnect-jitter-bitrate-boundary.md)
+- [ARCH-PICOO-UI-001](../../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-MEDIA-*`、`REQ-PICO-PROTOCOL-*`
+- 待分解：`REQ-PICOO-MEDIA-*`、`REQ-PICOO-PROTOCOL-*`

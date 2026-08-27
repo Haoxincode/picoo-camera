@@ -1,11 +1,11 @@
-# ARCH-PICO-SESSION-001: 会话状态、重连、抖动缓冲与码率控制边界
+# ARCH-PICOO-SESSION-001: 会话状态、重连、抖动缓冲与码率控制边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-006
 
 ## 背景
 
-无线局域网存在丢包、乱序、抖动和短暂断网。Pico Camera 的目标是 **实时性优先**：可以丢弃过期视频帧，但不能因重传旧帧或无限缓冲导致延迟持续累积。
+无线局域网存在丢包、乱序、抖动和短暂断网。Picoo Camera 的目标是 **实时性优先**：可以丢弃过期视频帧，但不能因重传旧帧或无限缓冲导致延迟持续累积。
 
 ## 架构决策
 
@@ -100,10 +100,10 @@ Receiver 每秒向 Sender 发送 `ReceiverStats`：
 
 ## 相关 Architecture
 
-- [ARCH-PICO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICO-PROTOCOL-001](0003-pico-camera-protocol-boundary.md)
-- [ARCH-PICO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
+- [ARCH-PICOO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001](0003-picoo-camera-protocol-boundary.md)
+- [ARCH-PICOO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-SESSION-*`
+- 待分解：`REQ-PICOO-SESSION-*`

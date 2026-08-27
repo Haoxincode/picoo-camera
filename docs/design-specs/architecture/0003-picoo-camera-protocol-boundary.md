@@ -1,4 +1,4 @@
-# ARCH-PICO-PROTOCOL-001: Pico Camera Protocol (PCP/1) 边界
+# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/1) 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-002 / PUC-005 / PUC-006
@@ -9,11 +9,11 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 
 ## 架构决策
 
-协议名称：**Pico Camera Protocol**，版本 **PCP/1**。
+协议名称：**Picoo Camera Protocol**，版本 **PCP/1**。
 
 ### 控制平面
 
-控制消息使用 Protobuf 定义于 `proto/pico_camera.proto`，由 Rust `prost` 生成类型，经 QUIC Reliable Stream 传输。
+控制消息使用 Protobuf 定义于 `proto/picoo_camera.proto`，由 Rust `prost` 生成类型，经 QUIC Reliable Stream 传输。
 
 主要消息：
 
@@ -98,10 +98,10 @@ Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DIS
 
 ## 相关 Architecture
 
-- [ARCH-PICO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICO-MEDIA-001](0004-cross-platform-media-pipeline-boundary.md)
-- [ARCH-PICO-SESSION-001](0005-session-reconnect-jitter-bitrate-boundary.md)
+- [ARCH-PICOO-TRANSPORT-001](0002-quic-transport-encapsulation-boundary.md)
+- [ARCH-PICOO-MEDIA-001](0004-cross-platform-media-pipeline-boundary.md)
+- [ARCH-PICOO-SESSION-001](0005-session-reconnect-jitter-bitrate-boundary.md)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICO-PROTOCOL-*`
+- 待分解：`REQ-PICOO-PROTOCOL-*`
