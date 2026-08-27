@@ -206,6 +206,11 @@ fn test_suite(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
+                "cargo test -p picoo-receiver --lib reconnect_churn_fifteen_rounds"
+            )
+            .run()?;
+            cmd!(
+                sh,
                 "cargo test -p picoo-receiver --lib public_key_change_rejects_auto_connect"
             )
             .run()?;

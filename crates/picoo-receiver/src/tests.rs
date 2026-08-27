@@ -3197,6 +3197,12 @@ fn reconnect_churn_smoke_five_rounds() {
 }
 
 #[test]
+fn reconnect_churn_fifteen_rounds() {
+    // Medium CI gate between smoke (5) and full PRD N=50 (`--ignored`).
+    run_reconnect_churn(15);
+}
+
+#[test]
 #[ignore = "PRD §20.6 N=50 reconnect churn; enable via --ignored"]
 fn reconnect_churn_fifty_rounds() {
     run_reconnect_churn(50);
