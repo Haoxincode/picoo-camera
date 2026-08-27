@@ -1148,18 +1148,7 @@ fn default_jitter_holds_au_until_target_delay() {
 /// REQ-PICOO-SESSION-005 — paired loopback soak (default 60s; set `PICOO_SOAK_SECONDS`).
 ///
 /// Run: `PICOO_SOAK_SECONDS=60 cargo test -p picoo-receiver --lib soak_paired_loopback_memory_stable -- --ignored --nocapture`
-#[test]
-#[ignore = "long-running soak; enable via --ignored"]
-fn soak_paired_loopback_memory_stable() {
-    let soak_secs: u64 = std::env::var("PICOO_SOAK_SECONDS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(60);
-    let sample_every: u64 = std::env::var("PICOO_SOAK_SAMPLE_EVERY")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5);
-
+fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
     receiver.set_jitter_target_ms(0);
@@ -1278,7 +1267,7 @@ fn soak_paired_loopback_memory_stable() {
             let au = receiver.stats().access_units;
             eprintln!("soak sample elapsed={elapsed}s au={au} rss_kb={rss}");
             samples.push((elapsed, au, rss));
-            next_sample += Duration::from_secs(sample_every);
+            next_sample += Duration::from_secs(sample_every.max(1));
         }
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -1297,6 +1286,26 @@ fn soak_paired_loopback_memory_stable() {
             "RSS grew too much during soak: first={first}kb last={last}kb samples={samples:?}"
         );
     }
+}
+
+/// CI-friendly SESSION-005 harness smoke (full 2h remains `--ignored` / SOAK_SECONDS=7200).
+#[test]
+fn soak_harness_smoke_five_seconds() {
+    run_paired_loopback_soak(5, 2);
+}
+
+#[test]
+#[ignore = "long-running soak; enable via --ignored"]
+fn soak_paired_loopback_memory_stable() {
+    let soak_secs: u64 = std::env::var("PICOO_SOAK_SECONDS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let sample_every: u64 = std::env::var("PICOO_SOAK_SAMPLE_EVERY")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+    run_paired_loopback_soak(soak_secs, sample_every);
 }
 
 #[test]
