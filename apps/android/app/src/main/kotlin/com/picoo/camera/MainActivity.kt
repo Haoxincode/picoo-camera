@@ -178,6 +178,7 @@ private fun SenderHomeScreen(
         remember { mutableStateOf<List<PicooNative.DiscoveredReceiver>>(emptyList()) }
     val discoveredList = discoveredListState.value
     var connectedReceiverId by remember { mutableStateOf("") }
+    var connectedReceiverName by remember { mutableStateOf("") }
     var pairedDevicesText by remember { mutableStateOf("") }
     var pairedDevices by remember { mutableStateOf<List<PicooNative.TrustedDevice>>(emptyList()) }
     var selectedReceiverId by remember { mutableStateOf("") }
@@ -457,6 +458,8 @@ private fun SenderHomeScreen(
                 senderStatus = PicooNative.getSenderStatus(senderHandle)
                 pairingCode = PicooNative.getPairingShortCode(senderHandle)
                 connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
+                connectedReceiverName =
+                    PicooNative.getConnectedReceiverDisplayName(senderHandle)
                 val bps = PicooNative.getCurrentBitrateBps(senderHandle)
                 if (bps > 0) {
                     adaptiveBitrateBps = bps
@@ -786,31 +789,72 @@ private fun SenderHomeScreen(
                     text = if (pairingCode.isNotEmpty()) "Confirm Pairing" else "Waiting for pairing…",
                     style = MaterialTheme.typography.titleMedium,
                 )
+                if (connectedReceiverName.isNotEmpty()) {
+                    Text(
+                        text = connectedReceiverName,
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
                 if (connectedReceiverId.isNotEmpty()) {
-                    Text(text = "Receiver: $connectedReceiverId")
+                    Text(
+                        text = "Receiver: $connectedReceiverId",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
                 if (pairingCode.isNotEmpty()) {
                     Text(text = pairingCode, style = MaterialTheme.typography.headlineMedium)
                     Text(text = "Make sure the same number appears on your computer.")
                 }
-                Button(onClick = {
-                    val receiverId = connectedReceiverId.ifEmpty { selectedReceiverId.ifEmpty { "windows-receiver" } }
-                    val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
-                    if (rc == 0) {
-                        errorText = null
-                        reloadTrustedStore()
-                        senderTab = SenderTab.Streaming
-                    } else {
-                        errorText = "Pairing confirm failed: $rc"
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Button(
+                        onClick = {
+                            val receiverId =
+                                connectedReceiverId.ifEmpty {
+                                    selectedReceiverId.ifEmpty { "windows-receiver" }
+                                }
+                            val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
+                            if (rc == 0) {
+                                errorText = null
+                                reloadTrustedStore()
+                                senderTab = SenderTab.Streaming
+                            } else {
+                                errorText = "Pairing confirm failed: $rc"
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Confirm pairing")
                     }
-                }) {
-                    Text("Confirm pairing")
+                    Button(
+                        onClick = {
+                            // PUC-001 / PRD §17.2: Cancel aborts pairing → Devices.
+                            PicooNative.disconnect(senderHandle)
+                            pairingCode = ""
+                            connectedReceiverId = ""
+                            connectedReceiverName = ""
+                            suppressAutoConnect = true
+                            senderTab = SenderTab.Devices
+                            errorText = null
+                        },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text("Cancel")
+                    }
                 }
                 errorText?.let {
                     Text(text = "Error: $it", color = MaterialTheme.colorScheme.error)
                 }
             }
             SenderTab.Streaming -> {
+                if (connectedReceiverName.isNotEmpty()) {
+                    Text(
+                        text = "Streaming to $connectedReceiverName",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                }
                 if (powerHint.isNotEmpty()) {
                     Text(
                         text = powerHint,

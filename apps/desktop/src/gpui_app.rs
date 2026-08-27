@@ -423,6 +423,15 @@ impl PicooDesktopApp {
                                     this.runtime.confirm_pairing();
                                     cx.notify();
                                 })),
+                        )
+                        .child(
+                            Button::new("cancel-pairing")
+                                .label("取消")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    // PUC-001 / PRD §17.2: Cancel aborts pending pairing.
+                                    this.runtime.disconnect();
+                                    cx.notify();
+                                })),
                         ),
                 ),
             )
@@ -716,7 +725,11 @@ impl PicooDesktopApp {
                         picoo_diagnostics::redact_device_id(&device.device_id)
                     ))
                     .child(format!(
-                        "fp={}",
+                        "{} · last {} · fp={}",
+                        device.platform,
+                        crate::receiver_runtime::format_last_connected_ms(
+                            device.last_connected_at_ms,
+                        ),
                         picoo_diagnostics::redact_fingerprint(&device.certificate_fingerprint)
                     )),
             )

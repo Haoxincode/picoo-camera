@@ -14,16 +14,25 @@ class TrustedDeviceListTest {
     }
 
     @Test
-    fun formatRowIncludesNameAndFingerprint() {
+    fun formatLastConnectedUtcDateOrDash() {
+        assertEquals("—", TrustedDeviceList.formatLastConnected(0L))
+        // 2020-01-01T00:00:00Z
+        assertEquals("2020-01-01", TrustedDeviceList.formatLastConnected(1_577_836_800_000L))
+    }
+
+    @Test
+    fun formatRowIncludesPlatformLastConnectAndFingerprint() {
         val device = PicooNative.TrustedDevice(
             deviceId = "win-1",
             deviceName = "Office PC",
             certificateFingerprint = "deadbeefcafebabe",
             pairedAtMs = 1L,
-            lastConnectedAtMs = 0L,
+            lastConnectedAtMs = 1_577_836_800_000L,
         )
         val row = TrustedDeviceList.formatRow(device)
         assertTrue(row.contains("Office PC"))
+        assertTrue(row.contains("Windows"))
+        assertTrue(row.contains("2020-01-01"))
         assertTrue(row.contains("deadbeef…") || row.contains("deadbeef"))
     }
 

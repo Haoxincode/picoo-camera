@@ -137,6 +137,8 @@ object PicooNative {
 
     external fun getConnectedReceiverId(handle: Long): String
 
+    external fun getConnectedReceiverDisplayName(handle: Long): String
+
     external fun loadTrustedStore(path: String): Long
 
     external fun destroyTrustedStore(handle: Long)

@@ -492,6 +492,22 @@ Java_com_picoo_camera_jni_PicooNative_getConnectedReceiverId(JNIEnv *env, jobjec
     return makeJString(env, buf);
 }
 
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_picoo_camera_jni_PicooNative_getConnectedReceiverDisplayName(
+    JNIEnv *env,
+    jobject /* this */,
+    jlong handle) {
+    if (handle == 0) {
+        return makeJString(env, "");
+    }
+    char buf[128] = {0};
+    if (picoo_sender_connected_receiver_display_name(
+            reinterpret_cast<void *>(handle), buf, sizeof(buf)) <= 0) {
+        return makeJString(env, "");
+    }
+    return makeJString(env, buf);
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_picoo_camera_jni_PicooNative_loadTrustedStore(JNIEnv *env, jobject /* this */, jstring path) {
     if (path == nullptr) {

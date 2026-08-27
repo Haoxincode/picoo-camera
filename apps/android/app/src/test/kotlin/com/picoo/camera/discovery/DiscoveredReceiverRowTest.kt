@@ -20,7 +20,7 @@ class DiscoveredReceiverRowTest {
     fun openAndUntrustedIsReady() {
         assertEquals("Ready", DiscoveredReceiverRow.readinessLabel("open", false))
         assertEquals(
-            "Work PC · Ready (192.168.1.20:4433)",
+            "Work PC · Windows · Ready",
             DiscoveredReceiverRow.format(receiver("open"), locallyTrusted = false),
         )
     }
@@ -29,7 +29,7 @@ class DiscoveredReceiverRowTest {
     fun locallyTrustedIsPairedEvenIfTxtOpen() {
         assertEquals("Paired", DiscoveredReceiverRow.readinessLabel("open", true))
         assertEquals(
-            "Work PC · Paired (192.168.1.20:4433)",
+            "Work PC · Windows · Paired",
             DiscoveredReceiverRow.format(receiver("open"), locallyTrusted = true),
         )
     }

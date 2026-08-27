@@ -645,6 +645,24 @@ pub extern "C" fn picoo_sender_connected_receiver_id(
     }
 }
 
+/// Connected receiver display name from ServerHello.
+#[no_mangle]
+pub extern "C" fn picoo_sender_connected_receiver_display_name(
+    handle: *mut std::ffi::c_void,
+    out: *mut std::ffi::c_char,
+    out_len: usize,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    let session = inner.session.lock().expect("sender lock");
+    match session.connected_receiver_display_name() {
+        Some(name) => copy_str_to_buf(name, out, out_len),
+        None => 0,
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PicooDiscoveredReceiver {

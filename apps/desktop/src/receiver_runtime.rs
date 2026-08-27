@@ -7,7 +7,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use picoo_discovery::{
-    generate_nonce, MdnsAdvertiser, QrConnectPayload, ReceiverAdvertisement, DEFAULT_QR_TTL_MS,
+    generate_nonce, MdnsAdvertiser, PairingState, QrConnectPayload, ReceiverAdvertisement,
+    DEFAULT_QR_TTL_MS,
 };
 use picoo_pairing::{
     public_key_fingerprint, public_key_fingerprint_prefix, DeviceIdentity,
@@ -35,6 +36,9 @@ pub struct TrustedDeviceSummary {
     pub device_id: String,
     pub device_name: String,
     pub certificate_fingerprint: String,
+    pub last_connected_at_ms: u64,
+    /// A→W V1: paired phones are Android.
+    pub platform: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -114,21 +118,26 @@ impl ReceiverRuntime {
         };
 
         let fingerprint_prefix = public_key_fingerprint_prefix(&config.identity.public_key);
+        let trusted_count = receiver.trusted_devices().list().count();
         let advertisement = ReceiverAdvertisement::new(
             config.identity.receiver_id.clone(),
             config.identity.display_name.clone(),
             bind.port(),
             fingerprint_prefix,
-        );
+        )
+        .with_pairing_state(ReceiverAdvertisement::pairing_state_for_v1_receiver(
+            trusted_count,
+        ));
 
         if let Some(advertiser) = mdns.as_mut() {
             if let Err(err) = advertiser.register("127.0.0.1", &advertisement) {
                 tracing::warn!("mDNS register failed: {err}");
             } else {
                 tracing::info!(
-                    "mDNS advertising {} on port {}",
+                    "mDNS advertising {} on port {} ({})",
                     advertisement.display_name,
-                    bind.port()
+                    bind.port(),
+                    advertisement.pairing_state.as_str()
                 );
             }
         }
@@ -199,19 +208,24 @@ impl ReceiverRuntime {
         };
         let identity = self.receiver.identity();
         let fingerprint_prefix = public_key_fingerprint_prefix(&identity.public_key);
+        let trusted_count = self.receiver.trusted_devices().list().count();
+        let pairing_state: PairingState =
+            ReceiverAdvertisement::pairing_state_for_v1_receiver(trusted_count);
         let advertisement = ReceiverAdvertisement::new(
             identity.receiver_id.clone(),
             self.display_name.clone(),
             bind.port(),
             fingerprint_prefix,
-        );
+        )
+        .with_pairing_state(pairing_state);
         if let Err(err) = advertiser.register("127.0.0.1", &advertisement) {
-            tracing::warn!("mDNS re-advertise failed after rename: {err}");
+            tracing::warn!("mDNS re-advertise failed: {err}");
         } else {
             tracing::info!(
-                "mDNS re-advertising {} on port {}",
+                "mDNS re-advertising {} on port {} ({})",
                 advertisement.display_name,
-                bind.port()
+                bind.port(),
+                advertisement.pairing_state.as_str()
             );
         }
     }
@@ -315,6 +329,8 @@ impl ReceiverRuntime {
                     device_id: d.device_id.clone(),
                     device_name: d.device_name.clone(),
                     certificate_fingerprint: d.certificate_fingerprint.clone(),
+                    last_connected_at_ms: d.last_connected_at_ms.unwrap_or(0),
+                    platform: "Android",
                 })
                 .collect(),
             display_name: self.display_name.clone(),
@@ -326,16 +342,26 @@ impl ReceiverRuntime {
     #[allow(dead_code)]
     pub fn confirm_pairing(&mut self) {
         self.receiver.confirm_pairing_locally();
+        // Trust store may have grown — refresh TXT (REQ-PICOO-DISCOVERY-001).
+        self.refresh_mdns_advertisement();
     }
 
     #[allow(dead_code)]
     pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, ReceiverError> {
-        self.receiver.remove_trusted_device(device_id)
+        let removed = self.receiver.remove_trusted_device(device_id)?;
+        if removed {
+            self.refresh_mdns_advertisement();
+        }
+        Ok(removed)
     }
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
-        self.receiver.clear_trusted_devices()
+        let removed = self.receiver.clear_trusted_devices()?;
+        if removed > 0 {
+            self.refresh_mdns_advertisement();
+        }
+        Ok(removed)
     }
 
     pub fn receiver(&self) -> &ReceiverSession {
@@ -441,4 +467,35 @@ pub fn default_trusted_store_path() -> PathBuf {
                     .join("trusted_devices.json")
             }
         })
+}
+
+/// UTC `yyyy-MM-dd` for paired-device rows (PUC-007); em dash when unknown.
+pub fn format_last_connected_ms(ms: u64) -> String {
+    if ms == 0 {
+        return "—".into();
+    }
+    const DAY_MS: u64 = 86_400_000;
+    let days = ms / DAY_MS;
+    let z = days as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_last_connected_ms;
+
+    #[test]
+    fn format_last_connected_utc_date_or_dash() {
+        assert_eq!(format_last_connected_ms(0), "—");
+        assert_eq!(format_last_connected_ms(1_577_836_800_000), "2020-01-01");
+    }
 }

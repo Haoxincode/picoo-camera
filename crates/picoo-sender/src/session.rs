@@ -252,6 +252,13 @@ impl<T: PicooTransport> SenderSession<T> {
             .and_then(|p| (!p.receiver_id.is_empty()).then_some(p.receiver_id.as_str()))
     }
 
+    /// Display name from ServerHello (empty until hello arrives).
+    pub fn connected_receiver_display_name(&self) -> Option<&str> {
+        self.pairing.as_ref().and_then(|p| {
+            (!p.display_name.is_empty()).then_some(p.display_name.as_str())
+        })
+    }
+
     fn persist_trusted(&self) -> Result<(), SenderError> {
         if let Some(path) = &self.trusted_store_path {
             self.trusted.save_to_path(path)?;
@@ -472,6 +479,14 @@ impl<T: PicooTransport> SenderSession<T> {
                     pairing.receiver_id = hello.receiver_id;
                     pairing.display_name = hello.display_name;
                     pairing.public_key = hello.public_key;
+                } else {
+                    self.pairing = Some(SenderPairing {
+                        receiver_id: hello.receiver_id,
+                        display_name: hello.display_name,
+                        public_key: hello.public_key,
+                        challenge_nonce: Vec::new(),
+                        short_code: String::new(),
+                    });
                 }
                 self.enter_streaming();
             }
@@ -995,6 +1010,8 @@ mod tests {
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject hello");
         assert_eq!(session.status(), SenderStatus::Streaming);
+        assert_eq!(session.connected_receiver_id(), Some("recv-1"));
+        assert_eq!(session.connected_receiver_display_name(), Some("Desktop"));
         assert!(session.stream_config_sent());
         assert!(session.take_keyframe_request());
 

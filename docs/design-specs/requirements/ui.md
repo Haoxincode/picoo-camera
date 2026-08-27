@@ -4,7 +4,7 @@
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-UI-001 | implemented | ARCH-PICOO-UI-001 | GPUI View 不直接持有 QUIC/Decoder/Frame Buffer | `ReceiverRuntime` + `ReceiverSnapshot`；View 只观察 |
 | REQ-PICOO-UI-002 | implemented | PRD §16 | 桌面四页：首次启动/等待连接(含QR)/直播/设置 | `DesktopPage`；设置改名 → 身份持久化 + mDNS re-advertise |
-| REQ-PICOO-UI-003 | implemented | PRD §17 | 手机三页：设备列表/配对/传输 | `SenderTab` Devices/Pairing/Streaming；Devices 行 Ready/Paired |
+| REQ-PICOO-UI-003 | implemented | PRD §17 | 手机三页：设备列表/配对/传输 | Devices `Windows · Ready/Paired`；Pairing/Streaming 显示 Receiver 名；Cancel 取消配对 |
 | REQ-PICOO-UI-004 | implemented | ARCH-PICOO-UI-001 | VideoSurface 只渲染纹理，不拥有解码器 | `video_surface.rs` 仅 `nv12_preview_rgba` |
 | REQ-PICOO-UI-005 | implemented | PUC-005 | Sender 前台、防锁屏、深色低亮度、过热/低电量提示 | FGS + `FLAG_KEEP_SCREEN_ON` + Streaming `screenBrightness` 调暗 + `PowerHints`（真机验证仍待） |
 | REQ-PICOO-UI-006 | implemented | PUC-001 | 权限在操作时请求，非启动一次性弹出 | Enable camera / Scan QR 时请求 CAMERA |

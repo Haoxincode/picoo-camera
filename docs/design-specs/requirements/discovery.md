@@ -2,7 +2,7 @@
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
-| REQ-PICOO-DISCOVERY-001 | implemented | PUC-002 | Receiver 广播 `_picoocam._udp.local` | MdnsAdvertiser 注册/改名重注册测试；桌面 `set_display_name` 持久化并 re-advertise |
+| REQ-PICOO-DISCOVERY-001 | implemented | PUC-002 | Receiver 广播 `_picoocam._udp.local` | MdnsAdvertiser 注册/改名/信任变更后 re-advertise；`with_pairing_state` + V1 保持 `open` |
 | REQ-PICOO-DISCOVERY-002 | implemented | ARCH-PICOO-DISCOVERY-001 | 广播仅含白名单字段；fingerprint_prefix 来自公钥 | TXT 白名单 + 指纹前缀测试 |
 | REQ-PICOO-DISCOVERY-003 | implemented | PUC-003 | 桌面 Show QR Code，含地址/端口/ID/版本/指纹/nonce | QR payload 使用真实指纹 |
 | REQ-PICOO-DISCOVERY-004 | implemented | PUC-003 | 短期 nonce 过期后二维码不可复用 | QR TTL + Receiver `active_qr` 校验/消费；桌面过期自动刷新；Android 传 `qr_nonce` |
