@@ -1259,6 +1259,100 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     }
 }
 
+#[test]
+fn paired_loopback_e2e_latency_p50_under_budget() {
+    // PRD §21 / REQ-PICOO-SESSION-007: loopback ingest→FrameHub P50/P95 latency budget.
+    // Full camera→VCam P95 needs devices; this closes the transport/decode path gate on Linux.
+    use picoo_pairing::TrustedDevice;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+    use std::time::Instant;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "lat-phone".into(),
+        device_name: "Lat".into(),
+        public_key: vec![3, 3, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("lat-phone", "Lat", &[3, 3, 3])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let mut samples_ms = Vec::new();
+    let mut last_seq = 0u64;
+    for frame_id in 1..=80u64 {
+        let payload = format!("lat-{frame_id}");
+        let t0 = Instant::now();
+        sender
+            .ingest_and_flush(payload.as_bytes(), true, frame_id, 1)
+            .expect("ingest");
+        let mut observed = None;
+        for _ in 0..200 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if let Some(frame) = receiver.latest_frame() {
+                if frame.sequence > last_seq {
+                    last_seq = frame.sequence;
+                    observed = Some(t0.elapsed().as_secs_f64() * 1000.0);
+                    break;
+                }
+            }
+        }
+        if let Some(ms) = observed {
+            samples_ms.push(ms);
+        }
+    }
+
+    assert!(
+        samples_ms.len() >= 40,
+        "need enough latency samples, got {}",
+        samples_ms.len()
+    );
+    samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p50 = samples_ms[samples_ms.len() / 2];
+    let p95 = samples_ms[(samples_ms.len() as f64 * 0.95) as usize];
+    eprintln!(
+        "loopback ingest→FrameHub latency_ms p50={p50:.2} p95={p95:.2} n={}",
+        samples_ms.len()
+    );
+    // Healthy LAN budgets from PRD (transport path only on loopback should be far below).
+    assert!(p50 < 150.0, "P50 {p50}ms exceeds 150ms budget");
+    assert!(p95 < 250.0, "P95 {p95}ms exceeds 250ms budget");
+}
+
 fn linux_vm_rss_kb() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {

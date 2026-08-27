@@ -8,3 +8,4 @@
 | REQ-PICOO-SESSION-004 | implemented | PUC-006 | 重连后恢复分辨率/镜像并请求 SPS/PPS/IDR | sender reconnect 集成测试 |
 | REQ-PICOO-SESSION-005 | implemented | PRD §21 | 2h 长稳无崩溃、内存不增长 | `scripts/soak_loopback.sh` + ignored soak 测试（默认 60s；`SOAK_SECONDS=7200` 做 2h） |
 | REQ-PICOO-SESSION-006 | implemented | PRD §21 | 丢包约 5% 时会话仍可用、延迟不无限堆积 | `LossyVideoTransport` + `paired_loopback_remains_usable_under_five_percent_loss` / `scripts/loss_loopback.sh` |
+| REQ-PICOO-SESSION-007 | implemented | PRD §21 | 健康网络 E2E P50&lt;150ms / P95&lt;250ms（传输路径） | `paired_loopback_e2e_latency_p50_under_budget`（真机 camera→VCam 仍待） |
