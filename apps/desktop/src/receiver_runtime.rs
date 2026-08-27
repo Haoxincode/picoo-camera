@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use picoo_discovery::{
     generate_nonce, MdnsAdvertiser, QrConnectPayload, ReceiverAdvertisement, DEFAULT_QR_TTL_MS,
 };
+use picoo_pairing::{
+    public_key_fingerprint, public_key_fingerprint_prefix, DeviceIdentity,
+};
 use picoo_protocol::control::StreamConfig;
 use picoo_receiver::{IngressStats, ReceiverError, ReceiverIdentity, ReceiverSession};
 use picoo_session::ReceiverStatus;
@@ -45,7 +48,7 @@ pub struct ReceiverRuntimeConfig {
 impl Default for ReceiverRuntimeConfig {
     fn default() -> Self {
         Self {
-            identity: ReceiverIdentity::default(),
+            identity: load_receiver_identity("Picoo Camera"),
             trusted_store_path: default_trusted_store_path(),
             shared_ring_name: DEFAULT_SHARED_RING_NAME.into(),
             bind_host: "0.0.0.0".into(),
@@ -107,11 +110,12 @@ impl ReceiverRuntime {
             }
         };
 
+        let fingerprint_prefix = public_key_fingerprint_prefix(&config.identity.public_key);
         let advertisement = ReceiverAdvertisement::new(
             config.identity.receiver_id.clone(),
             config.identity.display_name.clone(),
             bind.port(),
-            "00000000",
+            fingerprint_prefix,
         );
 
         if let Some(advertiser) = mdns.as_mut() {
@@ -143,6 +147,15 @@ impl ReceiverRuntime {
     pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
         let mut config = ReceiverRuntimeConfig::default();
         config.identity.display_name = prefs.display_name.clone();
+        // Persist renamed display name into durable identity file.
+        if let Ok(mut identity) = DeviceIdentity::load_or_create(default_identity_path(), &prefs.display_name)
+        {
+            if identity.device_name != prefs.display_name {
+                identity.set_device_name(&prefs.display_name);
+                let _ = identity.save_to_path(default_identity_path());
+            }
+            config.identity = receiver_identity_from_device(&identity);
+        }
         Self::start(config)
     }
 
@@ -232,11 +245,12 @@ fn build_qr_payload(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
+    let fingerprint = public_key_fingerprint(&identity.public_key);
     let qr = QrConnectPayload::new(
         bind.ip().to_string(),
         bind.port(),
         identity.receiver_id.clone(),
-        "00000000",
+        fingerprint,
         generate_nonce(),
         now_ms,
         DEFAULT_QR_TTL_MS,
@@ -250,6 +264,42 @@ fn build_qr_payload(
             tracing::warn!("QR encode failed: {err}");
             (None, None)
         }
+    }
+}
+
+fn default_identity_path() -> PathBuf {
+    if cfg!(target_os = "windows") {
+        std::env::var("APPDATA")
+            .map(|appdata| {
+                PathBuf::from(appdata)
+                    .join("picoo-camera")
+                    .join("receiver_identity.json")
+            })
+            .unwrap_or_else(|_| PathBuf::from("receiver_identity.json"))
+    } else {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        PathBuf::from(home)
+            .join(".config")
+            .join("picoo-camera")
+            .join("receiver_identity.json")
+    }
+}
+
+fn load_receiver_identity(default_name: &str) -> ReceiverIdentity {
+    match DeviceIdentity::load_or_create(default_identity_path(), default_name) {
+        Ok(identity) => receiver_identity_from_device(&identity),
+        Err(err) => {
+            tracing::warn!("receiver identity load failed, using ephemeral: {err}");
+            ReceiverIdentity::default()
+        }
+    }
+}
+
+fn receiver_identity_from_device(identity: &DeviceIdentity) -> ReceiverIdentity {
+    ReceiverIdentity {
+        receiver_id: identity.device_id.clone(),
+        display_name: identity.device_name.clone(),
+        public_key: identity.public_key().to_vec(),
     }
 }
 

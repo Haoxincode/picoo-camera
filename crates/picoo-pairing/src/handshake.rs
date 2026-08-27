@@ -59,13 +59,24 @@ fn bytes_to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Full SHA-256 hex fingerprint of a device public key (REQ-PICOO-DISCOVERY-002).
+pub fn public_key_fingerprint(public_key: &[u8]) -> String {
+    bytes_to_hex(&Sha256::digest(public_key))
+}
+
+/// First 8 hex chars of the public-key fingerprint for mDNS TXT.
+pub fn public_key_fingerprint_prefix(public_key: &[u8]) -> String {
+    let full = public_key_fingerprint(public_key);
+    full.chars().take(8).collect()
+}
+
 pub fn trusted_device_from_pairing(
     sender_id: &str,
     device_name: &str,
     public_key: &[u8],
     paired_at_ms: u64,
 ) -> TrustedDevice {
-    let fingerprint = bytes_to_hex(&Sha256::digest(public_key));
+    let fingerprint = public_key_fingerprint(public_key);
     TrustedDevice {
         device_id: sender_id.into(),
         device_name: device_name.into(),
@@ -107,5 +118,17 @@ mod tests {
             challenge.short_code,
             derive_short_code(nonce, "recv", "send")
         );
+    }
+
+    #[test]
+    fn fingerprint_prefix_is_stable_eight_hex() {
+        let key = [0xAAu8, 0xBB, 0xCC, 0xDD];
+        let full = public_key_fingerprint(&key);
+        let prefix = public_key_fingerprint_prefix(&key);
+        assert_eq!(full.len(), 64);
+        assert_eq!(prefix.len(), 8);
+        assert!(prefix.chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(full.starts_with(&prefix));
+        assert_eq!(prefix, public_key_fingerprint_prefix(&key));
     }
 }
