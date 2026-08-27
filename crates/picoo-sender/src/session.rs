@@ -1,12 +1,20 @@
 //! Sender session: packetization + transport flush.
 
-use picoo_protocol::control::ClientHello;
+use picoo_pairing::pairing_confirm_signature;
+use picoo_protocol::control::{ClientHello, PairingChallenge, PairingConfirm, ServerHello};
 use picoo_protocol::VideoPacket;
 use picoo_protocol::ALPN;
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
 use prost::Message;
 
 use crate::{SenderError, SenderPipeline, SenderStats};
+
+#[derive(Debug, Clone)]
+struct SenderPairing {
+    receiver_id: String,
+    challenge_nonce: Vec<u8>,
+    short_code: String,
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionStats {
@@ -19,6 +27,8 @@ pub struct SenderSession<T: PicooTransport> {
     transport: T,
     session: Option<SessionId>,
     sent_datagrams: u64,
+    pairing: Option<SenderPairing>,
+    sender_id: Option<String>,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -28,13 +38,48 @@ impl<T: PicooTransport> SenderSession<T> {
             transport,
             session: None,
             sent_datagrams: 0,
+            pairing: None,
+            sender_id: None,
         }
     }
 
-    fn drain_connected_events(&mut self) {
+    fn drain_events(&mut self) {
         while let Some(event) = self.transport.poll_event() {
-            if let TransportEvent::Connected(session) = event {
-                self.session = Some(session);
+            match event {
+                TransportEvent::Connected(session) => self.session = Some(session),
+                TransportEvent::ControlMessage(_, msg) => self.handle_control(msg),
+                TransportEvent::Disconnected(_, _) => {
+                    self.session = None;
+                    self.pairing = None;
+                }
+                TransportEvent::VideoPacket(_, _) => {}
+            }
+        }
+    }
+
+    fn handle_control(&mut self, msg: bytes::Bytes) {
+        if let Ok(challenge) = PairingChallenge::decode(msg.as_ref()) {
+            if let Some(pairing) = self.pairing.as_mut() {
+                pairing.challenge_nonce = challenge.challenge_nonce;
+                pairing.short_code = challenge.short_code;
+            } else {
+                self.pairing = Some(SenderPairing {
+                    receiver_id: String::new(),
+                    challenge_nonce: challenge.challenge_nonce,
+                    short_code: challenge.short_code,
+                });
+            }
+            return;
+        }
+        if let Ok(hello) = ServerHello::decode(msg.as_ref()) {
+            if let Some(pairing) = self.pairing.as_mut() {
+                pairing.receiver_id = hello.receiver_id;
+            } else if hello.pairing_required {
+                self.pairing = Some(SenderPairing {
+                    receiver_id: hello.receiver_id,
+                    challenge_nonce: Vec::new(),
+                    short_code: String::new(),
+                });
             }
         }
     }
@@ -55,14 +100,20 @@ impl<T: PicooTransport> SenderSession<T> {
             .transport
             .connect(endpoint)
             .map_err(SenderError::Transport)?;
-        self.drain_connected_events();
+        self.drain_events();
         Ok(session)
     }
 
     pub fn pump(&mut self) -> Result<(), SenderError> {
         self.transport.pump().map_err(SenderError::Transport)?;
-        self.drain_connected_events();
+        self.drain_events();
         Ok(())
+    }
+
+    pub fn pairing_short_code(&self) -> Option<&str> {
+        self.pairing
+            .as_ref()
+            .and_then(|p| (!p.short_code.is_empty()).then_some(p.short_code.as_str()))
     }
 
     pub fn ingest_access_unit(
@@ -113,8 +164,6 @@ impl<T: PicooTransport> SenderSession<T> {
         device_name: &str,
         public_key: &[u8],
     ) -> Result<(), SenderError> {
-        use bytes::Bytes;
-
         let session = self.session.ok_or(SenderError::NotConnected)?;
         let hello = ClientHello {
             sender_id: sender_id.into(),
@@ -122,12 +171,43 @@ impl<T: PicooTransport> SenderSession<T> {
             protocol_version: ALPN.into(),
             public_key: public_key.to_vec(),
         };
+        self.sender_id = Some(sender_id.into());
         let mut buf = Vec::new();
         hello
             .encode(&mut buf)
             .map_err(|e| SenderError::Protocol(e.to_string()))?;
         self.transport
-            .send_control(session, Bytes::from(buf))
+            .send_control(session, bytes::Bytes::from(buf))
+            .map_err(SenderError::Transport)?;
+        self.transport.pump().map_err(SenderError::Transport)?;
+        self.drain_events();
+        Ok(())
+    }
+
+    pub fn send_pairing_confirm(&mut self, receiver_id: &str) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let pairing = self
+            .pairing
+            .as_ref()
+            .ok_or_else(|| SenderError::Protocol("no pairing challenge".into()))?;
+        let sender_id = self
+            .sender_id
+            .as_deref()
+            .ok_or_else(|| SenderError::Protocol("missing sender id".into()))?;
+
+        let confirm = PairingConfirm {
+            confirm_signature: pairing_confirm_signature(
+                &pairing.challenge_nonce,
+                receiver_id,
+                sender_id,
+            ),
+        };
+        let mut buf = Vec::new();
+        confirm
+            .encode(&mut buf)
+            .map_err(|e| SenderError::Protocol(e.to_string()))?;
+        self.transport
+            .send_control(session, bytes::Bytes::from(buf))
             .map_err(SenderError::Transport)?;
         self.transport.pump().map_err(SenderError::Transport)?;
         Ok(())

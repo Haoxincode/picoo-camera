@@ -115,3 +115,74 @@ fn paired_sender_enters_streaming_after_client_hello() {
     }
     assert_eq!(receiver.stats().access_units, 1);
 }
+
+#[test]
+fn first_time_pairing_flow_enables_video() {
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("new-phone", "Pixel 9", &[9, 9, 9])
+        .expect("client hello");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let recv_code = receiver.pairing_short_code().expect("receiver code");
+    let send_code = sender.pairing_short_code().expect("sender code");
+    assert_eq!(recv_code, send_code);
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+
+    receiver.confirm_pairing_locally();
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("pairing confirm");
+
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert!(receiver.trusted_devices().is_paired("new-phone"));
+
+    sender
+        .ingest_and_flush(b"paired-after-flow", true, 1, 1)
+        .expect("send video");
+    receiver.pump().expect("receiver pump");
+    assert_eq!(receiver.stats().access_units, 1);
+}

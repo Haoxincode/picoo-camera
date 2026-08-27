@@ -126,6 +126,9 @@ fn run_serve_mode() {
         if let Err(err) = receiver.pump() {
             eprintln!("Receiver pump error: {err}");
         }
+        if let Some(code) = receiver.pairing_short_code() {
+            println!("Pairing code: {code} (call confirm_pairing_locally via UI)");
+        }
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
 }

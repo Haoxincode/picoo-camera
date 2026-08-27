@@ -11,8 +11,13 @@ use picoo_frame_hub::{
     PLACEHOLDER_WIDTH,
 };
 use picoo_packet::ReassemblyMap;
-use picoo_pairing::{PairingError, TrustedDeviceStore};
-use picoo_protocol::control::{ClientHello, ServerHello};
+use picoo_pairing::{
+    new_pairing_challenge, random_challenge_nonce, trusted_device_from_pairing,
+    verify_pairing_confirm, PairingError, PairingHandshakeError, TrustedDeviceStore,
+};
+use picoo_protocol::control::{
+    ClientHello, PairingChallenge as PairingChallengeMsg, PairingConfirm, ServerHello,
+};
 use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{
@@ -67,11 +72,15 @@ pub struct ReceiverStats {
 
 struct ActiveSender {
     sender_id: String,
-    #[allow(dead_code)]
     device_name: String,
-    #[allow(dead_code)]
     public_key: Vec<u8>,
     video_allowed: bool,
+}
+
+struct PendingPairing {
+    session: SessionId,
+    challenge_nonce: Vec<u8>,
+    short_code: String,
 }
 
 pub struct ReceiverSession {
@@ -81,6 +90,8 @@ pub struct ReceiverSession {
     identity: ReceiverIdentity,
     trusted: TrustedDeviceStore,
     active_sender: Option<ActiveSender>,
+    pending_pairing: Option<PendingPairing>,
+    local_pairing_confirmed: bool,
     status: ReceiverStatus,
     stats: ReceiverStats,
     permit_unpaired_video: bool,
@@ -102,6 +113,8 @@ impl ReceiverSession {
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),
             active_sender: None,
+            pending_pairing: None,
+            local_pairing_confirmed: false,
             status: ReceiverStatus::Disconnected,
             stats: ReceiverStats::default(),
             permit_unpaired_video: false,
@@ -168,10 +181,17 @@ impl ReceiverSession {
             .is_some_and(|sender| !sender.video_allowed)
     }
 
-    pub fn active_sender_id(&self) -> Option<&str> {
-        self.active_sender
-            .as_ref()
-            .map(|sender| sender.sender_id.as_str())
+    pub fn pairing_short_code(&self) -> Option<&str> {
+        self.pending_pairing.as_ref().map(|p| p.short_code.as_str())
+    }
+
+    /// User confirmed the six-digit code on desktop (PUC-001).
+    pub fn confirm_pairing_locally(&mut self) {
+        self.local_pairing_confirmed = true;
+    }
+
+    pub fn is_awaiting_pairing_confirm(&self) -> bool {
+        self.pending_pairing.is_some()
     }
 
     pub fn frame_hub(&self) -> &FrameHub {
@@ -199,6 +219,8 @@ impl ReceiverSession {
                 TransportEvent::Disconnected(_, _) => {
                     self.status = ReceiverStatus::Disconnected;
                     self.active_sender = None;
+                    self.pending_pairing = None;
+                    self.local_pairing_confirmed = false;
                     self.reassembly = ReassemblyMap::new(8, 16);
                     let _ = self.publish_waiting_placeholder();
                 }
@@ -231,6 +253,13 @@ impl ReceiverSession {
     }
 
     fn handle_control(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
+        if self.pending_pairing.is_some() {
+            return self.handle_pairing_confirm(session, msg);
+        }
+        self.handle_client_hello(session, msg)
+    }
+
+    fn handle_client_hello(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         let hello = ClientHello::decode(msg.as_ref())
             .map_err(|e| ReceiverError::Protocol(format!("ClientHello decode: {e}")))?;
 
@@ -238,34 +267,126 @@ impl ReceiverSession {
             .trusted
             .verify_paired_key(&hello.sender_id, &hello.public_key)
             .is_ok();
-        let pairing_required = !paired;
 
         let server_hello = ServerHello {
             receiver_id: self.identity.receiver_id.clone(),
             display_name: self.identity.display_name.clone(),
             protocol_version: ALPN.into(),
             public_key: self.identity.public_key.clone(),
-            pairing_required,
+            pairing_required: !paired,
         };
-        let mut out = Vec::new();
-        server_hello
-            .encode(&mut out)
-            .map_err(|e| ReceiverError::Protocol(format!("ServerHello encode: {e}")))?;
-        self.transport.send_control(session, Bytes::from(out))?;
+        self.send_control_message(session, &server_hello)?;
 
+        if paired {
+            self.active_sender = Some(ActiveSender {
+                sender_id: hello.sender_id,
+                device_name: hello.device_name,
+                public_key: hello.public_key,
+                video_allowed: true,
+            });
+            self.status = ReceiverStatus::Streaming;
+            return Ok(());
+        }
+
+        let nonce = random_challenge_nonce();
+        let challenge = new_pairing_challenge(&nonce, &self.identity.receiver_id, &hello.sender_id);
+        let challenge_msg = PairingChallengeMsg {
+            short_code: challenge.short_code.clone(),
+            challenge_nonce: challenge.challenge_nonce,
+        };
+        self.send_control_message(session, &challenge_msg)?;
+
+        self.pending_pairing = Some(PendingPairing {
+            session,
+            challenge_nonce: nonce,
+            short_code: challenge.short_code,
+        });
+        self.local_pairing_confirmed = false;
         self.active_sender = Some(ActiveSender {
             sender_id: hello.sender_id,
             device_name: hello.device_name,
             public_key: hello.public_key,
-            video_allowed: paired,
+            video_allowed: false,
         });
-        self.status = if pairing_required {
-            ReceiverStatus::Pairing
-        } else {
-            ReceiverStatus::Streaming
-        };
-
+        self.status = ReceiverStatus::Pairing;
         Ok(())
+    }
+
+    fn handle_pairing_confirm(
+        &mut self,
+        session: SessionId,
+        msg: Bytes,
+    ) -> Result<(), ReceiverError> {
+        let confirm = PairingConfirm::decode(msg.as_ref())
+            .map_err(|e| ReceiverError::Protocol(format!("PairingConfirm decode: {e}")))?;
+
+        let pending = self
+            .pending_pairing
+            .as_ref()
+            .ok_or_else(|| ReceiverError::Protocol("no pending pairing".into()))?;
+
+        if session != pending.session {
+            return Err(ReceiverError::Protocol("pairing session mismatch".into()));
+        }
+
+        if !self.local_pairing_confirmed {
+            return Err(ReceiverError::Protocol(
+                "desktop pairing not confirmed locally".into(),
+            ));
+        }
+
+        let sender_id = self
+            .active_sender
+            .as_ref()
+            .map(|s| s.sender_id.as_str())
+            .unwrap_or("");
+
+        verify_pairing_confirm(
+            &pending.challenge_nonce,
+            &self.identity.receiver_id,
+            sender_id,
+            &confirm.confirm_signature,
+        )
+        .map_err(|e| match e {
+            PairingHandshakeError::InvalidSignature => {
+                ReceiverError::Protocol("invalid pairing signature".into())
+            }
+        })?;
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let active = self.active_sender.as_ref().expect("active sender");
+        self.trusted.upsert(trusted_device_from_pairing(
+            &active.sender_id,
+            &active.device_name,
+            &active.public_key,
+            now_ms,
+        ));
+
+        if let Some(sender) = self.active_sender.as_mut() {
+            sender.video_allowed = true;
+        }
+        self.pending_pairing = None;
+        self.local_pairing_confirmed = false;
+        self.status = ReceiverStatus::Streaming;
+        Ok(())
+    }
+
+    fn send_control_message<M: Message>(
+        &mut self,
+        session: SessionId,
+        message: &M,
+    ) -> Result<(), ReceiverError> {
+        let mut out = Vec::new();
+        message
+            .encode(&mut out)
+            .map_err(|e| ReceiverError::Protocol(format!("encode control: {e}")))?;
+        self.transport
+            .send_control(session, Bytes::from(out))
+            .map_err(ReceiverError::Transport)
     }
 
     pub fn close(&mut self) {
@@ -275,6 +396,8 @@ impl ReceiverSession {
         }
         self.status = ReceiverStatus::Disconnected;
         self.active_sender = None;
+        self.pending_pairing = None;
+        self.local_pairing_confirmed = false;
     }
 
     /// Placeholder decode path: store NV12 until MF/VT H.264 decoder lands.

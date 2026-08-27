@@ -1,8 +1,15 @@
 //! Pairing and trusted device storage — REQ-PICOO-PAIRING-*.
 
+mod handshake;
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+
+pub use handshake::{
+    new_pairing_challenge, pairing_confirm_signature, random_challenge_nonce,
+    trusted_device_from_pairing, verify_pairing_confirm, PairingChallenge, PairingHandshakeError,
+};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 

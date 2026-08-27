@@ -748,6 +748,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "picoo-packet",
+ "picoo-pairing",
  "picoo-protocol",
  "picoo-testkit",
  "picoo-transport",
