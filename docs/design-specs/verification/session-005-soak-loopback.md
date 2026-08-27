@@ -28,9 +28,8 @@ awk -F'[= ]+' '/soak sample/{e=$4+0;r=$8+0; if(!n++){fe=e;fr=r} le=e;lr=r} END{p
 | --- | --- |
 | 开始时间（UTC） | 2026-08-27 ~21:32 |
 | 日志路径 | `/opt/cursor/artifacts/soak_7200s.log` |
-| 中间样例（~104 min） | `elapsed=6240s rss_kb=18128`（RSS 平坦） |
-| 最终汇总 | _待 7200s 结束后填写_ |
-| 结论 | _待填：loopback PASS/FAIL；真机仍待_ |
+| 最终汇总 | `first_rss_kb=18124 last_rss_kb=18128 delta_rss_kb=4`；测试墙钟 `7200.05s`；`soak_paired_loopback_memory_stable ... ok` |
+| 结论 | **loopback PASS**（RSS 平坦、无崩溃）。真机 Win11+Android 1080p30 仍待 |
 
 ## 真机（关闭本 REQ 必需）
 
