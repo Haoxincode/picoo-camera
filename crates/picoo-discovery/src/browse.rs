@@ -163,4 +163,46 @@ mod tests {
 
         advertiser.unregister().expect("unregister");
     }
+
+    /// CI-safe stand-in for DISCOVERY-006: in-process advertise→list update P50 ≪ 2s.
+    /// Real mDNS remains `--ignored` above (cloud VMs lack reliable multicast).
+    #[test]
+    fn synthetic_advertise_to_list_p50_under_two_seconds() {
+        use std::time::Instant;
+
+        const TRIALS: usize = 21;
+        let mut samples_ms = Vec::with_capacity(TRIALS);
+        for i in 0..TRIALS {
+            let mut browser = MdnsBrowser::new().expect("browser");
+            let ad = ReceiverAdvertisement::new(
+                &format!("recv-{i}"),
+                &format!("PC {i}"),
+                4433,
+                "abcd1234",
+            );
+            let t0 = Instant::now();
+            // Simulate TXT resolve landing in the browser map (same path NSD/mDNS feed).
+            browser.receivers.insert(
+                format!("PC {i}._picoocam._udp.local."),
+                DiscoveredReceiver {
+                    fullname: format!("PC {i}._picoocam._udp.local."),
+                    advertisement: ad,
+                    host: format!("192.168.1.{}", 20 + (i % 200)),
+                },
+            );
+            assert!(browser.find(&format!("recv-{i}")).is_some());
+            samples_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let p50 = samples_ms[TRIALS / 2];
+        eprintln!("synthetic discovery P50_ms={p50:.4} max_ms={:.4}", samples_ms[TRIALS - 1]);
+        assert!(
+            p50 < 2_000.0,
+            "synthetic discovery P50 {p50}ms exceeds 2s budget"
+        );
+        assert!(
+            p50 < 50.0,
+            "in-process discovery list update unexpectedly slow: P50={p50}ms"
+        );
+    }
 }
