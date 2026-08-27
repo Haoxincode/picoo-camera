@@ -3,6 +3,7 @@
 //! First launch / Waiting / Live / Settings pages driven by [`ReceiverRuntime`] snapshots.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::prelude::FluentBuilder;
@@ -13,12 +14,15 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
+use image::{Frame, ImageBuffer, Rgba};
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
+use smallvec::smallvec;
 
 use crate::diagnostics_export::export_diagnostics_to_file;
 use crate::model::VirtualCameraStatus;
 use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
+use crate::qr_display;
 use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary};
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
 use crate::video_surface::VideoSurface;
@@ -42,6 +46,9 @@ pub struct PicooDesktopApp {
     vcam_status: VirtualCameraStatus,
     diagnostics_message: Option<String>,
     diagnostics_error: Option<String>,
+    /// Cached QR bitmap for waiting page (PUC-003).
+    qr_image: Option<Arc<RenderImage>>,
+    qr_payload_key: Option<String>,
 }
 
 impl PicooDesktopApp {
@@ -67,11 +74,39 @@ impl PicooDesktopApp {
             vcam_status,
             diagnostics_message: None,
             diagnostics_error: None,
+            qr_image: None,
+            qr_payload_key: None,
         }
     }
 
     fn snapshot(&self) -> ReceiverSnapshot {
         self.runtime.snapshot()
+    }
+
+    fn ensure_qr_image(&mut self, snapshot: &ReceiverSnapshot) {
+        let Some(json) = snapshot.qr_json.as_ref() else {
+            self.qr_image = None;
+            self.qr_payload_key = None;
+            return;
+        };
+        if self.qr_payload_key.as_ref() == Some(json) && self.qr_image.is_some() {
+            return;
+        }
+        match qr_display::render_qr_rgba(json, 6) {
+            Ok((width, height, rgba)) => {
+                if let Some(buffer) =
+                    ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, rgba)
+                {
+                    let frame = Frame::new(buffer);
+                    self.qr_image = Some(Arc::new(RenderImage::new(smallvec![frame])));
+                    self.qr_payload_key = Some(json.clone());
+                }
+            }
+            Err(_) => {
+                self.qr_image = None;
+                self.qr_payload_key = None;
+            }
+        }
     }
 
     fn persist_prefs(&mut self) -> Result<(), String> {
@@ -192,6 +227,9 @@ impl Render for PicooDesktopApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_pump_loop(cx);
         let snapshot = self.snapshot();
+        if self.page == DesktopPage::Waiting && self.show_qr {
+            self.ensure_qr_image(&snapshot);
+        }
 
         div()
             .v_flex()
@@ -351,12 +389,33 @@ impl PicooDesktopApp {
                             })),
                     )
                     .child(
-                        div().font_family("monospace").text_sm().child(
-                            snapshot
-                                .qr_ascii
-                                .clone()
-                                .unwrap_or_else(|| "QR 不可用".into()),
-                        ),
+                        div()
+                            .w_64()
+                            .h_64()
+                            .bg(cx.theme().background)
+                            .rounded_md()
+                            .overflow_hidden()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(if let Some(image) = &self.qr_image {
+                                img(ImageSource::Render(image.clone()))
+                                    .w_full()
+                                    .h_full()
+                                    .object_fit(ObjectFit::Contain)
+                                    .into_any_element()
+                            } else {
+                                div()
+                                    .font_family("monospace")
+                                    .text_xs()
+                                    .child(
+                                        snapshot
+                                            .qr_ascii
+                                            .clone()
+                                            .unwrap_or_else(|| "QR 不可用".into()),
+                                    )
+                                    .into_any_element()
+                            }),
                     )
                     .into_any_element()]
             } else {
