@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -105,6 +106,9 @@ private fun SenderHomeScreen(
     var trustedStoreHandle by remember { mutableLongStateOf(0L) }
     var qrJsonText by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
+    var remoteMirrored by remember { mutableStateOf(false) }
+    var resolutionLabel by remember { mutableStateOf("720p") }
+    var powerHint by remember { mutableStateOf("") }
 
     var diagnosticExportPath by remember { mutableStateOf("") }
 
@@ -136,16 +140,21 @@ private fun SenderHomeScreen(
         )
     }
 
-    fun connectToReceiver(host: String, port: Int, receiverId: String) {
+    fun applyStreamConfigToSender() {
+        val (width, height) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
         PicooNative.setStreamConfig(
             senderHandle,
-            width = 1280,
-            height = 720,
+            width = width,
+            height = height,
             fps = 30,
-            bitrateBps = 6_000_000,
+            bitrateBps = if (width >= 1920) 6_000_000 else 3_000_000,
             streamEpoch = encoder.streamEpoch,
-            mirrored = false,
+            mirrored = remoteMirrored,
         )
+    }
+
+    fun connectToReceiver(host: String, port: Int, receiverId: String) {
+        applyStreamConfigToSender()
         val rc = PicooNative.connect(senderHandle, host.trim(), port)
         if (rc == 0) {
             selectedReceiverId = receiverId
@@ -196,6 +205,14 @@ private fun SenderHomeScreen(
     }
 
     LaunchedEffect(senderStatus) {
+        val filter = android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+        val battery = context.registerReceiver(null, filter)
+        val level = battery?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: -1
+        val scale = battery?.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, -1) ?: -1
+        if (level >= 0 && scale > 0) {
+            val pct = level * 100 / scale
+            powerHint = if (pct < 20) "Low battery ($pct%) — streaming may stop" else ""
+        }
         when (senderStatus) {
             PicooNative.STATUS_STREAMING,
             PicooNative.STATUS_NEGOTIATING,
@@ -274,6 +291,25 @@ private fun SenderHomeScreen(
         }
         if (connectedReceiverId.isNotEmpty()) {
             Text(text = "Connected receiver: $connectedReceiverId", style = MaterialTheme.typography.bodySmall)
+        }
+        if (powerHint.isNotEmpty()) {
+            Text(
+                text = powerHint,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Remote mirror")
+            Switch(checked = remoteMirrored, onCheckedChange = {
+                remoteMirrored = it
+                applyStreamConfigToSender()
+            })
         }
 
         OutlinedTextField(
@@ -390,8 +426,18 @@ private fun SenderHomeScreen(
                 Button(onClick = {
                     encoder.switchCamera()
                     encoderState = encoder.state
+                    applyStreamConfigToSender()
                 }) {
                     Text("Switch camera")
+                }
+                Button(onClick = {
+                    resolutionLabel = if (resolutionLabel == "720p") "1080p" else "720p"
+                    val (w, h) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
+                    encoder.setResolution(w, h)
+                    encoderState = encoder.state
+                    applyStreamConfigToSender()
+                }) {
+                    Text("Resolution: $resolutionLabel")
                 }
                 Button(onClick = {
                     val rust = PicooNative.readSenderStats(senderHandle)

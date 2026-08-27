@@ -3,6 +3,7 @@
 //! GPUI integration will be added in the Windows vertical slice step.
 
 mod model;
+mod qr_display;
 
 use std::io::{self, BufRead};
 use std::path::PathBuf;
@@ -337,7 +338,15 @@ fn run_serve_mode() {
         DEFAULT_QR_TTL_MS,
     );
     match qr.encode_json() {
-        Ok(json) => println!("QR payload: {json}"),
+        Ok(json) => {
+            println!("QR payload: {json}");
+            match qr_display::render_qr_ascii(&json) {
+                Ok(art) => {
+                    println!("Scan QR Code (PUC-003):\n{art}");
+                }
+                Err(err) => eprintln!("QR render failed: {err}"),
+            }
+        }
         Err(err) => eprintln!("QR encode failed: {err}"),
     }
 

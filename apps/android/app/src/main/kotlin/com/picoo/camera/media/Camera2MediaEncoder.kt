@@ -107,6 +107,17 @@ class Camera2MediaEncoder(
         }
     }
 
+    override fun setResolution(width: Int, height: Int) {
+        val next = Size(width, height)
+        if (profile.resolution == next) return
+        profile = profile.copy(resolution = next)
+        streamEpoch += 1
+        if (_state.get() == CaptureState.Previewing) {
+            stopPreview()
+            startPreview()
+        }
+    }
+
     override fun close() {
         stopPreview()
         cameraThread.quitSafely()

@@ -34,4 +34,5 @@ interface CameraCaptureController {
     fun startPreview()
     fun stopPreview()
     fun switchCamera()
+    fun setResolution(width: Int, height: Int)
 }
