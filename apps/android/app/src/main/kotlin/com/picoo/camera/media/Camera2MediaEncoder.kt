@@ -74,7 +74,7 @@ class Camera2MediaEncoder(
 
     override fun setTargetBitrateBps(bitrateBps: Int) {
         if (bitrateBps <= 0) return
-        val clamped = bitrateBps.coerceIn(500_000, 12_000_000)
+        val clamped = MediaBitrate.clampAdaptive(bitrateBps)
         targetBitrateBps = clamped
         applyBitrateIfNeeded()
     }
@@ -399,10 +399,7 @@ class Camera2MediaEncoder(
         }.getOrNull()
     }
 
-    private fun bitrateFor(size: Size): Int {
-        val pixels = size.width * size.height
-        return if (pixels >= 1920 * 1080) 6_000_000 else 3_000_000
-    }
+    private fun bitrateFor(size: Size): Int = MediaBitrate.forResolution(size.width, size.height)
 
     private fun findCameraId(facing: LensFacing): String? {
         val target = when (facing) {

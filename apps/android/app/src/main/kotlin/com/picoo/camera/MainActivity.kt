@@ -40,10 +40,12 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.picoo.camera.discovery.NsdReceiverBrowser
+import com.picoo.camera.discovery.PairedAutoConnect
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.QrCodeScanner
@@ -174,6 +176,8 @@ private fun SenderHomeScreen(
     var pairedDevicesText by remember { mutableStateOf("") }
     var selectedReceiverId by remember { mutableStateOf("") }
     var trustedStoreHandle by remember { mutableLongStateOf(0L) }
+    val pairedReceiverIds = remember { mutableStateOf<Set<String>>(emptySet()) }
+    val autoConnectAttemptedIds = remember { mutableStateOf<Set<String>>(emptySet()) }
     var qrJsonText by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
     var remoteMirrored by remember { mutableStateOf(false) }
@@ -264,8 +268,7 @@ private fun SenderHomeScreen(
         val (width, height) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
         val bitrate = when {
             adaptiveBitrateBps > 0 -> adaptiveBitrateBps
-            width >= 1920 -> 6_000_000
-            else -> 3_000_000
+            else -> MediaBitrate.forResolution(width, height)
         }
         val sets = parameterSetsRef.get()
         PicooNative.setStreamConfig(
@@ -316,14 +319,17 @@ private fun SenderHomeScreen(
             PicooNative.destroyTrustedStore(trustedStoreHandle)
         }
         trustedStoreHandle = PicooNative.loadTrustedStore(trustedStorePath)
+        val ids = linkedSetOf<String>()
         pairedDevicesText = buildString {
             if (trustedStoreHandle == 0L) return@buildString
             val count = PicooNative.getTrustedDeviceCount(trustedStoreHandle)
             for (index in 0 until count) {
                 val device = PicooNative.getTrustedDevice(trustedStoreHandle, index) ?: continue
+                ids.add(device.deviceId)
                 append("${device.deviceName} (${device.deviceId})\n")
             }
         }.trim()
+        pairedReceiverIds.value = ids
     }
 
     LaunchedEffect(senderHandle, trustedStorePath) {
@@ -331,6 +337,27 @@ private fun SenderHomeScreen(
             PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
         }
         reloadTrustedStore()
+    }
+
+    // PUC-002: once a paired receiver appears in NSD, connect without requiring a tap.
+    LaunchedEffect(discoveredList, pairedReceiverIds.value, senderStatus) {
+        val sessionBusy = when (senderStatus) {
+            PicooNative.STATUS_DISCONNECTED,
+            PicooNative.STATUS_DISCOVERING,
+            -> false
+            else -> true
+        }
+        val pick = PairedAutoConnect.pick(
+            discovered = discoveredList,
+            pairedReceiverIds = pairedReceiverIds.value,
+            sessionBusy = sessionBusy,
+            alreadyAttemptedIds = autoConnectAttemptedIds.value,
+        ) ?: return@LaunchedEffect
+        autoConnectAttemptedIds.value = autoConnectAttemptedIds.value + pick.receiverId
+        hostText = pick.host
+        portText = pick.quicPort.toString()
+        selectedReceiverId = pick.receiverId
+        connectToReceiver(pick.host, pick.quicPort, pick.receiverId)
     }
 
     val keepScreenOn = when (senderStatus) {

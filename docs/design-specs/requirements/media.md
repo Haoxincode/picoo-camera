@@ -2,7 +2,7 @@
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
-| REQ-PICOO-MEDIA-001 | proposed | PUC-005 | Android Camera2 + MediaCodec InputSurface 硬件 H.264 | 真机预览+编码 |
+| REQ-PICOO-MEDIA-001 | implemented | PUC-005 | Android Camera2 + MediaCodec InputSurface 硬件 H.264 | `Camera2MediaEncoder` + `MediaBitrate` 单元测试（真机预览/编码仍待） |
 | REQ-PICOO-MEDIA-002 | implemented | PUC-005 | 720p30 / 1080p30 能力协商与回退 | Capabilities + Android max-height 钳制 |
 | REQ-PICOO-MEDIA-003 | implemented | PUC-005 | 前后摄切换触发 stream_epoch 递增与 IDR | Android epoch++；Receiver epoch↑→清 jitter/reassembly + RequestKeyframe |
 | REQ-PICOO-MEDIA-004 | implemented | PUC-005 | 本机预览镜像与远端输出镜像独立 | Android local vs remote；Receiver `nv12_mirror_horizontal` 应用 `StreamConfig.mirrored` |

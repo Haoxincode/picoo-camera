@@ -38,6 +38,7 @@ enum DesktopPage {
 pub struct PicooDesktopApp {
     runtime: ReceiverRuntime,
     prefs: DesktopPreferences,
+    tray_policy: crate::tray::TrayPolicy,
     page: DesktopPage,
     show_qr: bool,
     pump_started: bool,
@@ -68,7 +69,8 @@ impl PicooDesktopApp {
         };
         Self {
             runtime,
-            prefs,
+            prefs: prefs.clone(),
+            tray_policy: crate::tray::TrayPolicy::from_pref(prefs.minimize_to_tray),
             page,
             show_qr: true,
             pump_started: false,
@@ -86,6 +88,12 @@ impl PicooDesktopApp {
 
     fn snapshot(&self) -> ReceiverSnapshot {
         self.runtime.snapshot()
+    }
+
+    /// Close-button policy from settings (REQ-PICOO-UI-008). Win32 notify icon still pending.
+    #[allow(dead_code)] // consulted when window-close / Shell_NotifyIcon hook lands.
+    fn close_action(&self) -> crate::tray::CloseAction {
+        self.tray_policy.on_close_requested()
     }
 
     fn ensure_qr_image(&mut self, snapshot: &ReceiverSnapshot) {
@@ -577,9 +585,8 @@ impl PicooDesktopApp {
                             .label("最小化到托盘")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.minimize_to_tray = *checked;
+                                this.tray_policy = crate::tray::TrayPolicy::from_pref(*checked);
                                 let _ = this.persist_prefs();
-                                // Policy is consulted on close; Win32 notify icon lands with shell.
-                                let _ = crate::tray::TrayPolicy::from_pref(*checked);
                                 cx.notify();
                             })),
                     )

@@ -41,6 +41,15 @@ pub enum TrayMenuAction {
     Quit,
 }
 
+impl TrayMenuAction {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Show => "Show Picoo Camera",
+            Self::Quit => "Quit",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,5 +68,11 @@ mod tests {
             TrayPolicy::from_pref(false).on_close_requested(),
             CloseAction::Quit
         );
+    }
+
+    #[test]
+    fn tray_menu_labels_are_stable() {
+        assert_eq!(TrayMenuAction::Show.label(), "Show Picoo Camera");
+        assert_eq!(TrayMenuAction::Quit.label(), "Quit");
     }
 }
