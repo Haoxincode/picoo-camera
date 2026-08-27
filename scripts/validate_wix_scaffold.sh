@@ -36,10 +36,11 @@ need "$WXS" 'UpgradeCode="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E70"'
 need "$WXS" 'PicooVirtualCameraSource.dll'
 need "$WXS" 'picoo-desktop.exe'
 need "$WXS" 'picoo-vcam-ring-reader.exe'
-need "$WXS" 'regsvr32 /s'
-need "$WXS" 'regsvr32 /u /s'
+need "$WXS" 'SystemFolder]regsvr32.exe'
 need "$WXS" 'RegisterVcamDll'
 need "$WXS" 'UnregisterVcamDll'
+need "$WXS" 'FirewallQuic'
+need "$WXS" 'KeyPath="yes"'
 need "$WXS" 'Return="check"'
 need "$WXS" 'MajorUpgrade'
 need "$WXS" 'StartMenuDesktop'
@@ -56,6 +57,14 @@ need "$WXS" 'fw:FirewallException'
 need "$WXS" 'Port="4433"'
 need "$WXS" 'Picoo Camera QUIC'
 need "$WXS" 'Protocol="udp"'
+
+# DEFAULT_QUIC_PORT in Rust must stay aligned with WiX FirewallException.
+HOST_RS="$ROOT/crates/picoo-discovery/src/host.rs"
+need "$HOST_RS" 'DEFAULT_QUIC_PORT: u16 = 4433'
+if ! grep -qE 'Port="4433"' "$WXS"; then
+  echo "port drift: WiX FirewallException must use Port=4433"
+  fail=1
+fi
 
 # COM CLSID must stay identical across C++ / Rust / register script.
 need "$VCAM_IDS" "$CLSID"

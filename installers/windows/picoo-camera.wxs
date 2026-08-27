@@ -15,18 +15,18 @@
       <ComponentGroupRef Id="ProductComponents" />
     </Feature>
 
-    <!-- CustomAction: regsvr32 PicooVirtualCameraSource.dll after install -->
+    <!-- CustomAction: SystemFolder\regsvr32 so deferred elevated install finds the tool. -->
     <CustomAction
         Id="RegisterVcamDll"
         Directory="INSTALLFOLDER"
-        ExeCommand="regsvr32 /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
+        ExeCommand="&quot;[SystemFolder]regsvr32.exe&quot; /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
         Execute="deferred"
         Impersonate="no"
         Return="check" />
     <CustomAction
         Id="UnregisterVcamDll"
         Directory="INSTALLFOLDER"
-        ExeCommand="regsvr32 /u /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
+        ExeCommand="&quot;[SystemFolder]regsvr32.exe&quot; /u /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
         Execute="deferred"
         Impersonate="no"
         Return="check" />
@@ -76,6 +76,13 @@
       </Component>
       <!-- REQ-PICOO-VCAM-004 / PRD §19.3: UDP firewall for QUIC (port matches DEFAULT_QUIC_PORT). -->
       <Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74">
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\Picoo\PicooCamera"
+            Name="firewall_quic"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
         <fw:FirewallException
             Id="PicooQuicUdp"
             Name="Picoo Camera QUIC"

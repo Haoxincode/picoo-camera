@@ -58,11 +58,16 @@ jobs:
       - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install WiX v4
+      - name: Install WiX v5
+        shell: pwsh
         run: |
-          dotnet tool install --global wix
+          # Pin WiX 5.x: avoids WiX 7 OSMF EULA (WIX7015) on clean CI agents.
+          dotnet tool install --global wix --version 5.0.2 --verbosity quiet
+          $tools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          $env:Path = "$tools;$env:Path"
           wix --version
-          wix extension add WixToolset.Firewall.wixext
+          wix extension add WixToolset.Firewall.wixext/5.0.2
       - run: cargo run -p xtask -- build windows
       - name: Package Windows + MSI
         env:

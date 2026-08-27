@@ -23,7 +23,11 @@ if (-not (Get-Command wix -ErrorAction SilentlyContinue)) {
 }
 
 # Ensure Firewall extension for fw:FirewallException (REQ-PICOO-VCAM-004).
-& wix extension add WixToolset.Firewall.wixext 2>$null | Out-Null
+# Prefer 5.0.2 to match CI; fall back to unpinned if pin unavailable.
+& wix extension add WixToolset.Firewall.wixext/5.0.2 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    & wix extension add WixToolset.Firewall.wixext 2>$null | Out-Null
+}
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Msi = Join-Path $OutDir "PicooCamera.msi"
@@ -31,7 +35,12 @@ $Msi = Join-Path $OutDir "PicooCamera.msi"
 Write-Host "Building MSI from $Wxs with bindpath Bundle=$Bundle"
 & wix build $Wxs -ext WixToolset.Firewall.wixext -o $Msi -b Bundle=$Bundle
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "wix build failed with exit code $LASTEXITCODE"
+    # WiX 7+ requires OSMF EULA acceptance (WIX7015).
+    Write-Host "Retrying wix build with -acceptEula wix7 (WiX 7+)"
+    & wix build $Wxs -ext WixToolset.Firewall.wixext -o $Msi -b Bundle=$Bundle -acceptEula wix7
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "wix build failed with exit code $LASTEXITCODE"
+    }
 }
 
 if (-not (Test-Path $Msi)) {
