@@ -165,8 +165,8 @@ fn run_list_paired() {
                 println!(
                     "{} | {} | fp={} | last={:?}",
                     device.device_id,
-                    device.device_name,
-                    device.certificate_fingerprint,
+                    picoo_diagnostics::redact_device_name(&device.device_name),
+                    picoo_diagnostics::redact_fingerprint(&device.certificate_fingerprint),
                     device.last_connected_at_ms
                 );
             }
@@ -272,7 +272,9 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
             for device in receiver.trusted_devices().list() {
                 println!(
                     "{} | {} | fp={}",
-                    device.device_id, device.device_name, device.certificate_fingerprint
+                    device.device_id,
+                    picoo_diagnostics::redact_device_name(&device.device_name),
+                    picoo_diagnostics::redact_fingerprint(&device.certificate_fingerprint)
                 );
             }
         }

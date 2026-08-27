@@ -19,7 +19,16 @@ pub fn export_diagnostics_to_file(
     status: ReceiverStatus,
     ingress: IngressStats,
 ) -> Result<DiagnosticsExportResult, String> {
-    let json = build_diagnostics_json(status, ingress)?;
+    export_diagnostics_to_file_with_hosts(out_path, status, ingress, &[])
+}
+
+pub fn export_diagnostics_to_file_with_hosts(
+    out_path: &str,
+    status: ReceiverStatus,
+    ingress: IngressStats,
+    hosts: &[String],
+) -> Result<DiagnosticsExportResult, String> {
+    let json = build_diagnostics_json(status, ingress, hosts)?;
     std::fs::write(out_path, &json).map_err(|err| format!("write {out_path}: {err}"))?;
     Ok(DiagnosticsExportResult {
         path: Some(out_path.to_string()),
@@ -31,10 +40,14 @@ pub fn export_diagnostics_json(
     status: ReceiverStatus,
     ingress: IngressStats,
 ) -> Result<String, String> {
-    build_diagnostics_json(status, ingress)
+    build_diagnostics_json(status, ingress, &[])
 }
 
-fn build_diagnostics_json(status: ReceiverStatus, ingress: IngressStats) -> Result<String, String> {
+fn build_diagnostics_json(
+    status: ReceiverStatus,
+    ingress: IngressStats,
+    hosts: &[String],
+) -> Result<String, String> {
     let trusted_path = default_trusted_store_path();
     let store = TrustedDeviceStore::load_from_path(&trusted_path)
         .map_err(|err| format!("load trusted store {}: {err}", trusted_path.display()))?;
@@ -54,8 +67,10 @@ fn build_diagnostics_json(status: ReceiverStatus, ingress: IngressStats) -> Resu
             ingress_access_units: ingress.access_units,
             ingress_packets_received: ingress.packets_received,
             ingress_packets_dropped_unpaired: ingress.packets_dropped_unpaired,
+            hosts: Vec::new(),
         }),
         trusted_devices: store.list().cloned().collect(),
+        hosts: hosts.to_vec(),
         ..Default::default()
     });
 

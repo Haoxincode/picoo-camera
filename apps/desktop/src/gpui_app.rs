@@ -19,7 +19,7 @@ use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 use smallvec::smallvec;
 
-use crate::diagnostics_export::export_diagnostics_to_file;
+use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::model::VirtualCameraStatus;
 use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
 use crate::qr_display;
@@ -146,10 +146,15 @@ impl PicooDesktopApp {
     fn export_diagnostics(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.snapshot();
         let out_path = default_diagnostics_path();
-        match export_diagnostics_to_file(
+        let mut hosts = Vec::new();
+        if let Some(addr) = snapshot.bind_addr {
+            hosts.push(addr.to_string());
+        }
+        match export_diagnostics_to_file_with_hosts(
             &out_path.to_string_lossy(),
             snapshot.status,
             snapshot.ingress,
+            &hosts,
         ) {
             Ok(result) => {
                 self.diagnostics_error = None;
@@ -644,8 +649,15 @@ impl PicooDesktopApp {
             .child(
                 div()
                     .v_flex()
-                    .child(format!("{} ({})", device.device_name, device.device_id))
-                    .child(format!("fp={}", device.certificate_fingerprint)),
+                    .child(format!(
+                        "{} ({})",
+                        picoo_diagnostics::redact_device_name(&device.device_name),
+                        picoo_diagnostics::redact_device_id(&device.device_id)
+                    ))
+                    .child(format!(
+                        "fp={}",
+                        picoo_diagnostics::redact_fingerprint(&device.certificate_fingerprint)
+                    )),
             )
             .child(div().flex_1())
             .child(

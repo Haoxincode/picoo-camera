@@ -39,6 +39,9 @@ pub struct DiagnosticSessionSnapshot {
     pub ingress_access_units: u64,
     pub ingress_packets_received: u64,
     pub ingress_packets_dropped_unpaired: u64,
+    /// Optional bind / peer hosts (IPv4), redacted when policy.redact_ips.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hosts: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -71,6 +74,8 @@ pub struct DiagnosticInput {
     pub redaction: RedactionPolicy,
     pub session: Option<DiagnosticSessionSnapshot>,
     pub trusted_devices: Vec<TrustedDevice>,
+    /// Raw hosts to attach to session (will be redacted).
+    pub hosts: Vec<String>,
 }
 
 pub fn redact_ipv4(ip: &str) -> String {
@@ -79,6 +84,33 @@ pub fn redact_ipv4(ip: &str) -> String {
         return format!("{}.{}.xxx.xxx", parts[0], parts[1]);
     }
     "xxx.xxx.xxx.xxx".into()
+}
+
+/// Redact a host that may be `ip`, `ip:port`, or a hostname.
+pub fn redact_host(host: &str, redact_ips: bool) -> String {
+    if !redact_ips {
+        return host.to_string();
+    }
+    let (addr, port) = match host.rsplit_once(':') {
+        Some((addr, port)) if port.chars().all(|c| c.is_ascii_digit()) => (addr, Some(port)),
+        _ => (host, None),
+    };
+    // Strip IPv6 brackets if present.
+    let addr = addr.trim_start_matches('[').trim_end_matches(']');
+    let redacted = if addr.split('.').count() == 4 {
+        redact_ipv4(addr)
+    } else if addr.contains(':') {
+        // IPv6 — coarse redaction.
+        "xxxx:xxxx:xxxx:xxxx::".into()
+    } else {
+        // Hostname — keep first label only.
+        let label = addr.split('.').next().unwrap_or(addr);
+        format!("{}.***", redact_device_name(label).trim_end_matches('*'))
+    };
+    match port {
+        Some(p) => format!("{redacted}:{p}"),
+        None => redacted,
+    }
 }
 
 pub fn redact_device_name(name: &str) -> String {
@@ -137,6 +169,29 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
         || input.redaction.redact_device_names
         || input.redaction.redact_fingerprints;
 
+    let mut session = input.session;
+    if let Some(ref mut snap) = session {
+        let mut hosts = snap.hosts.clone();
+        hosts.extend(input.hosts.iter().cloned());
+        snap.hosts = hosts
+            .into_iter()
+            .map(|h| redact_host(&h, input.redaction.redact_ips))
+            .collect();
+    } else if !input.hosts.is_empty() {
+        session = Some(DiagnosticSessionSnapshot {
+            role: "unknown".into(),
+            status: "unknown".into(),
+            ingress_access_units: 0,
+            ingress_packets_received: 0,
+            ingress_packets_dropped_unpaired: 0,
+            hosts: input
+                .hosts
+                .iter()
+                .map(|h| redact_host(h, input.redaction.redact_ips))
+                .collect(),
+        });
+    }
+
     DiagnosticReport {
         version: REPORT_VERSION,
         exported_at_ms: input.exported_at_ms,
@@ -145,7 +200,7 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
         protocol_version: ALPN.into(),
         redaction_enabled,
         includes_video: false,
-        session: input.session,
+        session,
         trusted_devices: input
             .trusted_devices
             .iter()
@@ -167,6 +222,8 @@ mod tests {
         assert_eq!(redact_ipv4("192.168.1.42"), "192.168.xxx.xxx");
         assert_eq!(redact_device_name("Pixel 9 Pro"), "P***");
         assert_eq!(redact_fingerprint("abcdef0123456789"), "abcdef01…");
+        assert_eq!(redact_host("10.0.0.5:4433", true), "10.0.xxx.xxx:4433");
+        assert_eq!(redact_host("10.0.0.5:4433", false), "10.0.0.5:4433");
     }
 
     #[test]
@@ -207,5 +264,30 @@ mod tests {
         let json = export_json(&report).expect("json");
         assert!(!json.contains("Picoo Camera"));
         assert!(!json.contains("deadbeefcafebabe"));
+    }
+
+    #[test]
+    fn session_hosts_are_redacted_in_export_json() {
+        // REQ-PICOO-PRIVACY-003: raw LAN IPs must not appear in default export.
+        let report = build_report(DiagnosticInput {
+            platform: "linux".into(),
+            app_version: "0.1.0".into(),
+            exported_at_ms: 1,
+            session: Some(DiagnosticSessionSnapshot {
+                role: "receiver".into(),
+                status: "Streaming".into(),
+                ingress_access_units: 1,
+                ingress_packets_received: 2,
+                ingress_packets_dropped_unpaired: 0,
+                hosts: vec!["192.168.1.42:4433".into()],
+            }),
+            hosts: vec!["10.0.0.7".into()],
+            ..Default::default()
+        });
+        let hosts = &report.session.as_ref().unwrap().hosts;
+        assert!(hosts.iter().all(|h| h.contains("xxx")));
+        let json = export_json(&report).expect("json");
+        assert!(!json.contains("192.168.1.42"));
+        assert!(!json.contains("10.0.0.7"));
     }
 }
