@@ -176,7 +176,44 @@ impl ReceiverRuntime {
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_display_name(&mut self, name: String) {
         self.display_name = name.clone();
-        self.receiver.set_display_name(name);
+        self.receiver.set_display_name(name.clone());
+        // Persist renamed display name into durable identity (REQ-PICOO-UI-002 / DISCOVERY-001).
+        if let Ok(mut identity) =
+            DeviceIdentity::load_or_create(default_identity_path(), &name)
+        {
+            if identity.device_name != name {
+                identity.set_device_name(&name);
+                let _ = identity.save_to_path(default_identity_path());
+            }
+        }
+        self.refresh_mdns_advertisement();
+    }
+
+    /// Re-register mDNS with current display name / TXT (keeps bind port).
+    fn refresh_mdns_advertisement(&mut self) {
+        let Some(bind) = self.bind_addr else {
+            return;
+        };
+        let Some(advertiser) = self.mdns.as_mut() else {
+            return;
+        };
+        let identity = self.receiver.identity();
+        let fingerprint_prefix = public_key_fingerprint_prefix(&identity.public_key);
+        let advertisement = ReceiverAdvertisement::new(
+            identity.receiver_id.clone(),
+            self.display_name.clone(),
+            bind.port(),
+            fingerprint_prefix,
+        );
+        if let Err(err) = advertiser.register("127.0.0.1", &advertisement) {
+            tracing::warn!("mDNS re-advertise failed after rename: {err}");
+        } else {
+            tracing::info!(
+                "mDNS re-advertising {} on port {}",
+                advertisement.display_name,
+                bind.port()
+            );
+        }
     }
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]

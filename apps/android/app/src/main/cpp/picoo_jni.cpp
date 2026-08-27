@@ -834,16 +834,21 @@ Java_com_picoo_camera_jni_PicooNative_getDiscoveredReceiver(
     if (cls == nullptr) {
         return nullptr;
     }
-    jmethodID ctor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V");
+    jmethodID ctor = env->GetMethodID(
+        cls,
+        "<init>",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;)V");
     if (ctor == nullptr) {
         return nullptr;
     }
 
+    jstring pairingState = makeJString(env, reinterpret_cast<const char *>(item.pairing_state));
     return env->NewObject(
         cls,
         ctor,
         makeJString(env, reinterpret_cast<const char *>(item.receiver_id)),
         makeJString(env, reinterpret_cast<const char *>(item.display_name)),
         makeJString(env, reinterpret_cast<const char *>(item.host)),
-        static_cast<jint>(item.quic_port));
+        static_cast<jint>(item.quic_port),
+        pairingState);
 }

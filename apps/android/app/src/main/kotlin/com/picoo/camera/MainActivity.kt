@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.picoo.camera.discovery.DiscoveredReceiverRow
 import com.picoo.camera.discovery.NsdReceiverBrowser
 import com.picoo.camera.discovery.PairedAutoConnect
 import com.picoo.camera.jni.PicooNative
@@ -603,6 +604,8 @@ private fun SenderHomeScreen(
                 if (discoveredList.isNotEmpty()) {
                     Text(text = "Discovered (NSD):", style = MaterialTheme.typography.bodySmall)
                     discoveredList.forEach { receiver ->
+                        val locallyTrusted =
+                            pairedReceiverIds.value.contains(receiver.receiverId)
                         Button(
                             onClick = {
                                 hostText = receiver.host
@@ -612,7 +615,12 @@ private fun SenderHomeScreen(
                             },
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Text("${receiver.displayName} (${receiver.host}:${receiver.quicPort})")
+                            Text(
+                                DiscoveredReceiverRow.format(
+                                    receiver,
+                                    locallyTrusted,
+                                ),
+                            )
                         }
                     }
                 } else {

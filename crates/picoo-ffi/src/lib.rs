@@ -652,6 +652,8 @@ pub struct PicooDiscoveredReceiver {
     pub display_name: [u8; 64],
     pub host: [u8; 64],
     pub quic_port: u16,
+    /// TXT `pairing_state` (`open` / `paired_only`); empty if unknown.
+    pub pairing_state: [u8; 32],
 }
 
 fn write_field(buf: &mut [u8], value: &str) {
@@ -939,10 +941,15 @@ pub extern "C" fn picoo_discovery_browser_poll(
             display_name: [0; 64],
             host: [0; 64],
             quic_port: entry.advertisement.quic_port,
+            pairing_state: [0; 32],
         };
         write_field(&mut item.receiver_id, &entry.advertisement.receiver_id);
         write_field(&mut item.display_name, &entry.advertisement.display_name);
         write_field(&mut item.host, &entry.host);
+        write_field(
+            &mut item.pairing_state,
+            entry.advertisement.pairing_state.as_str(),
+        );
         cached.push(item);
     }
     cached.len() as i32

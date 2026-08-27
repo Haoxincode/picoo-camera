@@ -7,6 +7,8 @@
 
 use std::sync::Mutex;
 
+use picoo_session::ReceiverStatus;
+
 /// How the main window should react to a close request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseAction {
@@ -66,11 +68,31 @@ pub enum TrayMenuAction {
     Quit,
 }
 
+/// Side-effects for a tray menu selection (applied by GPUI / Win32 pump).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrayMenuOutcome {
+    pub restore_window: bool,
+    pub quit: bool,
+}
+
 impl TrayMenuAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::Show => "Show Picoo Camera",
             Self::Quit => "Quit",
+        }
+    }
+
+    pub fn apply(self) -> TrayMenuOutcome {
+        match self {
+            Self::Show => TrayMenuOutcome {
+                restore_window: true,
+                quit: false,
+            },
+            Self::Quit => TrayMenuOutcome {
+                restore_window: false,
+                quit: true,
+            },
         }
     }
 }
@@ -129,6 +151,18 @@ impl NotifyIconController {
         self.tip = tip.to_string();
         self.ops.push(op);
         self.apply_win32(op);
+    }
+
+    /// Update tip while icon remains visible (status pump → live tip).
+    pub fn set_tip(&mut self, tip: &str) {
+        if self.tip == tip {
+            return;
+        }
+        self.tip = tip.to_string();
+        if self.visible {
+            self.ops.push(NotifyIconOp::Modify);
+            self.apply_win32(NotifyIconOp::Modify);
+        }
     }
 
     pub fn hide(&mut self) {
@@ -216,6 +250,11 @@ impl NotifyIconController {
     }
 }
 
+/// Hover tip text derived from receiver session status (REQ-PICOO-UI-008).
+pub fn tip_for_status(status: ReceiverStatus) -> String {
+    format!("Picoo Camera — {}", status.as_label())
+}
+
 static NOTIFY_ICON: Mutex<NotifyIconController> = Mutex::new(NotifyIconController {
     visible: false,
     tip: String::new(),
@@ -223,16 +262,36 @@ static NOTIFY_ICON: Mutex<NotifyIconController> = Mutex::new(NotifyIconControlle
     ops: Vec::new(),
 });
 
+static PENDING_MENU_ACTION: Mutex<Option<TrayMenuAction>> = Mutex::new(None);
+
 /// Soft notify that the UI hid to tray; records Shell_NotifyIcon ADD/MODIFY intent.
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub fn note_hidden_to_tray() {
+    note_hidden_to_tray_with_tip("Picoo Camera");
+}
+
+/// Hide-to-tray with a live status tip (preferred from GPUI close handler).
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn note_hidden_to_tray_with_tip(tip: &str) {
     if let Ok(mut icon) = NOTIFY_ICON.lock() {
-        icon.show("Picoo Camera");
+        icon.show(tip);
     }
     tracing::info!(
         target: "picoo_tray",
+        tip = %tip,
         "window close → hide to tray (REQ-PICOO-UI-008); Shell_NotifyIcon HWND optional"
     );
+}
+
+/// Keep tray tip in sync while the icon is visible (status pump).
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn sync_tray_tip(status: ReceiverStatus) {
+    let tip = tip_for_status(status);
+    if let Ok(mut icon) = NOTIFY_ICON.lock() {
+        if icon.is_visible() {
+            icon.set_tip(&tip);
+        }
+    }
 }
 
 /// Clear tray icon when quitting (Windows `NIM_DELETE` when HWND is known).
@@ -243,12 +302,26 @@ pub fn note_tray_cleared() {
     }
 }
 
-/// Test / GPUI hook: provide HWND once the platform window exists.
+/// Test / GPUI / Win32 hook: provide HWND once the platform window exists.
 #[allow(dead_code)]
 pub fn set_notify_icon_hwnd(hwnd: Option<isize>) {
     if let Ok(mut icon) = NOTIFY_ICON.lock() {
         icon.set_hwnd(hwnd);
     }
+}
+
+/// Queue a context-menu action (Win32 menu → GPUI pump).
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn enqueue_menu_action(action: TrayMenuAction) {
+    if let Ok(mut slot) = PENDING_MENU_ACTION.lock() {
+        *slot = Some(action);
+    }
+}
+
+/// Drain one pending tray menu action for the GPUI / app pump.
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn take_pending_menu_action() -> Option<TrayMenuAction> {
+    PENDING_MENU_ACTION.lock().ok()?.take()
 }
 
 #[cfg(test)]
@@ -292,6 +365,36 @@ mod tests {
     }
 
     #[test]
+    fn tray_menu_apply_show_and_quit() {
+        assert_eq!(
+            TrayMenuAction::Show.apply(),
+            TrayMenuOutcome {
+                restore_window: true,
+                quit: false,
+            }
+        );
+        assert_eq!(
+            TrayMenuAction::Quit.apply(),
+            TrayMenuOutcome {
+                restore_window: false,
+                quit: true,
+            }
+        );
+    }
+
+    #[test]
+    fn tip_for_status_includes_label() {
+        assert_eq!(
+            tip_for_status(ReceiverStatus::Streaming),
+            "Picoo Camera — Streaming"
+        );
+        assert_eq!(
+            tip_for_status(ReceiverStatus::Discovering),
+            "Picoo Camera — Discovering"
+        );
+    }
+
+    #[test]
     fn notify_icon_records_add_modify_delete() {
         let mut icon = NotifyIconController::new();
         icon.show("Picoo Camera");
@@ -311,12 +414,44 @@ mod tests {
     }
 
     #[test]
+    fn set_tip_modifies_when_visible() {
+        let mut icon = NotifyIconController::new();
+        icon.show("Picoo Camera — Discovering");
+        icon.take_ops();
+        icon.set_tip("Picoo Camera — Streaming");
+        assert_eq!(icon.take_ops(), vec![NotifyIconOp::Modify]);
+        assert_eq!(icon.tip(), "Picoo Camera — Streaming");
+        icon.set_tip("Picoo Camera — Streaming"); // no-op
+        assert!(icon.take_ops().is_empty());
+    }
+
+    #[test]
     fn note_hidden_to_tray_shows_global_icon() {
         note_tray_cleared();
-        note_hidden_to_tray();
+        note_hidden_to_tray_with_tip("Picoo Camera — Discovering");
         let icon = NOTIFY_ICON.lock().expect("lock");
         assert!(icon.is_visible());
-        assert_eq!(icon.tip(), "Picoo Camera");
+        assert_eq!(icon.tip(), "Picoo Camera — Discovering");
         assert!(icon.ops.contains(&NotifyIconOp::Add) || icon.ops.contains(&NotifyIconOp::Modify));
+    }
+
+    #[test]
+    fn sync_tray_tip_updates_while_visible() {
+        note_tray_cleared();
+        note_hidden_to_tray_with_tip("Picoo Camera — Discovering");
+        sync_tray_tip(ReceiverStatus::Streaming);
+        let icon = NOTIFY_ICON.lock().expect("lock");
+        assert_eq!(icon.tip(), "Picoo Camera — Streaming");
+    }
+
+    #[test]
+    fn enqueue_and_take_menu_action() {
+        let _ = take_pending_menu_action();
+        enqueue_menu_action(TrayMenuAction::Show);
+        assert_eq!(take_pending_menu_action(), Some(TrayMenuAction::Show));
+        assert_eq!(take_pending_menu_action(), None);
+        enqueue_menu_action(TrayMenuAction::Quit);
+        let outcome = take_pending_menu_action().unwrap().apply();
+        assert!(outcome.quit);
     }
 }

@@ -233,6 +233,17 @@ impl PicooDesktopApp {
                         this.video_surface.update_from_slot(slot);
                     }
                     let snapshot = this.runtime.snapshot();
+                    // REQ-PICOO-UI-008: live tip while hidden to tray.
+                    crate::tray::sync_tray_tip(snapshot.status);
+                    if let Some(action) = crate::tray::take_pending_menu_action() {
+                        let outcome = action.apply();
+                        if outcome.quit {
+                            crate::tray::note_tray_cleared();
+                            cx.quit();
+                        } else if outcome.restore_window {
+                            cx.activate(true);
+                        }
+                    }
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
                         if this.page != DesktopPage::Settings
                             && this.page != DesktopPage::FirstLaunch
@@ -805,15 +816,20 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 window.on_window_should_close(cx, move |window, cx| {
                     let outcome = tray_view.read(cx).close_outcome();
                     if outcome.hide_to_tray {
-                        crate::tray::note_hidden_to_tray();
+                        let status = tray_view.read(cx).runtime.snapshot().status;
+                        let tip = crate::tray::tip_for_status(status);
+                        crate::tray::note_hidden_to_tray_with_tip(&tip);
                         // App-level hide keeps the process; minimize covers hosts
                         // where hide() is a no-op until Shell_NotifyIcon lands.
                         cx.hide();
                         window.minimize_window();
                         return false;
                     }
+                    crate::tray::note_tray_cleared();
                     outcome.allow_close
                 });
+                // HWND injection hook for Shell_NotifyIconW (Windows FindWindowW fallback).
+                crate::tray::set_notify_icon_hwnd(None);
                 cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
             },
         )

@@ -200,6 +200,8 @@ object PicooNative {
         val displayName: String,
         val host: String,
         val quicPort: Int,
+        /** TXT `pairing_state` (`open` / `paired_only`); null if absent. */
+        val pairingState: String? = null,
     )
 
     data class TrustedDevice(
