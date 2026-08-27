@@ -19,6 +19,7 @@ jobs:
       - run: bash scripts/check-docs.sh
       - run: bash scripts/validate_wix_scaffold.sh
       - run: bash scripts/test_vcam_format.sh
+      - run: bash scripts/check_discovery_txt_keys.sh
       - run: cargo run -p xtask -- test protocol
 
   android:
