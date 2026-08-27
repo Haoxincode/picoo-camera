@@ -47,4 +47,10 @@ if (Test-Path $RegisterScript) {
     Write-Host "Staged register-vcam.ps1"
 }
 
+$BuildMsi = Join-Path $Root "installers/windows/build-msi.ps1"
+if (Test-Path $BuildMsi) {
+    Write-Host "Attempting MSI build (optional; requires WiX)"
+    & powershell -ExecutionPolicy Bypass -File $BuildMsi
+}
+
 Write-Host "Bundle ready: $Bundle"
