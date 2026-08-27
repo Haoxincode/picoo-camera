@@ -73,6 +73,9 @@ jobs:
         env:
           PICOO_REQUIRE_MSI: "1"
         run: cargo run -p xtask -- package windows
+      - name: Verify Windows bundle smoke (VCAM-001)
+        shell: pwsh
+        run: ./scripts/verify_windows_bundle.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: windows-bundle
