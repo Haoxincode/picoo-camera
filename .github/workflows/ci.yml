@@ -5,6 +5,10 @@ on:
     branches: [main, 'cursor/**']
   pull_request:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-and-docs:
     runs-on: ubuntu-latest
