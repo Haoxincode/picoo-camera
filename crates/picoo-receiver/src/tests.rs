@@ -15,6 +15,55 @@ fn loopback_sender_to_receiver_frame_hub() {
 }
 
 #[test]
+fn single_decode_per_access_unit_into_frame_hub() {
+    // REQ-PICOO-MEDIA-006: one decode invocation per reassembled AU (hub fans out).
+    let payload = b"single-decode-au";
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.set_permit_unpaired_video(true);
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .ingest_and_flush(payload, true, 1, 1)
+        .expect("ingest");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.stats().access_units > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let stats = receiver.stats();
+    assert_eq!(stats.access_units, 1);
+    assert_eq!(stats.decode_invocations, 1);
+    assert!(receiver.latest_frame().is_some());
+}
+
+#[test]
 fn paired_loopback_reaches_frame_hub_without_unpaired_bypass() {
     let payload = b"paired-product-path-au";
     let frame = run_paired_loopback_access_unit(payload).expect("paired loopback");

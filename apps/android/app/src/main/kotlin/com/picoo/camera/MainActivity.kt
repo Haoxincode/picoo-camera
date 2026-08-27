@@ -51,22 +51,39 @@ import java.util.concurrent.atomic.AtomicReference
 
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
+    private var pendingAfterCameraGrant: (() -> Unit)? = null
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             cameraGranted = granted
+            val pending = pendingAfterCameraGrant
+            pendingAfterCameraGrant = null
+            if (granted) {
+                pending?.invoke()
+            }
         }
+
+    /** REQ-PICOO-UI-006: request CAMERA only when an action needs it. */
+    fun requestCameraPermission(then: (() -> Unit)? = null) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            cameraGranted = true
+            then?.invoke()
+            return
+        }
+        pendingAfterCameraGrant = then
+        permissionLauncher.launch(Manifest.permission.CAMERA)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // Observe current grant only — do not prompt on cold start (REQ-PICOO-UI-006).
         cameraGranted =
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED
-        if (!cameraGranted) {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        }
 
         val protocolVersion = runCatching { PicooNative.getProtocolVersion() }
             .getOrElse { "FFI unavailable: ${it.message}" }
@@ -77,6 +94,7 @@ class MainActivity : ComponentActivity() {
                     SenderHomeScreen(
                         protocolVersion = protocolVersion,
                         cameraGranted = cameraGranted,
+                        onRequestCamera = { then -> requestCameraPermission(then) },
                         modifier = Modifier.padding(innerPadding),
                     )
                 }
@@ -89,6 +107,7 @@ class MainActivity : ComponentActivity() {
 private fun SenderHomeScreen(
     protocolVersion: String,
     cameraGranted: Boolean,
+    onRequestCamera: (then: (() -> Unit)?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -112,6 +131,7 @@ private fun SenderHomeScreen(
     var qrJsonText by remember { mutableStateOf("") }
     var showQrScanner by remember { mutableStateOf(false) }
     var remoteMirrored by remember { mutableStateOf(false) }
+    var localPreviewMirrored by remember { mutableStateOf(true) }
     var resolutionLabel by remember { mutableStateOf("720p") }
     var powerHint by remember { mutableStateOf("") }
     var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
@@ -385,11 +405,22 @@ private fun SenderHomeScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Remote mirror")
+            Text("Remote mirror (sent to PC)")
             Switch(checked = remoteMirrored, onCheckedChange = {
                 remoteMirrored = it
                 applyStreamConfigToSender()
             })
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Local preview mirror")
+            Switch(
+                checked = localPreviewMirrored,
+                onCheckedChange = { localPreviewMirrored = it },
+            )
         }
 
         OutlinedTextField(
@@ -428,7 +459,11 @@ private fun SenderHomeScreen(
             }) {
                 Text("Connect from QR")
             }
-            Button(onClick = { showQrScanner = true }) {
+            Button(onClick = {
+                onRequestCamera {
+                    showQrScanner = true
+                }
+            }) {
                 Text("Scan QR")
             }
         }
@@ -494,6 +529,7 @@ private fun SenderHomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(240.dp),
+                mirrorLocal = localPreviewMirrored,
                 onSurfaceAvailable = { surface ->
                     encoder.bindPreviewSurface(surface)
                     encoderState = encoder.state
@@ -549,9 +585,16 @@ private fun SenderHomeScreen(
         } else {
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Camera permission required",
+                text = "Camera access is requested only when you enable preview or scan QR.",
                 modifier = Modifier.align(Alignment.CenterHorizontally),
+                style = MaterialTheme.typography.bodySmall,
             )
+            Button(
+                onClick = { onRequestCamera(null) },
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text("Enable camera")
+            }
         }
     }
 

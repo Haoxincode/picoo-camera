@@ -78,6 +78,8 @@ pub struct IngressStats {
     pub access_units: u64,
     pub packets_received: u64,
     pub packets_dropped_unpaired: u64,
+    /// Times the decoder was invoked (REQ-PICOO-MEDIA-006: once per AU).
+    pub decode_invocations: u64,
 }
 
 struct StatsReporter {
@@ -793,6 +795,7 @@ impl ReceiverSession {
     /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
+        self.ingress.decode_invocations += 1;
         match self
             .decoder
             .decode_access_unit(&access_unit, self.current_stream_config.as_ref())?
