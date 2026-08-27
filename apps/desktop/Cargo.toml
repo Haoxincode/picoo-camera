@@ -10,10 +10,12 @@ name = "picoo-desktop"
 path = "src/main.rs"
 
 [dependencies]
+picoo-discovery.workspace = true
 picoo-frame-hub.workspace = true
 picoo-metrics.workspace = true
 picoo-receiver.workspace = true
 picoo-session.workspace = true
+picoo-transport.workspace = true
 serde.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

@@ -9,10 +9,12 @@ license.workspace = true
 bytes.workspace = true
 picoo-frame-hub.workspace = true
 picoo-packet.workspace = true
+picoo-pairing.workspace = true
 picoo-protocol.workspace = true
 picoo-session.workspace = true
 picoo-sender.workspace = true
 picoo-transport.workspace = true
+prost.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

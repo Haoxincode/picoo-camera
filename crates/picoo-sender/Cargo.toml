@@ -10,6 +10,7 @@ bytes.workspace = true
 picoo-protocol.workspace = true
 picoo-packet.workspace = true
 picoo-transport.workspace = true
+prost.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

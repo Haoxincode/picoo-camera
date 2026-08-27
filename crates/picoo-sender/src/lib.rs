@@ -25,6 +25,8 @@ pub enum SenderError {
     Transport(#[from] TransportError),
     #[error("packet error: {0}")]
     Packet(#[from] VideoPacketError),
+    #[error("protocol: {0}")]
+    Protocol(String),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

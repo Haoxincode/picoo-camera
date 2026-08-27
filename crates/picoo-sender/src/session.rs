@@ -1,7 +1,10 @@
 //! Sender session: packetization + transport flush.
 
+use picoo_protocol::control::ClientHello;
 use picoo_protocol::VideoPacket;
+use picoo_protocol::ALPN;
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
+use prost::Message;
 
 use crate::{SenderError, SenderPipeline, SenderStats};
 
@@ -102,6 +105,32 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn pending_packets(&self) -> usize {
         self.pipeline.pending_packets().len()
+    }
+
+    pub fn send_client_hello(
+        &mut self,
+        sender_id: &str,
+        device_name: &str,
+        public_key: &[u8],
+    ) -> Result<(), SenderError> {
+        use bytes::Bytes;
+
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let hello = ClientHello {
+            sender_id: sender_id.into(),
+            device_name: device_name.into(),
+            protocol_version: ALPN.into(),
+            public_key: public_key.to_vec(),
+        };
+        let mut buf = Vec::new();
+        hello
+            .encode(&mut buf)
+            .map_err(|e| SenderError::Protocol(e.to_string()))?;
+        self.transport
+            .send_control(session, Bytes::from(buf))
+            .map_err(SenderError::Transport)?;
+        self.transport.pump().map_err(SenderError::Transport)?;
+        Ok(())
     }
 }
 

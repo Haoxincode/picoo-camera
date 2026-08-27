@@ -4,6 +4,7 @@ members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
   "crates/picoo-pairing",
+  "crates/picoo-discovery",
   "crates/picoo-session",
   "crates/picoo-transport",
   "crates/picoo-quiche",
@@ -39,6 +40,7 @@ tracing = "0.1"
 picoo-protocol = { path = "crates/picoo-protocol" }
 picoo-packet = { path = "crates/picoo-packet" }
 picoo-pairing = { path = "crates/picoo-pairing" }
+picoo-discovery = { path = "crates/picoo-discovery" }
 picoo-session = { path = "crates/picoo-session" }
 picoo-transport = { path = "crates/picoo-transport" }
 picoo-quiche = { path = "crates/picoo-quiche" }

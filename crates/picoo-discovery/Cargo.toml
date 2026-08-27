@@ -1,0 +1,15 @@
+[package]
+name = "picoo-discovery"
+description = "mDNS/DNS-SD discovery and QR fallback payloads for Picoo Camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mdns-sd = "0.13"
+picoo-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]

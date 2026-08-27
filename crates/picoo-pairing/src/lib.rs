@@ -1,5 +1,7 @@
 //! Pairing and trusted device storage — REQ-PICOO-PAIRING-*.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -40,6 +42,46 @@ pub fn verify_public_key(device: &TrustedDevice, observed_key: &[u8]) -> Result<
         Err(PairingError::PublicKeyMismatch {
             device_id: device.device_id.clone(),
         })
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TrustedDeviceStore {
+    devices: HashMap<String, TrustedDevice>,
+}
+
+impl TrustedDeviceStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, device_id: &str) -> Option<&TrustedDevice> {
+        self.devices.get(device_id)
+    }
+
+    pub fn list(&self) -> impl Iterator<Item = &TrustedDevice> {
+        self.devices.values()
+    }
+
+    pub fn upsert(&mut self, device: TrustedDevice) {
+        self.devices.insert(device.device_id.clone(), device);
+    }
+
+    pub fn remove(&mut self, device_id: &str) -> bool {
+        self.devices.remove(device_id).is_some()
+    }
+
+    pub fn is_paired(&self, device_id: &str) -> bool {
+        self.devices.contains_key(device_id)
+    }
+
+    pub fn verify_paired_key(
+        &self,
+        device_id: &str,
+        observed_key: &[u8],
+    ) -> Result<(), PairingError> {
+        let device = self.devices.get(device_id).ok_or(PairingError::NotPaired)?;
+        verify_public_key(device, observed_key)
     }
 }
 
