@@ -616,6 +616,7 @@ dependencies = [
 name = "picoo-desktop"
 version = "0.1.0"
 dependencies = [
+ "picoo-diagnostics",
  "picoo-discovery",
  "picoo-frame-hub",
  "picoo-metrics",
@@ -626,6 +627,17 @@ dependencies = [
  "serde",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "picoo-diagnostics"
+version = "0.1.0"
+dependencies = [
+ "picoo-pairing",
+ "picoo-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -644,6 +656,7 @@ name = "picoo-ffi"
 version = "0.1.0"
 dependencies = [
  "cbindgen",
+ "picoo-diagnostics",
  "picoo-discovery",
  "picoo-pairing",
  "picoo-protocol",

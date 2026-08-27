@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 picoo-discovery.workspace = true
+picoo-diagnostics.workspace = true
 picoo-frame-hub.workspace = true
 picoo-pairing.workspace = true
 picoo-metrics.workspace = true

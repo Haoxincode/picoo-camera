@@ -102,6 +102,8 @@ private fun SenderHomeScreen(
     var selectedReceiverId by remember { mutableStateOf("") }
     var trustedStoreHandle by remember { mutableLongStateOf(0L) }
 
+    var diagnosticExportPath by remember { mutableStateOf("") }
+
     val trustedStorePath = remember {
         java.io.File(context.filesDir, "trusted_devices.json").absolutePath
     }
@@ -289,6 +291,30 @@ private fun SenderHomeScreen(
             }) {
                 Text("Remove paired")
             }
+            Button(onClick = {
+                val outFile = java.io.File(context.cacheDir, "picoo-diagnostics.json")
+                val rc = PicooNative.exportDiagnosticsToPath(
+                    trustedStorePath,
+                    platform = "android",
+                    appVersion = "0.1.0",
+                    outPath = outFile.absolutePath,
+                )
+                diagnosticExportPath = if (rc == 0) {
+                    errorText = null
+                    outFile.absolutePath
+                } else {
+                    errorText = "Diagnostics export failed: $rc"
+                    ""
+                }
+            }) {
+                Text("Export diagnostics")
+            }
+        }
+        if (diagnosticExportPath.isNotEmpty()) {
+            Text(
+                text = "Diagnostics: $diagnosticExportPath (redacted, no video)",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
 
         if (cameraGranted) {

@@ -10,6 +10,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use model::DesktopAppState;
+use picoo_diagnostics::{build_report, export_json, DiagnosticInput, DiagnosticSessionSnapshot};
 use picoo_discovery::{
     generate_nonce, MdnsAdvertiser, QrConnectPayload, ReceiverAdvertisement, DEFAULT_QR_TTL_MS,
 };
@@ -50,6 +51,12 @@ fn main() {
         return;
     }
 
+    if let Some(index) = args.iter().position(|arg| arg == "--export-diagnostics") {
+        let out_path = args.get(index + 1).map(String::as_str);
+        run_export_diagnostics(out_path);
+        return;
+    }
+
     let state = DesktopAppState::default();
     println!(
         "Picoo Camera Desktop (stub) — status: {:?}",
@@ -58,6 +65,7 @@ fn main() {
     println!("Run with --loopback-demo to exercise QUIC → FrameHub on Linux CI.");
     println!("Run with --serve to listen, advertise mDNS, and print QR JSON.");
     println!("Run with --list-paired / --remove-paired <id> to manage trusted devices.");
+    println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
 }
 
@@ -120,6 +128,51 @@ fn run_remove_paired(device_id: &str) {
     }
 }
 
+fn run_export_diagnostics(out_path: Option<&str>) {
+    let trusted_path = default_trusted_store_path();
+    let store = match TrustedDeviceStore::load_from_path(&trusted_path) {
+        Ok(store) => store,
+        Err(err) => {
+            eprintln!(
+                "Failed to load trusted store {}: {err}",
+                trusted_path.display()
+            );
+            std::process::exit(1);
+        }
+    };
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let report = build_report(DiagnosticInput {
+        platform: std::env::consts::OS.into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+        exported_at_ms: now_ms,
+        trusted_devices: store.list().cloned().collect(),
+        ..Default::default()
+    });
+
+    let json = match export_json(&report) {
+        Ok(json) => json,
+        Err(err) => {
+            eprintln!("Failed to serialize diagnostics: {err}");
+            std::process::exit(1);
+        }
+    };
+
+    if let Some(path) = out_path {
+        if let Err(err) = std::fs::write(path, &json) {
+            eprintln!("Failed to write diagnostics to {path}: {err}");
+            std::process::exit(1);
+        }
+        println!("Diagnostics exported to {path} (redacted, no video)");
+    } else {
+        println!("{json}");
+    }
+}
+
 fn run_loopback_demo() {
     match picoo_receiver::run_loopback_access_unit(b"desktop-loopback-au") {
         Ok(frame) => {
@@ -179,8 +232,33 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
                 Err(err) => eprintln!("Remove failed: {err}"),
             }
         }
+        "export-diagnostics" | "export" => {
+            let stats = receiver.ingress_stats();
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let report = build_report(DiagnosticInput {
+                platform: std::env::consts::OS.into(),
+                app_version: env!("CARGO_PKG_VERSION").into(),
+                exported_at_ms: now_ms,
+                session: Some(DiagnosticSessionSnapshot {
+                    role: "receiver".into(),
+                    status: format!("{:?}", receiver.status()),
+                    ingress_access_units: stats.access_units,
+                    ingress_packets_received: stats.packets_received,
+                    ingress_packets_dropped_unpaired: stats.packets_dropped_unpaired,
+                }),
+                trusted_devices: receiver.trusted_devices().list().cloned().collect(),
+                ..Default::default()
+            });
+            match export_json(&report) {
+                Ok(json) => println!("{json}"),
+                Err(err) => eprintln!("Export failed: {err}"),
+            }
+        }
         "help" => {
-            println!("Commands: confirm | list | remove <device_id> | help");
+            println!("Commands: confirm | list | remove <device_id> | export-diagnostics | help");
         }
         other => println!("Unknown command: {other} (type help)"),
     }
@@ -269,7 +347,7 @@ fn run_serve_mode() {
         receiver.status(),
         trusted_path.display()
     );
-    println!("Type `confirm` when pairing code matches, `list`, or `remove <device_id>`.");
+    println!("Type `confirm` when pairing code matches, `list`, `remove <device_id>`, or `export-diagnostics`.");
 
     let stdin_rx = spawn_stdin_commands();
     let mut last_pairing_hint = String::new();

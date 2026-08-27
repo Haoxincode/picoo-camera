@@ -98,6 +98,15 @@ object PicooNative {
 
     external fun saveTrustedStore(handle: Long): Int
 
+    external fun exportDiagnosticsToPath(
+        trustedStorePath: String,
+        platform: String,
+        appVersion: String,
+        outPath: String,
+    ): Int
+
+    external fun parseQrConnect(json: String): QrConnectPayload?
+
     data class SenderStats(
         val accessUnits: Long,
         val packets: Long,
@@ -119,6 +128,12 @@ object PicooNative {
         val certificateFingerprint: String,
         val pairedAtMs: Long,
         val lastConnectedAtMs: Long,
+    )
+
+    data class QrConnectPayload(
+        val host: String,
+        val quicPort: Int,
+        val receiverId: String,
     )
 
     fun readSenderStats(handle: Long): SenderStats {

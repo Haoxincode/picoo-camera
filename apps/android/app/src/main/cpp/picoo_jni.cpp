@@ -357,6 +357,70 @@ Java_com_picoo_camera_jni_PicooNative_saveTrustedStore(JNIEnv * /* env */, jobje
     return picoo_trusted_store_save(reinterpret_cast<void *>(handle));
 }
 
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_exportDiagnosticsToPath(
+    JNIEnv *env,
+    jobject /* this */,
+    jstring trustedStorePath,
+    jstring platform,
+    jstring appVersion,
+    jstring outPath) {
+    if (trustedStorePath == nullptr || platform == nullptr || appVersion == nullptr || outPath == nullptr) {
+        return -1;
+    }
+    char trusted_buf[512] = {0};
+    char platform_buf[64] = {0};
+    char version_buf[64] = {0};
+    char out_buf[512] = {0};
+    if (copyJString(env, trustedStorePath, trusted_buf, sizeof(trusted_buf)) != 0 ||
+        copyJString(env, platform, platform_buf, sizeof(platform_buf)) != 0 ||
+        copyJString(env, appVersion, version_buf, sizeof(version_buf)) != 0 ||
+        copyJString(env, outPath, out_buf, sizeof(out_buf)) != 0) {
+        return -1;
+    }
+    return picoo_export_diagnostics_to_path(trusted_buf, platform_buf, version_buf, out_buf);
+}
+
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_picoo_camera_jni_PicooNative_parseQrConnect(JNIEnv *env, jobject /* this */, jstring json) {
+    if (json == nullptr) {
+        return nullptr;
+    }
+    const char *json_chars = env->GetStringUTFChars(json, nullptr);
+    if (json_chars == nullptr) {
+        return nullptr;
+    }
+    char host_buf[128] = {0};
+    char receiver_buf[128] = {0};
+    uint16_t port = 0;
+    int32_t rc = picoo_qr_connect_parse(
+        json_chars,
+        host_buf,
+        sizeof(host_buf),
+        &port,
+        receiver_buf,
+        sizeof(receiver_buf));
+    env->ReleaseStringUTFChars(json, json_chars);
+    if (rc != 0) {
+        return nullptr;
+    }
+
+    jclass cls = env->FindClass("com/picoo/camera/jni/PicooNative$QrConnectPayload");
+    if (cls == nullptr) {
+        return nullptr;
+    }
+    jmethodID ctor = env->GetMethodID(cls, "<init>", "(Ljava/lang/String;ILjava/lang/String;)V");
+    if (ctor == nullptr) {
+        return nullptr;
+    }
+    return env->NewObject(
+        cls,
+        ctor,
+        makeJString(env, host_buf),
+        static_cast<jint>(port),
+        makeJString(env, receiver_buf));
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_picoo_camera_jni_PicooNative_createDiscoveryBrowser(JNIEnv * /* env */, jobject /* this */) {
     return reinterpret_cast<jlong>(picoo_discovery_browser_create());

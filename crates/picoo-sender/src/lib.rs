@@ -6,11 +6,11 @@ mod session;
 mod stream_config;
 
 use bytes::Bytes;
+use picoo_pairing::{PairingError, StoreError};
 use picoo_protocol::{
     VideoPacket, VideoPacketError, VideoPacketFlags, MAX_DATAGRAM_SIZE, VIDEO_PACKET_HEADER_SIZE,
 };
 use picoo_transport::TransportError;
-use picoo_pairing::{PairingError, StoreError};
 use thiserror::Error;
 
 pub use picoo_rate_control::BitrateAction;

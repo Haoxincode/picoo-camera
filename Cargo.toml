@@ -11,6 +11,7 @@ members = [
   "crates/picoo-jitter",
   "crates/picoo-rate-control",
   "crates/picoo-metrics",
+  "crates/picoo-diagnostics",
   "crates/picoo-frame-hub",
   "crates/picoo-sender",
   "crates/picoo-receiver",
@@ -47,6 +48,7 @@ picoo-quiche = { path = "crates/picoo-quiche" }
 picoo-jitter = { path = "crates/picoo-jitter" }
 picoo-rate-control = { path = "crates/picoo-rate-control" }
 picoo-metrics = { path = "crates/picoo-metrics" }
+picoo-diagnostics = { path = "crates/picoo-diagnostics" }
 picoo-frame-hub = { path = "crates/picoo-frame-hub" }
 picoo-sender = { path = "crates/picoo-sender" }
 picoo-receiver = { path = "crates/picoo-receiver" }
