@@ -34,7 +34,7 @@ class Camera2MediaEncoder(
     override var profile: CaptureProfile = initialProfile
         private set
 
-    override var streamEpoch: Int = 1
+    override var streamEpoch: Int = StreamEpoch.INITIAL
         private set
 
     override var exposureCompensation: Int = 0
@@ -132,7 +132,7 @@ class Camera2MediaEncoder(
                 LensFacing.Front -> LensFacing.Back
             },
         )
-        streamEpoch += 1
+        streamEpoch = StreamEpoch.bump(streamEpoch)
         if (_state.get() == CaptureState.Previewing) {
             stopPreview()
             startPreview()
@@ -143,9 +143,17 @@ class Camera2MediaEncoder(
 
     override fun setResolution(width: Int, height: Int) {
         val next = Size(width, height)
-        if (profile.resolution == next) return
+        if (!StreamEpoch.shouldBumpForResolution(
+                profile.resolution.width,
+                profile.resolution.height,
+                next.width,
+                next.height,
+            )
+        ) {
+            return
+        }
         profile = profile.copy(resolution = next)
-        streamEpoch += 1
+        streamEpoch = StreamEpoch.bump(streamEpoch)
         if (_state.get() == CaptureState.Previewing) {
             stopPreview()
             startPreview()
