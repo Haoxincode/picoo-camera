@@ -369,4 +369,12 @@ mod tests {
         assert_eq!(consumer.latest_frame().expect("view").timestamp_us, 9);
         cleanup(&name);
     }
+
+    #[test]
+    fn ring_layout_sizes_match_c_header() {
+        assert_eq!(std::mem::size_of::<RingMeta>(), META_SIZE);
+        // SlotMeta is 48 bytes; SLOT_META_SIZE reserves 64 bytes per slot header region.
+        assert_eq!(std::mem::size_of::<SlotMeta>(), 48);
+        assert_eq!(SLOT_META_SIZE, 64);
+    }
 }

@@ -26,6 +26,7 @@ typedef struct PicooRingMeta {
     uint32_t slot_count;
     uint32_t max_frame_bytes;
     uint32_t write_index;
+    uint32_t _pad_before_sequence;
     uint64_t latest_sequence;
     uint8_t pad[32];
 } PicooRingMeta;
@@ -41,6 +42,7 @@ typedef struct PicooRingSlotMeta {
     uint32_t data_length;
     uint32_t ready_state;
     uint8_t pad[4];
+    uint8_t reserved[16];
 } PicooRingSlotMeta;
 
 #ifdef __cplusplus
