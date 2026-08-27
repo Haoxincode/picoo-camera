@@ -55,6 +55,11 @@ impl<T: PicooTransport> LossyVideoTransport<T> {
         }
     }
 
+    /// Disable or retune loss for a post-recovery phase (PRD §21 delay gate).
+    pub fn set_drop_ratio(&mut self, drop_ratio: f64) {
+        self.drop_ratio = drop_ratio.clamp(0.0, 1.0);
+    }
+
     fn should_drop(&mut self) -> bool {
         if self.drop_ratio <= 0.0 {
             return false;

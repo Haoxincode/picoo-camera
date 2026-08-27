@@ -1325,17 +1325,60 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         "expected ~{loss_ratio} observed drops, got {observed}"
     );
 
-    // After stopping lossy sends, frame_age should not stay pathologically high forever.
-    // (Stub decode uses wall clock timestamps; require stats reporter to still function.)
-    for _ in 0..50 {
-        receiver.pump().ok();
-        sender.pump().ok();
+    // PRD §21: after recovery, delay must not accumulate past 1s.
+    // Clear loss, push fresh keyframes, then require FrameHub frame_age < 1000ms.
+    sender.transport_mut().set_drop_ratio(0.0);
+    for frame_id in 401..=430u64 {
+        let payload = format!("recover-au-{frame_id}");
+        sender
+            .ingest_and_flush(payload.as_bytes(), true, frame_id, 1)
+            .expect("recover ingest");
+        for _ in 0..8 {
+            receiver.pump().expect("rx");
+            sender.pump().ok();
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        receiver.latest_frame().is_some(),
+        "expected FrameHub frame after lossless recovery window"
+    );
+    // Wait for the 1s ReceiverStats interval, while continuing to publish fresh frames
+    // so frame_age reflects live recovery rather than idle stall.
+    let t_stats = std::time::Instant::now();
+    let mut recover_id = 431u64;
+    while t_stats.elapsed() < Duration::from_millis(1100) {
+        let payload = format!("recover-au-{recover_id}");
+        sender
+            .ingest_and_flush(payload.as_bytes(), true, recover_id, 1)
+            .expect("recover keep-alive");
+        recover_id += 1;
+        for _ in 0..6 {
+            receiver.pump().expect("rx");
+            sender.pump().ok();
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
+    for _ in 0..20 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Direct FrameHub age (decode timestamp → now) — PRD §21 recovery bound.
+    let frame = receiver.latest_frame().expect("recovered frame");
+    let now_us = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0);
+    let hub_age_ms = now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0;
+    assert!(
+        hub_age_ms < 1_000.0,
+        "FrameHub age piled up after recovery: {hub_age_ms}ms (PRD §21 <1s)"
+    );
     if let Some(stats) = receiver.last_stats() {
         assert!(
-            stats.frame_age_ms < 5_000.0,
-            "frame age piled up after loss window: {}ms",
+            stats.frame_age_ms < 1_000.0,
+            "stats frame_age piled up after recovery: {}ms (PRD §21 <1s)",
             stats.frame_age_ms
         );
     }
@@ -1597,4 +1640,129 @@ fn linux_vm_rss_kb() -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(not(windows))]
+#[test]
+fn paired_openh264_access_unit_reaches_frame_hub() {
+    // REQ-PICOO-MEDIA-005/006: real Annex-B H.264 through QUIC → decode → FrameHub.
+    use openh264::encoder::Encoder;
+    use openh264::formats::YUVBuffer;
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_packet::extract_sps_pps;
+    use picoo_pairing::TrustedDevice;
+    use picoo_sender::StreamConfigParams;
+    use picoo_session::ReceiverStatus;
+    use picoo_transport::{Endpoint, QuicSenderTransport};
+
+    let width = 160usize;
+    let height = 120usize;
+    let mut planes = vec![128u8; width * height * 3 / 2];
+    for y in 0..height {
+        for x in 0..width {
+            planes[y * width + x] = ((x * 3 + y * 5) % 256) as u8;
+        }
+    }
+    let yuv = YUVBuffer::from_vec(planes, width, height);
+    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let bitstream = encoder.encode(&yuv).expect("encode");
+    let annex = bitstream.to_vec();
+    assert!(annex.len() > 64, "AU too small for OpenH264 path");
+    let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS from Annex-B");
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "h264-phone".into(),
+        device_name: "H264".into(),
+        public_key: vec![9, 9, 9],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("h264-phone", "H264", &[9, 9, 9])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    sender.set_stream_config(StreamConfigParams {
+        width: width as u32,
+        height: height as u32,
+        fps: 30,
+        bitrate_bps: 500_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+        sps,
+        pps,
+    });
+    for _ in 0..50 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .ingest_and_flush(&annex, true, 1, 1)
+        .expect("ingest h264");
+    for _ in 0..300 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.width == width as u32 && frame.height == height as u32 {
+                assert_eq!(
+                    frame.pixel_data.len(),
+                    nv12_byte_size(frame.width, frame.height)
+                );
+                assert!(
+                    frame.pixel_data.iter().any(|b| *b != 16 && *b != 128),
+                    "expected non-placeholder NV12 from OpenH264"
+                );
+                assert_eq!(receiver.stats().decode_invocations, 1);
+                assert_eq!(receiver.stats().access_units, 1);
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    panic!(
+        "OpenH264 AU did not reach FrameHub at {}x{}; stats={:?}",
+        width,
+        height,
+        receiver.stats()
+    );
 }

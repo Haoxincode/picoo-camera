@@ -25,3 +25,6 @@ picoo-protocol.workspace = true
 picoo-sender.workspace = true
 picoo-testkit.workspace = true
 tempfile = "3.14"
+
+[target.'cfg(not(windows))'.dev-dependencies]
+openh264 = { version = "0.9", default-features = true }

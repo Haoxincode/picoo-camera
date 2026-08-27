@@ -5128,6 +5128,7 @@ name = "picoo-receiver"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "openh264",
  "picoo-frame-hub",
  "picoo-jitter",
  "picoo-media-decode",
