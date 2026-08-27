@@ -48,6 +48,7 @@ import com.picoo.camera.media.EncodedFrameListener
 import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
+import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.QrCodeScanner
 import com.picoo.camera.ui.SenderTab
@@ -175,6 +176,7 @@ private fun SenderHomeScreen(
     val discoveredList = discoveredListState.value
     var connectedReceiverId by remember { mutableStateOf("") }
     var pairedDevicesText by remember { mutableStateOf("") }
+    var pairedDevices by remember { mutableStateOf<List<PicooNative.TrustedDevice>>(emptyList()) }
     var selectedReceiverId by remember { mutableStateOf("") }
     var trustedStoreHandle by remember { mutableLongStateOf(0L) }
     val pairedReceiverIds = remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -326,17 +328,10 @@ private fun SenderHomeScreen(
             PicooNative.destroyTrustedStore(trustedStoreHandle)
         }
         trustedStoreHandle = PicooNative.loadTrustedStore(trustedStorePath)
-        val ids = linkedSetOf<String>()
-        pairedDevicesText = buildString {
-            if (trustedStoreHandle == 0L) return@buildString
-            val count = PicooNative.getTrustedDeviceCount(trustedStoreHandle)
-            for (index in 0 until count) {
-                val device = PicooNative.getTrustedDevice(trustedStoreHandle, index) ?: continue
-                ids.add(device.deviceId)
-                append("${device.deviceName} (${device.deviceId})\n")
-            }
-        }.trim()
-        pairedReceiverIds.value = ids
+        val devices = TrustedDeviceList.load(trustedStoreHandle)
+        pairedDevices = devices
+        pairedReceiverIds.value = TrustedDeviceList.ids(devices)
+        pairedDevicesText = devices.joinToString("\n") { "${it.deviceName} (${it.deviceId})" }
     }
 
     LaunchedEffect(senderHandle, trustedStorePath) {
@@ -612,8 +607,49 @@ private fun SenderHomeScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                if (pairedDevicesText.isNotEmpty()) {
-                    Text(text = "Paired receivers:\n$pairedDevicesText", style = MaterialTheme.typography.bodySmall)
+                if (pairedDevices.isNotEmpty()) {
+                    Text(
+                        text = "Paired receivers",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    pairedDevices.forEach { device ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = TrustedDeviceList.formatRow(device),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = device.deviceId,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Button(onClick = {
+                                selectedReceiverId = device.deviceId
+                                val rc = PicooNative.removeTrustedDevice(
+                                    trustedStoreHandle,
+                                    device.deviceId,
+                                )
+                                if (rc == 1) {
+                                    PicooNative.saveTrustedStore(trustedStoreHandle)
+                                    PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+                                    autoConnectAttemptedIds.value =
+                                        autoConnectAttemptedIds.value - device.deviceId
+                                    reloadTrustedStore()
+                                    errorText = null
+                                } else {
+                                    errorText = "Remove failed: $rc"
+                                }
+                            }) {
+                                Text("Remove")
+                            }
+                        }
+                    }
                 }
                 OutlinedTextField(
                     value = hostText,
@@ -658,26 +694,6 @@ private fun SenderHomeScreen(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        val deviceId = selectedReceiverId.ifEmpty {
-                            pairedDevicesText.lines().firstOrNull()?.substringAfter("(")?.substringBefore(")") ?: ""
-                        }
-                        if (deviceId.isEmpty()) {
-                            errorText = "Select a paired device to remove"
-                            return@Button
-                        }
-                        val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, deviceId)
-                        if (rc == 1) {
-                            PicooNative.saveTrustedStore(trustedStoreHandle)
-                            PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
-                            reloadTrustedStore()
-                            errorText = null
-                        } else {
-                            errorText = "Remove failed: $rc"
-                        }
-                    }) {
-                        Text("Remove paired")
-                    }
                     Button(onClick = {
                         val outFile = java.io.File(context.cacheDir, "picoo-diagnostics.json")
                         val rc = PicooNative.exportDiagnosticsToPath(
