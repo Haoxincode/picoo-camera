@@ -263,4 +263,77 @@ mod tests {
         assert_eq!(seen[0].as_ref(), b"first");
         assert_eq!(seen[1].as_ref(), b"second");
     }
+
+    #[test]
+    fn quic_receiver_accepts_sender_reconnect_after_close() {
+        // PUC-006 / REQ-PICOO-SESSION-008: peer close must free the listener for a new handshake.
+        let mut receiver = QuicReceiverTransport::new();
+        let bind = receiver
+            .bind(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 0,
+            })
+            .expect("bind");
+
+        let mut sender = QuicSenderTransport::new();
+        let session = sender
+            .connect(Endpoint {
+                host: bind.ip().to_string(),
+                port: bind.port(),
+            })
+            .expect("connect");
+        for _ in 0..200 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if sender.is_connected() && receiver.is_connected() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(receiver.is_connected());
+
+        sender.close(session, CloseReason::Timeout);
+        // Drain sender Disconnected, then drive both until receiver observes peer close.
+        let _ = sender.poll_event();
+        let mut saw_disconnect = false;
+        for _ in 0..200 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            while let Some(event) = receiver.poll_event() {
+                if matches!(event, TransportEvent::Disconnected(_, _)) {
+                    saw_disconnect = true;
+                }
+            }
+            if saw_disconnect && !receiver.is_connected() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(saw_disconnect, "receiver should observe peer disconnect");
+
+        let session2 = sender
+            .connect(Endpoint {
+                host: bind.ip().to_string(),
+                port: bind.port(),
+            })
+            .expect("reconnect");
+        let mut saw_connect = false;
+        for _ in 0..400 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            while let Some(event) = receiver.poll_event() {
+                if matches!(event, TransportEvent::Connected(_)) {
+                    saw_connect = true;
+                }
+            }
+            if sender.is_connected() && receiver.is_connected() && saw_connect {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        assert!(sender.is_connected(), "sender reconnect established");
+        assert!(receiver.is_connected(), "receiver accepted reconnect");
+        assert!(saw_connect, "receiver emitted Connected for reconnect");
+        assert_ne!(session.0, session2.0);
+    }
 }

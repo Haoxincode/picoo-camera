@@ -435,6 +435,12 @@ private fun SenderHomeScreen(
                     encoder.requestKeyFrame()
                     streamConfigDirty.set(true)
                 }
+                // Allow NSD auto-connect to retry after a full disconnect.
+                if (senderStatus == PicooNative.STATUS_DISCONNECTED &&
+                    previousStatus != PicooNative.STATUS_DISCONNECTED
+                ) {
+                    autoConnectAttemptedIds.value = emptySet()
+                }
                 previousStatus = senderStatus
                 if (streamConfigDirty.get() &&
                     (senderStatus == PicooNative.STATUS_STREAMING ||
