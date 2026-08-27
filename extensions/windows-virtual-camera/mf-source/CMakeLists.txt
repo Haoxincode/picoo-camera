@@ -3,6 +3,7 @@ project(PicooVirtualCameraSource LANGUAGES CXX)
 
 add_library(PicooVirtualCameraSource SHARED
     src/dllmain.cpp
+    src/picoo_vcam_ids.cpp
     src/ring_reader.cpp
     src/picoo_frame_provider.cpp
     src/picoo_media_stream.cpp

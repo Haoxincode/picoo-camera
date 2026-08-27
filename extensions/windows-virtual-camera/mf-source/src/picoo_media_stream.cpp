@@ -60,13 +60,12 @@ HRESULT PicooMediaStream::Initialize(PicooMediaSource* source, DWORD stream_id) 
     RETURN_IF_FAILED(descriptor_->GetMediaTypeHandler(&handler));
     RETURN_IF_FAILED(handler->SetCurrentMediaType(type_720.Get()));
 
-    ComPtr<IMFAttributes> attrs;
-    RETURN_IF_FAILED(descriptor_->GetAttributes(&attrs));
-    RETURN_IF_FAILED(attrs->SetGUID(MF_DEVICESTREAM_STREAM_CATEGORY, PINNAME_VIDEO_CAPTURE));
-    RETURN_IF_FAILED(attrs->SetUINT32(MF_DEVICESTREAM_STREAM_ID, stream_id));
-    RETURN_IF_FAILED(attrs->SetUINT32(MF_DEVICESTREAM_FRAMESERVER_SHARED, 1));
-    RETURN_IF_FAILED(
-        attrs->SetUINT32(MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES, MFFrameSourceTypes_Color));
+    // IMFStreamDescriptor inherits IMFAttributes — set keys directly (no GetAttributes).
+    RETURN_IF_FAILED(descriptor_->SetGUID(MF_DEVICESTREAM_STREAM_CATEGORY, PINNAME_VIDEO_CAPTURE));
+    RETURN_IF_FAILED(descriptor_->SetUINT32(MF_DEVICESTREAM_STREAM_ID, stream_id));
+    RETURN_IF_FAILED(descriptor_->SetUINT32(MF_DEVICESTREAM_FRAMESERVER_SHARED, 1));
+    RETURN_IF_FAILED(descriptor_->SetUINT32(MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES,
+                                            MFFrameSourceTypes_Color));
 
     return S_OK;
 }

@@ -116,12 +116,18 @@ bool ReadMappingNameFromFlink(const std::wstring& flink_path, std::wstring* mapp
     return !mapping_name->empty();
 }
 
+}  // namespace
+
+// Complete type for the opaque C typedef in picoo_ring_reader.h (must be global,
+// not anonymous-namespace — otherwise MSVC treats them as distinct types).
 struct PicooRingReader {
     HANDLE mapping = nullptr;
     uint8_t* view = nullptr;
     uint32_t max_frame_bytes = 0;
     uint64_t last_sequence = 0;
 };
+
+namespace {
 
 bool ValidateHeader(PicooRingReader* reader) {
     if (reader == nullptr || reader->view == nullptr) {

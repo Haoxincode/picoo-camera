@@ -26,9 +26,8 @@ HRESULT PicooMediaSource::Initialize(IMFAttributes* source_attributes) {
         descriptors[0]->Release();
     }
 
-    ComPtr<IMFAttributes> attrs;
-    RETURN_IF_FAILED(presentation_->GetAttributes(&attrs));
-    RETURN_IF_FAILED(attrs->SetUINT32(MF_PD_TOTAL_FILE_DURATION, 0));
+    // IMFPresentationDescriptor inherits IMFAttributes — set keys directly.
+    RETURN_IF_FAILED(presentation_->SetUINT32(MF_PD_TOTAL_FILE_DURATION, 0));
 
     return S_OK;
 }
@@ -165,7 +164,8 @@ IFACEMETHODIMP PicooMediaSource::GetStreamAttributes(DWORD stream_id, IMFAttribu
     }
     ComPtr<IMFStreamDescriptor> descriptor;
     RETURN_IF_FAILED(stream_->GetStreamDescriptor(&descriptor));
-    return descriptor->GetAttributes(attributes);
+    // Stream descriptor is already IMFAttributes.
+    return descriptor->QueryInterface(IID_PPV_ARGS(attributes));
 }
 
 IFACEMETHODIMP PicooMediaSource::SetD3DManager(IUnknown* /*manager*/) {
