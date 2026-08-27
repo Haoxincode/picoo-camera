@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 bytes.workspace = true
 picoo-frame-hub.workspace = true
+picoo-jitter.workspace = true
 picoo-media-decode.workspace = true
 picoo-metrics.workspace = true
 picoo-packet.workspace = true

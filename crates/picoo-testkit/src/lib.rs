@@ -15,7 +15,12 @@ pub fn simulate_video_roundtrip(packets: Vec<VideoPacket>) -> Option<Bytes> {
     let mut map = ReassemblyMap::new(16, 32);
     let mut last = None;
     for packet in packets {
-        last = map.ingest(packet).ok().flatten().or(last);
+        last = map
+            .ingest(packet)
+            .ok()
+            .flatten()
+            .map(|au| au.data)
+            .or(last);
     }
     last
 }

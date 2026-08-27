@@ -36,6 +36,14 @@ impl Default for PartialFrame {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledAccessUnit {
+    pub data: Bytes,
+    pub pts_us: u64,
+    pub keyframe: bool,
+    pub stream_epoch: u32,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ReassemblyError {
     #[error("fragment_count exceeds limit")]
@@ -79,7 +87,7 @@ impl ReassemblyMap {
         pending
     }
 
-    pub fn ingest(&mut self, packet: VideoPacket) -> Result<Option<Bytes>, ReassemblyError> {
+    pub fn ingest(&mut self, packet: VideoPacket) -> Result<Option<AssembledAccessUnit>, ReassemblyError> {
         if packet.fragment_count > self.max_fragments {
             return Err(ReassemblyError::TooManyFragments);
         }
@@ -108,11 +116,14 @@ impl ReassemblyMap {
             stream_epoch: packet.stream_epoch,
             frame_id: packet.frame_id,
         };
+        let packet_flags = packet.flags;
+        let packet_pts = packet.pts_us;
+        let packet_epoch = packet.stream_epoch;
 
         let entry = self.frames.entry(key).or_insert_with(|| PartialFrame {
             fragment_count: packet.fragment_count,
-            flags: packet.flags,
-            pts_us: packet.pts_us,
+            flags: packet_flags,
+            pts_us: packet_pts,
             ..Default::default()
         });
 
@@ -152,8 +163,15 @@ impl ReassemblyMap {
             }
         }
 
+        let flags = entry.flags;
+        let pts_us = entry.pts_us;
         self.frames.remove(&key);
-        Ok(Some(assembled.freeze()))
+        Ok(Some(AssembledAccessUnit {
+            data: assembled.freeze(),
+            pts_us,
+            keyframe: Self::is_keyframe(flags),
+            stream_epoch: packet_epoch,
+        }))
     }
 
     pub fn is_keyframe(flags: VideoPacketFlags) -> bool {
@@ -211,7 +229,7 @@ mod tests {
         let mut map = ReassemblyMap::new(8, 16);
         assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
         let assembled = map.ingest(fragment(1, 10, 1, 2, b"cd")).unwrap();
-        assert_eq!(assembled.as_deref(), Some(&b"abcd"[..]));
+        assert_eq!(assembled.as_ref().map(|a| a.data.as_ref()), Some(&b"abcd"[..]));
     }
 
     #[test]

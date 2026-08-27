@@ -251,7 +251,15 @@ fn first_time_pairing_flow_enables_video() {
     sender
         .ingest_and_flush(b"paired-after-flow", true, 1, 1)
         .expect("send video");
-    receiver.pump().expect("receiver pump");
+    // Default jitter target is 50ms — pump until the AU is released (SESSION-002).
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().ok();
+        if receiver.stats().access_units > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
     assert_eq!(receiver.stats().access_units, 1);
 }
 
@@ -310,7 +318,21 @@ fn receiver_sends_stats_to_paired_sender() {
     sender
         .ingest_and_flush(&[0u8; 1200], true, 1, 1)
         .expect("send video");
-    receiver.pump().expect("receiver pump");
+    // Release through the 50ms jitter buffer into FrameHub first.
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        receiver
+            .latest_frame()
+            .is_some_and(|f| f.timestamp_us > 0),
+        "expected decoded frame before stats interval"
+    );
 
     std::thread::sleep(Duration::from_millis(1100));
 
@@ -588,5 +610,77 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     assert_eq!(
         receiver.latest_frame().expect("placeholder").timestamp_us,
         0
+    );
+}
+
+#[test]
+fn default_jitter_holds_au_until_target_delay() {
+    // REQ-PICOO-SESSION-002: default 50ms target delays decode until media clock catches up.
+    let mut receiver = ReceiverSession::new();
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "android-sender".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1, 2, 3],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .ingest_and_flush(b"jitter-hold-au", true, 1, 1)
+        .expect("ingest");
+    receiver.pump().expect("rx");
+    // Immediately after first pump the AU should still be in the jitter buffer.
+    assert_eq!(receiver.stats().access_units, 0);
+
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_millis(200) {
+        receiver.pump().expect("rx");
+        if receiver.stats().access_units > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(receiver.stats().access_units, 1);
+    assert!(
+        started.elapsed() >= Duration::from_millis(40),
+        "expected ~50ms hold, released too early: {:?}",
+        started.elapsed()
     );
 }

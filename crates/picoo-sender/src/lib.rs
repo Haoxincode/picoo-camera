@@ -152,8 +152,8 @@ mod tests {
         let mut map = ReassemblyMap::new(8, 16);
         let mut assembled = None;
         for packet in sender.take_pending_packets() {
-            if let Ok(frame) = map.ingest(packet) {
-                assembled = frame;
+            if let Ok(Some(frame)) = map.ingest(packet) {
+                assembled = Some(frame.data);
             }
         }
         assert_eq!(assembled.as_deref(), Some(payload.as_slice()));

@@ -5098,6 +5098,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "picoo-frame-hub",
+ "picoo-jitter",
  "picoo-media-decode",
  "picoo-metrics",
  "picoo-packet",

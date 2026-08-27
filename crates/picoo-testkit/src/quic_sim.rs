@@ -115,7 +115,7 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
         if let Ok(Some(raw)) = p.server.recv_dgram() {
             if let Ok(packet) = VideoPacket::decode(&raw) {
                 if let Ok(Some(frame)) = reassembly.ingest(packet) {
-                    return Some(frame);
+                    return Some(frame.data);
                 }
             }
         }

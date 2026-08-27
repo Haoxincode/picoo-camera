@@ -13,6 +13,7 @@ use picoo_frame_hub::{
     waiting_placeholder, FrameHub, FrameSlot, SharedFrameRingProducer, PLACEHOLDER_HEIGHT,
     PLACEHOLDER_WIDTH,
 };
+use picoo_jitter::{Frame as JitterFrame, JitterBuffer};
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError};
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::{
@@ -140,6 +141,11 @@ pub struct ReceiverSession {
     /// After peer disconnect, keep last frame this long before placeholder (REQ-PICOO-FRAME-005).
     last_frame_hold: Duration,
     placeholder_after: Option<Instant>,
+    /// Complete-AU jitter buffer before decode (REQ-PICOO-SESSION-002).
+    jitter: JitterBuffer,
+    /// Maps wall time onto the media PTS timeline for jitter scheduling.
+    /// `(wall_anchor, pts_anchor)` — set on the first buffered AU of a burst.
+    jitter_timeline: Option<(Instant, u64)>,
 }
 
 impl Default for ReceiverSession {
@@ -170,6 +176,8 @@ impl ReceiverSession {
             decoder: create_platform_decoder(),
             last_frame_hold: Duration::from_millis(500),
             placeholder_after: None,
+            jitter: JitterBuffer::new(50, 120),
+            jitter_timeline: None,
         }
     }
 
@@ -340,7 +348,16 @@ impl ReceiverSession {
                     }
                     self.stats_reporter.record_packet(packet.payload.len());
                     if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
-                        self.publish_access_unit(access_unit)?;
+                        if self.jitter_timeline.is_none() {
+                            // Anchor media clock to this AU's PTS at wall arrival.
+                            self.jitter_timeline =
+                                Some((Instant::now(), access_unit.pts_us));
+                        }
+                        self.jitter.push(JitterFrame {
+                            pts_us: access_unit.pts_us,
+                            data: access_unit.data,
+                            keyframe: access_unit.keyframe,
+                        });
                     }
                     if self.reassembly.take_keyframe_loss() {
                         self.send_request_keyframe(session)?;
@@ -349,9 +366,39 @@ impl ReceiverSession {
             }
         }
 
+        self.drain_jitter()?;
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
 
+        Ok(())
+    }
+
+    /// Media-clock "now" aligned with packet `pts_us` (REQ-PICOO-SESSION-002).
+    ///
+    /// JitterBuffer compares `now_us` against frame PTS; wall-clock UNIX time must
+    /// not be passed in — relative media PTS would be treated as ancient and dropped.
+    fn jitter_media_now_us(&self) -> u64 {
+        match self.jitter_timeline {
+            Some((wall_anchor, pts_anchor)) => {
+                pts_anchor.saturating_add(wall_anchor.elapsed().as_micros() as u64)
+            }
+            None => 0,
+        }
+    }
+
+    fn drain_jitter(&mut self) -> Result<(), ReceiverError> {
+        if self.jitter.is_empty() {
+            self.jitter_timeline = None;
+            return Ok(());
+        }
+        let now_us = self.jitter_media_now_us();
+        self.jitter.drop_incomplete_before(now_us);
+        while let Some(frame) = self.jitter.pop_ready(now_us) {
+            self.publish_access_unit(frame.data)?;
+        }
+        if self.jitter.is_empty() {
+            self.jitter_timeline = None;
+        }
         Ok(())
     }
 
@@ -362,6 +409,8 @@ impl ReceiverSession {
         self.pending_pairing = None;
         self.local_pairing_confirmed = false;
         self.reassembly = ReassemblyMap::new(8, 16);
+        self.jitter.clear();
+        self.jitter_timeline = None;
         self.current_stream_config = None;
         self.receiver_capabilities_sent = None;
 
@@ -437,12 +486,12 @@ impl ReceiverSession {
         let stats = ReceiverStatsMsg {
             rtt_ms: 0.0,
             packet_loss: 0.0,
-            jitter_ms: 0.0,
+            jitter_ms: self.jitter.depth_ms(),
             reassembly_drop,
             decoder_drop: 0,
             frame_age_ms,
             receive_bitrate,
-            jitter_buffer_depth_ms: 0.0,
+            jitter_buffer_depth_ms: self.jitter.depth_ms(),
         };
 
         self.send_control_message(session, &stats)?;
@@ -679,6 +728,12 @@ impl ReceiverSession {
         self.last_frame_hold = hold;
     }
 
+    /// Set jitter buffer target delay in milliseconds (REQ-PICOO-SESSION-002).
+    /// `0` releases reassembled access units immediately (useful for tests/loopback).
+    pub fn set_jitter_target_ms(&mut self, target_ms: u64) {
+        self.jitter.set_target_ms(target_ms);
+    }
+
     /// Test-only: simulate peer disconnect without waiting on QUIC teardown.
     #[cfg(test)]
     pub fn inject_peer_disconnect_for_test(&mut self) {
@@ -743,6 +798,7 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
     receiver.set_permit_unpaired_video(true);
     let bind = receiver.listen(Endpoint {
         host: "127.0.0.1".into(),
@@ -792,6 +848,7 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
 
     let identity = ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    receiver.set_jitter_target_ms(0);
     let bind = receiver.listen(Endpoint {
         host: "127.0.0.1".into(),
         port: 0,
