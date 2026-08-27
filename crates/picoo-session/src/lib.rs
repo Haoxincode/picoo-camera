@@ -34,7 +34,10 @@ pub enum SenderStatus {
 #[derive(Debug, Error)]
 pub enum SessionError {
     #[error("invalid transition from {from:?} to {to:?}")]
-    InvalidTransition { from: ReceiverStatus, to: ReceiverStatus },
+    InvalidTransition {
+        from: ReceiverStatus,
+        to: ReceiverStatus,
+    },
 }
 
 #[derive(Default)]

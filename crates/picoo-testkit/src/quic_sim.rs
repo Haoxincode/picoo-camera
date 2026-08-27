@@ -6,7 +6,7 @@ use bytes::Bytes;
 use picoo_packet::ReassemblyMap;
 use picoo_protocol::control::{ClientHello, ServerHello};
 use picoo_protocol::{VideoPacket, VideoPacketFlags, ALPN};
-use picoo_transport::{establish_loopback, CONTROL_STREAM_ID, QuicLoopback};
+use picoo_transport::{establish_loopback, QuicLoopback, CONTROL_STREAM_ID};
 use prost::Message;
 use thiserror::Error;
 
@@ -22,11 +22,7 @@ pub enum QuicSimulationError {
     Timeout(&'static str),
 }
 
-fn pump<F, T>(
-    pair: &mut QuicLoopback,
-    max: usize,
-    mut poll: F,
-) -> Result<T, QuicSimulationError>
+fn pump<F, T>(pair: &mut QuicLoopback, max: usize, mut poll: F) -> Result<T, QuicSimulationError>
 where
     F: FnMut(&mut QuicLoopback) -> Option<T>,
 {
@@ -52,19 +48,17 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
         public_key: vec![1, 2, 3],
     };
     let mut hello_bytes = Vec::new();
-    client_hello.encode(&mut hello_bytes).map_err(|e| {
-        QuicSimulationError::Protocol(format!("encode ClientHello: {e}"))
-    })?;
+    client_hello
+        .encode(&mut hello_bytes)
+        .map_err(|e| QuicSimulationError::Protocol(format!("encode ClientHello: {e}")))?;
 
-    pair.client
-        .send_stream(CONTROL_STREAM_ID, &hello_bytes)?;
+    pair.client.send_stream(CONTROL_STREAM_ID, &hello_bytes)?;
 
     let (stream_id, data) = pump(&mut pair, 200, |p| p.server.recv_stream().ok().flatten())?;
     assert_eq!(stream_id, CONTROL_STREAM_ID);
 
-    let received = ClientHello::decode(data.as_slice()).map_err(|e| {
-        QuicSimulationError::Protocol(format!("decode ClientHello: {e}"))
-    })?;
+    let received = ClientHello::decode(data.as_slice())
+        .map_err(|e| QuicSimulationError::Protocol(format!("decode ClientHello: {e}")))?;
     assert_eq!(received.sender_id, "android-sender");
 
     let server_hello = ServerHello {
@@ -81,9 +75,8 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
     pair.server.send_stream(CONTROL_STREAM_ID, &ack)?;
 
     let (_, data) = pump(&mut pair, 200, |p| p.client.recv_stream().ok().flatten())?;
-    let ack = ServerHello::decode(data.as_slice()).map_err(|e| {
-        QuicSimulationError::Protocol(format!("decode ServerHello: {e}"))
-    })?;
+    let ack = ServerHello::decode(data.as_slice())
+        .map_err(|e| QuicSimulationError::Protocol(format!("decode ServerHello: {e}")))?;
     assert_eq!(ack.display_name, "Work PC");
     assert!(ack.pairing_required);
 

@@ -39,8 +39,7 @@ impl PicooTransport for MemoryTransport {
         let id = SessionId(self.next_session);
         self.next_session += 1;
         self.connected = Some(id);
-        self.events
-            .push_back(TransportEvent::Connected(id));
+        self.events.push_back(TransportEvent::Connected(id));
         Ok(id)
     }
 
@@ -53,7 +52,11 @@ impl PicooTransport for MemoryTransport {
         Ok(())
     }
 
-    fn send_video(&mut self, session: SessionId, packet: VideoPacket) -> Result<(), TransportError> {
+    fn send_video(
+        &mut self,
+        session: SessionId,
+        packet: VideoPacket,
+    ) -> Result<(), TransportError> {
         if self.connected != Some(session) {
             return Err(TransportError::NotConnected);
         }

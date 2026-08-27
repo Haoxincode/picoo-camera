@@ -45,7 +45,10 @@ fn test_cert_paths() -> Result<&'static TestCertPaths, QuicConfigError> {
     std::fs::write(&cert_path, cert.cert.pem())?;
     std::fs::write(&key_path, cert.key_pair.serialize_pem())?;
 
-    let _ = TEST_CERT_PATHS.set(TestCertPaths { cert: cert_path, key: key_path });
+    let _ = TEST_CERT_PATHS.set(TestCertPaths {
+        cert: cert_path,
+        key: key_path,
+    });
     Ok(TEST_CERT_PATHS.get().expect("cert paths initialized"))
 }
 
@@ -74,14 +77,16 @@ fn base_config(is_server: bool) -> Result<quiche::Config, QuicConfigError> {
     if is_server {
         let paths = test_cert_paths()?;
         config.load_cert_chain_from_pem_file(
-            paths.cert.to_str().ok_or_else(|| {
-                QuicConfigError::Cert("invalid cert path".into())
-            })?,
+            paths
+                .cert
+                .to_str()
+                .ok_or_else(|| QuicConfigError::Cert("invalid cert path".into()))?,
         )?;
         config.load_priv_key_from_pem_file(
-            paths.key.to_str().ok_or_else(|| {
-                QuicConfigError::Cert("invalid key path".into())
-            })?,
+            paths
+                .key
+                .to_str()
+                .ok_or_else(|| QuicConfigError::Cert("invalid key path".into()))?,
         )?;
     } else {
         config.verify_peer(false);
@@ -209,9 +214,8 @@ mod loopback {
                 };
 
                 if server_conn.is_none() {
-                    let _hdr =
-                        quiche::Header::from_slice(&mut buf[..len], quiche::MAX_CONN_ID_LEN)
-                            .expect("header");
+                    let _hdr = quiche::Header::from_slice(&mut buf[..len], quiche::MAX_CONN_ID_LEN)
+                        .expect("header");
                     let scid = conn_id();
                     server_conn = Some(
                         quiche::accept(&scid, None, server_addr, from, &mut server_config)

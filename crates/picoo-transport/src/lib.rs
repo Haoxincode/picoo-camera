@@ -8,9 +8,7 @@ use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use thiserror::Error;
 
-pub use quic::{
-    establish_loopback, QuicLoopback, QuicTransportError, CONTROL_STREAM_ID,
-};
+pub use quic::{establish_loopback, QuicLoopback, QuicTransportError, CONTROL_STREAM_ID};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Endpoint {
@@ -50,7 +48,8 @@ pub enum TransportError {
 pub trait PicooTransport {
     fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, TransportError>;
     fn send_control(&mut self, session: SessionId, message: Bytes) -> Result<(), TransportError>;
-    fn send_video(&mut self, session: SessionId, packet: VideoPacket) -> Result<(), TransportError>;
+    fn send_video(&mut self, session: SessionId, packet: VideoPacket)
+        -> Result<(), TransportError>;
     fn poll_event(&mut self) -> Option<TransportEvent>;
     fn close(&mut self, session: SessionId, reason: CloseReason);
 }

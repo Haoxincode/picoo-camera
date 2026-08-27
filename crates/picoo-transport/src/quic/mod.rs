@@ -51,9 +51,7 @@ pub struct QuicLoopback {
 
 fn random_conn_id() -> quiche::ConnectionId<'static> {
     let mut buf = [0u8; quiche::MAX_CONN_ID_LEN];
-    SystemRandom::new()
-        .fill(&mut buf)
-        .expect("random conn id");
+    SystemRandom::new().fill(&mut buf).expect("random conn id");
     quiche::ConnectionId::from_vec(buf.to_vec())
 }
 
@@ -114,11 +112,10 @@ impl QuicServer {
                 Err(e) => return Err(e.into()),
             };
 
-            let hdr =
-                match quiche::Header::from_slice(&mut buf[..len], quiche::MAX_CONN_ID_LEN) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
+            let hdr = match quiche::Header::from_slice(&mut buf[..len], quiche::MAX_CONN_ID_LEN) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
 
             let dcid = hdr.dcid.as_ref().to_vec();
             let info = quiche::RecvInfo {

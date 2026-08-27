@@ -75,8 +75,7 @@ impl VideoPacket {
             return Err(VideoPacketError::InvalidVersion(version));
         }
 
-        let flags =
-            VideoPacketFlags::from_bits(buf.get_u8()).unwrap_or(VideoPacketFlags::empty());
+        let flags = VideoPacketFlags::from_bits(buf.get_u8()).unwrap_or(VideoPacketFlags::empty());
         let stream_epoch = buf.get_u32();
         let frame_id = buf.get_u64();
         let pts_us = buf.get_u64();
@@ -121,7 +120,10 @@ mod tests {
         };
 
         let encoded = packet.encode().unwrap();
-        assert_eq!(encoded.len(), VIDEO_PACKET_HEADER_SIZE + packet.payload.len());
+        assert_eq!(
+            encoded.len(),
+            VIDEO_PACKET_HEADER_SIZE + packet.payload.len()
+        );
         let decoded = VideoPacket::decode(&encoded).unwrap();
         assert_eq!(decoded, packet);
     }
@@ -153,9 +155,6 @@ mod tests {
             fragment_count: 2,
             payload: Bytes::from_static(b"x"),
         };
-        assert_eq!(
-            packet.encode(),
-            Err(VideoPacketError::InvalidFragmentIndex)
-        );
+        assert_eq!(packet.encode(), Err(VideoPacketError::InvalidFragmentIndex));
     }
 }

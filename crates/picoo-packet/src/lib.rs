@@ -74,10 +74,12 @@ impl ReassemblyMap {
             self.frames.clear();
         }
 
-        if self.frames.len() >= self.max_frames && !self.frames.contains_key(&FrameKey {
-            stream_epoch: packet.stream_epoch,
-            frame_id: packet.frame_id,
-        }) {
+        if self.frames.len() >= self.max_frames
+            && !self.frames.contains_key(&FrameKey {
+                stream_epoch: packet.stream_epoch,
+                frame_id: packet.frame_id,
+            })
+        {
             self.drop_oldest();
         }
 
@@ -102,19 +104,16 @@ impl ReassemblyMap {
             return Err(ReassemblyError::DuplicateFragment);
         }
 
-        entry.fragments.insert(packet.fragment_index, packet.payload);
+        entry
+            .fragments
+            .insert(packet.fragment_index, packet.payload);
 
         if entry.fragments.len() as u16 != entry.fragment_count {
             return Ok(None);
         }
 
-        let mut assembled = BytesMut::with_capacity(
-            entry
-                .fragments
-                .values()
-                .map(|p| p.len())
-                .sum(),
-        );
+        let mut assembled =
+            BytesMut::with_capacity(entry.fragments.values().map(|p| p.len()).sum());
         for index in 0..entry.fragment_count {
             if let Some(chunk) = entry.fragments.get(&index) {
                 assembled.extend_from_slice(chunk);
@@ -166,10 +165,7 @@ mod tests {
     #[test]
     fn reassembles_fragments_same_epoch() {
         let mut map = ReassemblyMap::new(8, 16);
-        assert!(map
-            .ingest(fragment(1, 10, 0, 2, b"ab"))
-            .unwrap()
-            .is_none());
+        assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
         let assembled = map.ingest(fragment(1, 10, 1, 2, b"cd")).unwrap();
         assert_eq!(assembled.as_deref(), Some(&b"abcd"[..]));
     }
@@ -177,13 +173,7 @@ mod tests {
     #[test]
     fn isolates_stream_epochs() {
         let mut map = ReassemblyMap::new(8, 16);
-        assert!(map
-            .ingest(fragment(1, 10, 0, 2, b"ab"))
-            .unwrap()
-            .is_none());
-        assert!(map
-            .ingest(fragment(2, 10, 0, 1, b"xy"))
-            .unwrap()
-            .is_some());
+        assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
+        assert!(map.ingest(fragment(2, 10, 0, 1, b"xy")).unwrap().is_some());
     }
 }

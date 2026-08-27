@@ -13,6 +13,9 @@ fn main() {
         .init();
 
     let state = DesktopAppState::default();
-    println!("Picoo Camera Desktop (stub) — status: {:?}", state.receiver_status);
+    println!(
+        "Picoo Camera Desktop (stub) — status: {:?}",
+        state.receiver_status
+    );
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
 }

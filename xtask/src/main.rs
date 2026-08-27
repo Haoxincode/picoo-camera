@@ -80,7 +80,9 @@ fn package(platform: Platform) -> Result<()> {
             eprintln!("windows package: MSI/installer pipeline not yet implemented");
             Ok(())
         }
-        Platform::Android => bail!("use `xtask build android` for APK until package target is defined"),
+        Platform::Android => {
+            bail!("use `xtask build android` for APK until package target is defined")
+        }
     }
 }
 
@@ -88,7 +90,11 @@ fn test_suite(suite: TestSuite) -> Result<()> {
     let sh = Shell::new()?;
     match suite {
         TestSuite::Protocol => {
-            cmd!(sh, "cargo test -p picoo-protocol -p picoo-packet -p picoo-transport -p picoo-testkit").run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-protocol -p picoo-packet -p picoo-transport -p picoo-testkit"
+            )
+            .run()?;
         }
     }
     Ok(())
