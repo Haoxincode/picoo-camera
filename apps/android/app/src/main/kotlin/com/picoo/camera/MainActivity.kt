@@ -484,6 +484,16 @@ private fun SenderHomeScreen(
 
         when (senderTab) {
             SenderTab.Devices -> {
+                if (!nearbyWifiGranted) {
+                    Text(
+                        text = "Nearby Wi-Fi permission required for discovery on Android 13+",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = onRequestNearbyWifi) {
+                        Text("Grant nearby Wi-Fi")
+                    }
+                }
                 if (discoveredList.isNotEmpty()) {
                     Text(text = "Discovered (NSD):", style = MaterialTheme.typography.bodySmall)
                     discoveredList.forEach { receiver ->
