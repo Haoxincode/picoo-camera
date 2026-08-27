@@ -1,11 +1,10 @@
 package com.picoo.camera.media
 
 import android.util.Size
+import android.view.Surface
 
 /**
  * Camera2 + MediaCodec capture configuration (REQ-PICOO-MEDIA-001).
- *
- * Full Camera2 InputSurface → H.264 pipeline lands in the next iteration.
  */
 enum class LensFacing {
     Back,
@@ -28,23 +27,11 @@ enum class CaptureState {
 interface CameraCaptureController {
     val state: CaptureState
     val profile: CaptureProfile
+    val streamEpoch: Int
 
+    fun bindPreviewSurface(surface: Surface)
+    fun unbindPreviewSurface()
     fun startPreview()
     fun stopPreview()
     fun switchCamera()
-}
-
-/** Placeholder until Camera2 session wiring is implemented. */
-class CameraCaptureControllerStub(
-    override val profile: CaptureProfile = CaptureProfile(),
-) : CameraCaptureController {
-    override val state: CaptureState = CaptureState.Idle
-
-    override fun startPreview() {
-        // Camera2 capture session + MediaCodec InputSurface (Step 3b)
-    }
-
-    override fun stopPreview() = Unit
-
-    override fun switchCamera() = Unit
 }

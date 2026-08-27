@@ -9,13 +9,20 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -24,6 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.picoo.camera.jni.PicooNative
+import com.picoo.camera.media.Camera2MediaEncoder
+import com.picoo.camera.media.CaptureState
+import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.theme.PicooCameraTheme
 
 class MainActivity : ComponentActivity() {
@@ -68,28 +79,81 @@ private fun SenderHomeScreen(
     cameraGranted: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var encodedFrames by remember { mutableIntStateOf(0) }
+    var keyFrames by remember { mutableIntStateOf(0) }
+    var encoderState by remember { mutableStateOf(CaptureState.Idle) }
+    var statsText by remember { mutableStateOf("") }
+    var errorText by remember { mutableStateOf<String?>(null) }
+
+    val encoder = remember {
+        Camera2MediaEncoder(
+            context = context,
+            frameListener = EncodedFrameListener { _, isKeyFrame, _, _ ->
+                encodedFrames += 1
+                if (isKeyFrame) keyFrames += 1
+            },
+        )
+    }
+
+    DisposableEffect(encoder) {
+        onDispose { encoder.close() }
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
-            .padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
             text = "Picoo Camera Sender",
-            style = MaterialTheme.typography.headlineMedium,
+            style = MaterialTheme.typography.headlineSmall,
         )
-        Text(
-            text = "Protocol: $protocolVersion",
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Text(
-            text = if (cameraGranted) {
-                "Camera permission granted — discovery UI next"
-            } else {
-                "Camera permission required for capture"
-            },
-            style = MaterialTheme.typography.bodyMedium,
-        )
+        Text(text = "Protocol: $protocolVersion", style = MaterialTheme.typography.bodyMedium)
+
+        if (cameraGranted) {
+            CameraPreviewSurface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(240.dp),
+                onSurfaceAvailable = { surface ->
+                    encoder.bindPreviewSurface(surface)
+                    encoderState = encoder.state
+                    errorText = encoder.lastError
+                },
+                onSurfaceDestroyed = { encoder.unbindPreviewSurface() },
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = {
+                    encoder.switchCamera()
+                    encoderState = encoder.state
+                }) {
+                    Text("Switch camera")
+                }
+                Button(onClick = {
+                    statsText = encoder.stats.let {
+                        "frames=$encodedFrames keys=$keyFrames ~${it.lastBitrateEstimateKbps}kbps epoch=${encoder.streamEpoch}"
+                    }
+                    encoderState = encoder.state
+                    errorText = encoder.lastError
+                }) {
+                    Text("Refresh stats")
+                }
+            }
+
+            Text(text = "State: $encoderState", style = MaterialTheme.typography.bodySmall)
+            Text(text = statsText, style = MaterialTheme.typography.bodySmall)
+            errorText?.let {
+                Text(text = "Error: $it", color = MaterialTheme.colorScheme.error)
+            }
+        } else {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Camera permission required",
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            )
+        }
     }
 }

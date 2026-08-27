@@ -19,8 +19,9 @@ cargo xtask build android
 ## 架构
 
 ```text
-Kotlin/Compose → JNI (libpicoo_jni.so) → C ABI (libpicoo_ffi.so) → Rust Core
-Camera2/MediaCodec → H.264（下一步接入 QUIC 传输）
+Camera2 Capture Session → MediaCodec InputSurface (H.264)
+Kotlin/Compose 预览 → JNI (libpicoo_jni.so) → C ABI (libpicoo_ffi.so) → Rust Core
+（下一步：编码 AU → QUIC Datagram）
 ```
 
 ## Requirement 映射
