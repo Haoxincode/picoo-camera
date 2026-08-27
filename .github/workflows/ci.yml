@@ -25,6 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - run: bash .cursor/install.sh
       - run: cargo run -p xtask -- build android
       # Gradle + NDK steps added when apps/android is configured
 
