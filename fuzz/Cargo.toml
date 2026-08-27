@@ -1,0 +1,19 @@
+[package]
+name = "picoo-protocol-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+picoo-protocol = { path = "../crates/picoo-protocol" }
+
+[[bin]]
+name = "video_packet_decode"
+path = "fuzz_targets/video_packet_decode.rs"
+test = false
+doc = false
+bench = false

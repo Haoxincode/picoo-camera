@@ -144,6 +144,37 @@ mod tests {
     }
 
     #[test]
+    fn decode_never_panics_on_random_bytes() {
+        // Lightweight stand-in that always runs; full fuzz target lives under /fuzz.
+        let mut state: u64 = 0xC0FFEE_u64;
+        for _ in 0..2_000 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1);
+            let len = (state % 1_400) as usize;
+            let mut buf = vec![0u8; len];
+            for (i, byte) in buf.iter_mut().enumerate() {
+                state = state
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1);
+                *byte = (state >> 33) as u8;
+                if i == 0 {
+                    // Mix in valid version occasionally.
+                    if state % 7 == 0 {
+                        *byte = VideoPacket::VERSION;
+                    }
+                }
+            }
+            let _ = VideoPacket::decode(&buf);
+        }
+    }
+
+    #[test]
+    fn header_size_is_twenty_six_bytes() {
+        assert_eq!(VIDEO_PACKET_HEADER_SIZE, 26);
+    }
+
+    #[test]
     fn rejects_invalid_fragment_index() {
         let packet = VideoPacket {
             version: VideoPacket::VERSION,
