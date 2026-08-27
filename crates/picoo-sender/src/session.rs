@@ -820,6 +820,7 @@ mod tests {
             mirrored: true,
             sps: vec![0x67, 0x42],
             pps: vec![0x68, 0xce],
+            ..Default::default()
         });
 
         let hello = ServerHello {

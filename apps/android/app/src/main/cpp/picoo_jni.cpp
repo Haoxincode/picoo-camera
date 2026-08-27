@@ -262,6 +262,7 @@ Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
     jint bitrateBps,
     jint streamEpoch,
     jboolean mirrored,
+    jint rotation,
     jbyteArray sps,
     jbyteArray pps) {
     if (handle == 0) {
@@ -287,6 +288,7 @@ Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
         static_cast<uint32_t>(bitrateBps),
         static_cast<uint32_t>(streamEpoch),
         mirrored ? 1 : 0,
+        static_cast<uint32_t>(rotation),
         reinterpret_cast<const uint8_t *>(sps_ptr),
         static_cast<uintptr_t>(sps_len > 0 ? sps_len : 0),
         reinterpret_cast<const uint8_t *>(pps_ptr),

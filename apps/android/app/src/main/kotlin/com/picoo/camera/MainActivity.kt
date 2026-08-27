@@ -283,6 +283,7 @@ private fun SenderHomeScreen(
             bitrateBps = bitrate,
             streamEpoch = encoder.streamEpoch,
             mirrored = remoteMirrored,
+            rotation = encoder.sensorOrientationDegrees(),
             sps = sets?.first,
             pps = sets?.second,
         )

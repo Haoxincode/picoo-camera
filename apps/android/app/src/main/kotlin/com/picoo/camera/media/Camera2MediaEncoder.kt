@@ -448,6 +448,15 @@ class Camera2MediaEncoder(
         }.getOrNull()
     }
 
+    fun sensorOrientationDegrees(): Int {
+        val cameraId = selectedCameraId ?: return 0
+        return runCatching {
+            cameraManager
+                .getCameraCharacteristics(cameraId)
+                .get(CameraCharacteristics.SENSOR_ORIENTATION)
+        }.getOrNull() ?: 0
+    }
+
     private fun bitrateFor(size: Size): Int = MediaBitrate.forResolution(size.width, size.height)
 
     private fun findCameraId(facing: LensFacing): String? {

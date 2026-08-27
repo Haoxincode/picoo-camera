@@ -910,11 +910,17 @@ impl ReceiverSession {
             .decode_access_unit(&access_unit, self.current_stream_config.as_ref())?
         {
             Some(frame) => {
+                // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
+                let rotation = self
+                    .current_stream_config
+                    .as_ref()
+                    .map(|c| c.rotation)
+                    .unwrap_or(frame.rotation);
                 self.publish_nv12_frame(
                     frame.width,
                     frame.height,
                     frame.stride,
-                    frame.rotation,
+                    rotation,
                     frame.timestamp_us,
                     &frame.nv12,
                 )?;

@@ -81,6 +81,7 @@ object PicooNative {
         bitrateBps: Int,
         streamEpoch: Int,
         mirrored: Boolean,
+        rotation: Int = 0,
         sps: ByteArray? = null,
         pps: ByteArray? = null,
     ): Int

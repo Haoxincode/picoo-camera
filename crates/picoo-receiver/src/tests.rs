@@ -767,6 +767,88 @@ fn remote_mirrored_flips_framehub_nv12() {
 }
 
 #[test]
+fn stream_config_rotation_overrides_decoder_rotation() {
+    // REQ-PICOO-MEDIA-009 / PUC-005: FrameHub publishes Sender StreamConfig.rotation.
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_sender::StreamConfigParams;
+
+    let width = 4u32;
+    let height = 2u32;
+    let pattern = vec![42u8; nv12_byte_size(width, height)];
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "rot-phone".into(),
+        device_name: "Rot".into(),
+        public_key: vec![7, 7, 7],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("rot-phone", "Rot", &[7, 7, 7])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let cfg = StreamConfigParams {
+        width,
+        height,
+        rotation: 90,
+        ..Default::default()
+    };
+    sender.send_stream_config(&cfg).expect("rotation cfg");
+    for _ in 0..50 {
+        receiver.pump().ok();
+        sender.pump().ok();
+    }
+
+    sender
+        .ingest_access_unit(&pattern, true, 1, 1)
+        .expect("ingest");
+    sender.flush_pending().expect("flush");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.latest_frame().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let frame = receiver.latest_frame().expect("frame");
+    assert_eq!(frame.rotation, 90);
+}
+
+#[test]
 fn trusted_store_persists_after_pairing() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store_path = dir.path().join("trusted.json");

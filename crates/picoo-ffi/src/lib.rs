@@ -333,6 +333,7 @@ pub extern "C" fn picoo_sender_set_stream_config(
     bitrate_bps: u32,
     stream_epoch: u32,
     mirrored: u8,
+    rotation: u32,
     sps: *const u8,
     sps_len: usize,
     pps: *const u8,
@@ -354,6 +355,7 @@ pub extern "C" fn picoo_sender_set_stream_config(
             bitrate_bps,
             stream_epoch,
             mirrored: mirrored != 0,
+            rotation,
             sps: sps_bytes,
             pps: pps_bytes,
         });
