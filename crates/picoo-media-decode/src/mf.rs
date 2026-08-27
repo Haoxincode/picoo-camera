@@ -33,6 +33,9 @@ pub struct MfH264Decoder {
     fallback: StubDecoder,
 }
 
+// IMFTransform is not automatically Send in windows-rs; receiver owns the decoder on one thread.
+unsafe impl Send for MfH264Decoder {}
+
 impl MfH264Decoder {
     pub fn new() -> Result<Self, DecodeError> {
         unsafe {
