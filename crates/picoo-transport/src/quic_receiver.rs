@@ -54,6 +54,11 @@ impl QuicReceiverTransport {
         self.session
     }
 
+    /// QUIC path/RTT/loss counters for ReceiverStats (REQ-PICOO-PROTOCOL-006).
+    pub fn link_stats(&self) -> Option<crate::TransportLinkStats> {
+        self.server.as_ref().and_then(|s| s.link_stats())
+    }
+
     fn map_err(err: QuicTransportError) -> TransportError {
         TransportError::ConnectFailed(err.to_string())
     }

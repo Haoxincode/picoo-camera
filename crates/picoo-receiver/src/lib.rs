@@ -85,6 +85,7 @@ struct StatsReporter {
     window_packets: u64,
     window_bytes: u64,
     last_reassembly_drops: u64,
+    window_decoder_drops: u64,
 }
 
 impl StatsReporter {
@@ -94,12 +95,17 @@ impl StatsReporter {
             window_packets: 0,
             window_bytes: 0,
             last_reassembly_drops: 0,
+            window_decoder_drops: 0,
         }
     }
 
     fn record_packet(&mut self, payload_len: usize) {
         self.window_packets += 1;
         self.window_bytes += payload_len as u64;
+    }
+
+    fn record_decoder_drop(&mut self) {
+        self.window_decoder_drops += 1;
     }
 
     fn due(&self) -> bool {
@@ -146,6 +152,8 @@ pub struct ReceiverSession {
     /// Maps wall time onto the media PTS timeline for jitter scheduling.
     /// `(wall_anchor, pts_anchor)` — set on the first buffered AU of a burst.
     jitter_timeline: Option<(Instant, u64)>,
+    /// Last ReceiverStats payload sent to the sender (REQ-PICOO-PROTOCOL-006).
+    last_stats: Option<picoo_metrics::ReceiverStats>,
 }
 
 impl Default for ReceiverSession {
@@ -178,6 +186,7 @@ impl ReceiverSession {
             placeholder_after: None,
             jitter: JitterBuffer::new(50, 120),
             jitter_timeline: None,
+            last_stats: None,
         }
     }
 
@@ -286,6 +295,11 @@ impl ReceiverSession {
     /// Backward-compatible alias for ingress counters.
     pub fn stats(&self) -> IngressStats {
         self.ingress
+    }
+
+    /// Last ReceiverStats sent upstream (REQ-PICOO-PROTOCOL-006 / PUC-005 live metrics).
+    pub fn last_stats(&self) -> Option<&picoo_metrics::ReceiverStats> {
+        self.last_stats.as_ref()
     }
 
     pub fn is_connected(&self) -> bool {
@@ -411,6 +425,7 @@ impl ReceiverSession {
         self.reassembly = ReassemblyMap::new(8, 16);
         self.jitter.clear();
         self.jitter_timeline = None;
+        self.last_stats = None;
         self.current_stream_config = None;
         self.receiver_capabilities_sent = None;
 
@@ -483,16 +498,37 @@ impl ReceiverSession {
             })
             .unwrap_or(0.0);
 
+        // REQ-PICOO-PROTOCOL-006: real RTT from quiche path stats (via transport facade).
+        let link = self.transport.link_stats().unwrap_or_default();
+        let window_packets = self.stats_reporter.window_packets;
+        let app_loss = if window_packets + reassembly_drop == 0 {
+            0.0
+        } else {
+            reassembly_drop as f64 / (window_packets + reassembly_drop) as f64
+        };
+        let packet_loss = app_loss.max(link.sent_loss_ratio());
+
         let stats = ReceiverStatsMsg {
-            rtt_ms: 0.0,
-            packet_loss: 0.0,
+            rtt_ms: link.rtt_ms,
+            packet_loss,
             jitter_ms: self.jitter.depth_ms(),
             reassembly_drop,
-            decoder_drop: 0,
+            decoder_drop: self.stats_reporter.window_decoder_drops,
             frame_age_ms,
             receive_bitrate,
             jitter_buffer_depth_ms: self.jitter.depth_ms(),
         };
+
+        self.last_stats = Some(picoo_metrics::ReceiverStats {
+            rtt_ms: stats.rtt_ms,
+            packet_loss: stats.packet_loss,
+            jitter_ms: stats.jitter_ms,
+            reassembly_drop: stats.reassembly_drop,
+            decoder_drop: stats.decoder_drop,
+            frame_age_ms: stats.frame_age_ms,
+            receive_bitrate: stats.receive_bitrate,
+            jitter_buffer_depth_ms: stats.jitter_buffer_depth_ms,
+        });
 
         self.send_control_message(session, &stats)?;
         self.transport.pump()?;
@@ -500,6 +536,7 @@ impl ReceiverSession {
         self.stats_reporter.last_sent = Instant::now();
         self.stats_reporter.window_packets = 0;
         self.stats_reporter.window_bytes = 0;
+        self.stats_reporter.window_decoder_drops = 0;
         self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
 
         Ok(())
@@ -743,18 +780,23 @@ impl ReceiverSession {
     /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
-        if let Some(frame) = self
+        match self
             .decoder
             .decode_access_unit(&access_unit, self.current_stream_config.as_ref())?
         {
-            self.publish_nv12_frame(
-                frame.width,
-                frame.height,
-                frame.stride,
-                frame.rotation,
-                frame.timestamp_us,
-                &frame.nv12,
-            )?;
+            Some(frame) => {
+                self.publish_nv12_frame(
+                    frame.width,
+                    frame.height,
+                    frame.stride,
+                    frame.rotation,
+                    frame.timestamp_us,
+                    &frame.nv12,
+                )?;
+            }
+            None => {
+                self.stats_reporter.record_decoder_drop();
+            }
         }
         Ok(())
     }

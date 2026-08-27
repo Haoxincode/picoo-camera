@@ -190,6 +190,10 @@ impl PicooTransport for QuicSenderTransport {
         self.poll_inbound()?;
         Ok(())
     }
+
+    fn link_stats(&self) -> Option<crate::TransportLinkStats> {
+        self.client.as_ref().map(|c| c.link_stats())
+    }
 }
 
 #[cfg(test)]

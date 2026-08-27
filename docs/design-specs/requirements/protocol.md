@@ -7,5 +7,5 @@
 | REQ-PICOO-PROTOCOL-003 | proposed | ARCH-PICOO-PROTOCOL-001 | 单包最大 1150 字节，payload 不超 MTU | 超限返回错误 |
 | REQ-PICOO-PROTOCOL-004 | proposed | ARCH-PICOO-PROTOCOL-001 | stream_epoch 隔离重组 | 不同 epoch 片段不可组帧 |
 | REQ-PICOO-PROTOCOL-005 | implemented | PUC-005 | StreamConfig 携带 codec/分辨率/SPS/PPS/epoch | Android 提取 SPS/PPS → FFI → StreamConfig；packet 解析测试 |
-| REQ-PICOO-PROTOCOL-006 | proposed | PUC-006 | ReceiverStats 每秒上报 RTT/丢包/帧龄等 | metrics crate 与 proto 对齐 |
+| REQ-PICOO-PROTOCOL-006 | implemented | PUC-006 | ReceiverStats 每秒上报 RTT/丢包/帧龄等 | transport link_stats + receiver 上报；sender ABR |
 | REQ-PICOO-PROTOCOL-007 | proposed | PRD §20.2 | VideoPacket Parser 可 fuzz | cargo fuzz 目标存在 |

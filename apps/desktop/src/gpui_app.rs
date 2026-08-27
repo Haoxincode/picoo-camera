@@ -405,6 +405,12 @@ impl PicooDesktopApp {
                     .child(format!("{sender_name} · {status}"))
                     .child(format!("{resolution} · {fps} FPS"))
                     .child(format!(
+                        "码率 {:.1} Mbps · 延迟 {:.0} ms · 丢包 {:.1}%",
+                        snapshot.stream_metrics.bitrate_bps as f64 / 1_000_000.0,
+                        snapshot.stream_metrics.latency_ms,
+                        snapshot.stream_metrics.packet_loss * 100.0
+                    ))
+                    .child(format!(
                         "接收 AU：{} / 包：{}",
                         snapshot.ingress.access_units, snapshot.ingress.packets_received
                     ))

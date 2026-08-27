@@ -9,7 +9,25 @@ use picoo_quiche::{build_client_config, build_server_config, quiche};
 use ring::rand::{SecureRandom, SystemRandom};
 use thiserror::Error;
 
+use crate::TransportLinkStats;
+
 pub const CONTROL_STREAM_ID: u64 = 0;
+
+fn link_stats_from_conn(conn: &quiche::Connection) -> TransportLinkStats {
+    let stats = conn.stats();
+    let rtt_ms = conn
+        .path_stats()
+        .next()
+        .map(|path| path.rtt.as_secs_f64() * 1_000.0)
+        .unwrap_or(0.0);
+    TransportLinkStats {
+        rtt_ms,
+        lost_packets: stats.lost as u64,
+        sent_packets: stats.sent as u64,
+        recv_packets: stats.recv as u64,
+        dgram_recv: stats.dgram_recv as u64,
+    }
+}
 
 const MAX_PACKET: usize = 1350;
 
@@ -163,6 +181,14 @@ impl QuicServer {
         self.clients.values().any(|c| c.conn.is_established())
     }
 
+    /// QUIC path stats for the first established client (REQ-PICOO-PROTOCOL-006).
+    pub fn link_stats(&self) -> Option<TransportLinkStats> {
+        self.clients
+            .values()
+            .find(|c| c.conn.is_established())
+            .map(|c| link_stats_from_conn(&c.conn))
+    }
+
     pub fn send_stream(&mut self, stream_id: u64, data: &[u8]) -> Result<(), QuicTransportError> {
         let peer = {
             let client = self.established_client()?;
@@ -266,6 +292,11 @@ impl QuicClient {
 
     pub fn is_established(&self) -> bool {
         self.conn.is_established()
+    }
+
+    /// QUIC path stats for this client connection (REQ-PICOO-PROTOCOL-006).
+    pub fn link_stats(&self) -> TransportLinkStats {
+        link_stats_from_conn(&self.conn)
     }
 
     pub fn send_stream(&mut self, stream_id: u64, data: &[u8]) -> Result<(), QuicTransportError> {
@@ -411,5 +442,23 @@ mod tests {
         let raw = video.expect("video dgram");
         let decoded = VideoPacket::decode(&raw).expect("decode packet");
         assert_eq!(decoded.payload.as_ref(), b"h264");
+    }
+
+    #[test]
+    fn loopback_exposes_link_stats_with_rtt() {
+        // REQ-PICOO-PROTOCOL-006 — transport surfaces RTT without leaking quiche types.
+        let mut pair = establish_loopback().expect("handshake");
+        for _ in 0..20 {
+            drive(&mut pair);
+        }
+        let server = pair.server.link_stats().expect("server stats");
+        let client = pair.client.link_stats();
+        assert!(server.recv_packets > 0 || server.sent_packets > 0);
+        assert!(client.recv_packets > 0 || client.sent_packets > 0);
+        // Loopback RTT is typically small but non-zero after handshake samples.
+        assert!(server.rtt_ms >= 0.0);
+        assert!(client.rtt_ms >= 0.0);
+        assert!(server.rtt_ms < 5_000.0);
+        assert!(client.rtt_ms < 5_000.0);
     }
 }

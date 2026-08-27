@@ -54,6 +54,29 @@ pub enum TransportError {
     SendFailed(String),
 }
 
+/// Path/connection counters for ReceiverStats (REQ-PICOO-PROTOCOL-006).
+///
+/// Opaque to business code — never exposes quiche types (ARCH-PICOO-TRANSPORT-001).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TransportLinkStats {
+    pub rtt_ms: f64,
+    pub lost_packets: u64,
+    pub sent_packets: u64,
+    pub recv_packets: u64,
+    pub dgram_recv: u64,
+}
+
+impl TransportLinkStats {
+    /// QUIC-reported loss ratio on packets this endpoint sent (`lost / sent`).
+    pub fn sent_loss_ratio(&self) -> f64 {
+        if self.sent_packets == 0 {
+            0.0
+        } else {
+            self.lost_packets as f64 / self.sent_packets as f64
+        }
+    }
+}
+
 pub trait PicooTransport {
     fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, TransportError>;
     fn send_control(&mut self, session: SessionId, message: Bytes) -> Result<(), TransportError>;
@@ -65,5 +88,26 @@ pub trait PicooTransport {
     /// Drive underlying I/O (QUIC timers, UDP recv/send). Default no-op.
     fn pump(&mut self) -> Result<(), TransportError> {
         Ok(())
+    }
+
+    /// Optional QUIC path stats for ReceiverStats / ABR (REQ-PICOO-PROTOCOL-006).
+    fn link_stats(&self) -> Option<TransportLinkStats> {
+        None
+    }
+}
+
+#[cfg(test)]
+mod link_stats_tests {
+    use super::*;
+
+    #[test]
+    fn sent_loss_ratio_handles_empty_and_partial() {
+        assert_eq!(TransportLinkStats::default().sent_loss_ratio(), 0.0);
+        let stats = TransportLinkStats {
+            lost_packets: 5,
+            sent_packets: 100,
+            ..Default::default()
+        };
+        assert!((stats.sent_loss_ratio() - 0.05).abs() < f64::EPSILON);
     }
 }

@@ -66,6 +66,7 @@ pub struct ReceiverSnapshot {
     pub qr_ascii: Option<String>,
     pub ingress: IngressStats,
     pub stream_config: Option<StreamConfig>,
+    pub stream_metrics: picoo_metrics::StreamMetrics,
     pub trusted_device_count: usize,
     pub trusted_devices: Vec<TrustedDeviceSummary>,
     pub display_name: String,
@@ -196,6 +197,18 @@ impl ReceiverRuntime {
             qr_ascii: self.qr_ascii.clone(),
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
+            stream_metrics: {
+                let cfg = self.receiver.stream_config();
+                let stats = self.receiver.last_stats();
+                picoo_metrics::StreamMetrics {
+                    width: cfg.map(|c| c.width).unwrap_or(0),
+                    height: cfg.map(|c| c.height).unwrap_or(0),
+                    fps: 30,
+                    bitrate_bps: stats.map(|s| s.receive_bitrate).unwrap_or(0),
+                    latency_ms: stats.map(|s| s.rtt_ms + s.frame_age_ms).unwrap_or(0.0),
+                    packet_loss: stats.map(|s| s.packet_loss).unwrap_or(0.0),
+                }
+            },
             trusted_device_count: self.receiver.trusted_devices().list().count(),
             trusted_devices: self
                 .receiver
