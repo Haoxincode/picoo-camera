@@ -1,5 +1,7 @@
 package com.picoo.camera.ui.screens
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,12 +33,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -86,6 +90,12 @@ fun StreamingScreen(
     var uiLocked by remember { mutableStateOf(false) }
     var showEvPanel by remember { mutableStateOf(false) }
     var shutterArmed by remember { mutableStateOf(false) }
+    var flipRotationTarget by remember { mutableFloatStateOf(0f) }
+    val flipRotation by animateFloatAsState(
+        targetValue = flipRotationTarget,
+        animationSpec = tween(durationMillis = 280),
+        label = "flipRotation",
+    )
 
     LaunchedEffect(shutterArmed) {
         if (shutterArmed) {
@@ -304,14 +314,19 @@ fun StreamingScreen(
                             .clip(CircleShape)
                             .border(1.dp, Color(0x2FFFFFFF), CircleShape)
                             .background(Color(0x14FFFFFF))
-                            .clickable(onClick = onFlipCamera),
+                            .clickable {
+                                flipRotationTarget += 180f
+                                onFlipCamera()
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Default.Cameraswitch,
                             contentDescription = "切换前后摄像头",
                             tint = Color.White,
-                            modifier = Modifier.size(22.dp),
+                            modifier = Modifier
+                                .size(22.dp)
+                                .rotate(flipRotation),
                         )
                     }
                 }
