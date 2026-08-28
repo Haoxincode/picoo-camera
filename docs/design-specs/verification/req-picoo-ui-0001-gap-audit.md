@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | AC-M-DISC-01 | ⏳ | 顶栏 Wi‑Fi pill 读取实时 SSID（`WifiNetworkInfo`）；无权限时回退「局域网」 |
 | AC-M-DISC-02 | ✅ | 发现中橙色脉冲；发现完成绿点常驻（无动画） |
-| AC-M-DISC-03 | ⏳ | 已配对 badge + `MoreHoriz` 分栏；菜单为 Dropdown 非 bottom sheet |
+| AC-M-DISC-03 | ✅ | 已配对 badge + `MoreHoriz` 分栏；管理菜单为原型 `m-sheet` bottom sheet |
 | AC-M-DISC-04 | ✅ | 离线卡片置灰；点击 Toast 提示不在线 |
 | AC-M-DISC-05 | ✅ | 空态 checklist + 空态时 primary 大按钮扫码 |
 
@@ -39,20 +39,20 @@
 | AC | 状态 | 说明 |
 | --- | --- | --- |
 | AC-M-LIVE-01 | ⏳ | HUD + 工具条 + 锁定；**480p 三档点按轮换** ✅；无抽屉 |
-| AC-M-LIVE-02 | ⏳ | 过热横幅文案对齐；药丸无 🔥 态；无 Toast |
-| AC-M-LIVE-03 | ⏳ | 16:9 虚线框 ✅；**轻触对焦环** ✅；**双击沉浸** ✅ |
-| AC-M-LIVE-04 | ⏳ | EV −/＋ 独立步进 + **↺ 重置自动测光** ✅；无 brightness 滤镜 |
+| AC-M-LIVE-02 | ✅ | 过热横幅 + 药丸火焰图标 + Toast「1080P 暂不可选」 |
+| AC-M-LIVE-03 | ✅ | 16:9 虚线框；轻触对焦环（向内微缩）；双击沉浸 |
+| AC-M-LIVE-04 | ✅ | EV −/＋/↺ + 取景器 brightness 滤镜（`ExposurePreview`） |
 | AC-M-LIVE-05 | ✅ | 码率 + 丢包 pill；已移除底栏「前置/后置」文字 |
-| AC-M-LIVE-06 | ⏳ | 64px 快门 + armed 态 + **3s 自动复位** ✅；**armed 呼吸脉冲** ✅ |
-| AC-M-LIVE-07 | ⏳ | 46px 翻转钮 ✅；**180° 旋转动画** ✅；无模糊转场 |
+| AC-M-LIVE-06 | ✅ | 64px 快门 + armed 态 + 3s 自动复位 + armed 呼吸脉冲 |
+| AC-M-LIVE-07 | ✅ | 46px 翻转钮；180° 旋转；翻转瞬间模糊转场 |
 | AC-M-LIVE-08 | ✅ | 重连遮罩 + 退避阶梯文案（`第 N 次 (500ms→5s)`，对齐原型 `m-reconnect-msg`） |
 
 ### 3.5 设置（Screen 6）
 
 | AC | 状态 | 说明 |
 | --- | --- | --- |
-| AC-M-SET-01 | ✅ | Chevron 返回 |
-| AC-M-SET-02 | ⏳ | 自动直连 + 默认画质；配对列表展示 **公钥短指纹** ✅；无独立 sheet |
+| AC-M-SET-01 | ✅ | Chevron Left 矢量返回（扫码页同步） |
+| AC-M-SET-02 | ✅ | 自动直连 + 默认画质三档 sheet；已配对指纹 sheet 可撤销 |
 
 ## 桌面 Receiver（GPUI）
 
@@ -63,11 +63,11 @@
 | AC-D-IDLE-01 | ⏳ | 标题/副标题对齐；**摄像机品牌圆标**（非 ▶ 占位） |
 | AC-D-IDLE-02 | ⏳ | VCam pill 绿/红态；**就绪 (Ready) 文案**对齐 |
 | AC-D-IDLE-03 | ⏳ | QR 卡片 + endpoint ✅；**Nonce 展示** ✅ |
-| AC-D-PAIR-01/02 | ⏳ | Modal 结构 + **code-box** + 首次强调 ✅；无 blur backdrop |
+| AC-D-PAIR-01/02 | ⏳ | Modal + code-box + 首次强调 +「两端一致，确认配对」；暗色遮罩（GPUI 无系统 blur） |
 | AC-D-LIVE-01 | ⏳ | HUD pill 8px 圆角 ✅ |
 | AC-D-LIVE-02 | ⏳ | 遥测 **单行 flex** ✅；真实 jitter ✅；双语网络质量 ✅ |
 | AC-D-LIVE-03 | ⏳ | IDR + **danger 红断开钮** ✅ |
-| AC-D-SET-01 | ⏳ | 功能在 **全页 Settings** 非 Modal；**占位画面三选一**（Logo/黑/彩条）✅ |
+| AC-D-SET-01 | ✅ | Settings 为覆盖 Modal；占位画面三选一（Logo/黑/彩条） |
 | AC-D-SET-02 | ✅ | 诊断导出已实现 |
 
 ## Anti-Patterns（§5）
@@ -75,7 +75,7 @@
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
 | UI 侵入底层 | ✅ | `ReceiverRuntime` / JNI 边界保持 |
-| 移动端表单化 | ⏳ | flip 文字已移除；**480p 轮换** ✅；设置抽屉等待 |
+| 移动端表单化 | ✅ | 无前后摄文字钮；画质点按轮换；设置/配对管理为 bottom sheet |
 | Emoji 替代图标 | ✅ | EV 面板改用 `BrightnessHigh` 矢量图标 |
 | 断开误触 / 假死 | ⏳ | 快门二次确认 + 3s 复位 ✅；重连遮罩 ✅ |
 
@@ -83,8 +83,8 @@
 
 | 类别 | ✅ | ⏳ | ❌ |
 | --- | --- | --- | --- |
-| 移动端 AC | 10 | 11 | 0 |
-| 桌面 AC | 3 | 9 | 0 |
-| Anti-Pattern | 2 | 2 | 0 |
+| 移动端 AC | 17 | 4 | 0 |
+| 桌面 AC | 4 | 8 | 0 |
+| Anti-Pattern | 3 | 1 | 0 |
 
-**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：对焦环/沉浸、翻转动画、Settings Modal、桌面 logo 渐变/阴影精修。
+**REQ-PICOO-UI-0001 仍不可宣称 `verified`。** 本轮对齐了推流滤镜/过热 Toast/翻转模糊、发现页与设置页 bottom sheet、桌面 Settings Modal。剩余：发现页 Wi‑Fi 文案精度、桌面 logo/遮罩精修。云端无法预览原生 Compose/GPUI，视觉源仍是 HTML 原型。
