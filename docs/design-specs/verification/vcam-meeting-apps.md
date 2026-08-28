@@ -8,9 +8,9 @@
 
 ## 前置
 
-- [ ] 安装最新 MSI（含 `picoo-desktop.exe` + `PicooVirtualCameraSource.dll`）
+- [ ] 安装最新 MSI（含 `picoo-desktop.exe` + `PicooVirtualCameraSource.dll`），或开发态执行 `installers/windows/register-vcam.ps1`（须同时完成 `regsvr32` **与** `picoo-desktop --register-vcam`；缺桌面 exe 时脚本非零退出，除非显式 `-AllowComOnly`）
 - [ ] 首次启动桌面 Receiver，确认托盘/窗口正常，设置中 VCam 状态为 Active/Installed
-- [ ] Android Sender 与 PC 同一局域网，完成配对并进入 Streaming
+- [ ] Android Sender 与 PC 同一局域网，完成配对并进入 Streaming（配对确认后应请求 IDR；手机可不依赖预览 Surface 即开始编码）
 - [ ] 桌面直播页可见预览；Shared Frame Ring 有帧（可选：ring-reader 工具）
 
 ## 会议 / 采集软件
