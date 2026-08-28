@@ -1026,7 +1026,7 @@ impl PicooDesktopApp {
                     .v_flex()
                     .child(format!("{} ({})", device.device_name, device.device_id))
                     .child(format!(
-                        "{} · last {} · fp={}",
+                        "{} · 上次 {} · 公钥指纹 {}",
                         device.platform,
                         crate::receiver_runtime::format_last_connected_ms(
                             device.last_connected_at_ms,

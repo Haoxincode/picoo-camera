@@ -164,9 +164,12 @@ fun DevicesScreen(
 
             discoveredList.forEach { receiver ->
                 val locallyTrusted = pairedReceiverIds.contains(receiver.receiverId)
+                val pairedMeta = pairedDevices.find { it.deviceId == receiver.receiverId }
                 DeviceCard(
                     name = receiver.displayName,
-                    meta = if (locallyTrusted) {
+                    meta = if (locallyTrusted && pairedMeta != null) {
+                        "在线 · 公钥 ${TrustedDeviceList.shortFingerprint(pairedMeta.certificateFingerprint)} · 点按直连"
+                    } else if (locallyTrusted) {
                         "在线 · ${receiver.host} · 点按直连"
                     } else {
                         "${DiscoveredReceiverRow.PLATFORM_WINDOWS} · 首次连接需配对短码"
@@ -189,7 +192,7 @@ fun DevicesScreen(
             offlinePaired.forEach { device ->
                 DeviceCard(
                     name = device.deviceName,
-                    meta = "已配对 · 上次连接 ${TrustedDeviceList.formatLastConnected(device.lastConnectedAtMs)}",
+                    meta = "已配对 · 公钥 ${TrustedDeviceList.shortFingerprint(device.certificateFingerprint)} · 上次 ${TrustedDeviceList.formatLastConnected(device.lastConnectedAtMs)}",
                     badge = "不在线",
                     paired = true,
                     offline = true,
