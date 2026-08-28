@@ -12,9 +12,9 @@
 
 | AC | 状态 | 说明 |
 | --- | --- | --- |
-| AC-M-DISC-01 | ⏳ | 顶栏 Wi‑Fi pill 读取实时 SSID（`WifiNetworkInfo`）；无权限时回退「局域网」 |
+| AC-M-DISC-01 | ⏳ | 顶栏 Wi‑Fi pill；`normalizeSsid`/`fallbackLabel` 可测；无权限时回退「局域网」/「Wi‑Fi」 |
 | AC-M-DISC-02 | ✅ | 发现中橙色脉冲；发现完成绿点常驻（无动画） |
-| AC-M-DISC-03 | ⏳ | 已配对 badge + `MoreHoriz` 分栏；菜单为 Dropdown 非 bottom sheet |
+| AC-M-DISC-03 | ✅ | 已配对 badge + `MoreHoriz` 分栏；**ModalBottomSheet** 撤销配对（非 Dropdown） |
 | AC-M-DISC-04 | ✅ | 离线卡片置灰；点击 Toast 提示不在线 |
 | AC-M-DISC-05 | ✅ | 空态 checklist + 空态时 primary 大按钮扫码 |
 
@@ -39,7 +39,7 @@
 | AC | 状态 | 说明 |
 | --- | --- | --- |
 | AC-M-LIVE-01 | ⏳ | HUD + 工具条 + 锁定；**480p 三档点按轮换** ✅；无抽屉 |
-| AC-M-LIVE-02 | ⏳ | 过热横幅文案对齐；药丸无 🔥 态；无 Toast |
+| AC-M-LIVE-02 | ⏳ | 过热横幅 + Toast；**ResPill「热降档」warn 态** ✅；无 emoji 🔥 |
 | AC-M-LIVE-03 | ⏳ | 16:9 虚线框 ✅；**轻触对焦环** ✅；**双击沉浸** ✅ |
 | AC-M-LIVE-04 | ⏳ | EV −/＋ 独立步进 + **↺ 重置自动测光** ✅；无 brightness 滤镜 |
 | AC-M-LIVE-05 | ✅ | 码率 + 丢包 pill；已移除底栏「前置/后置」文字 |
@@ -61,13 +61,13 @@
 | AC-D-TECH-01 | ✅ | 纯 GPUI，无 Electron/WebView |
 | AC-D-TECH-02 | ✅ | `VideoSurface` + FrameHub |
 | AC-D-IDLE-01 | ⏳ | 标题/副标题对齐；**摄像机品牌圆标**（非 ▶ 占位） |
-| AC-D-IDLE-02 | ⏳ | VCam pill 绿/红态；**就绪 (Ready) 文案**对齐 |
+| AC-D-IDLE-02 | ⏳ | VCam pill 绿/红态；**就绪 (Ready) 文案**；未就绪时 **修复按钮 + 诊断反馈** |
 | AC-D-IDLE-03 | ⏳ | QR 卡片 + endpoint ✅；**Nonce 展示** ✅ |
 | AC-D-PAIR-01/02 | ⏳ | Modal 结构 + **code-box** + 首次强调 ✅；无 blur backdrop |
 | AC-D-LIVE-01 | ⏳ | HUD pill 8px 圆角 ✅ |
 | AC-D-LIVE-02 | ⏳ | 遥测 **单行 flex** ✅；真实 jitter ✅；双语网络质量 ✅ |
-| AC-D-LIVE-03 | ⏳ | IDR + **danger 红断开钮** ✅ |
-| AC-D-SET-01 | ⏳ | 功能在 **全页 Settings** 非 Modal；**占位画面三选一**（Logo/黑/彩条）✅ |
+| AC-D-LIVE-03 | ⏳ | IDR + **danger 红断开钮** ✅；**远程 CameraCommand**（前/后/480/720/1080/远端镜像）✅ |
+| AC-D-SET-01 | ✅ | **Settings Modal** 覆盖层（非全页）；占位画面三选一（Logo/黑/彩条）✅ |
 | AC-D-SET-02 | ✅ | 诊断导出已实现 |
 
 ## Anti-Patterns（§5）
@@ -83,8 +83,8 @@
 
 | 类别 | ✅ | ⏳ | ❌ |
 | --- | --- | --- | --- |
-| 移动端 AC | 10 | 11 | 0 |
-| 桌面 AC | 3 | 9 | 0 |
+| 移动端 AC | 12 | 9 | 0 |
+| 桌面 AC | 4 | 8 | 0 |
 | Anti-Pattern | 2 | 2 | 0 |
 
-**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：对焦环/沉浸、翻转动画、Settings Modal、桌面 logo 渐变/阴影精修。
+**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：桌面 logo 渐变/阴影精修、Wi‑Fi SSID 真机权限路径、Settings Modal blur backdrop。

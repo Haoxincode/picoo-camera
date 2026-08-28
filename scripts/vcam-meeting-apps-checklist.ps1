@@ -1,0 +1,25 @@
+# Human-driven REQ-PICOO-VCAM-005 checklist for Win11.
+# Prints the meeting-app matrix; does not automate Zoom/Teams/etc.
+$ErrorActionPreference = "Stop"
+$Root = Split-Path -Parent $PSScriptRoot
+$Doc = Join-Path $Root "docs/design-specs/verification/vcam-meeting-apps.md"
+$E2E = Join-Path $Root "docs/design-specs/verification/device-e2e-android-win11.md"
+
+Write-Host "=== Picoo Camera · VCAM-005 meeting apps (Win11) ==="
+Write-Host "Open: $Doc"
+Write-Host "Prerequisite E2E: $E2E"
+Write-Host ""
+Write-Host "Preflight:"
+Write-Host "  [ ] MSI installed as Administrator; Picoo Camera in Windows Camera list"
+Write-Host "  [ ] Android Streaming; desktop Live preview OK"
+Write-Host ""
+Write-Host "Per app (Zoom / Teams / 腾讯会议 / OBS / Browser):"
+Write-Host "  [ ] Enumerates Picoo Camera"
+Write-Host "  [ ] 720p preview from phone"
+Write-Host "  [ ] 1080p if offered"
+Write-Host "  [ ] Placeholder when Sender stops"
+Write-Host "  [ ] Recovers after 10s Wi-Fi drop"
+Write-Host ""
+Write-Host "Save screenshots as:"
+Write-Host "  docs/design-specs/verification/artifacts/vcam-<app>-<result>.png"
+Write-Host "When all rows pass, set REQ-PICOO-VCAM-005 to verified in docs/design-specs/requirements/vcam.md"

@@ -5,7 +5,10 @@ use picoo_sender::SenderSession;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
 
-use crate::{run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession};
+use crate::{
+    run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession,
+    PAIRING_CHALLENGE_TTL,
+};
 
 fn pump_pair_for(
     receiver: &mut ReceiverSession,
@@ -178,6 +181,65 @@ fn public_key_change_rejects_auto_connect() {
 }
 
 #[test]
+fn pairing_challenge_expires_clears_short_code() {
+    // AC-M-PAIR-02 / PUC-001: pending pairing TTL (60s) — late confirm must fail.
+    use crate::ReceiverIdentity;
+
+    let identity = ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..200 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("ttl-phone", "TTL", &[4, 4, 4])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.pairing_short_code().is_some());
+    assert!(receiver
+        .pairing_ttl_remaining()
+        .is_some_and(|d| d <= PAIRING_CHALLENGE_TTL));
+
+    receiver.force_expire_pending_pairing_for_test();
+    assert!(receiver.pairing_short_code().is_none());
+    assert!(!receiver.is_awaiting_pairing_confirm());
+
+    // Late confirm after expiry must not begin streaming.
+    receiver.confirm_pairing_locally();
+    let _ = sender.send_pairing_confirm(&identity.receiver_id);
+    for _ in 0..40 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+}
+
+#[test]
 fn default_placeholder_toggle_switches_waiting_frame() {
     // PRD §16: "默认占位画面" — branded waiting vs solid black.
     let mut receiver = ReceiverSession::new();
@@ -194,6 +256,41 @@ fn default_placeholder_toggle_switches_waiting_frame() {
     let black = receiver.latest_frame().expect("frame").pixel_data.clone();
     let y_plane = &black[..1280 * 720];
     assert!(y_plane.iter().all(|&b| b == 0));
+}
+
+#[test]
+fn placeholder_mode_bars_and_logo_publish_distinct_frames() {
+    // AC-D-SET-01: Logo / Black / Bars must produce distinct waiting frames.
+    use picoo_frame_hub::PlaceholderMode;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_placeholder_mode(PlaceholderMode::Logo);
+    receiver.publish_waiting_placeholder().expect("logo");
+    let logo = receiver
+        .latest_frame()
+        .expect("logo frame")
+        .pixel_data
+        .clone();
+
+    receiver.set_placeholder_mode(PlaceholderMode::Black);
+    receiver.publish_waiting_placeholder().expect("black");
+    let black = receiver
+        .latest_frame()
+        .expect("black frame")
+        .pixel_data
+        .clone();
+
+    receiver.set_placeholder_mode(PlaceholderMode::Bars);
+    receiver.publish_waiting_placeholder().expect("bars");
+    let bars = receiver
+        .latest_frame()
+        .expect("bars frame")
+        .pixel_data
+        .clone();
+
+    assert_ne!(logo.as_ref(), black.as_ref(), "Logo ≠ Black");
+    assert_ne!(bars.as_ref(), black.as_ref(), "Bars ≠ Black");
+    assert_ne!(bars.as_ref(), logo.as_ref(), "Bars ≠ Logo");
 }
 
 #[test]
@@ -394,6 +491,35 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
     }
     let got = got.expect("CameraCommand delivered to sender");
     assert_eq!(got.command, camera_command::Command::SwitchBack as i32);
+
+    // PUC-005 / ABR: SetResolution 480p (854×480) must round-trip like 720/1080.
+    receiver
+        .send_camera_command(CameraCommand {
+            command: camera_command::Command::SetResolution as i32,
+            resolution: Some(picoo_protocol::control::Resolution {
+                width: 854,
+                height: 480,
+            }),
+            mirrored: false,
+        })
+        .expect("camera cmd 480p");
+    let mut got_res = None;
+    for _ in 0..40 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if let Some(c) = sender.take_camera_command() {
+            got_res = Some(c);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let got_res = got_res.expect("SetResolution 480 delivered");
+    assert_eq!(
+        got_res.command,
+        camera_command::Command::SetResolution as i32
+    );
+    let res = got_res.resolution.expect("resolution payload");
+    assert_eq!((res.width, res.height), (854, 480));
 
     sender.send_stop_stream().expect("stop");
     for _ in 0..100 {
@@ -4106,6 +4232,69 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(ok, "FrameHub must show post-downshift frames");
+
+    // Second ABR rung: 720 → 480 (MEDIA-010 / PUC-006 weak-network floor).
+    let mut downshifted_480 = false;
+    for _ in 0..40 {
+        let stats = ReceiverStatsMsg {
+            packet_loss: 0.05,
+            frame_age_ms: 250.0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        stats.encode(&mut buf).expect("encode");
+        sender
+            .inject_control_for_test(bytes::Bytes::from(buf))
+            .expect("inject");
+        if sender.take_resolution_downshift() {
+            downshifted_480 = true;
+            break;
+        }
+    }
+    assert!(downshifted_480, "ABR must request second downshift to 480");
+    assert_eq!(sender.bitrate_active_height(), 480);
+
+    let (au_480, sps_480, pps_480) = encode_pattern(80, 48, 3);
+    sender.set_stream_config(StreamConfigParams {
+        width: 854,
+        height: 480,
+        fps: 30,
+        bitrate_bps: 1_800_000,
+        stream_epoch: 3,
+        mirrored: false,
+        rotation: 0,
+        sps: sps_480,
+        pps: pps_480,
+    });
+    for _ in 0..80 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.stream_config_sent() && receiver.stream_config().is_some_and(|c| c.height == 480)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        receiver.stream_config().map(|c| (c.width, c.height)),
+        Some((854, 480)),
+        "StreamConfig must be 854x480 after second ABR apply"
+    );
+    sender.ingest_and_flush(&au_480, true, 3, 3).expect("480");
+    let mut ok480 = false;
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if let Some(frame) = receiver.latest_frame() {
+            if frame.width == 80 && frame.height == 48 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(80, 48));
+                ok480 = true;
+                break;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(ok480, "FrameHub must show 480p post-downshift frames");
 }
 
 #[cfg(not(windows))]

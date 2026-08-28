@@ -1,6 +1,6 @@
 //! GPUI desktop shell — ARCH-PICOO-UI-001.
 //!
-//! First launch / Waiting / Live / Settings pages driven by [`ReceiverRuntime`] snapshots.
+//! First launch / Waiting / Live pages + Settings modal driven by [`ReceiverRuntime`] snapshots.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,11 +11,13 @@ use gpui::*;
 use gpui_component::button::*;
 use gpui_component::group_box::*;
 use gpui_component::input::{Input, InputState};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
 use image::{Frame, ImageBuffer, Rgba};
 use picoo_discovery::DEFAULT_QUIC_PORT;
+use picoo_protocol::control::{camera_command, CameraCommand, Resolution};
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 use smallvec::smallvec;
@@ -33,7 +35,6 @@ enum DesktopPage {
     FirstLaunch,
     Waiting,
     Live,
-    Settings,
 }
 
 pub struct PicooDesktopApp {
@@ -41,6 +42,8 @@ pub struct PicooDesktopApp {
     prefs: DesktopPreferences,
     tray_policy: crate::tray::TrayPolicy,
     page: DesktopPage,
+    /// AC-D-SET-01: settings as overlay modal (not a full page).
+    settings_open: bool,
     show_qr: bool,
     pump_started: bool,
     video_surface: VideoSurface,
@@ -73,6 +76,7 @@ impl PicooDesktopApp {
             prefs: prefs.clone(),
             tray_policy: crate::tray::TrayPolicy::from_pref(prefs.minimize_to_tray),
             page,
+            settings_open: false,
             show_qr: true,
             pump_started: false,
             video_surface: VideoSurface::default(),
@@ -156,9 +160,16 @@ impl PicooDesktopApp {
                     self.vcam_status = VirtualCameraStatus::Active;
                     self.runtime
                         .set_virtual_camera_status(VirtualCameraStatus::Active);
+                    self.diagnostics_error = None;
+                    self.diagnostics_message =
+                        Some("虚拟摄像头已激活（Picoo Camera / MF Session）".into());
                 }
                 Err(err) => {
                     tracing::warn!("Install Virtual Camera failed: {err}");
+                    self.diagnostics_message = None;
+                    self.diagnostics_error = Some(format!(
+                        "虚拟摄像头激活失败：{err}。请以管理员运行，或重装 MSI 后重试。"
+                    ));
                     self.refresh_vcam_status();
                 }
             }
@@ -166,6 +177,8 @@ impl PicooDesktopApp {
         #[cfg(not(all(windows, feature = "windows-vcam")))]
         {
             self.refresh_vcam_status();
+            self.diagnostics_message =
+                Some("当前构建未启用 windows-vcam；Linux CI 仅做环路探测。".into());
         }
     }
 
@@ -250,13 +263,19 @@ impl PicooDesktopApp {
                             crate::tray::note_tray_cleared();
                             cx.quit();
                         } else if outcome.restore_window {
-                            cx.activate(true);
+                            // Defer activate out of this entity update to avoid
+                            // nested App/Entity RefCell borrows during pump.
+                            cx.spawn(async move |_, cx| {
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(0))
+                                    .await;
+                                let _ = cx.update(|cx| cx.activate(true));
+                            })
+                            .detach();
                         }
                     }
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
-                        if this.page != DesktopPage::Settings
-                            && this.page != DesktopPage::FirstLaunch
-                        {
+                        if this.page != DesktopPage::FirstLaunch {
                             this.page = DesktopPage::Live;
                         }
                     } else if matches!(
@@ -284,7 +303,8 @@ impl PicooDesktopApp {
 
 impl Render for PicooDesktopApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.ensure_pump_loop(cx);
+        // Pump loop is started once after window open (not here) to avoid
+        // re-entrant Entity updates / RefCell panics during render.
         let snapshot = self.snapshot();
         if self.page == DesktopPage::Waiting && self.show_qr {
             self.ensure_qr_image(&snapshot);
@@ -305,9 +325,9 @@ impl Render for PicooDesktopApp {
                             self.render_waiting(&snapshot, cx).into_any_element()
                         }
                         DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
-                        DesktopPage::Settings => {
-                            self.render_settings(&snapshot, cx).into_any_element()
-                        }
+                    })
+                    .when(self.settings_open, |this| {
+                        this.child(self.render_settings_modal(&snapshot, cx))
                     })
                     .when(
                         matches!(snapshot.status, ReceiverStatus::Pairing)
@@ -338,7 +358,16 @@ impl PicooDesktopApp {
             .when(self.prefs.first_launch_completed, |this| {
                 this.child(self.nav_button("等待连接", DesktopPage::Waiting, cx))
                     .child(self.nav_button("直播", DesktopPage::Live, cx))
-                    .child(self.nav_button("设置", DesktopPage::Settings, cx))
+                    .child({
+                        let mut button = Button::new("nav-settings").label("设置");
+                        if self.settings_open {
+                            button = button.primary();
+                        }
+                        button.on_click(cx.listener(|this, _, _, cx| {
+                            this.settings_open = !this.settings_open;
+                            cx.notify();
+                        }))
+                    })
             })
     }
 
@@ -394,6 +423,32 @@ impl PicooDesktopApp {
                         this.try_register_vcam();
                         cx.notify();
                     })),
+            )
+            .children(
+                self.diagnostics_message
+                    .as_ref()
+                    .map(|msg| {
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0x86efac))
+                            .child(msg.clone())
+                            .into_any_element()
+                    })
+                    .into_iter(),
+            )
+            .children(
+                self.diagnostics_error
+                    .as_ref()
+                    .map(|err| {
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xfca5a5))
+                            .max_w_96()
+                            .text_center()
+                            .child(err.clone())
+                            .into_any_element()
+                    })
+                    .into_iter(),
             )
             .child(
                 Button::new("continue-first-launch")
@@ -491,6 +546,56 @@ impl PicooDesktopApp {
                             })
                             .child(format!("● 虚拟摄像头驱动：{vcam}")),
                     )
+                    .when(!vcam_ready, |this| {
+                        this.child(
+                            div()
+                                .v_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(proto_muted_fg())
+                                        .max_w_96()
+                                        .text_center()
+                                        .child(vcam_repair_hint(self.vcam_status)),
+                                )
+                                .child(
+                                    Button::new("waiting-vcam-repair")
+                                        .label("修复虚拟摄像头注册")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.try_register_vcam();
+                                            cx.notify();
+                                        })),
+                                )
+                                .children(
+                                    self.diagnostics_message
+                                        .as_ref()
+                                        .map(|msg| {
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x86efac))
+                                                .child(msg.clone())
+                                                .into_any_element()
+                                        })
+                                        .into_iter(),
+                                )
+                                .children(
+                                    self.diagnostics_error
+                                        .as_ref()
+                                        .map(|err| {
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0xfca5a5))
+                                                .max_w_96()
+                                                .text_center()
+                                                .child(err.clone())
+                                                .into_any_element()
+                                        })
+                                        .into_iter(),
+                                ),
+                        )
+                    })
                     .child(self.render_qr_card(snapshot, cx))
                     .child(
                         div()
@@ -627,6 +732,19 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|s| s.device_name.clone())
             .unwrap_or_else(|| "手机".into());
+        let pairing_ttl_label = {
+            let ttl = self
+                .runtime
+                .receiver()
+                .pairing_ttl_remaining()
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if ttl > 0 {
+                format!("握手上下文派生短码 · {ttl}s 内有效")
+            } else {
+                "短码已过期 · 请让手机重新发起配对".into()
+            }
+        };
 
         div()
             .absolute()
@@ -690,7 +808,7 @@ impl PicooDesktopApp {
                                     .mt_1()
                                     .text_xs()
                                     .text_color(proto_muted_fg())
-                                    .child("握手上下文派生短码 · 60s 内有效"),
+                                    .child(pairing_ttl_label),
                             ),
                     )
                     .child(
@@ -717,13 +835,31 @@ impl PicooDesktopApp {
             )
     }
 
+    fn send_live_camera_command(&mut self, command: CameraCommand) {
+        // REQ-PICOO-UI-009 / PUC-005: desktop Live remote camera controls.
+        match self.runtime.send_camera_command(command) {
+            Ok(()) => {
+                self.diagnostics_error = None;
+            }
+            Err(err) => {
+                tracing::warn!("CameraCommand failed: {err}");
+                self.diagnostics_error = Some(format!("远程摄像头控制失败：{err}"));
+            }
+        }
+    }
+
     fn render_live(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+        let streaming = matches!(snapshot.status, ReceiverStatus::Streaming);
         let res_label = snapshot
             .stream_config
             .as_ref()
             .map(|c| {
                 if c.height >= 1080 {
                     "1080p30".into()
+                } else if c.height >= 720 {
+                    "720p30".into()
+                } else if c.height >= 480 {
+                    "480p30".into()
                 } else {
                     format!("{}p{}", c.height, c.fps)
                 }
@@ -747,6 +883,11 @@ impl PicooDesktopApp {
         let rtt = snapshot.stream_metrics.latency_ms;
         let loss_pct = snapshot.stream_metrics.packet_loss * 100.0;
         let jitter = snapshot.link_jitter_ms;
+        let remote_mirrored = snapshot
+            .stream_config
+            .as_ref()
+            .map(|c| c.mirrored)
+            .unwrap_or(false);
 
         div()
             .v_flex()
@@ -797,6 +938,99 @@ impl PicooDesktopApp {
                             ))
                             .child(telemetry_cell("网络质量", quality.into())),
                     )
+                    .when(streaming, |this| {
+                        this.child(
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .flex_wrap()
+                                .items_center()
+                                .child(Button::new("cam-front").label("前置").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SwitchFront as i32,
+                                            resolution: None,
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(Button::new("cam-back").label("后置").on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SwitchBack as i32,
+                                            resolution: None,
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    },
+                                )))
+                                .child(Button::new("res-480").label("480p").on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SetResolution as i32,
+                                            resolution: Some(Resolution {
+                                                width: 854,
+                                                height: 480,
+                                            }),
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    },
+                                )))
+                                .child(Button::new("res-720").label("720p").on_click(cx.listener(
+                                    |this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SetResolution as i32,
+                                            resolution: Some(Resolution {
+                                                width: 1280,
+                                                height: 720,
+                                            }),
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    },
+                                )))
+                                .child(Button::new("res-1080").label("1080p").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SetResolution as i32,
+                                            resolution: Some(Resolution {
+                                                width: 1920,
+                                                height: 1080,
+                                            }),
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(
+                                    Switch::new("remote-mirror")
+                                        .checked(remote_mirrored)
+                                        .label("远端镜像")
+                                        .on_click(cx.listener(|this, checked, _, cx| {
+                                            this.send_live_camera_command(CameraCommand {
+                                                command: camera_command::Command::SetMirror as i32,
+                                                resolution: None,
+                                                mirrored: *checked,
+                                            });
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                    })
+                    .children(
+                        self.diagnostics_error
+                            .as_ref()
+                            .map(|err| {
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(0xfca5a5))
+                                    .child(err.clone())
+                                    .into_any_element()
+                            })
+                            .into_iter(),
+                    )
                     .child(
                         div()
                             .h_flex()
@@ -837,11 +1071,60 @@ impl PicooDesktopApp {
             )
     }
 
+    fn render_settings_modal(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        // AC-D-SET-01: settings overlay (prototype d-modal-settings).
+        div()
+            .absolute()
+            .inset_0()
+            .bg(rgba(0xa6000000))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_3()
+                    .p_5()
+                    .w(px(560.))
+                    .max_h(px(640.))
+                    // ScrollableElement must be in scope — Windows CI failed without it.
+                    .overflow_y_scrollbar()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(rgba(0x29ffffff))
+                    .bg(rgba(0x1b202cff))
+                    .shadow_lg()
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0xf4f2ed))
+                                    .child("设置"),
+                            )
+                            .child(Button::new("close-settings").label("关闭").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.settings_open = false;
+                                    cx.notify();
+                                }),
+                            )),
+                    )
+                    .child(self.render_settings(snapshot, cx)),
+            )
+    }
+
     fn render_settings(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
         div()
             .v_flex()
             .gap_4()
-            .p_6()
             .child(
                 GroupBox::new()
                     .outline()
@@ -983,6 +1266,30 @@ impl PicooDesktopApp {
                                 this.try_register_vcam();
                                 cx.notify();
                             })),
+                    )
+                    .children(
+                        self.diagnostics_message
+                            .as_ref()
+                            .map(|msg| {
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0x86efac))
+                                    .child(msg.clone())
+                                    .into_any_element()
+                            })
+                            .into_iter(),
+                    )
+                    .children(
+                        self.diagnostics_error
+                            .as_ref()
+                            .map(|err| {
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0xfca5a5))
+                                    .child(err.clone())
+                                    .into_any_element()
+                            })
+                            .into_iter(),
                     ),
             )
             .child(
@@ -1229,6 +1536,10 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 });
                 let view = cx.new(|_| {
                     PicooDesktopApp::new(runtime, prefs_for_window, display_name_input, vcam_status)
+                });
+                // Start frame/tray pump after the view exists — not inside Render.
+                view.update(cx, |this, cx| {
+                    this.ensure_pump_loop(cx);
                 });
                 // REQ-PICOO-UI-008: close → tray hide (or quit) from Settings preference.
                 let tray_view = view.clone();
