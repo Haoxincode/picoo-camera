@@ -321,10 +321,10 @@ impl Render for PicooDesktopApp {
                     .relative()
                     .child(match self.page {
                         DesktopPage::FirstLaunch => self.render_first_launch(cx).into_any_element(),
+                        DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
                         DesktopPage::Waiting => {
                             self.render_waiting(&snapshot, cx).into_any_element()
                         }
-                        DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
                     })
                     .when(self.settings_open, |this| {
                         this.child(self.render_settings_modal(&snapshot, cx))
@@ -825,7 +825,7 @@ impl PicooDesktopApp {
                             .child(
                                 Button::new("confirm-pairing")
                                     .primary()
-                                    .label("数字一致，确认配对")
+                                    .label("两端一致，确认配对")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.runtime.confirm_pairing();
                                         cx.notify();

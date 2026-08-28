@@ -879,6 +879,7 @@ private fun SenderHomeScreen(
             )
             SenderTab.Settings -> SettingsScreen(
                 pairedDeviceCount = pairedDevices.size,
+                pairedDevices = pairedDevices,
                 cameraGranted = cameraGranted,
                 nearbyWifiGranted = nearbyWifiGranted,
                 notificationsGranted = notificationsGranted,
@@ -891,10 +892,19 @@ private fun SenderHomeScreen(
                     onRequestCamera(null)
                 },
                 onOpenPairedDevices = { senderTab = SenderTab.Devices },
+                onRemovePaired = { device ->
+                    val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, device.deviceId)
+                    if (rc == 1) {
+                        PicooNative.saveTrustedStore(trustedStoreHandle)
+                        PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+                        autoConnectAttemptedIds.value =
+                            autoConnectAttemptedIds.value - device.deviceId
+                        reloadTrustedStore()
+                    }
+                },
                 onToggleAutoConnect = { suppressAutoConnect = !suppressAutoConnect },
-                onOpenDefaultResolution = {
-                    val cur = StreamResolution.fromLabel(preferredResolutionLabel)
-                    preferredResolutionLabel = StreamResolution.next(cur, thermalForced720 = false).label
+                onSelectDefaultResolution = { label ->
+                    preferredResolutionLabel = StreamResolution.fromLabel(label).label
                 },
             )
             SenderTab.Qr -> QrScanScreen(

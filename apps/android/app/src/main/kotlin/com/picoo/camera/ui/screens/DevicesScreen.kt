@@ -24,16 +24,12 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,9 +49,10 @@ import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooPill
 import com.picoo.camera.ui.components.PicooPrimaryButton
+import com.picoo.camera.ui.components.PicooSheet
+import com.picoo.camera.ui.components.PicooSheetRow
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
-import kotlinx.coroutines.launch
 
 /** REQ-PICOO-UI-003 — 发现页，对齐 HTML 原型 m-screen-devices。 */
 @Composable
@@ -180,6 +177,7 @@ fun DevicesScreen(
                     badge = if (locallyTrusted) "已配对" else "在线",
                     paired = locallyTrusted,
                     offline = false,
+                    fingerprint = pairedMeta?.certificateFingerprint,
                     onClick = { onSelectReceiver(receiver) },
                     onRemove = if (locallyTrusted) {
                         {
@@ -199,6 +197,7 @@ fun DevicesScreen(
                     badge = "不在线",
                     paired = true,
                     offline = true,
+                    fingerprint = device.certificateFingerprint,
                     onClick = { onOfflinePairedClick(device) },
                     onRemove = { onRemovePaired(device) },
                 )
@@ -260,7 +259,6 @@ private fun ScanQrGhostButton(onClick: () -> Unit) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DeviceCard(
     name: String,
@@ -268,12 +266,11 @@ private fun DeviceCard(
     badge: String,
     paired: Boolean,
     offline: Boolean,
+    fingerprint: String? = null,
     onClick: () -> Unit,
     onRemove: (() -> Unit)?,
 ) {
-    var sheetOpen by remember { mutableStateOf(false) }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val scope = rememberCoroutineScope()
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -326,7 +323,7 @@ private fun DeviceCard(
                         color = PicooColors.Line,
                         shape = RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp),
                     )
-                    .clickable { sheetOpen = true },
+                    .clickable { menuOpen = true },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -337,52 +334,27 @@ private fun DeviceCard(
             }
         }
     }
-    if (sheetOpen && onRemove != null) {
-        // AC-M-DISC-03 / PUC-007: paired-device actions use bottom sheet (not Dropdown).
-        ModalBottomSheet(
-            onDismissRequest = { sheetOpen = false },
-            sheetState = sheetState,
-            containerColor = PicooColors.Panel2,
-            contentColor = PicooColors.Text,
+    if (menuOpen && onRemove != null) {
+        PicooSheet(
+            title = name,
+            description = "已配对的信任电脑 · 公钥指纹: ${
+                TrustedDeviceList.shortFingerprint(fingerprint.orEmpty())
+            }",
+            onDismiss = { menuOpen = false },
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    text = name,
-                    fontFamily = PicooFont.Display,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
-                    color = PicooColors.Text,
-                )
-                Text(
-                    text = meta,
-                    color = PicooColors.Muted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 16.dp),
-                )
-                Text(
-                    text = "撤销信任并删除配对",
-                    color = PicooColors.DangerText,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 16.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0x22FF5C6C))
-                        .clickable {
-                            scope.launch {
-                                sheetState.hide()
-                                sheetOpen = false
-                                onRemove()
-                            }
-                        }
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                )
-                Spacer(modifier = Modifier.height(24.dp))
-            }
+            PicooSheetRow(
+                title = "撤销信任并删除配对",
+                subtitle = "下次连接需重新在两端核对 6 位短码",
+                danger = true,
+                onClick = {
+                    menuOpen = false
+                    onRemove()
+                },
+            )
+            PicooSheetRow(
+                title = "取消",
+                onClick = { menuOpen = false },
+            )
         }
     }
 }

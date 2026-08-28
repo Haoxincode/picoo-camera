@@ -29,10 +29,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -45,12 +46,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
@@ -63,6 +64,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
+import com.picoo.camera.ui.ExposurePreview
 import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
 import com.picoo.camera.ui.ReconnectBackoffFormat
@@ -105,6 +107,8 @@ fun StreamingScreen(
     var showEvPanel by remember { mutableStateOf(false) }
     var shutterArmed by remember { mutableStateOf(false) }
     var flipRotationTarget by remember { mutableFloatStateOf(0f) }
+    var flipBlurActive by remember { mutableStateOf(false) }
+    var thermalToast by remember { mutableStateOf(false) }
     var immersive by remember { mutableStateOf(false) }
     var focusRingCenter by remember { mutableStateOf(Offset.Zero) }
     var focusRingActive by remember { mutableStateOf(false) }
@@ -128,6 +132,20 @@ fun StreamingScreen(
         }
     }
 
+    LaunchedEffect(flipBlurActive) {
+        if (flipBlurActive) {
+            delay(280)
+            flipBlurActive = false
+        }
+    }
+
+    LaunchedEffect(thermalToast) {
+        if (thermalToast) {
+            delay(2_400)
+            thermalToast = false
+        }
+    }
+
     LaunchedEffect(uiLocked) {
         if (uiLocked) {
             immersive = false
@@ -148,6 +166,22 @@ fun StreamingScreen(
                 onSurfaceAvailable = onPreviewSurfaceAvailable,
                 onSurfaceDestroyed = onPreviewSurfaceDestroyed,
             )
+            val evAlpha = ExposurePreview.overlayAlpha(exposureEv)
+            if (evAlpha > 0f) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(ExposurePreview.overlayColor(exposureEv).copy(alpha = evAlpha)),
+                )
+            }
+            if (flipBlurActive) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .blur(14.dp)
+                        .background(Color(0x66000000)),
+                )
+            }
         } else {
             Box(
                 modifier = Modifier
@@ -254,7 +288,7 @@ fun StreamingScreen(
                         contentDescription = "预览镜像",
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Sync,
+                            imageVector = Icons.Default.Flip,
                             contentDescription = null,
                             tint = if (localPreviewMirrored) PicooColors.Accent2 else PicooColors.Muted,
                             modifier = Modifier.size(15.dp),
@@ -277,7 +311,15 @@ fun StreamingScreen(
                 ResPill(
                     text = "${resolutionLabel.uppercase()} · 30",
                     throttled = thermalForced720,
-                    onClick = onToggleResolution,
+                    onClick = {
+                        if (thermalForced720 &&
+                            resolutionLabel.contains("720", ignoreCase = true)
+                        ) {
+                            thermalToast = true
+                        } else {
+                            onToggleResolution()
+                        }
+                    },
                 )
             }
         }
@@ -384,6 +426,7 @@ fun StreamingScreen(
                             .background(Color(0x14FFFFFF))
                             .clickable {
                                 flipRotationTarget += 180f
+                                flipBlurActive = true
                                 onFlipCamera()
                             },
                         contentAlignment = Alignment.Center,
@@ -401,6 +444,21 @@ fun StreamingScreen(
             }
         }
 
+        if (thermalToast) {
+            Text(
+                text = "设备偏热保护中，1080P 暂不可选",
+                color = Color(0xFFFFE6A4),
+                fontSize = 13.sp,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 96.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xE6242B3B))
+                    .border(1.dp, Color(0x47F0C14A), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+
         if (reconnecting) {
             ReconnectOverlay(
                 networkUnstable = networkUnstable,
@@ -414,6 +472,11 @@ fun StreamingScreen(
 
 @Composable
 private fun FocusRing(center: Offset) {
+    val shrink by animateFloatAsState(
+        targetValue = 0.82f,
+        animationSpec = tween(durationMillis = 220),
+        label = "focusShrink",
+    )
     val halfPx = with(LocalDensity.current) { 28.dp.toPx() }
     Box(
         modifier = Modifier
@@ -424,6 +487,7 @@ private fun FocusRing(center: Offset) {
                 )
             }
             .size(56.dp)
+            .scale(shrink)
             .border(1.5.dp, Color(0xFFFFDC52), RoundedCornerShape(8.dp)),
     )
 }
@@ -621,19 +685,32 @@ private fun ResPill(text: String, throttled: Boolean, onClick: () -> Unit) {
     val bg = if (throttled) Color(0x33F0C14A) else Color(0xB30A0C10)
     val fg = if (throttled) PicooColors.Warn else Color.White
     val label = if (throttled) "热降档 · $text" else text
-    Text(
-        text = label,
+    Row(
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
             .border(1.dp, border, RoundedCornerShape(999.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
-        color = fg,
-        fontSize = 11.sp,
-        fontWeight = FontWeight.Bold,
-        fontFamily = PicooFont.Mono,
-    )
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (throttled) {
+            Icon(
+                imageVector = Icons.Default.LocalFireDepartment,
+                contentDescription = "过热降档",
+                tint = PicooColors.Warn,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+        Text(
+            text = label,
+            color = fg,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Bold,
+            fontFamily = PicooFont.Mono,
+        )
+    }
 }
 
 @Composable
