@@ -19,7 +19,7 @@
     <!-- COM registration: declarative registry (DllRegisterServer equivalent). Avoids
          deferred regsvr32 ExeCommand failures (Return=check aborts install on clean Win11
          when DLL load or DllRegisterServer fails). MF virtual camera is registered after
-         InstallFiles via picoo-desktop --register-vcam --no-wait (system lifetime). -->
+         InstallFiles via picoo-desktop register-vcam with no-wait (system lifetime). -->
 
     <SetProperty
         Id="RegisterVcamOnInstall"
