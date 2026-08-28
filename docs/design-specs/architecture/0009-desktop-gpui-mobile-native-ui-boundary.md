@@ -111,5 +111,6 @@ struct DesktopAppState {
 
 ## 相关 Requirements
 
-- `REQ-PICOO-UI-*`（见 [requirements/ui.md](../requirements/ui.md)）
+- [REQ-PICOO-UI-0001（全端 UI 交互设计与细化验收规范）](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
+- `REQ-PICOO-UI-001` … `REQ-PICOO-UI-009`（见 [requirements/ui.md](../requirements/ui.md)）
 - 桌面远程摄像头控制：`REQ-PICOO-UI-009`（PUC-005）

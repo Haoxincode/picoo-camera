@@ -10,6 +10,8 @@
 
 **V1 差距审计**（实现 vs 真机）：[verification/android-win-v1-gap-audit.md](../verification/android-win-v1-gap-audit.md)
 
+**UI 1:1 验收审计**（REQ-PICOO-UI-0001）：[verification/req-picoo-ui-0001-gap-audit.md](../verification/req-picoo-ui-0001-gap-audit.md)
+
 ## 验证清单（Android→Windows）
 
 | 文档 | 关闭的 REQ / PUC |
@@ -33,6 +35,7 @@
 | `PICOO-FRAME` | [frame.md](frame.md) | FrameHub、Shared Frame Ring |
 | `PICOO-VCAM` | [vcam.md](vcam.md) | Windows 虚拟摄像头 |
 | `PICOO-UI` | [ui.md](ui.md) | Compose / GPUI 页面与状态 |
+| `PICOO-UI` | [req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md](req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md) | **全端 UI 1:1 验收规范**（REQ-PICOO-UI-0001，`proposed`） |
 | `PICOO-PRIVACY` | [privacy.md](privacy.md) | 日志脱敏、本地-only |
 
 ## 追溯链
