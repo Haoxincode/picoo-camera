@@ -87,16 +87,18 @@
 
 ## Compose UI vs HTML 原型（`64bd7c4` 已对齐）
 
-[`64bd7c4`](https://github.com/Haoxincode/picoo-camera/commit/64bd7c4) 重写 Devices / QrScan / Pairing / Streaming 四屏，对齐 [HTML 原型](../prototypes/android-sender/index.html) 流程与中文文案（REQ-PICOO-UI-003、REQ-PICOO-UI-005）。JNI / Rust 会话逻辑未改。
+[`64bd7c4`](https://github.com/Haoxincode/picoo-camera/commit/64bd7c4) 重写 Devices / QrScan / Pairing / Wait / Streaming / Settings 六屏，对齐 [HTML 原型](../prototypes/picoo-camera-ui-prototype.html) 流程与中文文案（REQ-PICOO-UI-003、REQ-PICOO-UI-005）。JNI / Rust 会话逻辑未改。
 
 | 区域 | HTML 原型 | Compose（`64bd7c4` 后） | 剩余 delta |
 | --- | --- | --- | --- |
 | 视觉 | Bricolage/Figtree、品牌色 | 深色 graphite + coral `PicooColors`、卡片组件 | 自定义字体未嵌入；圆角/间距微调 |
-| 发现空态 | 空态 + 主色「扫描二维码连接」 | `DevicesScreen` 空态 + 主色 CTA | 真机视觉验收 |
-| 发现非空 | 列表 + ghost 扫码 | 列表 + ghost 扫码按钮 | — |
-| 扫码 | 独立全屏取景 | `QrScanScreen` 全屏导航 | — |
+| 发现空态 | 空态 + 主色「扫描二维码连接」 | `DevicesScreen` 空态清单 + 主色 CTA | 真机视觉验收 |
+| 发现非空 | 列表 + ghost 扫码 | 列表 + ⋮ 菜单 + ghost 扫码 | — |
+| 扫码 | 独立全屏取景 + 手动 IP | `QrScanScreen` 全屏 + 权限被拒兜底 | — |
 | 配对 | 大号六位码 + 确认/取消 | `PairingScreen` | — |
-| 传输 | 全屏预览 + 控件条 | `StreamingScreen` + 过热横幅 / 链路质量 chip | 真机 FGS / 防锁屏 UX（UI-005） |
+| 等待 | 手机确认后等电脑端 | `WaitScreen` 新增 | — |
+| 传输 | 原生相机 HUD + 快门 | `StreamingScreen` 原生布局 | 真机 FGS / 防锁屏 UX（UI-005） |
+| 设置 | 手机端设置 | `SettingsScreen` 新增 | — |
 | 权限 | 操作时 inline 提示 | 按需请求保留 | 文案/样式微调 |
 
 功能路径（NSD / QR / 配对 / 流控）已在 Compose 接线；**Android 侧 UX 缺口已收窄至字体/真机 UX 验收**。
