@@ -2,6 +2,7 @@ package com.picoo.camera.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -46,8 +47,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
@@ -91,6 +97,9 @@ fun StreamingScreen(
     var showEvPanel by remember { mutableStateOf(false) }
     var shutterArmed by remember { mutableStateOf(false) }
     var flipRotationTarget by remember { mutableFloatStateOf(0f) }
+    var immersive by remember { mutableStateOf(false) }
+    var focusRingCenter by remember { mutableStateOf(Offset.Zero) }
+    var focusRingActive by remember { mutableStateOf(false) }
     val flipRotation by animateFloatAsState(
         targetValue = flipRotationTarget,
         animationSpec = tween(durationMillis = 280),
@@ -103,6 +112,21 @@ fun StreamingScreen(
             shutterArmed = false
         }
     }
+
+    LaunchedEffect(focusRingActive) {
+        if (focusRingActive) {
+            delay(800)
+            focusRingActive = false
+        }
+    }
+
+    LaunchedEffect(uiLocked) {
+        if (uiLocked) {
+            immersive = false
+        }
+    }
+
+    val showChrome = !uiLocked && !immersive
 
     Box(
         modifier = modifier
@@ -139,11 +163,31 @@ fun StreamingScreen(
             }
         }
 
-        if (!uiLocked) {
+        if (cameraGranted && !uiLocked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onTap = { offset ->
+                                focusRingCenter = offset
+                                focusRingActive = true
+                            },
+                            onDoubleTap = { immersive = !immersive },
+                        )
+                    },
+            )
+        }
+
+        if (showChrome) {
             SafeFrameOverlay()
         }
 
-        if (!uiLocked) {
+        if (focusRingActive) {
+            FocusRing(center = focusRingCenter)
+        }
+
+        if (showChrome) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -230,7 +274,7 @@ fun StreamingScreen(
             }
         }
 
-        if (!uiLocked) {
+        if (showChrome) {
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
@@ -342,6 +386,22 @@ fun StreamingScreen(
             )
         }
     }
+}
+
+@Composable
+private fun FocusRing(center: Offset) {
+    val halfPx = with(LocalDensity.current) { 28.dp.toPx() }
+    Box(
+        modifier = Modifier
+            .offset {
+                IntOffset(
+                    (center.x - halfPx).roundToInt(),
+                    (center.y - halfPx).roundToInt(),
+                )
+            }
+            .size(56.dp)
+            .border(1.5.dp, Color(0xFFFFDC52), RoundedCornerShape(8.dp)),
+    )
 }
 
 @Composable
