@@ -730,6 +730,145 @@ fn auto_accept_paired_off_requires_confirm_for_trusted_sender() {
 }
 
 #[test]
+fn pairing_confirm_false_positive_does_not_complete_pairing() {
+    // REQ-PICOO-PAIRING-002 / device-e2e §C: prost may decode unrelated blobs as
+    // PairingConfirm — receiver must verify signature before completing pairing.
+    use picoo_protocol::control::PairingConfirm;
+    use prost::Message;
+
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("flaky-phone", "Pixel", &[7, 7, 7])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    receiver.confirm_pairing_locally();
+
+    let bogus = PairingConfirm {
+        confirm_signature: vec![0u8; 32],
+    };
+    let mut buf = Vec::new();
+    bogus.encode(&mut buf).expect("encode bogus confirm");
+    receiver
+        .inject_control_for_test(bytes::Bytes::from(buf))
+        .expect("inject bogus confirm");
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    assert!(receiver.pairing_short_code().is_some());
+
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("real confirm");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+}
+
+#[test]
+fn pairing_confirm_before_desktop_confirm_is_ignored() {
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .send_client_hello("early-phone", "Pixel", &[8, 8, 8])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("early confirm");
+    for _ in 0..40 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+
+    receiver.confirm_pairing_locally();
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("confirm after desktop ack");
+    for _ in 0..100 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+}
+
+#[test]
 fn first_time_pairing_flow_enables_video() {
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());

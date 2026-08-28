@@ -1136,6 +1136,16 @@ impl ReceiverSession {
         self.on_peer_disconnected();
     }
 
+    /// Test-only: inject a sender-originated control blob into the pairing/session handler.
+    #[cfg(test)]
+    pub fn inject_control_for_test(&mut self, msg: Bytes) -> Result<(), ReceiverError> {
+        let session = self
+            .transport
+            .active_session()
+            .ok_or_else(|| ReceiverError::Protocol("no active session".into()))?;
+        self.handle_control(session, msg)
+    }
+
     /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;

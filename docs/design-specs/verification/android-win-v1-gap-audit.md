@@ -34,7 +34,7 @@
 | 四种平台组合可连接 | 部分 | loopback 四端 crate | ❌ | V1 仅验 Android→Windows；iOS/macOS 未交付 |
 | 自动发现 | ✅ | ✅ | ⏳ | |
 | 二维码兜底 | ✅ | ✅ | ⏳ | |
-| 配对与撤销 | ✅ | ✅ | ⏳ | 配对 flaky 修复待真机确认（`PairingConfirm` 误解析） |
+| 配对与撤销 | ✅ | ✅ + **PairingConfirm 误解析回归测试** | ⏳ | 真机 10 轮取消/重配确认 |
 | 前后摄切换 | ✅ | ✅ epoch | ⏳ | |
 | 720p30 / 1080p30 | ✅ | ✅ caps/ABR | ⏳ | |
 | Windows 注册 Picoo Camera | ✅ | ✅ CI UTF-16/DLL/MSI | ⏳ | 系统相机枚举仍人工 |
@@ -98,7 +98,7 @@
 1. [device-e2e-android-win11.md](device-e2e-android-win11.md) — 安装→配对→Streaming→桌面预览
 2. [vcam-meeting-apps.md](vcam-meeting-apps.md) — 5 款会议/采集软件（关闭 VCAM-005）
 3. SESSION-005 / SESSION-007 — 2h 长稳 + 延迟抽样
-4. 配对 flaky — 重复配对/取消 10 轮确认 `PairingConfirm` 修复
+4. 配对 flaky — 重复配对/取消 10 轮（自动化已有 `pairing_confirm_false_positive_*` 回归测试）
 
 ## 相关文档
 

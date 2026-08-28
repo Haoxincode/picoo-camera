@@ -57,8 +57,9 @@
 ## G. 断网恢复（PUC-006）
 
 1. [ ] Streaming 中关闭手机 Wi‑Fi 5–10s → 状态 Network unstable / Reconnecting
-2. [ ] 重新打开 Wi‑Fi → **&lt;5s** 恢复画面，无需重新输入配对码
-3. [ ] 桌面 Live 预览与 VCam 同步恢复
+2. [ ] 重连遮罩显示退避阶梯文案（`QUIC 会话重试中 · 第 N 次 (500ms/1s/2s/5s)`）
+3. [ ] 重新打开 Wi‑Fi → **&lt;5s** 恢复画面，无需重新输入配对码
+4. [ ] 桌面 Live 预览与 VCam 同步恢复
 
 ## H. 配对管理（PUC-007）
 
