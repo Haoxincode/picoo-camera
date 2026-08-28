@@ -83,8 +83,8 @@
 
 | 类别 | ✅ | ⏳ | ❌ |
 | --- | --- | --- | --- |
-| 移动端 AC | 10 | 11 | 0 |
-| 桌面 AC | 3 | 9 | 0 |
+| 移动端 AC | 12 | 9 | 0 |
+| 桌面 AC | 4 | 8 | 0 |
 | Anti-Pattern | 2 | 2 | 0 |
 
-**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：Settings Modal、桌面 logo 渐变/阴影精修、Wi‑Fi SSID 权限兜底精修。
+**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：桌面 logo 渐变/阴影精修、Wi‑Fi SSID 真机权限路径、Settings Modal blur backdrop。
