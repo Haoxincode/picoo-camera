@@ -42,6 +42,12 @@ need "$WXS" 'ThreadingModel'
 need "$WXS" 'Value="[#PicooVcamDll]"'
 need "$WXS" 'Value="Both"'
 need "$WXS" 'Value="Picoo Camera"'
+if grep -qE 'RegistryValue[^>]*Name=""' "$WXS"; then
+  echo "picoo-camera.wxs: RegistryValue Name must be omitted for default values, not empty string (WIX0006)"
+  fail=1
+else
+  echo "ok: picoo-camera.wxs default RegistryValue names omitted"
+fi
 need "$WXS" 'FirewallQuic'
 need "$WXS" 'KeyPath="yes"'
 need "$WXS" 'MajorUpgrade'

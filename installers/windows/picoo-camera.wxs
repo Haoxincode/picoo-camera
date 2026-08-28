@@ -55,14 +55,12 @@
         <RegistryValue
             Root="HKLM"
             Key="Software\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}"
-            Name=""
             Type="string"
             Value="Picoo Camera"
             KeyPath="no" />
         <RegistryValue
             Root="HKLM"
             Key="Software\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32"
-            Name=""
             Type="string"
             Value="[#PicooVcamDll]"
             KeyPath="no" />
