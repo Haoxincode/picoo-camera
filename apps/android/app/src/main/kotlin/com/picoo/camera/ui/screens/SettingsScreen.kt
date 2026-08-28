@@ -17,18 +17,28 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.picoo.camera.jni.PicooNative
+import com.picoo.camera.media.StreamResolution
+import com.picoo.camera.pairing.TrustedDeviceList
+import com.picoo.camera.ui.ResolutionSheetOptions
 import com.picoo.camera.ui.components.PicooIconButton
+import com.picoo.camera.ui.components.PicooSheet
+import com.picoo.camera.ui.components.PicooSheetRow
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
 
@@ -36,6 +46,7 @@ import com.picoo.camera.ui.theme.PicooFont
 @Composable
 fun SettingsScreen(
     pairedDeviceCount: Int,
+    pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
     cameraGranted: Boolean,
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
@@ -44,13 +55,17 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onCheckPermissions: () -> Unit,
     onOpenPairedDevices: () -> Unit,
+    onRemovePaired: (PicooNative.TrustedDevice) -> Unit = {},
     onToggleAutoConnect: () -> Unit,
-    onOpenDefaultResolution: () -> Unit,
+    onSelectDefaultResolution: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var showPairedSheet by remember { mutableStateOf(false) }
+    var showResolutionSheet by remember { mutableStateOf(false) }
     val permissionsReady = cameraGranted && nearbyWifiGranted && notificationsGranted
+    Box(modifier = modifier.fillMaxSize()) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxSize()
             .background(PicooColors.Panel)
             .verticalScroll(rememberScrollState()),
@@ -64,10 +79,10 @@ fun SettingsScreen(
         ) {
             PicooIconButton(onClick = onBack) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
                     contentDescription = "返回",
                     tint = PicooColors.Text,
-                    modifier = Modifier.size(18.dp),
+                    modifier = Modifier.size(22.dp),
                 )
             }
             Text(
@@ -92,13 +107,13 @@ fun SettingsScreen(
                 title = "默认初始画质",
                 description = "新连接建立时的起步分辨率档位",
                 value = "$defaultResolutionLabel ›",
-                onClick = onOpenDefaultResolution,
+                onClick = { showResolutionSheet = true },
             )
             SettingsValueRow(
                 title = "已配对信任电脑",
                 description = "管理已固定的对端公钥（PUC-007）",
                 value = "$pairedDeviceCount 台 ›",
-                onClick = onOpenPairedDevices,
+                onClick = { showPairedSheet = true },
             )
             SettingsValueRow(
                 title = "权限就绪状态",
@@ -123,6 +138,87 @@ fun SettingsScreen(
             )
             Spacer(modifier = Modifier.height(24.dp))
         }
+    }
+        if (showPairedSheet) {
+            PairedDevicesSheet(
+                devices = pairedDevices,
+                onDismiss = { showPairedSheet = false },
+                onRemove = onRemovePaired,
+                onFallback = {
+                    showPairedSheet = false
+                    onOpenPairedDevices()
+                },
+            )
+        }
+        if (showResolutionSheet) {
+            DefaultResolutionSheet(
+                selectedLabel = defaultResolutionLabel,
+                onDismiss = { showResolutionSheet = false },
+                onSelect = { label ->
+                    onSelectDefaultResolution(label)
+                    showResolutionSheet = false
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun PairedDevicesSheet(
+    devices: List<PicooNative.TrustedDevice>,
+    onDismiss: () -> Unit,
+    onRemove: (PicooNative.TrustedDevice) -> Unit,
+    onFallback: () -> Unit,
+) {
+    PicooSheet(
+        title = "已配对信任电脑",
+        description = if (devices.isEmpty()) {
+            "还没有已固定的电脑。首次配对成功后会出现在这里。"
+        } else {
+            "查看公钥短指纹，或撤销不再使用的电脑。"
+        },
+        onDismiss = onDismiss,
+    ) {
+        devices.forEach { device ->
+            PicooSheetRow(
+                title = device.deviceName,
+                subtitle = "公钥指纹 ${TrustedDeviceList.shortFingerprint(device.certificateFingerprint)} · 点按撤销",
+                danger = true,
+                onClick = { onRemove(device) },
+            )
+        }
+        PicooSheetRow(
+            title = "在设备列表中管理",
+            onClick = onFallback,
+        )
+        PicooSheetRow(
+            title = "取消",
+            onClick = onDismiss,
+        )
+    }
+}
+
+@Composable
+private fun DefaultResolutionSheet(
+    selectedLabel: String,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit,
+) {
+    val selected = StreamResolution.fromLabel(selectedLabel)
+    PicooSheet(
+        title = "发送画质规格",
+        description = "新连接建立时的起步分辨率。推流中点按画质药丸即可轮换，无需抽屉。",
+        onDismiss = onDismiss,
+    ) {
+        ResolutionSheetOptions.all.forEach { option ->
+            PicooSheetRow(
+                title = option.title,
+                subtitle = option.subtitle,
+                selected = option.resolution == selected,
+                onClick = { onSelect(option.resolution.label) },
+            )
+        }
+        PicooSheetRow(title = "取消", onClick = onDismiss)
     }
 }
 

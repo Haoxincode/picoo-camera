@@ -8,8 +8,15 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +27,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -28,6 +36,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
 
@@ -244,4 +254,104 @@ fun DiscoveryPulseDot(searching: Boolean) {
 @Composable
 fun ReadinessBadge(label: String, paired: Boolean, offline: Boolean = false) {
     DeviceBadge(label = label, paired = paired, offline = offline)
+}
+
+/** 原型 `m-sheet`：底栏管理面板（AC-M-DISC-03 / AC-M-SET-02）。 */
+@Composable
+fun PicooSheet(
+    title: String,
+    description: String? = null,
+    onDismiss: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x99000000))
+                .clickable(onClick = onDismiss),
+        ) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                    .background(PicooColors.Panel3)
+                    .border(
+                        1.dp,
+                        PicooColors.Line,
+                        RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+                    )
+                    .clickable(enabled = false) {}
+                    .padding(horizontal = 18.dp, vertical = 16.dp),
+            ) {
+                Text(
+                    text = title,
+                    color = PicooColors.Text,
+                    fontFamily = PicooFont.Display,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                if (description != null) {
+                    Text(
+                        text = description,
+                        color = PicooColors.Muted,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+                    )
+                } else {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+fun PicooSheetRow(
+    title: String,
+    subtitle: String? = null,
+    selected: Boolean = false,
+    danger: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val border = when {
+        danger -> Color(0x47FF5C6C)
+        selected -> Color(0x8CFF6A3D)
+        else -> PicooColors.Line
+    }
+    val bg = when {
+        selected -> Color(0x1AFF6A3D)
+        else -> PicooColors.Panel2
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(bg)
+            .border(1.dp, border, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text(
+            text = title,
+            color = if (danger) PicooColors.DangerText else PicooColors.Text,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (subtitle != null) {
+            Text(
+                text = subtitle,
+                color = if (danger) PicooColors.DangerText.copy(alpha = 0.85f) else PicooColors.Muted,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+        }
+    }
 }

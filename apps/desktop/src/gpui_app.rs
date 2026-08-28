@@ -301,13 +301,21 @@ impl Render for PicooDesktopApp {
                     .relative()
                     .child(match self.page {
                         DesktopPage::FirstLaunch => self.render_first_launch(cx).into_any_element(),
+                        DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
                         DesktopPage::Waiting => {
                             self.render_waiting(&snapshot, cx).into_any_element()
                         }
-                        DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
-                        DesktopPage::Settings => {
-                            self.render_settings(&snapshot, cx).into_any_element()
+                        DesktopPage::Settings
+                            if matches!(snapshot.status, ReceiverStatus::Streaming) =>
+                        {
+                            self.render_live(&snapshot, cx).into_any_element()
                         }
+                        DesktopPage::Settings => {
+                            self.render_waiting(&snapshot, cx).into_any_element()
+                        }
+                    })
+                    .when(self.page == DesktopPage::Settings, |this| {
+                        this.child(self.render_settings_modal(&snapshot, cx))
                     })
                     .when(
                         matches!(snapshot.status, ReceiverStatus::Pairing)
@@ -707,7 +715,7 @@ impl PicooDesktopApp {
                             .child(
                                 Button::new("confirm-pairing")
                                     .primary()
-                                    .label("数字一致，确认配对")
+                                    .label("两端一致，确认配对")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.runtime.confirm_pairing();
                                         cx.notify();
@@ -834,6 +842,32 @@ impl PicooDesktopApp {
                                     .child("断开会话"),
                             ),
                     ),
+            )
+    }
+
+    fn render_settings_modal(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .absolute()
+            .inset_0()
+            .bg(rgba(0x99000000))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .w(px(520.))
+                    .max_h(px(640.))
+                    .overflow_hidden()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(rgba(0x29ffffff))
+                    .bg(rgba(0x242b3bff))
+                    .shadow_lg()
+                    .child(self.render_settings(snapshot, cx)),
             )
     }
 

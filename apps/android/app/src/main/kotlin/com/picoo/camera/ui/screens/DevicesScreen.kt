@@ -24,8 +24,6 @@ import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,6 +49,8 @@ import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooPill
 import com.picoo.camera.ui.components.PicooPrimaryButton
+import com.picoo.camera.ui.components.PicooSheet
+import com.picoo.camera.ui.components.PicooSheetRow
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
 
@@ -177,6 +177,7 @@ fun DevicesScreen(
                     badge = if (locallyTrusted) "已配对" else "在线",
                     paired = locallyTrusted,
                     offline = false,
+                    fingerprint = pairedMeta?.certificateFingerprint,
                     onClick = { onSelectReceiver(receiver) },
                     onRemove = if (locallyTrusted) {
                         {
@@ -196,6 +197,7 @@ fun DevicesScreen(
                     badge = "不在线",
                     paired = true,
                     offline = true,
+                    fingerprint = device.certificateFingerprint,
                     onClick = { onOfflinePairedClick(device) },
                     onRemove = { onRemovePaired(device) },
                 )
@@ -264,6 +266,7 @@ private fun DeviceCard(
     badge: String,
     paired: Boolean,
     offline: Boolean,
+    fingerprint: String? = null,
     onClick: () -> Unit,
     onRemove: (() -> Unit)?,
 ) {
@@ -328,21 +331,30 @@ private fun DeviceCard(
                     contentDescription = "更多操作",
                     tint = PicooColors.Muted,
                 )
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = "撤销信任并删除配对",
-                                color = PicooColors.DangerText,
-                            )
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onRemove()
-                        },
-                    )
-                }
             }
+        }
+    }
+    if (menuOpen && onRemove != null) {
+        PicooSheet(
+            title = name,
+            description = "已配对的信任电脑 · 公钥指纹: ${
+                TrustedDeviceList.shortFingerprint(fingerprint.orEmpty())
+            }",
+            onDismiss = { menuOpen = false },
+        ) {
+            PicooSheetRow(
+                title = "撤销信任并删除配对",
+                subtitle = "下次连接需重新在两端核对 6 位短码",
+                danger = true,
+                onClick = {
+                    menuOpen = false
+                    onRemove()
+                },
+            )
+            PicooSheetRow(
+                title = "取消",
+                onClick = { menuOpen = false },
+            )
         }
     }
 }
