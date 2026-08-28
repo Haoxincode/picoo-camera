@@ -11,6 +11,7 @@ use gpui::*;
 use gpui_component::button::*;
 use gpui_component::group_box::*;
 use gpui_component::input::{Input, InputState};
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
@@ -1090,6 +1091,7 @@ impl PicooDesktopApp {
                     .p_5()
                     .w(px(560.))
                     .max_h(px(640.))
+                    // ScrollableElement must be in scope — Windows CI failed without it.
                     .overflow_y_scrollbar()
                     .rounded_lg()
                     .border_1()
