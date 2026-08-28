@@ -1,6 +1,6 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · 审计基准 commit `2b22237` · 末次全绿 CI run [33131999904](https://github.com/Haoxincode/picoo-camera/actions/runs/33131999904)（`3ae2569`，6/6 green）；`64bd7c4` Compose + `2b22237` MSI 待本轮 CI 确认
+> 分支：`cursor/android-win-v1-gates-dbe3` · tip `3dffa6c`（合并 UI 原型还原 + MSI 安装时自动 VCam 注册）· 末次全绿 CI run [33137894478](https://github.com/Haoxincode/picoo-camera/actions/runs/33137894478)（`744c5ee`）；合并后待新 CI 确认
 >
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
@@ -85,23 +85,9 @@
 
 下载步骤见 [ci-artifacts.md](ci-artifacts.md)。
 
-## Compose UI vs HTML 原型（`64bd7c4` 已对齐）
+## Compose UI vs HTML 原型（REQ-PICOO-UI-0001）
 
-[`64bd7c4`](https://github.com/Haoxincode/picoo-camera/commit/64bd7c4) 重写 Devices / QrScan / Pairing / Wait / Streaming / Settings 六屏，对齐 [HTML 原型](../prototypes/picoo-camera-ui-prototype.html) 流程与中文文案（REQ-PICOO-UI-003、REQ-PICOO-UI-005）。JNI / Rust 会话逻辑未改。
-
-| 区域 | HTML 原型 | Compose（`64bd7c4` 后） | 剩余 delta |
-| --- | --- | --- | --- |
-| 视觉 | Bricolage/Figtree、品牌色 | 深色 graphite + coral `PicooColors`、卡片组件 | 自定义字体未嵌入；圆角/间距微调 |
-| 发现空态 | 空态 + 主色「扫描二维码连接」 | `DevicesScreen` 空态清单 + 主色 CTA | 真机视觉验收 |
-| 发现非空 | 列表 + ghost 扫码 | 列表 + ⋮ 菜单 + ghost 扫码 | — |
-| 扫码 | 独立全屏取景 + 手动 IP | `QrScanScreen` 全屏 + 权限被拒兜底 | — |
-| 配对 | 大号六位码 + 确认/取消 | `PairingScreen` | — |
-| 等待 | 手机确认后等电脑端 | `WaitScreen` 新增 | — |
-| 传输 | 原生相机 HUD + 快门 | `StreamingScreen` 原生布局 | 真机 FGS / 防锁屏 UX（UI-005） |
-| 设置 | 手机端设置 | `SettingsScreen` 新增 | — |
-| 权限 | 操作时 inline 提示 | 按需请求保留 | 文案/样式微调 |
-
-功能路径（NSD / QR / 配对 / 流控）已在 Compose 接线；**Android 侧 UX 缺口已收窄至字体/真机 UX 验收**。
+[`63c9799`](https://github.com/Haoxincode/picoo-camera/commit/63c9799) + [`e57e1a6`](https://github.com/Haoxincode/picoo-camera/commit/e57e1a6) 对齐六屏 + P0 验收项：JetBrains Mono 短码、60s TTL、扫码自动继续、Wi‑Fi SSID pill、Wait 拒绝/超时、GPUI Nonce/遥测单行。详见 [req-picoo-ui-0001-gap-audit.md](req-picoo-ui-0001-gap-audit.md)。
 
 ## Windows MSI / VCam 安装
 
