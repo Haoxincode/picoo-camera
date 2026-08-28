@@ -1411,10 +1411,10 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     sender
         .send_client_hello("hold-phone", "Hold Phone", &[3, 3, 3])
         .expect("hello");
-    for _ in 0..100 {
+    for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.pairing_short_code().is_some() {
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -1423,7 +1423,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("confirm");
-    for _ in 0..100 {
+    for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
         if receiver.status() == ReceiverStatus::Streaming {

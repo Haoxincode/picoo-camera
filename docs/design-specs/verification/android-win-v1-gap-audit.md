@@ -1,6 +1,6 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · 审计基准 commit `3ae2569` · CI run [33131999904](https://github.com/Haoxincode/picoo-camera/actions/runs/33131999904)（6/6 green）
+> 分支：`cursor/android-win-v1-gates-dbe3` · 审计基准 commit `2b22237` · 末次全绿 CI run [33131999904](https://github.com/Haoxincode/picoo-camera/actions/runs/33131999904)（`3ae2569`，6/6 green）；`64bd7c4` Compose + `2b22237` MSI 待本轮 CI 确认
 >
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
@@ -85,21 +85,25 @@
 
 下载步骤见 [ci-artifacts.md](ci-artifacts.md)。
 
-## Compose UI vs HTML 原型（**不改动 Compose**）
+## Compose UI vs HTML 原型（`64bd7c4` 已对齐）
 
-用户正在对齐 [HTML 原型](../prototypes/android-sender/index.html)。当前 Jetpack Compose（`MainActivity.kt`）与原型主要 delta：
+[`64bd7c4`](https://github.com/Haoxincode/picoo-camera/commit/64bd7c4) 重写 Devices / QrScan / Pairing / Streaming 四屏，对齐 [HTML 原型](../prototypes/android-sender/index.html) 流程与中文文案（REQ-PICOO-UI-003、REQ-PICOO-UI-005）。JNI / Rust 会话逻辑未改。
 
-| 区域 | HTML 原型 | 当前 Compose | 对齐后需做 |
+| 区域 | HTML 原型 | Compose（`64bd7c4` 后） | 剩余 delta |
 | --- | --- | --- | --- |
-| 视觉 | Bricolage/Figtree、品牌色、卡片列表 | Material3 调试风格、Tab 按钮 | 换肤 + 布局 |
-| 发现空态 | 空态 + **主色**「扫描二维码连接」 | 「Searching…」+ 同等权重 Scan QR | 空态优先级 |
-| 发现非空 | 列表主路径 + **ghost** 扫码 | 列表 + 常规 Scan QR 按钮 | 按钮层级 |
-| 扫码 | 独立第 4 屏全屏取景 | `QrCodeScanner` overlay | 全屏导航 |
-| 配对 | 大号六位码 + 确认/取消 | Pairing tab 基础 UI | 视觉 + 文案 |
-| 传输 | 全屏预览 + 控件条 | Streaming tab + 调试信息 | 隐藏调试、全屏预览 |
-| 权限 | 操作时 inline 提示 | 已有按需请求 | 文案/样式 |
+| 视觉 | Bricolage/Figtree、品牌色 | 深色 graphite + coral `PicooColors`、卡片组件 | 自定义字体未嵌入；圆角/间距微调 |
+| 发现空态 | 空态 + 主色「扫描二维码连接」 | `DevicesScreen` 空态 + 主色 CTA | 真机视觉验收 |
+| 发现非空 | 列表 + ghost 扫码 | 列表 + ghost 扫码按钮 | — |
+| 扫码 | 独立全屏取景 | `QrScanScreen` 全屏导航 | — |
+| 配对 | 大号六位码 + 确认/取消 | `PairingScreen` | — |
+| 传输 | 全屏预览 + 控件条 | `StreamingScreen` + 过热横幅 / 链路质量 chip | 真机 FGS / 防锁屏 UX（UI-005） |
+| 权限 | 操作时 inline 提示 | 按需请求保留 | 文案/样式微调 |
 
-功能路径（NSD / QR / 配对 / 流控）已在 Compose 接线；**缺口主要是 UX，不是协议**。
+功能路径（NSD / QR / 配对 / 流控）已在 Compose 接线；**Android 侧 UX 缺口已收窄至字体/真机 UX 验收**。
+
+## Windows MSI / VCam 安装（`2b22237`）
+
+[`2b22237`](https://github.com/Haoxincode/picoo-camera/commit/2b22237) 修正 WiX deferred `regsvr32` 自定义动作：`SystemFolder` 作工作目录、`[#PicooVcamDll]` 解析已安装 DLL 路径（REQ-PICOO-VCAM-004）。仍须 Win11 真机验证 MSI 安装/卸载与 COM 枚举。
 
 ## 本会话建议的关闭顺序（真机）
 
