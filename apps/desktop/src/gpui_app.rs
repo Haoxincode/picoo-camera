@@ -731,6 +731,19 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|s| s.device_name.clone())
             .unwrap_or_else(|| "手机".into());
+        let pairing_ttl_label = {
+            let ttl = self
+                .runtime
+                .receiver()
+                .pairing_ttl_remaining()
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if ttl > 0 {
+                format!("握手上下文派生短码 · {ttl}s 内有效")
+            } else {
+                "短码已过期 · 请让手机重新发起配对".into()
+            }
+        };
 
         div()
             .absolute()
@@ -794,7 +807,7 @@ impl PicooDesktopApp {
                                     .mt_1()
                                     .text_xs()
                                     .text_color(proto_muted_fg())
-                                    .child("握手上下文派生短码 · 60s 内有效"),
+                                    .child(pairing_ttl_label),
                             ),
                     )
                     .child(

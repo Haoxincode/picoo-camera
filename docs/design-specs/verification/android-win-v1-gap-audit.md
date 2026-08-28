@@ -17,13 +17,13 @@
 
 | PUC | 实现 | 自动化测试 | 真机验证 | 主要缺口 |
 | --- | --- | --- | --- | --- |
-| **PUC-001** 首次安装与配对 | ✅ | ✅ pairing/FFI/VCam scaffold + MSI 自动 MF | ⏳ | MSI 真机安装 + 首次配对录屏；VCam-001 系统枚举 |
+| **PUC-001** 首次安装与配对 | ✅ | ✅ pairing TTL 60s + FFI/VCam scaffold + MSI | ⏳ | MSI 真机安装 + 首次配对录屏；VCam-001 系统枚举 |
 | **PUC-002** 自动发现连接 | ✅ | ✅ NSD/mDNS/3s 连接测试 | ⏳ | 真 mDNS P50（`--ignored`）；多路由器环境 |
 | **PUC-003** 二维码兜底 | ✅ | ✅ QR JSON + TTL | ⏳ | 企业 Wi‑Fi 隔离场景扫码 E2E |
 | **PUC-004** 会议软件 VCam | ✅ | ✅ placeholder/ring CI | ❌ | **REQ-VCAM-005 `proposed`**；5 款会议/采集软件 |
-| **PUC-005** 直播中调整摄像头 | ✅ | ✅ epoch/ABR/EV 单测 | ⏳ | 真机前后摄/720·1080/EV/镜像；MF 硬解 |
+| **PUC-005** 直播中调整摄像头 | ✅ | ✅ epoch/ABR 1080→720→480/EV + Live CameraCommand | ⏳ | 真机前后摄/720·1080/EV/镜像；MF 硬解 |
 | **PUC-006** 断网自动恢复 | ✅ | ✅ churn/5% loss/5s 恢复 + **退避阶梯 UI** | ⏳ | 真机 Wi‑Fi 开关/漫游；camera→VCam 延迟 |
-| **PUC-007** 管理已配对设备 | ✅ | ✅ clear/remove 测试 | ⏳ | 双端删除后重配对 E2E |
+| **PUC-007** 管理已配对设备 | ✅ | ✅ clear/remove + PUBLIC_KEY_CHANGED 环路/Android Toast | ⏳ | 双端删除后重配对 E2E；真机公钥变化 |
 
 **BUC-001**（手机作无线会议摄像头）：实现链完整，**关闭依赖 PUC-004 会议软件证据 + 全链路真机 E2E**。
 

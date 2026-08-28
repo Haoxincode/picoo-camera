@@ -252,6 +252,7 @@ private fun SenderHomeScreen(
     var waitUserCancelled by remember { mutableStateOf(false) }
     var reconnectAttempt by remember { mutableIntStateOf(0) }
     var reconnectDelayMs by remember { mutableLongStateOf(0L) }
+    var lastShownSessionError by remember { mutableStateOf("") }
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
     val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
@@ -652,6 +653,23 @@ private fun SenderHomeScreen(
                 }
                 if (PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                     encoder.requestKeyFrame()
+                }
+                // PUC-007 / PAIRING-004: surface PUBLIC_KEY_CHANGED / UNPAIRED to the user.
+                val sessionErr = PicooNative.lastSessionError(senderHandle)
+                if (sessionErr.isNotEmpty() && sessionErr != lastShownSessionError) {
+                    lastShownSessionError = sessionErr
+                    val msg = when (sessionErr) {
+                        "PUBLIC_KEY_CHANGED" ->
+                            "电脑端检测到公钥变化，已拒绝自动连接。请删除配对后重新核对短码。"
+                        "UNPAIRED" ->
+                            "尚未完成配对，无法开始推流。请先完成六位短码确认。"
+                        else -> "会话错误：$sessionErr"
+                    }
+                    errorText = msg
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    if (sessionErr == "PUBLIC_KEY_CHANGED") {
+                        senderTab = SenderTab.Devices
+                    }
                 }
                 run {
                     val camOut = IntArray(3)

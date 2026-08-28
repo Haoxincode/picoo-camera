@@ -129,7 +129,12 @@ struct PendingPairing {
     session: SessionId,
     challenge_nonce: Vec<u8>,
     short_code: String,
+    /// PUC-001 / AC-M-PAIR-02: challenge valid for 60s (wall clock).
+    expires_at: Instant,
 }
+
+/// Pairing short-code / challenge lifetime (matches Android PairingScreen TTL).
+pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);
 
 pub struct ReceiverSession {
     transport: QuicReceiverTransport,
@@ -475,13 +480,47 @@ impl ReceiverSession {
         self.pending_pairing.as_ref().map(|p| p.short_code.as_str())
     }
 
+    /// Remaining TTL for the active pairing challenge, if any.
+    pub fn pairing_ttl_remaining(&self) -> Option<Duration> {
+        let pending = self.pending_pairing.as_ref()?;
+        Some(pending.expires_at.saturating_duration_since(Instant::now()))
+    }
+
+    /// Drop expired pending pairing (clears short code / modal).
+    pub fn expire_pending_pairing_if_needed(&mut self) {
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return;
+        };
+        if Instant::now() < pending.expires_at {
+            return;
+        }
+        self.pending_pairing = None;
+        self.local_pairing_confirmed = false;
+        if matches!(self.status, ReceiverStatus::Pairing) {
+            // Keep connection; UI must regenerate / wait for new challenge.
+            self.status = ReceiverStatus::Connecting;
+        }
+    }
+
     /// User confirmed the six-digit code on desktop (PUC-001).
     pub fn confirm_pairing_locally(&mut self) {
-        self.local_pairing_confirmed = true;
+        self.expire_pending_pairing_if_needed();
+        if self.pending_pairing.is_some() {
+            self.local_pairing_confirmed = true;
+        }
     }
 
     pub fn is_awaiting_pairing_confirm(&self) -> bool {
         self.pending_pairing.is_some()
+    }
+
+    /// Test hook: expire the pending pairing challenge immediately.
+    #[cfg(test)]
+    pub fn force_expire_pending_pairing_for_test(&mut self) {
+        if let Some(pending) = self.pending_pairing.as_mut() {
+            pending.expires_at = Instant::now() - Duration::from_millis(1);
+        }
+        self.expire_pending_pairing_if_needed();
     }
 
     pub fn frame_hub(&self) -> &FrameHub {
@@ -499,6 +538,7 @@ impl ReceiverSession {
     }
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
+        self.expire_pending_pairing_if_needed();
         self.transport.pump()?;
 
         while let Some(event) = self.transport.poll_event() {
@@ -1031,6 +1071,7 @@ impl ReceiverSession {
             session,
             challenge_nonce: nonce,
             short_code: challenge.short_code,
+            expires_at: Instant::now() + PAIRING_CHALLENGE_TTL,
         });
         self.local_pairing_confirmed = false;
         self.active_sender = Some(ActiveSender {
@@ -1055,6 +1096,15 @@ impl ReceiverSession {
             .pending_pairing
             .as_ref()
             .ok_or_else(|| ReceiverError::Protocol("no pending pairing".into()))?;
+
+        if Instant::now() >= pending.expires_at {
+            self.pending_pairing = None;
+            self.local_pairing_confirmed = false;
+            if matches!(self.status, ReceiverStatus::Pairing) {
+                self.status = ReceiverStatus::Connecting;
+            }
+            return Err(ReceiverError::Protocol("pairing challenge expired".into()));
+        }
 
         if session != pending.session {
             return Err(ReceiverError::Protocol("pairing session mismatch".into()));
