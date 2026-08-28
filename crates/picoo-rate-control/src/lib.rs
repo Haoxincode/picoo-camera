@@ -2,6 +2,11 @@
 
 use picoo_metrics::ReceiverStats;
 
+/// 480p ladder (weak-network floor; aligns with Android MediaBitrate).
+pub const LADDER_480_MIN_BPS: u32 = 900_000;
+pub const LADDER_480_MAX_BPS: u32 = 2_500_000;
+pub const LADDER_480_INITIAL_BPS: u32 = 1_800_000;
+
 /// 720p ladder (PRD FR-ENC-003 style bounds).
 pub const LADDER_720_MIN_BPS: u32 = 1_500_000;
 pub const LADDER_720_MAX_BPS: u32 = 5_000_000;
@@ -12,6 +17,17 @@ pub const LADDER_1080_MIN_BPS: u32 = 3_000_000;
 pub const LADDER_1080_MAX_BPS: u32 = 10_000_000;
 pub const LADDER_1080_INITIAL_BPS: u32 = 6_000_000;
 
+/// Snap arbitrary encode height onto the V1 ladder (1080 / 720 / 480).
+pub fn normalize_height(height: u32) -> u32 {
+    if height >= 1080 {
+        1080
+    } else if height >= 720 {
+        720
+    } else {
+        480
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitrateLadder {
     pub min_bps: u32,
@@ -21,18 +37,22 @@ pub struct BitrateLadder {
 
 impl BitrateLadder {
     pub fn for_height(height: u32) -> Self {
-        if height >= 1080 {
-            Self {
+        match normalize_height(height) {
+            1080 => Self {
                 min_bps: LADDER_1080_MIN_BPS,
                 max_bps: LADDER_1080_MAX_BPS,
                 initial_bps: LADDER_1080_INITIAL_BPS,
-            }
-        } else {
-            Self {
+            },
+            720 => Self {
                 min_bps: LADDER_720_MIN_BPS,
                 max_bps: LADDER_720_MAX_BPS,
                 initial_bps: LADDER_720_INITIAL_BPS,
-            }
+            },
+            _ => Self {
+                min_bps: LADDER_480_MIN_BPS,
+                max_bps: LADDER_480_MAX_BPS,
+                initial_bps: LADDER_480_INITIAL_BPS,
+            },
         }
     }
 }
@@ -48,7 +68,7 @@ pub struct BitrateController {
     upshift_armed: bool,
     /// Host thermal policy: block ABR upshift while true (REQ-PICOO-MEDIA-010).
     thermal_hold: bool,
-    /// Currently encoded height (720 or 1080).
+    /// Currently encoded height (480 / 720 / 1080).
     active_height: u32,
     /// User / capability preferred height (may be 1080 while active is 720).
     preferred_height: u32,
@@ -71,10 +91,11 @@ impl BitrateController {
     }
 
     pub fn for_height(height: u32) -> Self {
-        let ladder = BitrateLadder::for_height(height);
+        let h = normalize_height(height);
+        let ladder = BitrateLadder::for_height(h);
         let mut ctrl = Self::new(ladder.initial_bps, ladder.min_bps, ladder.max_bps);
-        ctrl.active_height = if height >= 1080 { 1080 } else { 720 };
-        ctrl.preferred_height = ctrl.active_height;
+        ctrl.active_height = h;
+        ctrl.preferred_height = h;
         ctrl
     }
 
@@ -100,7 +121,7 @@ impl BitrateController {
 
     /// Sync preferred height from StreamConfig / user Resolution toggle.
     pub fn set_preferred_height(&mut self, height: u32) {
-        let h = if height >= 1080 { 1080 } else { 720 };
+        let h = normalize_height(height);
         self.preferred_height = h;
         if self.active_height == h {
             self.apply_ladder(BitrateLadder::for_height(h), /*reset_current*/ false);
@@ -121,17 +142,25 @@ impl BitrateController {
 
     /// Host applied encode height (thermal force, user toggle, or ABR apply).
     pub fn sync_encode_height(&mut self, height: u32) {
-        let h = if height >= 1080 { 1080 } else { 720 };
+        let h = normalize_height(height);
         if h == self.active_height {
             return;
         }
         if h < self.active_height {
             self.acknowledge_resolution_downshift();
+            if self.active_height != h {
+                self.active_height = h;
+                self.apply_ladder(BitrateLadder::for_height(h), true);
+            }
         } else {
             if self.preferred_height < h {
                 self.preferred_height = h;
             }
             self.acknowledge_resolution_upshift();
+            if self.active_height != h && h <= self.preferred_height {
+                self.active_height = h;
+                self.apply_ladder(BitrateLadder::for_height(h), true);
+            }
         }
     }
 
@@ -147,26 +176,30 @@ impl BitrateController {
         }
     }
 
-    /// Host applied 1080→720; retarget to the 720 ladder.
+    /// Host applied one ladder rung down (1080→720 or 720→480).
     pub fn acknowledge_resolution_downshift(&mut self) {
-        self.active_height = 720;
-        self.apply_ladder(BitrateLadder::for_height(720), true);
-        self.downshift_armed = false;
+        self.active_height = if self.active_height >= 1080 { 720 } else { 480 };
+        self.apply_ladder(BitrateLadder::for_height(self.active_height), true);
+        self.downshift_armed = self.active_height > 480;
         self.upshift_armed = true;
         self.congested_at_floor_ticks = 0;
         self.stable_seconds = 0;
     }
 
-    /// Host applied 720→1080; retarget to the 1080 ladder.
+    /// Host applied one ladder rung up toward preferred height.
     pub fn acknowledge_resolution_upshift(&mut self) {
-        self.active_height = if self.preferred_height >= 1080 {
+        let next = if self.active_height < 720 && self.preferred_height >= 720 {
+            720
+        } else if self.active_height < 1080 && self.preferred_height >= 1080 {
             1080
         } else {
-            self.preferred_height
+            self.preferred_height.max(self.active_height)
         };
+        self.active_height = normalize_height(next);
         self.apply_ladder(BitrateLadder::for_height(self.active_height), true);
-        self.upshift_armed = false;
-        self.downshift_armed = self.active_height > 720;
+        self.upshift_armed = self.active_height < self.preferred_height;
+        self.downshift_armed = self.active_height > 480;
+        self.congested_at_floor_ticks = 0;
         self.stable_seconds = 0;
     }
 
@@ -182,7 +215,7 @@ impl BitrateController {
             if self.current_bitrate_bps <= self.min_bps {
                 self.congested_at_floor_ticks = self.congested_at_floor_ticks.saturating_add(1);
                 if self.downshift_armed
-                    && self.active_height > 720
+                    && self.active_height > 480
                     && self.congested_at_floor_ticks >= 3
                 {
                     self.downshift_armed = false;
@@ -199,14 +232,13 @@ impl BitrateController {
 
         self.congested_at_floor_ticks = 0;
         if stats.packet_loss < 0.01 && stats.jitter_buffer_depth_ms < 80.0 {
-            self.downshift_armed = self.active_height > 720;
+            self.downshift_armed = self.active_height > 480;
             self.stable_seconds += 1;
             let near_max = self.current_bitrate_bps >= (self.max_bps * 9) / 10;
-            // Prefer climbing back to preferred height before further bitrate increases.
+            // Prefer climbing back toward preferred height before further bitrate increases.
             if self.upshift_armed
                 && !self.thermal_hold
                 && self.active_height < self.preferred_height
-                && self.preferred_height >= 1080
                 && near_max
             {
                 if self.stable_seconds >= 8 {
@@ -235,9 +267,9 @@ pub enum BitrateAction {
     Hold,
     Increase,
     Decrease,
-    /// Prefer lowering capture/encode height (typically 1080p → 720p).
+    /// Prefer lowering capture/encode height (1080→720 or 720→480).
     DownshiftResolution,
-    /// Prefer restoring preferred height (typically 720p → 1080p).
+    /// Prefer restoring preferred height one rung at a time.
     UpshiftResolution,
 }
 
@@ -354,5 +386,36 @@ mod tests {
         assert_eq!(ctrl.active_height(), 720);
         assert_eq!(ctrl.preferred_height(), 1080);
         assert_eq!(ctrl.max_bps(), LADDER_720_MAX_BPS);
+    }
+
+    #[test]
+    fn downshifts_720_to_480_after_floor_congestion() {
+        let mut ctrl = BitrateController::for_height(720);
+        let bad = ReceiverStats {
+            packet_loss: 0.05,
+            frame_age_ms: 250.0,
+            ..Default::default()
+        };
+        let mut saw = BitrateAction::Hold;
+        for _ in 0..40 {
+            saw = ctrl.update(&bad);
+            if saw == BitrateAction::DownshiftResolution {
+                break;
+            }
+        }
+        assert_eq!(saw, BitrateAction::DownshiftResolution);
+        ctrl.acknowledge_resolution_downshift();
+        assert_eq!(ctrl.active_height(), 480);
+        assert_eq!(ctrl.min_bps(), LADDER_480_MIN_BPS);
+        assert_eq!(ctrl.max_bps(), LADDER_480_MAX_BPS);
+    }
+
+    #[test]
+    fn sync_encode_height_480_uses_480_ladder() {
+        let mut ctrl = BitrateController::for_height(1080);
+        ctrl.sync_encode_height(480);
+        assert_eq!(ctrl.active_height(), 480);
+        assert_eq!(ctrl.max_bps(), LADDER_480_MAX_BPS);
+        assert_eq!(ctrl.min_bps(), LADDER_480_MIN_BPS);
     }
 }

@@ -203,8 +203,11 @@ impl<T: PicooTransport> SenderSession<T> {
         if cfg.height <= max_h {
             return;
         }
-        // Map onto the receiver ladder (720p / 1080p for A→W V1).
-        if max_h <= 720 {
+        // Map onto the receiver ladder (480p / 720p / 1080p).
+        if max_h < 720 {
+            cfg.width = 854;
+            cfg.height = 480;
+        } else if max_h < 1080 {
             cfg.width = 1280;
             cfg.height = 720;
         } else {

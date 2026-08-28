@@ -675,26 +675,42 @@ private fun SenderHomeScreen(
                         }
                     }
                 }
-                if (PicooNative.takeResolutionDownshift(senderHandle) == 1 &&
-                    StreamResolution.fromLabel(resolutionLabel).height > 720
-                ) {
-                    resolutionLabel = "720p"
-                    encoder.setResolution(1280, 720)
-                    streamConfigDirty.set(true)
-                    encoder.requestKeyFrame()
-                }
-                if (!PowerHints.shouldForce720p(PowerHints.readThermalStatus(context)) &&
-                    PicooNative.takeResolutionUpshift(senderHandle) == 1 &&
-                    preferredResolutionLabel == "1080p" &&
-                    resolutionLabel != "1080p"
-                ) {
-                    val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
-                    if (maxH == 0 || maxH >= 1080) {
-                        resolutionLabel = "1080p"
-                        encoder.setResolution(1920, 1080)
-                        PicooNative.syncEncodeHeight(senderHandle, 1080)
+                if (PicooNative.takeResolutionDownshift(senderHandle) == 1) {
+                    val current = StreamResolution.fromLabel(resolutionLabel)
+                    val next = when (current) {
+                        StreamResolution.P1080 -> StreamResolution.P720
+                        StreamResolution.P720 -> StreamResolution.P480
+                        StreamResolution.P480 -> null
+                    }
+                    if (next != null) {
+                        resolutionLabel = next.label
+                        encoder.setResolution(next.width, next.height)
+                        PicooNative.syncEncodeHeight(senderHandle, next.height)
                         streamConfigDirty.set(true)
                         encoder.requestKeyFrame()
+                    }
+                }
+                if (!PowerHints.shouldForce720p(PowerHints.readThermalStatus(context)) &&
+                    PicooNative.takeResolutionUpshift(senderHandle) == 1
+                ) {
+                    val preferred = StreamResolution.fromLabel(preferredResolutionLabel)
+                    val current = StreamResolution.fromLabel(resolutionLabel)
+                    val next = when {
+                        current == StreamResolution.P480 && preferred.height >= 720 ->
+                            StreamResolution.P720
+                        current == StreamResolution.P720 && preferred.height >= 1080 ->
+                            StreamResolution.P1080
+                        else -> null
+                    }
+                    if (next != null) {
+                        val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
+                        if (maxH == 0 || maxH >= next.height) {
+                            resolutionLabel = next.label
+                            encoder.setResolution(next.width, next.height)
+                            PicooNative.syncEncodeHeight(senderHandle, next.height)
+                            streamConfigDirty.set(true)
+                            encoder.requestKeyFrame()
+                        }
                     }
                 }
                 if (previousStatus == PicooNative.STATUS_RECONNECTING &&
