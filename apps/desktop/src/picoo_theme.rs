@@ -1,17 +1,30 @@
 //! Picoo Dark Slate — REQ-PICOO-UI-0001 / REQ-PICOO-UI-010.
 //!
-//! Hex lives here only. Application views must read `cx.theme()`.
+//! Hex and type families live here only. Application views must read
+//! `cx.theme()` or the `FONT_*` constants.
 //!
 //! `gpui::rgba` is RRGGBBAA, not AARRGGBB. `0x14ffffff` is cyan `#14ffff`.
+
+use std::borrow::Cow;
 
 use gpui::{rgb, rgba, App, Hsla, Rgba};
 use gpui_component::{Theme, ThemeMode, ThemeTokens};
 
-/// Apply Dark mode, then stamp prototype tokens onto colors **and** tokens.
+/// HTML `--font-display`. Titles and brand only.
+pub const FONT_DISPLAY: &str = "Bricolage Grotesque";
+/// HTML `--font-body`. Theme sans / Root default.
+pub const FONT_BODY: &str = "Figtree";
+/// HTML `--font-mono`. Telemetry, short codes, IP:Port.
+pub const FONT_MONO: &str = "JetBrains Mono";
+
+/// Load OFL faces, then stamp prototype colors, type and tokens.
 pub fn apply_picoo_theme(cx: &mut App) {
+    load_picoo_fonts(cx);
     Theme::change(ThemeMode::Dark, None, cx);
     {
         let theme = Theme::global_mut(cx);
+        theme.font_family = FONT_BODY.into();
+        theme.mono_font_family = FONT_MONO.into();
         let colors = &mut theme.colors;
 
         let ink = hex(0x0b0d11);
@@ -91,6 +104,27 @@ pub fn apply_picoo_theme(cx: &mut App) {
     Theme::sync_base(cx);
 }
 
+fn load_picoo_fonts(cx: &App) {
+    let faces: Vec<Cow<'static, [u8]>> = vec![
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Regular.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Medium.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-SemiBold.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Bold.ttf")),
+        Cow::Borrowed(include_bytes!(
+            "../assets/fonts/BricolageGrotesque-Bold.ttf"
+        )),
+        Cow::Borrowed(include_bytes!(
+            "../assets/fonts/BricolageGrotesque-ExtraBold.ttf"
+        )),
+        Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Medium.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf")),
+    ];
+    cx.text_system()
+        .add_fonts(faces)
+        .expect("load Picoo OFL fonts");
+}
+
 fn hex(rgb_u24: u32) -> Hsla {
     rgb(rgb_u24).into()
 }
@@ -140,5 +174,26 @@ mod tests {
         assert!((line.g - 1.0).abs() < 0.02);
         assert!((line.b - 1.0).abs() < 0.02);
         assert!(line.a > 0.05 && line.a < 0.15);
+    }
+
+    #[test]
+    fn prototype_families_match_req() {
+        assert_eq!(FONT_DISPLAY, "Bricolage Grotesque");
+        assert_eq!(FONT_BODY, "Figtree");
+        assert_eq!(FONT_MONO, "JetBrains Mono");
+    }
+
+    #[test]
+    fn embedded_faces_are_ttf() {
+        for bytes in [
+            include_bytes!("../assets/fonts/Figtree-Regular.ttf").as_slice(),
+            include_bytes!("../assets/fonts/BricolageGrotesque-Bold.ttf").as_slice(),
+            include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf").as_slice(),
+        ] {
+            assert!(
+                bytes.starts_with(b"\x00\x01\x00\x00") || bytes.starts_with(b"OTTO"),
+                "expected TTF/OTF magic"
+            );
+        }
     }
 }

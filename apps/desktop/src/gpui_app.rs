@@ -371,6 +371,7 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_sm()
+                            .font_family(crate::picoo_theme::FONT_DISPLAY)
                             .font_weight(FontWeight::BOLD)
                             .text_color(cx.theme().foreground)
                             .child("Picoo Camera Receiver"),
@@ -383,7 +384,7 @@ impl PicooDesktopApp {
                             .bg(cx.theme().primary.opacity(0.15))
                             .text_color(cx.theme().primary)
                             .text_xs()
-                            .font_family("monospace")
+                            .font_family(cx.theme().mono_font_family.clone())
                             .child("GPUI Native"),
                     ),
             )
@@ -413,7 +414,8 @@ impl PicooDesktopApp {
             .child(
                 div()
                     .text_2xl()
-                    .font_weight(FontWeight::BOLD)
+                    .font_family(crate::picoo_theme::FONT_DISPLAY)
+                    .font_weight(FontWeight::EXTRA_BOLD)
                     .child("Picoo Camera"),
             )
             .child(
@@ -546,7 +548,8 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_2xl()
-                            .font_weight(FontWeight::BOLD)
+                            .font_family(crate::picoo_theme::FONT_DISPLAY)
+                            .font_weight(FontWeight::EXTRA_BOLD)
                             .text_color(cx.theme().foreground)
                             .child("等待手机连接…"),
                     )
@@ -680,7 +683,7 @@ impl PicooDesktopApp {
                                 .into_any_element()
                         } else {
                             div()
-                                .font_family("monospace")
+                                .font_family(cx.theme().mono_font_family.clone())
                                 .text_xs()
                                 .child(
                                     snapshot
@@ -706,6 +709,7 @@ impl PicooDesktopApp {
                     .gap_2()
                     .child(
                         div()
+                            .font_family(crate::picoo_theme::FONT_DISPLAY)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(cx.theme().foreground)
                             .child("Show QR Code (扫码直连)"),
@@ -723,7 +727,7 @@ impl PicooDesktopApp {
                             .rounded_md()
                             .bg(cx.theme().warning.opacity(0.12))
                             .text_sm()
-                            .font_family("monospace")
+                            .font_family(cx.theme().mono_font_family.clone())
                             .text_color(cx.theme().warning)
                             .child(endpoint),
                     )
@@ -807,6 +811,7 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_lg()
+                            .font_family(crate::picoo_theme::FONT_DISPLAY)
                             .font_weight(FontWeight::BOLD)
                             .text_color(cx.theme().foreground)
                             .child("核对配对短码"),
@@ -842,7 +847,7 @@ impl PicooDesktopApp {
                                         vec![div()
                                             .text_3xl()
                                             .font_weight(FontWeight::BOLD)
-                                            .font_family("monospace")
+                                            .font_family(cx.theme().mono_font_family.clone())
                                             .text_color(cx.theme().foreground)
                                             .child(format_pairing_code(&pairing))
                                             .into_any_element()]
@@ -1153,6 +1158,7 @@ impl PicooDesktopApp {
                             .child(
                                 div()
                                     .text_lg()
+                                    .font_family(crate::picoo_theme::FONT_DISPLAY)
                                     .font_weight(FontWeight::BOLD)
                                     .text_color(cx.theme().foreground)
                                     .child("桌面端设置中心"),
@@ -1635,7 +1641,7 @@ fn pairing_code_box(digit: char, cx: &Context<PicooDesktopApp>) -> gpui::AnyElem
         .border_color(cx.theme().border)
         .bg(cx.theme().muted)
         .text_xl()
-        .font_family("monospace")
+        .font_family(cx.theme().mono_font_family.clone())
         .font_weight(FontWeight::BOLD)
         .text_color(cx.theme().foreground)
         .child(digit.to_string())
@@ -1660,7 +1666,7 @@ fn telemetry_cell(
         .child(
             div()
                 .text_sm()
-                .font_family("monospace")
+                .font_family(cx.theme().mono_font_family.clone())
                 .font_weight(FontWeight::BOLD)
                 .text_color(cx.theme().foreground)
                 .child(value),
