@@ -11,11 +11,11 @@ Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依
 | Rust Core（共享） | Cargo、quiche/BoringSSL | ✅ 开发与测试 |
 | Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
 | Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
-| Linux GPUI 预览宿主 | 同一套 GPUI 壳（无虚拟摄像头） | ✅ 本机编译与窗口预览（`REQ-PICOO-UI-010`） |
+| Linux 桌面验证面 | 同一套 GPUI 壳（无虚拟摄像头） | ✅ 本机编译、功能闭环与 UI 对照（`REQ-PICOO-UI-010`） |
 | macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境 |
 | iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode |
 
-**结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建、**本机 Linux GPUI 预览壳** 与 CI 维护；**Windows / macOS 最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要在 Linux 上交叉编译 Windows GPUI、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。Linux GPUI 预览不等于 Linux 产品 Receiver。
+**结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建、**本机 Linux GPUI 桌面验证闭环** 与 CI 维护；**Windows / macOS 最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要在 Linux 上交叉编译 Windows GPUI、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。Linux 验证面不等于 Linux 产品 Receiver。
 
 ## 构建分工
 
@@ -40,7 +40,7 @@ GitHub Actions
 | Job | Runner | 职责 | xtask 命令（实现后启用） |
 | --- | --- | --- | --- |
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
-| `linux-gpui` | `ubuntu-latest` | Linux GPUI 预览壳编译（无 VCam） | `cargo xtask build linux` |
+| `linux-gpui` | `ubuntu-latest` | Linux GPUI 桌面验证壳编译（无 VCam） | `cargo xtask build linux` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
 | `macos` | `macos-latest` | 桌面 app、Camera Extension（后续） | `cargo xtask build macos`、`cargo xtask package macos` |

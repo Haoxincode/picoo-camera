@@ -17,11 +17,11 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 | iOS Sender | SwiftUI |
 | Windows Receiver | GPUI + gpui-component |
 | macOS Receiver | GPUI + gpui-component |
-| Linux 预览宿主 | 同一套 GPUI + gpui-component（非产品 Receiver） |
+| Linux 验证面 | 同一套 GPUI + gpui-component（测功能、测 UI；非产品 Receiver） |
 
 不引入：Flutter、React Native、Electron、Tauri、WebView、GPUI Mobile。
 
-Linux 运行同一套桌面壳，用于预览 First Launch / Waiting / Live / Settings，以及在有显示器或 Xvfb 时截取像素。Linux 预览宿主不是产品 Receiver：它不注册虚拟摄像头，不进入会议软件，不把 `PUC-004` 扩到 Linux。虚拟摄像头状态必须是 `Unsupported`，不得伪装成检测中或未安装。
+Linux 运行同一套桌面壳，用来走完桌面功能闭环，并对照 HTML 原型验收 UI。默认视觉是 Waiting（`#d-view-idle`），不是 First Launch。Linux 不是产品 Receiver：它不注册虚拟摄像头，不进入会议软件，不把 `PUC-004` 扩到 Linux。虚拟摄像头状态必须是 `Unsupported`，不得伪装成检测中、未安装或 Active。
 
 ### gpui-component 使用方式
 
@@ -58,12 +58,13 @@ struct DesktopAppState {
 
 ### 页面结构
 
-桌面端主要页面：
+桌面端主要页面（视觉以 HTML `#desktop-window` 为准）：
 
-- **首次启动页**：虚拟摄像头安装状态与引导。
-- **等待连接页**：等待 Sender、Show QR Code、虚拟摄像头 Ready 状态。
+- **等待连接页（默认主视觉）**：等待 Sender、Show QR Code、虚拟摄像头状态胶囊。
 - **直播页**：VideoSurface 预览、设备名、分辨率/帧率/码率/延迟、网络质量、远程摄像头控制（前后摄 / 远端镜像）、断开。
-- **设置页**：显示名称、自动接受已配对设备、开机启动、托盘、占位画面、日志级别、已配对设备、虚拟摄像头修复、诊断导出。
+- **设置 overlay**：显示名称、自动接受已配对设备、开机启动、托盘、占位画面、日志级别、已配对设备、虚拟摄像头状态、诊断导出。标题栏齿轮打开，不是独立导航页。
+- **配对 overlay**：六位短码确认。
+- **首次启动页**：仅 Windows / macOS 的虚拟摄像头安装门；不是 HTML 主视觉，Linux 验证路径默认跳过。
 
 手机端主要页面：
 
@@ -83,9 +84,9 @@ struct DesktopAppState {
 
 ## 不采用的方案
 
-### 把 Linux GPUI 预览宿主做成产品 Receiver
+### 把 Linux 验证面做成产品 Receiver
 
-不采用。产品 Receiver 仍是 Windows / macOS，并驱动虚拟摄像头。Linux 只共享 GPUI 壳，不引入 v4l2loopback，也不宣称会议软件接入。
+不采用。产品 Receiver 仍是 Windows / macOS，并驱动虚拟摄像头。Linux 共享同一套 GPUI 壳，用来测功能和测 UI；不引入 v4l2loopback，也不宣称会议软件接入。
 
 ### 桌面 Electron / WebView UI
 
@@ -121,4 +122,4 @@ struct DesktopAppState {
 - [REQ-PICOO-UI-0001（全端 UI 交互设计与细化验收规范）](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
 - `REQ-PICOO-UI-001` … `REQ-PICOO-UI-010`（见 [requirements/ui.md](../requirements/ui.md)）
 - 桌面远程摄像头控制：`REQ-PICOO-UI-009`（PUC-005）
-- Linux GPUI 预览宿主：`REQ-PICOO-UI-010`
+- Linux 桌面验证闭环：`REQ-PICOO-UI-010`

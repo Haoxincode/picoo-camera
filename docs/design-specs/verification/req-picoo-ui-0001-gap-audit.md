@@ -87,4 +87,4 @@
 | 桌面 AC | 4 | 8 | 0 |
 | Anti-Pattern | 3 | 1 | 0 |
 
-**REQ-PICOO-UI-0001 仍不可宣称 `verified`。** 本轮对齐了推流滤镜/过热 Toast/翻转模糊、发现页与设置页 bottom sheet、桌面 Settings Modal 与滚动。剩余：发现页 Wi‑Fi 文案精度、桌面 logo/遮罩精修。云端无法预览原生 Compose/GPUI，视觉源仍是 HTML 原型。
+**REQ-PICOO-UI-0001 仍不可宣称 `verified`。** 桌面验证面已落到 Linux 同一套 GPUI 壳（`REQ-PICOO-UI-010`）：可启动、可对照 `#d-view-idle` / `#d-modal-settings` 截图像素。剩余：logo/遮罩精修、Live 真流、Windows 真 VCam。不要只因 Linux 窗口能打开就标 verified。

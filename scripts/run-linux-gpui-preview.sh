@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# REQ-PICOO-UI-010: start the Linux GPUI preview host under Xvfb when needed.
+# REQ-PICOO-UI-010: start the Linux GPUI desktop verification shell under Xvfb when needed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

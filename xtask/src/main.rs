@@ -33,7 +33,7 @@ enum Command {
 enum Platform {
     Android,
     Windows,
-    /// Linux GPUI preview host (REQ-PICOO-UI-010). Not a product Receiver.
+    /// Linux GPUI verification surface (REQ-PICOO-UI-010). Not a product Receiver.
     Linux,
 }
 
@@ -129,7 +129,7 @@ fn build_vcam_dll(sh: &Shell) -> Result<()> {
 fn package(platform: Platform) -> Result<()> {
     match platform {
         Platform::Linux => {
-            bail!("linux package: preview host only — use `cargo xtask build linux`")
+            bail!("linux package: verification surface only — use `cargo xtask build linux`")
         }
         Platform::Windows => {
             build(Platform::Windows)?;
