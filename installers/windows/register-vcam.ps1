@@ -1,6 +1,7 @@
 # Register Picoo Camera virtual camera (COM + MFCreateVirtualCamera) - REQ-PICOO-VCAM-004
 param(
-    [switch]$Unregister
+    [switch]$Unregister,
+    [switch]$AllowComOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,9 +42,13 @@ if (-not (Test-Path $Dll)) {
 if ($Unregister) {
     Write-Host "Unregistering COM server: $Dll"
     & regsvr32 /u /s $Dll
-    if (Test-Path $Desktop) {
-        Write-Host "Removing MF virtual camera registration via picoo-desktop"
-        & $Desktop --unregister-vcam
+    if (-not (Test-Path $Desktop)) {
+        Write-Error "picoo-desktop.exe not found; COM unregistered but MFCreateVirtualCamera cleanup skipped."
+    }
+    Write-Host "Removing MF virtual camera registration via picoo-desktop --unregister-vcam"
+    & $Desktop --unregister-vcam
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "picoo-desktop --unregister-vcam failed with exit code $LASTEXITCODE"
     }
     Write-Host "Picoo Camera virtual camera unregistered."
     exit 0
@@ -51,13 +56,23 @@ if ($Unregister) {
 
 Write-Host "Registering COM server: $Dll"
 & regsvr32 /s $Dll
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "regsvr32 failed with exit code $LASTEXITCODE for $Dll"
+}
 
 if (-not (Test-Path $Desktop)) {
-    Write-Warning "picoo-desktop.exe not found; COM registered but MFCreateVirtualCamera not invoked."
-    Write-Host "Run picoo-desktop --register-vcam after building the desktop app."
-    exit 0
+    if ($AllowComOnly) {
+        Write-Warning "picoo-desktop.exe not found; COM registered but MFCreateVirtualCamera not invoked (-AllowComOnly)."
+        Write-Host "Run picoo-desktop --register-vcam after building the desktop app."
+        exit 0
+    }
+    Write-Error "Missing picoo-desktop.exe (needed for MFCreateVirtualCamera). Build desktop or pass -AllowComOnly."
 }
 
 Write-Host "Starting MF virtual camera via picoo-desktop --register-vcam"
 Write-Host "Note: on Windows 11, Frame Server must be able to read the DLL path (prefer Program Files install)."
-Write-Host "For interactive session registration run: $Desktop --register-vcam"
+& $Desktop --register-vcam
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "picoo-desktop --register-vcam failed with exit code $LASTEXITCODE"
+}
+Write-Host "Picoo Camera virtual camera registered (COM + MF)."
