@@ -156,9 +156,16 @@ impl PicooDesktopApp {
                     self.vcam_status = VirtualCameraStatus::Active;
                     self.runtime
                         .set_virtual_camera_status(VirtualCameraStatus::Active);
+                    self.diagnostics_error = None;
+                    self.diagnostics_message =
+                        Some("虚拟摄像头已激活（Picoo Camera / MF Session）".into());
                 }
                 Err(err) => {
                     tracing::warn!("Install Virtual Camera failed: {err}");
+                    self.diagnostics_message = None;
+                    self.diagnostics_error = Some(format!(
+                        "虚拟摄像头激活失败：{err}。请以管理员运行，或重装 MSI 后重试。"
+                    ));
                     self.refresh_vcam_status();
                 }
             }
@@ -166,6 +173,8 @@ impl PicooDesktopApp {
         #[cfg(not(all(windows, feature = "windows-vcam")))]
         {
             self.refresh_vcam_status();
+            self.diagnostics_message =
+                Some("当前构建未启用 windows-vcam；Linux CI 仅做环路探测。".into());
         }
     }
 
@@ -250,7 +259,15 @@ impl PicooDesktopApp {
                             crate::tray::note_tray_cleared();
                             cx.quit();
                         } else if outcome.restore_window {
-                            cx.activate(true);
+                            // Defer activate out of this entity update to avoid
+                            // nested App/Entity RefCell borrows during pump.
+                            cx.spawn(async move |_, cx| {
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(0))
+                                    .await;
+                                let _ = cx.update(|cx| cx.activate(true));
+                            })
+                            .detach();
                         }
                     }
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
@@ -284,7 +301,8 @@ impl PicooDesktopApp {
 
 impl Render for PicooDesktopApp {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.ensure_pump_loop(cx);
+        // Pump loop is started once after window open (not here) to avoid
+        // re-entrant Entity updates / RefCell panics during render.
         let snapshot = self.snapshot();
         if self.page == DesktopPage::Waiting && self.show_qr {
             self.ensure_qr_image(&snapshot);
@@ -395,6 +413,32 @@ impl PicooDesktopApp {
                         cx.notify();
                     })),
             )
+            .children(
+                self.diagnostics_message
+                    .as_ref()
+                    .map(|msg| {
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0x86efac))
+                            .child(msg.clone())
+                            .into_any_element()
+                    })
+                    .into_iter(),
+            )
+            .children(
+                self.diagnostics_error
+                    .as_ref()
+                    .map(|err| {
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xfca5a5))
+                            .max_w_96()
+                            .text_center()
+                            .child(err.clone())
+                            .into_any_element()
+                    })
+                    .into_iter(),
+            )
             .child(
                 Button::new("continue-first-launch")
                     .primary()
@@ -491,6 +535,56 @@ impl PicooDesktopApp {
                             })
                             .child(format!("● 虚拟摄像头驱动：{vcam}")),
                     )
+                    .when(!vcam_ready, |this| {
+                        this.child(
+                            div()
+                                .v_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(proto_muted_fg())
+                                        .max_w_96()
+                                        .text_center()
+                                        .child(vcam_repair_hint(self.vcam_status)),
+                                )
+                                .child(
+                                    Button::new("waiting-vcam-repair")
+                                        .label("修复虚拟摄像头注册")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.try_register_vcam();
+                                            cx.notify();
+                                        })),
+                                )
+                                .children(
+                                    self.diagnostics_message
+                                        .as_ref()
+                                        .map(|msg| {
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0x86efac))
+                                                .child(msg.clone())
+                                                .into_any_element()
+                                        })
+                                        .into_iter(),
+                                )
+                                .children(
+                                    self.diagnostics_error
+                                        .as_ref()
+                                        .map(|err| {
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(0xfca5a5))
+                                                .max_w_96()
+                                                .text_center()
+                                                .child(err.clone())
+                                                .into_any_element()
+                                        })
+                                        .into_iter(),
+                                ),
+                        )
+                    })
                     .child(self.render_qr_card(snapshot, cx))
                     .child(
                         div()
@@ -983,6 +1077,30 @@ impl PicooDesktopApp {
                                 this.try_register_vcam();
                                 cx.notify();
                             })),
+                    )
+                    .children(
+                        self.diagnostics_message
+                            .as_ref()
+                            .map(|msg| {
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0x86efac))
+                                    .child(msg.clone())
+                                    .into_any_element()
+                            })
+                            .into_iter(),
+                    )
+                    .children(
+                        self.diagnostics_error
+                            .as_ref()
+                            .map(|err| {
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0xfca5a5))
+                                    .child(err.clone())
+                                    .into_any_element()
+                            })
+                            .into_iter(),
                     ),
             )
             .child(
@@ -1229,6 +1347,10 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 });
                 let view = cx.new(|_| {
                     PicooDesktopApp::new(runtime, prefs_for_window, display_name_input, vcam_status)
+                });
+                // Start frame/tray pump after the view exists — not inside Render.
+                view.update(cx, |this, cx| {
+                    this.ensure_pump_loop(cx);
                 });
                 // REQ-PICOO-UI-008: close → tray hide (or quit) from Settings preference.
                 let tray_view = view.clone();
