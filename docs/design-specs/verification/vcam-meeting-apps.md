@@ -14,14 +14,28 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `PicooCamera.msi` | 推荐：注册 COM + MF + 防火墙规则 |
+| `PicooCamera.msi` | 推荐：安装文件 + COM 注册（regsvr32）+ 防火墙规则；**MF 虚拟相机**需首次启动 desktop |
 | 或 `windows-bundle` 解压 | 开发态：`register-vcam.ps1`（**管理员** PowerShell） |
+
+**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。安装末尾会静默执行 `regsvr32` 注册 `PicooVirtualCameraSource.dll`；若失败，Windows 会报 *「A program run as part of the setup did not finish as expected」*。
 
 ```powershell
 # 开发态示例（在解压后的 bundle 目录）
 Set-ExecutionPolicy -Scope Process Bypass
 .\register-vcam.ps1
 # 卸载：.\register-vcam.ps1 -Unregister
+
+# MSI 安装成功但 COM 仍失败时的手动补救（管理员 PowerShell，路径按实际安装目录）
+cd "C:\Program Files\Picoo Camera"
+regsvr32 /s PicooVirtualCameraSource.dll
+.\picoo-desktop.exe --register-vcam
+```
+
+**MSI 诊断日志**（安装失败时）：
+
+```powershell
+msiexec /i PicooCamera.msi /l*v "$env:TEMP\picoo-camera-install.log"
+# 在日志中搜索 RegisterVcamDll、regsvr32、Return value 3
 ```
 
 ## 1. 系统级预检（必做）
@@ -123,6 +137,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 
 | 现象 | 处理 |
 | --- | --- |
+| MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log` 中 `RegisterVcamDll`；手动 `regsvr32 /s` + `picoo-desktop --register-vcam`（见 §0） |
 | 列表有 Picoo Camera 但黑屏 | 确认 desktop Streaming；运行 `picoo-vcam-ring-reader.exe` |
 | 只有 Integrated Camera | 重启应用；检查 MSI 安装；系统相机是否可见 Picoo |
 | Zoom 报摄像头被占用 | 关闭 Windows 相机 App 与其他占用 VCam 的程序 |

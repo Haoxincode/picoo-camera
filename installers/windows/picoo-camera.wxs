@@ -15,18 +15,20 @@
       <ComponentGroupRef Id="ProductComponents" />
     </Feature>
 
-    <!-- CustomAction: SystemFolder\regsvr32 so deferred elevated install finds the tool. -->
+    <!-- COM registration: deferred CA must use [#FileId] (not [INSTALLFOLDER]) so the
+         resolved install path is baked into the execute script. Run 64-bit regsvr32 from
+         SystemFolder with Impersonate=no (elevated perMachine install). -->
     <CustomAction
         Id="RegisterVcamDll"
-        Directory="INSTALLFOLDER"
-        ExeCommand="&quot;[SystemFolder]regsvr32.exe&quot; /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
+        Directory="SystemFolder"
+        ExeCommand="regsvr32.exe /s &quot;[#PicooVcamDll]&quot;"
         Execute="deferred"
         Impersonate="no"
         Return="check" />
     <CustomAction
         Id="UnregisterVcamDll"
-        Directory="INSTALLFOLDER"
-        ExeCommand="&quot;[SystemFolder]regsvr32.exe&quot; /u /s &quot;[INSTALLFOLDER]PicooVirtualCameraSource.dll&quot;"
+        Directory="SystemFolder"
+        ExeCommand="regsvr32.exe /u /s &quot;[#PicooVcamDll]&quot;"
         Execute="deferred"
         Impersonate="no"
         Return="check" />
