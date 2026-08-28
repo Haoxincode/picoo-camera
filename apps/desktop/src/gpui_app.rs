@@ -851,8 +851,7 @@ impl PicooDesktopApp {
                                         Some(format!("未找到配对设备：{device_id}"));
                                 }
                                 Err(err) => {
-                                    this.diagnostics_error =
-                                        Some(format!("删除配对失败：{err}"));
+                                    this.diagnostics_error = Some(format!("删除配对失败：{err}"));
                                 }
                             }
                             cx.notify();
