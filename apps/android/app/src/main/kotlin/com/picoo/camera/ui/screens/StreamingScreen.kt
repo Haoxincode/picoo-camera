@@ -1,5 +1,9 @@
 package com.picoo.camera.ui.screens
 
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -27,6 +31,7 @@ import androidx.compose.material.icons.filled.BrightnessHigh
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -42,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -84,7 +90,9 @@ fun StreamingScreen(
     onFlipCamera: () -> Unit,
     onToggleResolution: () -> Unit,
     onToggleMirror: () -> Unit,
-    onEvStep: () -> Unit,
+    onEvMinus: () -> Unit,
+    onEvPlus: () -> Unit,
+    onEvReset: () -> Unit,
     exposureEv: Int,
     evSupported: Boolean,
     onDisconnect: () -> Unit,
@@ -305,7 +313,12 @@ fun StreamingScreen(
                 }
 
                 if (showEvPanel && evSupported) {
-                    EvPanel(exposureEv = exposureEv, onEvStep = onEvStep)
+                    EvPanel(
+                        exposureEv = exposureEv,
+                        onEvMinus = onEvMinus,
+                        onEvPlus = onEvPlus,
+                        onEvReset = onEvReset,
+                    )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
@@ -317,9 +330,20 @@ fun StreamingScreen(
                     StatPill(bitrate = bitrateMbps, packetLossLabel = packetLossLabel)
 
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val infinite = rememberInfiniteTransition(label = "shutterPulse")
+                        val pulseScale by infinite.animateFloat(
+                            initialValue = 1f,
+                            targetValue = if (shutterArmed) 1.06f else 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 500),
+                                repeatMode = RepeatMode.Reverse,
+                            ),
+                            label = "shutterScale",
+                        )
                         Box(
                             modifier = Modifier
                                 .size(64.dp)
+                                .scale(if (shutterArmed) pulseScale else 1f)
                                 .clip(CircleShape)
                                 .border(
                                     width = 3.5.dp,
@@ -483,7 +507,12 @@ private fun ReconnectOverlay(
 }
 
 @Composable
-private fun EvPanel(exposureEv: Int, onEvStep: () -> Unit) {
+private fun EvPanel(
+    exposureEv: Int,
+    onEvMinus: () -> Unit,
+    onEvPlus: () -> Unit,
+    onEvReset: () -> Unit,
+) {
     val label = when (exposureEv) {
         0 -> "自动"
         1 -> "提亮 +1"
@@ -502,8 +531,18 @@ private fun EvPanel(exposureEv: Int, onEvStep: () -> Unit) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = "−", color = PicooColors.Text, modifier = Modifier.clickable { onEvStep() })
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "−",
+            color = PicooColors.Text,
+            fontSize = 18.sp,
+            modifier = Modifier
+                .clickable(onClick = onEvMinus)
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             Icon(
                 imageVector = Icons.Default.BrightnessHigh,
                 contentDescription = null,
@@ -517,7 +556,27 @@ private fun EvPanel(exposureEv: Int, onEvStep: () -> Unit) {
                 fontFamily = PicooFont.Mono,
             )
         }
-        Text(text = "＋", color = PicooColors.Text, modifier = Modifier.clickable { onEvStep() })
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "＋",
+                color = PicooColors.Text,
+                fontSize = 18.sp,
+                modifier = Modifier
+                    .clickable(onClick = onEvPlus)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+            Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "恢复自动测光",
+                tint = if (exposureEv == 0) PicooColors.Muted else PicooColors.Accent2,
+                modifier = Modifier
+                    .size(18.dp)
+                    .clickable(onClick = onEvReset),
+            )
+        }
     }
 }
 

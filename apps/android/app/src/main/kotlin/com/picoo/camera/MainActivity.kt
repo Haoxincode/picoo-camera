@@ -987,11 +987,21 @@ private fun SenderHomeScreen(
                     errorText = null
                 },
                 onToggleMirror = { localPreviewMirrored = !localPreviewMirrored },
-                onEvStep = {
+                onEvMinus = {
                     val range = encoder.exposureCompensationRange
                     if (range.isEmpty()) return@StreamingScreen
-                    val next = if (exposureEv >= 2) -2 else exposureEv + 1
-                    encoder.setExposureCompensation(next)
+                    encoder.setExposureCompensation((exposureEv - 1).coerceAtLeast(range.first.coerceAtLeast(-2)))
+                    exposureEv = encoder.exposureCompensation
+                },
+                onEvPlus = {
+                    val range = encoder.exposureCompensationRange
+                    if (range.isEmpty()) return@StreamingScreen
+                    encoder.setExposureCompensation((exposureEv + 1).coerceAtMost(range.last.coerceAtMost(2)))
+                    exposureEv = encoder.exposureCompensation
+                },
+                onEvReset = {
+                    if (encoder.exposureCompensationRange.isEmpty()) return@StreamingScreen
+                    encoder.setExposureCompensation(0)
                     exposureEv = encoder.exposureCompensation
                 },
                 exposureEv = exposureEv,
