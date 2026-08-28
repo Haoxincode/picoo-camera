@@ -218,6 +218,37 @@ pub extern "C" fn picoo_sender_status(handle: *mut std::ffi::c_void) -> i32 {
     sender_status_code(inner.session.lock().expect("sender lock").status())
 }
 
+/// Last scheduled reconnect backoff delay in ms (REQ-PICOO-TRANSPORT-004 / PUC-006).
+#[no_mangle]
+pub extern "C" fn picoo_sender_last_scheduled_reconnect_delay_ms(
+    handle: *mut std::ffi::c_void,
+) -> u64 {
+    if handle.is_null() {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .last_scheduled_reconnect_delay_ms()
+        .unwrap_or(0)
+}
+
+/// 1-based reconnect attempt while Reconnecting; 0 otherwise.
+#[no_mangle]
+pub extern "C" fn picoo_sender_reconnect_attempt(handle: *mut std::ffi::c_void) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock()
+        .expect("sender lock")
+        .reconnect_attempt()
+}
+
 /// Mark Permission Required (REQ-PICOO-SESSION-001). Returns 0 on success.
 #[no_mangle]
 pub extern "C" fn picoo_sender_mark_permission_required(handle: *mut std::ffi::c_void) -> i32 {

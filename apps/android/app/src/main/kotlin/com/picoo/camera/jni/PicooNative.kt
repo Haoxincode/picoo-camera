@@ -87,6 +87,12 @@ object PicooNative {
 
     external fun getSenderStatus(handle: Long): Int
 
+    /** REQ-PICOO-TRANSPORT-004 / PUC-006 — last scheduled reconnect delay; 0 if none. */
+    external fun getLastScheduledReconnectDelayMs(handle: Long): Long
+
+    /** 1-based attempt while Reconnecting; 0 otherwise. */
+    external fun getReconnectAttempt(handle: Long): Int
+
     /** REQ-PICOO-SESSION-001: surface Permission Required when CAMERA denied. */
     external fun markPermissionRequired(handle: Long): Int
 

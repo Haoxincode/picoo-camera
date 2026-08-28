@@ -146,6 +146,15 @@ impl<T: PicooTransport> SenderSession<T> {
         self.last_scheduled_reconnect_delay_ms
     }
 
+    /// 1-based reconnect attempt while in [`SenderStatus::Reconnecting`].
+    pub fn reconnect_attempt(&self) -> u32 {
+        if self.status == SenderStatus::Reconnecting {
+            self.reconnect_backoff.attempt()
+        } else {
+            0
+        }
+    }
+
     /// Active ABR ladder height after downshift/upshift acknowledgements.
     pub fn bitrate_active_height(&self) -> u32 {
         self.bitrate.active_height()
@@ -911,9 +920,11 @@ mod tests {
         session.pump().expect("pump");
         assert_eq!(session.status(), SenderStatus::Reconnecting);
         assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(500));
+        assert_eq!(session.reconnect_attempt(), 1);
 
         session.simulate_failed_reconnect_for_test();
         assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(1_000));
+        assert_eq!(session.reconnect_attempt(), 2);
         session.simulate_failed_reconnect_for_test();
         assert_eq!(session.last_scheduled_reconnect_delay_ms(), Some(2_000));
         session.simulate_failed_reconnect_for_test();

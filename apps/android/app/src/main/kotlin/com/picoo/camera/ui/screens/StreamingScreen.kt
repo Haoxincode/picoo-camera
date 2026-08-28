@@ -49,6 +49,7 @@ import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
+import com.picoo.camera.ui.ReconnectBackoffFormat
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
 
@@ -65,6 +66,9 @@ fun StreamingScreen(
     thermalForced720: Boolean,
     powerHint: String,
     reconnecting: Boolean,
+    networkUnstable: Boolean = false,
+    reconnectAttempt: Int = 0,
+    reconnectDelayMs: Long = 0L,
     packetLossLabel: String,
     onRequestCamera: () -> Unit,
     onFlipCamera: () -> Unit,
@@ -315,7 +319,12 @@ fun StreamingScreen(
         }
 
         if (reconnecting) {
-            ReconnectOverlay(onStopReconnect = onStopReconnect)
+            ReconnectOverlay(
+                networkUnstable = networkUnstable,
+                reconnectAttempt = reconnectAttempt,
+                reconnectDelayMs = reconnectDelayMs,
+                onStopReconnect = onStopReconnect,
+            )
         }
     }
 }
@@ -349,7 +358,18 @@ private fun SafeFrameOverlay() {
 }
 
 @Composable
-private fun ReconnectOverlay(onStopReconnect: () -> Unit) {
+private fun ReconnectOverlay(
+    networkUnstable: Boolean,
+    reconnectAttempt: Int,
+    reconnectDelayMs: Long,
+    onStopReconnect: () -> Unit,
+) {
+    val title = if (networkUnstable) "网络不稳定，正在优化…" else "网络中断，正在重连…"
+    val detail = if (networkUnstable) {
+        "链路丢包较高，保持推流并等待恢复\n连接恢复后将自动请求 IDR 关键帧"
+    } else {
+        ReconnectBackoffFormat.detailMessage(reconnectAttempt, reconnectDelayMs)
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -367,7 +387,7 @@ private fun ReconnectOverlay(onStopReconnect: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(16.dp))
             Text(
-                text = "网络中断，正在重连…",
+                text = title,
                 color = PicooColors.Text,
                 fontFamily = PicooFont.Display,
                 fontSize = 18.sp,
@@ -375,7 +395,7 @@ private fun ReconnectOverlay(onStopReconnect: () -> Unit) {
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "QUIC 会话重试中\n连接恢复后将自动请求 IDR 关键帧",
+                text = detail,
                 color = PicooColors.Muted,
                 fontSize = 13.sp,
                 lineHeight = 20.sp,

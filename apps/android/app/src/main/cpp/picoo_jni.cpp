@@ -156,6 +156,25 @@ Java_com_picoo_camera_jni_PicooNative_getSenderStatus(JNIEnv * /* env */, jobjec
     return picoo_sender_status(reinterpret_cast<void *>(handle));
 }
 
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_picoo_camera_jni_PicooNative_getLastScheduledReconnectDelayMs(
+    JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return 0;
+    }
+    return static_cast<jlong>(
+        picoo_sender_last_scheduled_reconnect_delay_ms(reinterpret_cast<void *>(handle)));
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_picoo_camera_jni_PicooNative_getReconnectAttempt(
+    JNIEnv * /* env */, jobject /* this */, jlong handle) {
+    if (handle == 0) {
+        return 0;
+    }
+    return static_cast<jint>(picoo_sender_reconnect_attempt(reinterpret_cast<void *>(handle)));
+}
+
 extern "C" JNIEXPORT jint JNICALL
 Java_com_picoo_camera_jni_PicooNative_markPermissionRequired(
     JNIEnv * /* env */, jobject /* this */, jlong handle) {

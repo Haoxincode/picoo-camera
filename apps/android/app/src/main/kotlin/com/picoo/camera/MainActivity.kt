@@ -248,6 +248,8 @@ private fun SenderHomeScreen(
     var pairingStartedAtMs by remember { mutableLongStateOf(0L) }
     var waitOutcome by remember { mutableStateOf(WaitOutcome.Pending) }
     var waitUserCancelled by remember { mutableStateOf(false) }
+    var reconnectAttempt by remember { mutableIntStateOf(0) }
+    var reconnectDelayMs by remember { mutableLongStateOf(0L) }
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
     val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
@@ -606,6 +608,13 @@ private fun SenderHomeScreen(
             if (senderHandle != 0L) {
                 PicooNative.pump(senderHandle)
                 senderStatus = PicooNative.getSenderStatus(senderHandle)
+                if (senderStatus == PicooNative.STATUS_RECONNECTING) {
+                    reconnectAttempt = PicooNative.getReconnectAttempt(senderHandle)
+                    reconnectDelayMs = PicooNative.getLastScheduledReconnectDelayMs(senderHandle)
+                } else {
+                    reconnectAttempt = 0
+                    reconnectDelayMs = 0L
+                }
                 encoderState = encoder.state
                 pairingCode = PicooNative.getPairingShortCode(senderHandle)
                 connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
@@ -930,6 +939,9 @@ private fun SenderHomeScreen(
                 powerHint = if (thermalForced720) "" else powerHint,
                 reconnecting = senderStatus == PicooNative.STATUS_RECONNECTING ||
                     senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
+                networkUnstable = senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
+                reconnectAttempt = reconnectAttempt,
+                reconnectDelayMs = reconnectDelayMs,
                 packetLossLabel = run {
                     val link = PicooNative.getLinkStats(senderHandle)
                     if (link != null && link.size >= 2) {

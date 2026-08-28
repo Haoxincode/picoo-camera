@@ -111,6 +111,11 @@ impl ReconnectBackoff {
     pub fn reset(&mut self) {
         self.attempt = 0;
     }
+
+    /// Attempts since last successful connect (1-based after first [`Self::next_delay_ms`]).
+    pub fn attempt(&self) -> u32 {
+        self.attempt
+    }
 }
 
 #[cfg(test)]
