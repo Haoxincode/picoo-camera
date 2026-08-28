@@ -27,7 +27,7 @@ pub enum VirtualCameraStatus {
     Installed,
     NotInstalled,
     Active,
-    /// Linux / non-Windows preview host: VCam is out of product scope.
+    /// Linux / non-Windows verification surface: VCam is out of product scope.
     Unsupported,
 }
 

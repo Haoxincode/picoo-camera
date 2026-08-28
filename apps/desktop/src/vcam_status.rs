@@ -4,7 +4,7 @@ use crate::model::VirtualCameraStatus;
 
 /// Probe whether Picoo Camera virtual camera appears installed on this machine.
 pub fn detect_vcam_status() -> VirtualCameraStatus {
-    // REQ-PICOO-UI-010: Linux GPUI is a preview host, not a product Receiver.
+    // REQ-PICOO-UI-010: Linux verifies the desktop shell; it is not a product Receiver.
     #[cfg(not(all(windows, feature = "windows-vcam")))]
     {
         return VirtualCameraStatus::Unsupported;
@@ -78,7 +78,7 @@ pub fn vcam_repair_hint(status: VirtualCameraStatus) -> &'static str {
         }
         VirtualCameraStatus::Unknown => "正在检测虚拟摄像头状态…",
         VirtualCameraStatus::Unsupported => {
-            "虚拟摄像头仅支持 Windows 11 / macOS。Linux 是 GPUI 预览面，不注册会议软件摄像头。"
+            "虚拟摄像头仅支持 Windows 11 / macOS。Linux 用于验证桌面功能与 UI，不注册会议软件摄像头。"
         }
     }
 }
@@ -102,8 +102,9 @@ mod tests {
 
     #[cfg(not(all(windows, feature = "windows-vcam")))]
     #[test]
-    fn linux_preview_host_reports_unsupported() {
+    fn linux_verification_surface_reports_unsupported() {
         assert_eq!(detect_vcam_status(), VirtualCameraStatus::Unsupported);
         assert!(vcam_repair_hint(VirtualCameraStatus::Unsupported).contains("Linux"));
+        assert!(!vcam_repair_hint(VirtualCameraStatus::Unsupported).contains("Active"));
     }
 }

@@ -9,7 +9,6 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::*;
-use gpui_component::group_box::*;
 use gpui_component::input::{Input, InputState};
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::switch::*;
@@ -25,7 +24,9 @@ use smallvec::smallvec;
 use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::model::VirtualCameraStatus;
 use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
-use crate::preview_page::{preview_page_from_env, UiPreviewPage};
+use crate::preview_page::{
+    preview_page_from_env, resolve_initial_shell, InitialDesktopPage,
+};
 use crate::qr_display;
 use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary};
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
@@ -67,14 +68,17 @@ impl PicooDesktopApp {
         display_name_input: Entity<InputState>,
         vcam_status: VirtualCameraStatus,
     ) -> Self {
-        let (page, settings_open) = match preview_page_from_env() {
-            Some(UiPreviewPage::FirstLaunch) => (DesktopPage::FirstLaunch, false),
-            Some(UiPreviewPage::Waiting) => (DesktopPage::Waiting, false),
-            Some(UiPreviewPage::Live) => (DesktopPage::Live, false),
-            Some(UiPreviewPage::Settings) => (DesktopPage::Waiting, true),
-            None if prefs.first_launch_completed => (DesktopPage::Waiting, false),
-            None => (DesktopPage::FirstLaunch, false),
+        let shell = resolve_initial_shell(
+            preview_page_from_env(),
+            prefs.first_launch_completed,
+            vcam_status == VirtualCameraStatus::Unsupported,
+        );
+        let page = match shell.page {
+            InitialDesktopPage::FirstLaunch => DesktopPage::FirstLaunch,
+            InitialDesktopPage::Waiting => DesktopPage::Waiting,
+            InitialDesktopPage::Live => DesktopPage::Live,
         };
+        let settings_open = shell.settings_open;
         Self {
             runtime,
             prefs: prefs.clone(),
@@ -182,7 +186,7 @@ impl PicooDesktopApp {
         {
             self.refresh_vcam_status();
             self.diagnostics_message = Some(
-                "Linux 是 GPUI 预览宿主，不注册虚拟摄像头。会议软件接入只在 Windows / macOS。"
+                "Linux 用于验证桌面功能与 UI，不注册虚拟摄像头。会议软件接入只在 Windows / macOS。"
                     .into(),
             );
         }
@@ -292,9 +296,13 @@ impl PicooDesktopApp {
                         this.page = DesktopPage::Waiting;
                     }
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
-                        this.vcam_status = VirtualCameraStatus::Active;
-                        this.runtime
-                            .set_virtual_camera_status(VirtualCameraStatus::Active);
+                        // Product VCam only exists on Windows. Linux must stay Unsupported.
+                        #[cfg(all(windows, feature = "windows-vcam"))]
+                        {
+                            this.vcam_status = VirtualCameraStatus::Active;
+                            this.runtime
+                                .set_virtual_camera_status(VirtualCameraStatus::Active);
+                        }
                     }
                     cx.notify();
                 })
@@ -346,52 +354,52 @@ impl Render for PicooDesktopApp {
 
 impl PicooDesktopApp {
     fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
+        // HTML `.desktop-titlebar`: title + GPUI badge + settings gear. No page nav.
         div()
             .h_flex()
             .w_full()
-            .p_4()
-            .gap_2()
+            .px_4()
+            .py_3()
+            .gap_3()
             .items_center()
+            .bg(cx.theme().title_bar)
             .border_b_1()
-            .border_color(cx.theme().border)
+            .border_color(cx.theme().title_bar_border)
             .child(
                 div()
-                    .text_lg()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(format!("Picoo Camera — {}", self.snapshot().display_name)),
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(cx.theme().foreground)
+                            .child("Picoo Camera Receiver"),
+                    )
+                    .child(
+                        div()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded(px(4.))
+                            .bg(cx.theme().primary.opacity(0.15))
+                            .text_color(cx.theme().primary)
+                            .text_xs()
+                            .font_family("monospace")
+                            .child("GPUI Native"),
+                    ),
             )
             .child(div().flex_1())
-            .when(self.prefs.first_launch_completed, |this| {
-                this.child(self.nav_button("等待连接", DesktopPage::Waiting, cx))
-                    .child(self.nav_button("直播", DesktopPage::Live, cx))
-                    .child({
-                        let mut button = Button::new("nav-settings").label("设置");
-                        if self.settings_open {
-                            button = button.primary();
-                        }
-                        button.on_click(cx.listener(|this, _, _, cx| {
-                            this.settings_open = !this.settings_open;
-                            cx.notify();
-                        }))
-                    })
-            })
-    }
-
-    fn nav_button(
-        &self,
-        label: &'static str,
-        page: DesktopPage,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        let active = self.page == page;
-        let mut button = Button::new(format!("nav-{label}")).label(label);
-        if active {
-            button = button.primary();
-        }
-        button.on_click(cx.listener(move |this, _, _, cx| {
-            this.page = page;
-            cx.notify();
-        }))
+            .child(
+                Button::new("nav-settings")
+                    .ghost()
+                    .icon(IconName::Settings)
+                    .tooltip("设置中心")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_open = !this.settings_open;
+                        cx.notify();
+                    })),
+            )
     }
 
     fn render_first_launch(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -402,18 +410,31 @@ impl PicooDesktopApp {
             .justify_center()
             .gap_4()
             .p_8()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
             .child(
                 div()
                     .text_2xl()
                     .font_weight(FontWeight::BOLD)
                     .child("Picoo Camera"),
             )
-            .child("把手机变成电脑无线摄像头")
+            .child(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("把手机变成电脑无线摄像头"),
+            )
             .child(format!(
                 "虚拟摄像头状态：{}",
                 vcam_label_zh(self.vcam_status)
             ))
-            .child(vcam_repair_hint(self.vcam_status))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .max_w_96()
+                    .text_center()
+                    .child(vcam_repair_hint(self.vcam_status)),
+            )
             .when(
                 self.vcam_status != VirtualCameraStatus::Unsupported,
                 |this| {
@@ -441,7 +462,7 @@ impl PicooDesktopApp {
                     .map(|msg| {
                         div()
                             .text_sm()
-                            .text_color(rgb(0x86efac))
+                            .text_color(cx.theme().success)
                             .child(msg.clone())
                             .into_any_element()
                     })
@@ -453,7 +474,7 @@ impl PicooDesktopApp {
                     .map(|err| {
                         div()
                             .text_sm()
-                            .text_color(rgb(0xfca5a5))
+                            .text_color(cx.theme().danger_foreground)
                             .max_w_96()
                             .text_center()
                             .child(err.clone())
@@ -471,14 +492,15 @@ impl PicooDesktopApp {
             )
     }
 
-    fn render_idle_brand_logo(&self) -> impl IntoElement {
+    fn render_idle_brand_logo(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .size(px(72.))
             .rounded_full()
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgba(0xff6a3dff))
+            .bg(cx.theme().primary)
+            .shadow_lg()
             .child(
                 div()
                     .h_flex()
@@ -490,14 +512,14 @@ impl PicooDesktopApp {
                             .h(px(20.))
                             .rounded(px(4.))
                             .border_2()
-                            .border_color(rgb(0xffffff)),
+                            .border_color(gpui::white()),
                     )
                     .child(
                         div()
                             .w(px(10.))
                             .h(px(12.))
                             .rounded(px(2.))
-                            .bg(rgb(0xffffff)),
+                            .bg(gpui::white()),
                     ),
             )
     }
@@ -515,19 +537,19 @@ impl PicooDesktopApp {
             .size_full()
             .items_center()
             .justify_center()
-            .bg(rgba(0x14171fff))
+            .bg(cx.theme().background)
             .child(
                 div()
                     .v_flex()
                     .items_center()
                     .gap_5()
                     .px_8()
-                    .child(self.render_idle_brand_logo())
+                    .child(self.render_idle_brand_logo(cx))
                     .child(
                         div()
                             .text_2xl()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f2ed))
+                            .text_color(cx.theme().foreground)
                             .child("等待手机连接…"),
                     )
                     .child(
@@ -535,7 +557,7 @@ impl PicooDesktopApp {
                             .max_w_96()
                             .text_center()
                             .text_sm()
-                            .text_color(proto_muted_fg())
+                            .text_color(cx.theme().muted_foreground)
                             .child("在同一 Wi‑Fi 下打开手机端 Picoo Camera，将自动发现本电脑。也可通过手机直接扫描下方二维码建立直连。"),
                     )
                     .child(
@@ -544,16 +566,20 @@ impl PicooDesktopApp {
                             .py_2()
                             .rounded_full()
                             .when(vcam_ready, |this| {
-                                this.bg(rgba(0x1a3ecf8e)).border_1().border_color(rgba(0x403ecf8e))
+                                this.bg(cx.theme().success.opacity(0.1))
+                                    .border_1()
+                                    .border_color(cx.theme().success.opacity(0.25))
                             })
                             .when(!vcam_ready, |this| {
-                                this.bg(rgba(0x1aff5c6c)).border_1().border_color(rgba(0x40ff5c6c))
+                                this.bg(cx.theme().danger.opacity(0.1))
+                                    .border_1()
+                                    .border_color(cx.theme().danger.opacity(0.25))
                             })
                             .text_sm()
                             .text_color(if vcam_ready {
-                                rgba(0x3ecf8eff)
+                                cx.theme().success
                             } else {
-                                rgba(0xff9da8ff)
+                                cx.theme().danger_foreground
                             })
                             .child(format!("● 虚拟摄像头驱动：{vcam}")),
                     )
@@ -566,7 +592,7 @@ impl PicooDesktopApp {
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(proto_muted_fg())
+                                        .text_color(cx.theme().muted_foreground)
                                         .max_w_96()
                                         .text_center()
                                         .child(vcam_repair_hint(self.vcam_status)),
@@ -590,7 +616,7 @@ impl PicooDesktopApp {
                                         .map(|msg| {
                                             div()
                                                 .text_xs()
-                                                .text_color(rgb(0x86efac))
+                                                .text_color(cx.theme().success)
                                                 .child(msg.clone())
                                                 .into_any_element()
                                         })
@@ -602,7 +628,7 @@ impl PicooDesktopApp {
                                         .map(|err| {
                                             div()
                                                 .text_xs()
-                                                .text_color(rgb(0xfca5a5))
+                                                .text_color(cx.theme().danger_foreground)
                                                 .max_w_96()
                                                 .text_center()
                                                 .child(err.clone())
@@ -616,7 +642,7 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_xs()
-                            .text_color(proto_muted_fg())
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!(
                                 "QUIC 监听 {endpoint} · 已配对 {} 台",
                                 snapshot.trusted_device_count
@@ -633,8 +659,8 @@ impl PicooDesktopApp {
             .p_5()
             .rounded_lg()
             .border_1()
-            .border_color(rgba(0x14ffffff))
-            .bg(rgba(0x1b202cff))
+            .border_color(cx.theme().border)
+            .bg(cx.theme().secondary)
             .max_w(px(480.))
             .child(
                 div()
@@ -642,7 +668,7 @@ impl PicooDesktopApp {
                     .h(px(120.))
                     .rounded_md()
                     .overflow_hidden()
-                    .bg(rgb(0xffffff))
+                    .bg(gpui::white())
                     .p_2()
                     .flex()
                     .items_center()
@@ -683,13 +709,13 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(rgb(0xf4f2ed))
+                            .text_color(cx.theme().foreground)
                             .child("Show QR Code (扫码直连)"),
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(proto_muted_fg())
+                            .text_color(cx.theme().muted_foreground)
                             .child("企业网络 mDNS 受限时扫码直连 QUIC 端口"),
                     )
                     .child(
@@ -697,17 +723,17 @@ impl PicooDesktopApp {
                             .px_2()
                             .py_0p5()
                             .rounded_md()
-                            .bg(rgba(0x1affb347))
+                            .bg(cx.theme().warning.opacity(0.12))
                             .text_sm()
                             .font_family("monospace")
-                            .text_color(rgba(0xffb347ff))
+                            .text_color(cx.theme().warning)
                             .child(endpoint),
                     )
                     .when_some(snapshot.qr_nonce.clone(), |this, nonce| {
                         this.child(
                             div()
                                 .text_xs()
-                                .text_color(proto_muted_fg())
+                                .text_color(cx.theme().muted_foreground)
                                 .child(format!("Nonce · {nonce}")),
                         )
                     })
@@ -765,7 +791,7 @@ impl PicooDesktopApp {
         div()
             .absolute()
             .inset_0()
-            .bg(rgba(0xa6000000))
+            .bg(cx.theme().overlay)
             .flex()
             .items_center()
             .justify_center()
@@ -777,20 +803,25 @@ impl PicooDesktopApp {
                     .w_96()
                     .rounded_lg()
                     .border_1()
-                    .border_color(rgba(0x29ffffff))
-                    .bg(rgba(0x1b202cff))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
                     .shadow_lg()
                     .child(
                         div()
                             .text_lg()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xf4f2ed))
+                            .text_color(cx.theme().foreground)
                             .child("核对配对短码"),
                     )
-                    .child(div().text_sm().text_color(proto_muted_fg()).child(format!(
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
                         "来自 {sender_name} 的{}连接请求。请确认手机上显示相同的 6 位数字：",
                         if first_time { "首次" } else { "" }
-                    )))
+                    )),
+                    )
                     .child(
                         div()
                             .v_flex()
@@ -798,8 +829,8 @@ impl PicooDesktopApp {
                             .p_4()
                             .rounded_md()
                             .border_1()
-                            .border_color(rgba(0x14ffffff))
-                            .bg(rgba(0x14171fff))
+                            .border_color(cx.theme().border)
+                            .bg(cx.theme().background)
                             .child(
                                 div()
                                     .h_flex()
@@ -807,14 +838,14 @@ impl PicooDesktopApp {
                                     .children(if pairing_digits.len() == 6 {
                                         pairing_digits
                                             .into_iter()
-                                            .map(|digit| pairing_code_box(digit))
+                                            .map(|digit| pairing_code_box(digit, cx))
                                             .collect::<Vec<_>>()
                                     } else {
                                         vec![div()
                                             .text_3xl()
                                             .font_weight(FontWeight::BOLD)
                                             .font_family("monospace")
-                                            .text_color(rgb(0xffffff))
+                                            .text_color(cx.theme().foreground)
                                             .child(format_pairing_code(&pairing))
                                             .into_any_element()]
                                     }),
@@ -823,7 +854,7 @@ impl PicooDesktopApp {
                                 div()
                                     .mt_1()
                                     .text_xs()
-                                    .text_color(proto_muted_fg())
+                                    .text_color(cx.theme().muted_foreground)
                                     .child(pairing_ttl_label),
                             ),
                     )
@@ -908,12 +939,12 @@ impl PicooDesktopApp {
         div()
             .v_flex()
             .size_full()
-            .bg(rgb(0x07090d))
+            .bg(cx.theme().sidebar)
             .child(
                 div()
                     .flex_1()
                     .relative()
-                    .bg(rgb(0x020305))
+                    .bg(cx.theme().tiles)
                     .overflow_hidden()
                     .child(self.video_surface.render_preview())
                     .child(
@@ -924,11 +955,14 @@ impl PicooDesktopApp {
                             .right_4()
                             .h_flex()
                             .justify_between()
-                            .child(live_hud_pill(format!("● {sender_name}")))
-                            .child(live_hud_pill(format!(
-                                "Virtual Camera: {}",
-                                vcam_label(snapshot.virtual_camera).to_uppercase()
-                            ))),
+                            .child(live_hud_pill(format!("● {sender_name}"), cx))
+                            .child(live_hud_pill(
+                                format!(
+                                    "Virtual Camera: {}",
+                                    vcam_label(snapshot.virtual_camera).to_uppercase()
+                                ),
+                                cx,
+                            )),
                     ),
             )
             .child(
@@ -936,23 +970,24 @@ impl PicooDesktopApp {
                     .v_flex()
                     .gap_3()
                     .p_4()
-                    .bg(rgba(0x1b202cff))
+                    .bg(cx.theme().secondary)
                     .border_t_1()
-                    .border_color(rgba(0x14ffffff))
+                    .border_color(cx.theme().border)
                     .child(
                         div()
                             .h_flex()
                             .gap_2()
                             .flex_wrap()
-                            .child(telemetry_cell("画质规格", res_label))
-                            .child(telemetry_cell("实时帧率", fps))
-                            .child(telemetry_cell("接收码率", format!("{bitrate:.1} Mbps")))
-                            .child(telemetry_cell("RTT 延迟", format!("{rtt:.0} ms")))
+                            .child(telemetry_cell("画质规格", res_label, cx))
+                            .child(telemetry_cell("实时帧率", fps, cx))
+                            .child(telemetry_cell("接收码率", format!("{bitrate:.1} Mbps"), cx))
+                            .child(telemetry_cell("RTT 延迟", format!("{rtt:.0} ms"), cx))
                             .child(telemetry_cell(
                                 "丢包 / 抖动",
                                 format!("{loss_pct:.1}% · {jitter:.0} ms"),
+                                cx,
                             ))
-                            .child(telemetry_cell("网络质量", quality.into())),
+                            .child(telemetry_cell("网络质量", quality.into(), cx)),
                     )
                     .when(streaming, |this| {
                         this.child(
@@ -1041,7 +1076,7 @@ impl PicooDesktopApp {
                             .map(|err| {
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(0xfca5a5))
+                                    .text_color(cx.theme().danger_foreground)
                                     .child(err.clone())
                                     .into_any_element()
                             })
@@ -1066,12 +1101,12 @@ impl PicooDesktopApp {
                                     .px_3()
                                     .py_1p5()
                                     .rounded_md()
-                                    .bg(rgba(0x33ff4757))
+                                    .bg(cx.theme().danger.opacity(0.2))
                                     .border_1()
-                                    .border_color(rgba(0x66ff4757))
+                                    .border_color(cx.theme().danger.opacity(0.4))
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(rgb(0xffb0b8))
+                                    .text_color(cx.theme().danger_foreground)
                                     .cursor_pointer()
                                     .on_mouse_down(
                                         gpui::MouseButton::Left,
@@ -1092,11 +1127,11 @@ impl PicooDesktopApp {
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        // AC-D-SET-01: settings overlay (prototype d-modal-settings).
+        // AC-D-SET-01: settings overlay (prototype #d-modal-settings).
         div()
             .absolute()
             .inset_0()
-            .bg(rgba(0xa6000000))
+            .bg(cx.theme().overlay)
             .flex()
             .items_center()
             .justify_center()
@@ -1104,76 +1139,107 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .gap_3()
-                    .p_5()
-                    .w(px(560.))
+                    .p_6()
+                    .w(px(620.))
                     .max_h(px(640.))
                     // ScrollableElement must be in scope — Windows CI failed without it.
                     .overflow_y_scrollbar()
                     .rounded_lg()
                     .border_1()
-                    .border_color(rgba(0x29ffffff))
-                    .bg(rgba(0x1b202cff))
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
                     .shadow_lg()
                     .child(
                         div()
-                            .h_flex()
-                            .items_center()
-                            .justify_between()
+                            .v_flex()
+                            .gap_1()
                             .child(
                                 div()
                                     .text_lg()
                                     .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0xf4f2ed))
-                                    .child("设置"),
+                                    .text_color(cx.theme().foreground)
+                                    .child("桌面端设置中心"),
                             )
-                            .child(Button::new("close-settings").label("关闭").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.settings_open = false;
-                                    cx.notify();
-                                }),
-                            )),
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Receiver 运行参数、虚拟摄像头状态与已配对设备管理"),
+                            ),
                     )
-                    .child(self.render_settings(snapshot, cx)),
+                    .child(self.render_settings(snapshot, cx))
+                    .child(
+                        div()
+                            .h_flex()
+                            .justify_end()
+                            .child(
+                                Button::new("close-settings")
+                                    .primary()
+                                    .label("完成并保存")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.save_display_name(cx);
+                                        this.settings_open = false;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
             )
     }
 
     fn render_settings(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+        let ring_hint = match &snapshot.shared_ring_error {
+            Some(err) => format!("Shared Frame Ring 附着失败 — {err}"),
+            None if self.vcam_status == VirtualCameraStatus::Unsupported => {
+                "本机预览可用；不向会议软件输出".into()
+            }
+            None => "Shared Frame Ring 已附着（VCam DLL 可读帧）".into(),
+        };
+
         div()
             .v_flex()
-            .gap_4()
-            .child(
-                GroupBox::new()
-                    .outline()
-                    .title("常规")
-                    .child(
+            .gap_3()
+            .child(settings_group("基础偏好设置", cx, |group| {
+                group
+                    .child(settings_row(
+                        "电脑显示名称",
+                        "在手机发现列表中显示的设备名",
+                        cx,
                         div()
-                            .v_flex()
+                            .h_flex()
                             .gap_2()
-                            .child("桌面显示名称")
-                            .child(Input::new(&self.display_name_input))
+                            .items_center()
+                            .child(div().w(px(160.)).child(Input::new(&self.display_name_input)))
                             .child(
                                 Button::new("save-display-name")
-                                    .label("保存显示名称")
+                                    .ghost()
+                                    .small()
+                                    .label("保存")
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.save_display_name(cx);
                                     })),
-                            ),
-                    )
-                    .child(
+                            )
+                            .into_any_element(),
+                    ))
+                    .child(settings_row(
+                        "自动接受已配对设备",
+                        "已验证固定公钥的手机连接时直接开始推流",
+                        cx,
                         Switch::new("auto-accept-paired")
                             .checked(self.prefs.auto_accept_paired)
-                            .label("自动接受已配对设备")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.auto_accept_paired = *checked;
                                 this.runtime.set_auto_accept_paired(*checked);
                                 let _ = this.persist_prefs();
                                 cx.notify();
-                            })),
-                    )
-                    .child(
+                            }))
+                            .into_any_element(),
+                    ))
+                    .child(settings_row(
+                        "开机启动",
+                        "登录后自动打开 Receiver",
+                        cx,
                         Switch::new("launch-at-startup")
                             .checked(self.prefs.launch_at_startup)
-                            .label("开机启动")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.launch_at_startup = *checked;
                                 if let Err(err) = crate::startup::sync_launch_at_startup(*checked) {
@@ -1181,123 +1247,181 @@ impl PicooDesktopApp {
                                 }
                                 let _ = this.persist_prefs();
                                 cx.notify();
-                            })),
-                    )
-                    .child(
+                            }))
+                            .into_any_element(),
+                    ))
+                    .child(settings_row(
+                        "最小化到系统托盘",
+                        "关闭窗口后保持后台运行",
+                        cx,
                         Switch::new("minimize-to-tray")
                             .checked(self.prefs.minimize_to_tray)
-                            .label("最小化到托盘")
                             .on_click(cx.listener(|this, checked, _, cx| {
                                 this.prefs.minimize_to_tray = *checked;
                                 this.tray_policy = crate::tray::TrayPolicy::from_pref(*checked);
                                 let _ = this.persist_prefs();
                                 cx.notify();
-                            })),
-                    ),
-            )
-            .child(GroupBox::new().outline().title("未推流占位画面").children(
-                crate::prefs::PlaceholderModePref::ALL.iter().map(|mode| {
-                    let selected = self.prefs.placeholder_mode == *mode;
-                    let mut button =
-                        Button::new(format!("placeholder-{mode:?}")).label(mode.label());
-                    if selected {
-                        button = button.primary();
-                    }
-                    let mode = *mode;
-                    button
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.prefs.placeholder_mode = mode;
-                            this.runtime.set_placeholder_mode(mode.to_frame_hub());
-                            let _ = this.persist_prefs();
-                            cx.notify();
-                        }))
-                        .into_any_element()
-                }),
-            ))
-            .child(
-                GroupBox::new()
-                    .outline()
-                    .title("日志级别")
-                    .children(LogLevel::ALL.iter().map(|level| {
-                        let selected = self.prefs.log_level == *level;
-                        let mut button = Button::new(format!("log-{level:?}")).label(level.label());
-                        if selected {
-                            button = button.primary();
-                        }
-                        let level = *level;
-                        button
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.prefs.log_level = level;
-                                this.apply_log_level();
-                                let _ = this.persist_prefs();
-                                cx.notify();
                             }))
-                            .into_any_element()
-                    })),
-            )
-            .child(
-                GroupBox::new()
-                    .outline()
-                    .title("已配对设备")
-                    .child(format!("共 {} 台设备", snapshot.trusted_device_count))
-                    .when(snapshot.trusted_device_count > 0, |box_| {
-                        box_.child(
-                            Button::new("clear-all-trusted")
-                                .label("清除全部配对")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    match this.runtime.clear_trusted_devices() {
-                                        Ok(n) => {
-                                            this.diagnostics_error = None;
-                                            this.diagnostics_message =
-                                                Some(format!("已清除 {n} 个配对设备"));
-                                        }
-                                        Err(err) => {
-                                            this.diagnostics_error =
-                                                Some(format!("清除配对失败：{err}"));
-                                        }
-                                    }
-                                    cx.notify();
-                                })),
-                        )
-                    })
+                            .into_any_element(),
+                    ))
+            }))
+            .child(settings_group("虚拟摄像头管理 (Virtual Camera)", cx, |group| {
+                group
+                    .child(settings_row(
+                        "系统虚拟摄像头驱动状态",
+                        vcam_repair_hint(self.vcam_status),
+                        cx,
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if self.vcam_status == VirtualCameraStatus::Unsupported {
+                                        cx.theme().danger_foreground
+                                    } else {
+                                        cx.theme().success
+                                    })
+                                    .child(vcam_label_zh(self.vcam_status)),
+                            )
+                            .when(
+                                self.vcam_status != VirtualCameraStatus::Unsupported,
+                                |this| {
+                                    this.child(
+                                        Button::new("repair-vcam")
+                                            .ghost()
+                                            .small()
+                                            .label("修复 / 重新激活")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.try_register_vcam();
+                                                cx.notify();
+                                            })),
+                                    )
+                                },
+                            )
+                            .into_any_element(),
+                    ))
+                    .child(settings_row(
+                        "未推流时默认占位画面",
+                        ring_hint.as_str(),
+                        cx,
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .children(crate::prefs::PlaceholderModePref::ALL.iter().map(|mode| {
+                                let selected = self.prefs.placeholder_mode == *mode;
+                                let mut button = Button::new(format!("placeholder-{mode:?}"))
+                                    .small()
+                                    .ghost()
+                                    .label(mode.label());
+                                if selected {
+                                    button = button.primary();
+                                }
+                                let mode = *mode;
+                                button
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.prefs.placeholder_mode = mode;
+                                        this.runtime.set_placeholder_mode(mode.to_frame_hub());
+                                        let _ = this.persist_prefs();
+                                        cx.notify();
+                                    }))
+                                    .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ))
+            }))
+            .child(settings_group("信任设备管理 (PUC-007)", cx, |group| {
+                group
+                    .child(
+                        div()
+                            .h_flex()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("共 {} 台设备", snapshot.trusted_device_count)),
+                            )
+                            .when(snapshot.trusted_device_count > 0, |this| {
+                                this.child(
+                                    Button::new("clear-all-trusted")
+                                        .ghost()
+                                        .small()
+                                        .label("清除全部配对")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            match this.runtime.clear_trusted_devices() {
+                                                Ok(n) => {
+                                                    this.diagnostics_error = None;
+                                                    this.diagnostics_message =
+                                                        Some(format!("已清除 {n} 个配对设备"));
+                                                }
+                                                Err(err) => {
+                                                    this.diagnostics_error =
+                                                        Some(format!("清除配对失败：{err}"));
+                                                }
+                                            }
+                                            cx.notify();
+                                        })),
+                                )
+                            }),
+                    )
                     .children(snapshot.trusted_devices.iter().map(|device| {
                         self.render_trusted_device_row(device, cx)
                             .into_any_element()
-                    })),
-            )
-            .child(
-                GroupBox::new()
-                    .outline()
-                    .title("虚拟摄像头修复")
-                    .child(format!("状态：{}", vcam_label(self.vcam_status)))
-                    .child(vcam_repair_hint(self.vcam_status))
-                    .child(match &snapshot.shared_ring_error {
-                        Some(err) => format!("Shared Frame Ring：附着失败 — {err}"),
-                        None if self.vcam_status == VirtualCameraStatus::Unsupported => {
-                            "Shared Frame Ring：本机预览可用；不向会议软件输出".into()
-                        }
-                        None => "Shared Frame Ring：已附着（VCam DLL 可读帧）".into(),
-                    })
-                    .when(
-                        self.vcam_status != VirtualCameraStatus::Unsupported,
-                        |this| {
-                            this.child(
-                                Button::new("repair-vcam")
-                                    .label("重新检测 / 修复引导")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.try_register_vcam();
+                    }))
+            }))
+            .child(settings_group("诊断与隐私", cx, |group| {
+                group
+                    .child(settings_row(
+                        "日志级别",
+                        "运行时 reload EnvFilter，不重启进程",
+                        cx,
+                        div()
+                            .h_flex()
+                            .gap_1()
+                            .children(LogLevel::ALL.iter().map(|level| {
+                                let selected = self.prefs.log_level == *level;
+                                let mut button = Button::new(format!("log-{level:?}"))
+                                    .small()
+                                    .ghost()
+                                    .label(level.label());
+                                if selected {
+                                    button = button.primary();
+                                }
+                                let level = *level;
+                                button
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.prefs.log_level = level;
+                                        this.apply_log_level();
+                                        let _ = this.persist_prefs();
                                         cx.notify();
-                                    })),
-                            )
-                        },
-                    )
+                                    }))
+                                    .into_any_element()
+                            }))
+                            .into_any_element(),
+                    ))
+                    .child(settings_row(
+                        "日志脱敏导出",
+                        "默认脱敏 IP、设备名与公钥指纹，不包含视频帧数据",
+                        cx,
+                        Button::new("export-diagnostics")
+                            .ghost()
+                            .small()
+                            .label("导出诊断日志 (.json)")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.export_diagnostics(cx);
+                            }))
+                            .into_any_element(),
+                    ))
                     .children(
                         self.diagnostics_message
                             .as_ref()
                             .map(|msg| {
                                 div()
                                     .text_sm()
-                                    .text_color(rgb(0x86efac))
+                                    .text_color(cx.theme().success)
                                     .child(msg.clone())
                                     .into_any_element()
                             })
@@ -1309,37 +1433,13 @@ impl PicooDesktopApp {
                             .map(|err| {
                                 div()
                                     .text_sm()
-                                    .text_color(rgb(0xfca5a5))
+                                    .text_color(cx.theme().danger_foreground)
                                     .child(err.clone())
                                     .into_any_element()
                             })
                             .into_iter(),
-                    ),
-            )
-            .child(
-                GroupBox::new()
-                    .outline()
-                    .title("诊断")
-                    .child(
-                        Button::new("export-diagnostics")
-                            .label("导出诊断信息")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.export_diagnostics(cx);
-                            })),
                     )
-                    .children(
-                        self.diagnostics_message
-                            .as_ref()
-                            .map(|msg| vec![msg.clone().into_any_element()])
-                            .unwrap_or_default(),
-                    )
-                    .children(
-                        self.diagnostics_error
-                            .as_ref()
-                            .map(|err| vec![format!("错误：{err}").into_any_element()])
-                            .unwrap_or_default(),
-                    ),
-            )
+            }))
     }
 
     fn render_trusted_device_row(
@@ -1414,8 +1514,64 @@ fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
     }
 }
 
-fn proto_muted_fg() -> Hsla {
-    rgba(0x959daeff).into()
+fn settings_group(
+    title: &'static str,
+    cx: &Context<PicooDesktopApp>,
+    build: impl FnOnce(Div) -> Div,
+) -> impl IntoElement {
+    build(
+        div()
+            .v_flex()
+            .gap_1()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .child(
+                div()
+                    .text_xs()
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(cx.theme().muted_foreground)
+                    .child(title.to_uppercase()),
+            ),
+    )
+}
+
+fn settings_row(
+    title: &'static str,
+    hint: &str,
+    cx: &Context<PicooDesktopApp>,
+    control: impl IntoElement,
+) -> impl IntoElement {
+    div()
+        .h_flex()
+        .w_full()
+        .items_center()
+        .justify_between()
+        .gap_3()
+        .py_2()
+        .border_t_1()
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .v_flex()
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().foreground)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(hint.to_string()),
+                ),
+        )
+        .child(control)
 }
 
 fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
@@ -1425,17 +1581,17 @@ fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
     format!("{}:{DEFAULT_QUIC_PORT}", snapshot.advertise_host)
 }
 
-fn live_hud_pill(label: String) -> impl IntoElement {
+fn live_hud_pill(label: String, cx: &Context<PicooDesktopApp>) -> impl IntoElement {
     div()
         .px_3()
         .py_1p5()
         .rounded(px(8.))
-        .bg(rgba(0xb30a0c12))
+        .bg(cx.theme().sidebar.opacity(0.7))
         .border_1()
-        .border_color(rgba(0x1fffffff))
+        .border_color(cx.theme().border)
         .text_xs()
         .font_weight(FontWeight::SEMIBOLD)
-        .text_color(rgb(0xf4f2ed))
+        .text_color(cx.theme().foreground)
         .child(label)
 }
 
@@ -1451,7 +1607,7 @@ fn format_pairing_code(code: &str) -> String {
     format!("{} {}", &digits[..3], &digits[3..])
 }
 
-fn pairing_code_box(digit: char) -> gpui::AnyElement {
+fn pairing_code_box(digit: char, cx: &Context<PicooDesktopApp>) -> gpui::AnyElement {
     div()
         .w(px(40.))
         .h(px(48.))
@@ -1460,17 +1616,21 @@ fn pairing_code_box(digit: char) -> gpui::AnyElement {
         .justify_center()
         .rounded_md()
         .border_1()
-        .border_color(rgba(0x29ffffff))
-        .bg(rgba(0x242b3bff))
+        .border_color(cx.theme().border)
+        .bg(cx.theme().muted)
         .text_xl()
         .font_family("monospace")
         .font_weight(FontWeight::BOLD)
-        .text_color(rgb(0xffffff))
+        .text_color(cx.theme().foreground)
         .child(digit.to_string())
         .into_any_element()
 }
 
-fn telemetry_cell(label: &'static str, value: String) -> impl IntoElement {
+fn telemetry_cell(
+    label: &'static str,
+    value: String,
+    cx: &Context<PicooDesktopApp>,
+) -> impl IntoElement {
     div()
         .v_flex()
         .gap_0p5()
@@ -1478,7 +1638,7 @@ fn telemetry_cell(label: &'static str, value: String) -> impl IntoElement {
             div()
                 .text_xs()
                 .font_weight(FontWeight::BOLD)
-                .text_color(proto_muted_fg())
+                .text_color(cx.theme().muted_foreground)
                 .child(label.to_uppercase()),
         )
         .child(
@@ -1486,7 +1646,7 @@ fn telemetry_cell(label: &'static str, value: String) -> impl IntoElement {
                 .text_sm()
                 .font_family("monospace")
                 .font_weight(FontWeight::BOLD)
-                .text_color(rgb(0xf4f2ed))
+                .text_color(cx.theme().foreground)
                 .child(value),
         )
 }
@@ -1539,13 +1699,14 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let prefs_for_window = prefs.clone();
     app.run(move |cx| {
         gpui_component::init(cx);
+        crate::picoo_theme::apply_picoo_theme(cx);
         cx.set_app_identity("com.picoo.camera", "Picoo Camera");
         cx.activate(true);
 
         cx.open_window(
             WindowOptions {
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Picoo Camera".into()),
+                    title: Some("Picoo Camera Receiver".into()),
                     ..Default::default()
                 }),
                 window_bounds: Some(WindowBounds::Windowed(Bounds {

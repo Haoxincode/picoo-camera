@@ -6,6 +6,8 @@ mod model;
 mod network_quality;
 mod prefs;
 mod preview_page;
+#[cfg(feature = "gpui-ui")]
+mod picoo_theme;
 mod qr_display;
 mod receiver_runtime;
 mod startup;
@@ -102,7 +104,7 @@ fn main() {
         return;
     }
 
-    // REQ-PICOO-UI-010: Linux uses the same GPUI shell as a preview host.
+    // REQ-PICOO-UI-010: Linux uses the same GPUI shell to verify desktop function + UI.
     #[cfg(feature = "gpui-ui")]
     if args.len() <= 1 {
         if let Err(err) = gpui_app::run_gpui_app() {
