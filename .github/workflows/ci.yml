@@ -28,7 +28,8 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
-    needs: rust-and-docs
+    # Parallel with rust-and-docs: tip APK feedback should not wait behind the
+    # full workspace test matrix when ubuntu runners are contested.
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -59,7 +60,8 @@ jobs:
 
   windows:
     runs-on: windows-latest
-    needs: rust-and-docs
+    # Parallel with rust-and-docs: windows-latest is a separate pool; waiting on
+    # ubuntu workspace tests was delaying PicooVirtualCameraSource.dll / MSI.
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
