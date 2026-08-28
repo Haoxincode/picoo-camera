@@ -144,6 +144,14 @@ tasks.register<Exec>("cargoBuildFfi") {
     // so libpicoo_jni DT_NEEDED is "libpicoo_ffi.so" (not a host absolute path).
     environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS", rustPageAlignFlags)
     environment("CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS", rustPageAlignFlags)
+    // NDK r28 + BoringSSL on x86_64: BoringSSL appends `-std=c11`, which makes
+    // sysroot swab.h `asm()` a syntax error. Force GNU C after that flag.
+    environment("CFLAGS", "-std=gnu11")
+    environment("CXXFLAGS", "-std=gnu++17")
+    environment(
+        "CMAKE_C_COMPILER_LAUNCHER",
+        workspaceRoot.resolve("scripts/android-c-gnu11-launcher.sh").absolutePath,
+    )
     doLast {
         jniLibsDir.asFile.walkTopDown()
             .filter { it.isFile && it.name.startsWith("libquiche-") && it.extension == "so" }
