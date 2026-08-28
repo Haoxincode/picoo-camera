@@ -67,7 +67,7 @@
 | AC-D-LIVE-01 | ⏳ | HUD pill 8px 圆角 ✅ |
 | AC-D-LIVE-02 | ⏳ | 遥测 **单行 flex** ✅；真实 jitter ✅；双语网络质量 ✅ |
 | AC-D-LIVE-03 | ⏳ | IDR + **danger 红断开钮** ✅ |
-| AC-D-SET-01 | ⏳ | 功能在 **全页 Settings** 非 Modal；占位图为 bool 非三选一 |
+| AC-D-SET-01 | ⏳ | 功能在 **全页 Settings** 非 Modal；**占位画面三选一**（Logo/黑/彩条）✅ |
 | AC-D-SET-02 | ✅ | 诊断导出已实现 |
 
 ## Anti-Patterns（§5）
