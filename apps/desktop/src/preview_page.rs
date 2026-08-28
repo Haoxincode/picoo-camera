@@ -2,6 +2,9 @@
 //!
 //! `PICOO_UI_PREVIEW_PAGE` 只覆盖打开哪一页，不改变产品 Receiver 范围。
 //! VCam 不适用时默认 Waiting（HTML `#d-view-idle`），不把 First Launch 当主视觉。
+//!
+//! rust-and-docs CI 编 bin 时不开 `gpui-ui`，这些符号只在 GPUI 壳和单测里用。
+#![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UiPreviewPage {
@@ -24,7 +27,6 @@ pub struct InitialShell {
     pub settings_open: bool,
 }
 
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub fn preview_page_from_env() -> Option<UiPreviewPage> {
     parse_ui_preview_page(std::env::var("PICOO_UI_PREVIEW_PAGE").ok().as_deref())
 }
