@@ -25,20 +25,21 @@ if (-not (Test-Path $Msi)) {
 }
 Write-Host "ok: PicooCamera.msi ($((Get-Item $Msi).Length) bytes)"
 
-# Post-build MSI smoke (REQ-PICOO-VCAM-004): no deferred regsvr32; expects WixQuietExec MF registration.
+# Post-build MSI smoke (REQ-PICOO-VCAM-004): RegisterVcamComDll regsvr32 (Return=ignore) is allowed
+# as COM fallback for 0x80040154; legacy RegisterVcamDll (Return=check) must not appear.
 # Limitation: CI cannot run msiexec /i (perMachine admin + Win11 GUI); install acceptance
 # remains manual — see docs/design-specs/verification/vcam-meeting-apps.md.
 $msiBytes = [System.IO.File]::ReadAllBytes($Msi)
 $msiAscii = [System.Text.Encoding]::ASCII.GetString($msiBytes)
 $msiUnicode = [System.Text.Encoding]::Unicode.GetString($msiBytes)
-$forbidden = @('regsvr32.exe', 'RegisterVcamDll')
+$forbidden = @('RegisterVcamDll')
 foreach ($needle in $forbidden) {
     if ($msiAscii.Contains($needle) -or $msiUnicode.Contains($needle)) {
-        Write-Error "MSI embeds forbidden pattern '$needle' (use declarative COM registry in wxs)"
+        Write-Error "MSI embeds forbidden pattern '$needle' (use RegisterVcamComDll with Return=ignore)"
     }
     Write-Host "ok: MSI lacks '$needle'"
 }
-$required = @('--register-vcam --no-wait', 'WixQuietExec', 'RegisterVcamOnInstall')
+$required = @('RegisterVcamComDll', 'regsvr32.exe', '--register-vcam --no-wait', 'WixQuietExec', 'RegisterVcamOnInstall')
 foreach ($needle in $required) {
     if (-not ($msiAscii.Contains($needle) -or $msiUnicode.Contains($needle))) {
         Write-Error "MSI missing required install hook '$needle'"

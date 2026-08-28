@@ -127,6 +127,20 @@ if grep -qF 'Split-Path -Parent (Split-Path -Parent $PSScriptRoot)' "$VERIFY_PS1
 else
   echo "ok: verify_windows_bundle.ps1 repo root depth"
 fi
+need "$VERIFY_PS1" 'RegisterVcamComDll'
+need "$VERIFY_PS1" 'regsvr32.exe'
+if grep -qF "'regsvr32.exe', 'RegisterVcamDll'" "$VERIFY_PS1"; then
+  echo "verify_windows_bundle.ps1 still forbids regsvr32.exe (RegisterVcamComDll fallback required)"
+  fail=1
+else
+  echo "ok: verify_windows_bundle.ps1 regsvr32 policy"
+fi
+if grep -qF 'RegisterVcamDll' "$VERIFY_PS1" && ! grep -qF "'RegisterVcamDll'" "$VERIFY_PS1"; then
+  echo "verify_windows_bundle.ps1 must forbid legacy RegisterVcamDll"
+  fail=1
+else
+  echo "ok: verify_windows_bundle.ps1 forbids RegisterVcamDll"
+fi
 
 if [[ "$fail" -ne 0 ]]; then
   echo "WiX scaffold validation failed"
