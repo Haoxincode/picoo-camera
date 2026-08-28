@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | AC-M-DISC-01 | ⏳ | 顶栏 Wi‑Fi pill；`normalizeSsid`/`fallbackLabel` 可测；无权限时回退「局域网」/「Wi‑Fi」 |
 | AC-M-DISC-02 | ✅ | 发现中橙色脉冲；发现完成绿点常驻（无动画） |
-| AC-M-DISC-03 | ⏳ | 已配对 badge + `MoreHoriz` 分栏；菜单为 Dropdown 非 bottom sheet |
+| AC-M-DISC-03 | ✅ | 已配对 badge + `MoreHoriz` 分栏；**ModalBottomSheet** 撤销配对（非 Dropdown） |
 | AC-M-DISC-04 | ✅ | 离线卡片置灰；点击 Toast 提示不在线 |
 | AC-M-DISC-05 | ✅ | 空态 checklist + 空态时 primary 大按钮扫码 |
 
@@ -39,7 +39,7 @@
 | AC | 状态 | 说明 |
 | --- | --- | --- |
 | AC-M-LIVE-01 | ⏳ | HUD + 工具条 + 锁定；**480p 三档点按轮换** ✅；无抽屉 |
-| AC-M-LIVE-02 | ⏳ | 过热横幅文案对齐；**过热 Toast**（首次降档 + 点击升 1080p 拒绝）；药丸无 🔥 态 |
+| AC-M-LIVE-02 | ⏳ | 过热横幅 + Toast；**ResPill「热降档」warn 态** ✅；无 emoji 🔥 |
 | AC-M-LIVE-03 | ⏳ | 16:9 虚线框 ✅；**轻触对焦环** ✅；**双击沉浸** ✅ |
 | AC-M-LIVE-04 | ⏳ | EV −/＋ 独立步进 + **↺ 重置自动测光** ✅；无 brightness 滤镜 |
 | AC-M-LIVE-05 | ✅ | 码率 + 丢包 pill；已移除底栏「前置/后置」文字 |

@@ -616,11 +616,13 @@ private fun CamToolButton(
 
 @Composable
 private fun ResPill(text: String, throttled: Boolean, onClick: () -> Unit) {
+    // AC-M-LIVE-02: thermal warn styling (no emoji — anti-pattern §5).
     val border = if (throttled) Color(0x80F0C14A) else Color(0x38FFFFFF)
     val bg = if (throttled) Color(0x33F0C14A) else Color(0xB30A0C10)
     val fg = if (throttled) PicooColors.Warn else Color.White
+    val label = if (throttled) "热降档 · $text" else text
     Text(
-        text = text,
+        text = label,
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
