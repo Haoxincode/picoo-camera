@@ -234,6 +234,7 @@ private fun SenderHomeScreen(
     var preferredResolutionLabel by remember { mutableStateOf("1080p") }
     var powerHint by remember { mutableStateOf("") }
     var thermalForced720 by remember { mutableStateOf(false) }
+    var thermalToastShown by remember { mutableStateOf(false) }
     var linkQualityChip by remember { mutableStateOf("") }
     var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
     var exposureEv by remember { mutableIntStateOf(0) }
@@ -582,6 +583,7 @@ private fun SenderHomeScreen(
         if (!live) {
             powerHint = ""
             thermalForced720 = false
+            thermalToastShown = false
             return@LaunchedEffect
         }
         while (true) {
@@ -589,6 +591,17 @@ private fun SenderHomeScreen(
             powerHint = PowerHints.readHint(context)
             val force720 = PowerHints.shouldForce720p(thermal)
             thermalForced720 = force720
+            if (force720 && !thermalToastShown) {
+                // AC-M-LIVE-02: toast when thermal throttle engages (banner remains visible).
+                Toast.makeText(
+                    context,
+                    "设备偏热保护中 · 已降至 720p，1080P 暂不可选",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                thermalToastShown = true
+            } else if (!force720) {
+                thermalToastShown = false
+            }
             if (senderHandle != 0L) {
                 PicooNative.setThermalHold(senderHandle, force720)
             }
@@ -989,6 +1002,11 @@ private fun SenderHomeScreen(
                     }
                     if (thermalForced720 && next == StreamResolution.P1080) {
                         errorText = "设备过热，暂不可升 1080p"
+                        Toast.makeText(
+                            context,
+                            "设备偏热保护中，1080P 暂不可选",
+                            Toast.LENGTH_SHORT,
+                        ).show()
                         return@StreamingScreen
                     }
                     resolutionLabel = next.label

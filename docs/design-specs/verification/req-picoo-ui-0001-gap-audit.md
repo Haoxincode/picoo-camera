@@ -39,7 +39,7 @@
 | AC | 状态 | 说明 |
 | --- | --- | --- |
 | AC-M-LIVE-01 | ⏳ | HUD + 工具条 + 锁定；**480p 三档点按轮换** ✅；无抽屉 |
-| AC-M-LIVE-02 | ⏳ | 过热横幅文案对齐；药丸无 🔥 态；无 Toast |
+| AC-M-LIVE-02 | ⏳ | 过热横幅文案对齐；**过热 Toast**（首次降档 + 点击升 1080p 拒绝）；药丸无 🔥 态 |
 | AC-M-LIVE-03 | ⏳ | 16:9 虚线框 ✅；**轻触对焦环** ✅；**双击沉浸** ✅ |
 | AC-M-LIVE-04 | ⏳ | EV −/＋ 独立步进 + **↺ 重置自动测光** ✅；无 brightness 滤镜 |
 | AC-M-LIVE-05 | ✅ | 码率 + 丢包 pill；已移除底栏「前置/后置」文字 |
@@ -61,7 +61,7 @@
 | AC-D-TECH-01 | ✅ | 纯 GPUI，无 Electron/WebView |
 | AC-D-TECH-02 | ✅ | `VideoSurface` + FrameHub |
 | AC-D-IDLE-01 | ⏳ | 标题/副标题对齐；**摄像机品牌圆标**（非 ▶ 占位） |
-| AC-D-IDLE-02 | ⏳ | VCam pill 绿/红态；**就绪 (Ready) 文案**对齐 |
+| AC-D-IDLE-02 | ⏳ | VCam pill 绿/红态；**就绪 (Ready) 文案**；未就绪时 **修复按钮 + 诊断反馈** |
 | AC-D-IDLE-03 | ⏳ | QR 卡片 + endpoint ✅；**Nonce 展示** ✅ |
 | AC-D-PAIR-01/02 | ⏳ | Modal 结构 + **code-box** + 首次强调 ✅；无 blur backdrop |
 | AC-D-LIVE-01 | ⏳ | HUD pill 8px 圆角 ✅ |
@@ -87,4 +87,4 @@
 | 桌面 AC | 3 | 9 | 0 |
 | Anti-Pattern | 2 | 2 | 0 |
 
-**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：对焦环/沉浸、翻转动画、Settings Modal、桌面 logo 渐变/阴影精修。
+**REQ-PICOO-UI-0001 不可宣称 `verified`**。下一轮 P1：Settings Modal、桌面 logo 渐变/阴影精修、Wi‑Fi SSID 权限兜底精修。
