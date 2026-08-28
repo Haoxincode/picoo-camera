@@ -1,6 +1,6 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · tip `97f79a0` · 待 CI 验证（上一全绿 [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632) @ `690cdbf`）
+> 分支：`cursor/android-win-v1-gates-dbe3` · tip `79e234a` · 全绿 CI [33144102114](https://github.com/Haoxincode/picoo-camera/actions/runs/33144102114)（含 VCam COM 兜底 + bundle smoke 修复）
 >
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
@@ -79,7 +79,7 @@
 
 | Job | 状态 | 产物 |
 | --- | --- | --- |
-| `rust-and-docs` | ✅ run [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632) | 无 artifact |
+| `rust-and-docs` | ✅ run [33144102114](https://github.com/Haoxincode/picoo-camera/actions/runs/33144102114) | 无 artifact |
 | `android` | ✅ | `android-apk-debug`, `android-release` |
 | `windows` | ✅ | `windows-bundle`, `windows-msi` |
 

@@ -6,9 +6,9 @@
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632) |
+| Run ID | [33144102114](https://github.com/Haoxincode/picoo-camera/actions/runs/33144102114) |
 | 分支 | `cursor/android-win-v1-gates-dbe3` |
-| Commit | `690cdbf` — PairingConfirm 回归测试 + MSI WIX0104 修复 + CI 修复链 |
+| Commit | `79e234a` — VCam COM 兜底 + `verify_windows_bundle.ps1` 策略对齐 |
 | 结论 | 3/3 jobs success（`rust-and-docs` + `android` + `windows`） |
 
 后续 tip 绿 run 用法相同：在 Actions 页打开对应 run → 页面底部 **Artifacts** 区域下载。
@@ -65,7 +65,7 @@ windows-bundle/
     └── PicooCamera.msi            # 与 windows-msi artifact 相同
 ```
 
-CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 不含 `regsvr32.exe`/`RegisterVcamDll` 且含 CLSID（REQ-VCAM-004）。**不**在 CI 上执行 `msiexec /i`（perMachine 需 Win11 管理员真机验收）。
+CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 含 `RegisterVcamComDll` + `regsvr32.exe`（COM 兜底）、禁止 legacy `RegisterVcamDll`，且含 CLSID 与 `--register-vcam --no-wait`（REQ-VCAM-004）。**不**在 CI 上执行 `msiexec /i`（perMachine 需 Win11 管理员真机验收）。
 
 ### `android-release` 解压后布局
 
