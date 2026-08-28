@@ -81,6 +81,23 @@ fn build(platform: Platform) -> Result<()> {
             build_vcam_dll(&sh)?;
         }
         Platform::Linux => {
+            // Cloud images may default `c++` to clang without -lstdc++ on the
+            // link path; BoringSSL/quiche then fails CMake. Prefer g++ and
+            // pass GCC's lib dir to rust-lld.
+            if std::env::var_os("CXX").is_none() && which_ok("g++") {
+                sh.set_var("CXX", "g++");
+                if std::env::var_os("CC").is_none() && which_ok("gcc") {
+                    sh.set_var("CC", "gcc");
+                }
+            }
+            if let Some(dir) = gcc_libstdcxx_dir() {
+                let extra = format!("-C link-arg=-L{}", dir.display());
+                let flags = match std::env::var("RUSTFLAGS") {
+                    Ok(existing) if !existing.is_empty() => format!("{existing} {extra}"),
+                    _ => extra,
+                };
+                sh.set_var("RUSTFLAGS", flags);
+            }
             cmd!(
                 sh,
                 "cargo build -p picoo-desktop --release --features gpui-ui"
@@ -257,4 +274,32 @@ fn test_suite(suite: TestSuite) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn gcc_libstdcxx_dir() -> Option<std::path::PathBuf> {
+    let output = std::process::Command::new("g++")
+        .args(["-print-file-name=libstdc++.so"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(output.stdout).ok()?;
+    let path = std::path::PathBuf::from(path.trim());
+    if path.is_file() {
+        path.parent().map(std::path::Path::to_path_buf)
+    } else {
+        None
+    }
+}
+
+fn which_ok(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|paths| {
+            std::env::split_paths(&paths).any(|dir| {
+                let candidate = dir.join(name);
+                candidate.is_file()
+            })
+        })
+        .unwrap_or(false)
 }

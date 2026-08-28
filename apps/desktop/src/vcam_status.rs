@@ -26,7 +26,10 @@ pub fn detect_vcam_status() -> VirtualCameraStatus {
         return VirtualCameraStatus::Installed;
     }
 
-    VirtualCameraStatus::Installed
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    {
+        VirtualCameraStatus::Installed
+    }
 }
 
 #[cfg(all(windows, feature = "windows-vcam"))]
