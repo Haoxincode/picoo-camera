@@ -33,6 +33,8 @@ enum Command {
 enum Platform {
     Android,
     Windows,
+    /// Linux GPUI preview host (REQ-PICOO-UI-010). Not a product Receiver.
+    Linux,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -78,6 +80,14 @@ fn build(platform: Platform) -> Result<()> {
             .run()?;
             build_vcam_dll(&sh)?;
         }
+        Platform::Linux => {
+            cmd!(
+                sh,
+                "cargo build -p picoo-desktop --release --features gpui-ui"
+            )
+            .run()?;
+            cmd!(sh, "cargo test -p picoo-desktop --features gpui-ui").run()?;
+        }
     }
     Ok(())
 }
@@ -101,6 +111,9 @@ fn build_vcam_dll(sh: &Shell) -> Result<()> {
 
 fn package(platform: Platform) -> Result<()> {
     match platform {
+        Platform::Linux => {
+            bail!("linux package: preview host only — use `cargo xtask build linux`")
+        }
         Platform::Windows => {
             build(Platform::Windows)?;
             let sh = Shell::new()?;

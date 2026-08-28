@@ -26,6 +26,14 @@ jobs:
       - run: cargo run -p xtask -- test linux
       - run: cargo run -p xtask -- test protocol
 
+  linux-gpui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: PICOO_INSTALL_GPUI=1 bash .cursor/install.sh
+      - run: cargo run -p xtask -- build linux
+
   android:
     runs-on: ubuntu-latest
     # Parallel with rust-and-docs: tip APK feedback should not wait behind the

@@ -77,7 +77,7 @@ Rust Receiver Core
 
 ### Linux v4l2loopback 第一版
 
-不采用。第一版只覆盖 Windows 与 macOS Receiver。
+不采用。产品 Receiver 只覆盖 Windows 与 macOS。Linux 上的同一套 GPUI 壳只作预览宿主（`REQ-PICOO-UI-010`），不注册虚拟摄像头。
 
 ## 约束
 

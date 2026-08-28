@@ -1,4 +1,4 @@
-# REQ-PICOO-UI：Android Compose + Windows GPUI
+# REQ-PICOO-UI：Android Compose + 桌面 GPUI
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
@@ -11,3 +11,4 @@
 | REQ-PICOO-UI-007 | implemented | PRD §16 | 开机启动偏好写入 OS | `startup.rs` HKCU Run（Windows）+ MemoryStore 测试 |
 | REQ-PICOO-UI-008 | implemented | PRD §16 | 关闭窗口时托盘策略 | `NotifyIconController` + tip 随 `ReceiverStatus`；`TrayMenuAction::apply` Show/Quit；HWND 注入或 `FindWindowW`；GPUI close + pump |
 | REQ-PICOO-UI-009 | implemented | PUC-005 | 桌面直播页远程摄像头控制（前后摄 / 480p·720p·1080p / 远端镜像）经 ReceiverSession → CameraCommand；Sender FFI/JNI 消费 | GPUI Live 前置/后置/480p/720p/1080p/远端镜像 → `send_camera_command`；`picoo_sender_take_camera_command` + Android poll |
+| REQ-PICOO-UI-010 | implemented | ARCH-PICOO-UI-001 | Linux 可编译并启动同一套 GPUI 壳，作为预览与验证宿主；虚拟摄像头状态为 `Unsupported`；不注册会议软件摄像头 | `detect_vcam_status` 在非 Windows VCam 构建返回 `Unsupported`；`xtask build linux`；`PICOO_UI_PREVIEW_PAGE` 可选打开 FirstLaunch/Waiting/Live/Settings |

@@ -120,5 +120,6 @@ Picoo Camera 第一版约束：
 - 视频格式为 H.264 720p30 / 1080p30；音频继续使用电脑麦克风。
 - 业务状态、协议、传输、配对、重连和码率控制尽可能统一使用 Rust Core。
 - Windows 与 macOS 桌面 UI 共用一套 GPUI 代码；手机端分别使用 Jetpack Compose 与 SwiftUI。
+- Linux 可运行同一套 GPUI 壳作为预览与验证宿主，不构成产品 Receiver，也不提供虚拟摄像头。
 
-明确不在第一版范围：USB/ADB、公网远程、手机麦克风、本地录像、4K/60FPS/HEVC、多手机输入、AI 美颜、Linux Receiver、浏览器 Receiver、账号与云同步。
+明确不在第一版范围：USB/ADB、公网远程、手机麦克风、本地录像、4K/60FPS/HEVC、多手机输入、AI 美颜、Linux 产品 Receiver（会议软件虚拟摄像头）、浏览器 Receiver、账号与云同步。

@@ -1,11 +1,16 @@
 //! Virtual camera install detection — REQ-PICOO-VCAM-001 / PUC-004.
 
-use std::path::PathBuf;
-
 use crate::model::VirtualCameraStatus;
 
 /// Probe whether Picoo Camera virtual camera appears installed on this machine.
 pub fn detect_vcam_status() -> VirtualCameraStatus {
+    // REQ-PICOO-UI-010: Linux GPUI is a preview host, not a product Receiver.
+    #[cfg(not(all(windows, feature = "windows-vcam")))]
+    {
+        return VirtualCameraStatus::Unsupported;
+    }
+
+    #[cfg(all(windows, feature = "windows-vcam"))]
     if !vcam_dll_present() {
         return VirtualCameraStatus::NotInstalled;
     }
@@ -21,16 +26,10 @@ pub fn detect_vcam_status() -> VirtualCameraStatus {
         return VirtualCameraStatus::Installed;
     }
 
-    #[cfg(not(all(windows, feature = "windows-vcam")))]
-    {
-        // Linux CI: ring reader validates consumer path; treat as unknown until MF lands.
-        return VirtualCameraStatus::Unknown;
-    }
-
-    #[cfg(all(windows, feature = "windows-vcam"))]
     VirtualCameraStatus::Installed
 }
 
+#[cfg(all(windows, feature = "windows-vcam"))]
 fn vcam_dll_present() -> bool {
     for path in candidate_vcam_dll_paths() {
         if path.is_file() {
@@ -40,24 +39,9 @@ fn vcam_dll_present() -> bool {
     false
 }
 
-fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
-    #[cfg(all(windows, feature = "windows-vcam"))]
-    {
-        return crate::vcam_register::candidate_vcam_dll_paths();
-    }
-    #[cfg(not(all(windows, feature = "windows-vcam")))]
-    {
-        let mut paths = Vec::new();
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                paths.push(dir.join("PicooVirtualCameraSource.dll"));
-            }
-        }
-        paths.push(PathBuf::from(
-            "extensions/windows-virtual-camera/mf-source/build/PicooVirtualCameraSource.dll",
-        ));
-        paths
-    }
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn candidate_vcam_dll_paths() -> Vec<std::path::PathBuf> {
+    crate::vcam_register::candidate_vcam_dll_paths()
 }
 
 #[cfg(all(windows, feature = "windows-vcam"))]
@@ -90,6 +74,9 @@ pub fn vcam_repair_hint(status: VirtualCameraStatus) -> &'static str {
             "请运行 Windows 安装程序（MSI）以注册 Picoo Camera；若已安装，在设置页点「安装/激活虚拟摄像头」（需管理员）或执行：regsvr32 PicooVirtualCameraSource.dll"
         }
         VirtualCameraStatus::Unknown => "正在检测虚拟摄像头状态…",
+        VirtualCameraStatus::Unsupported => {
+            "虚拟摄像头仅支持 Windows 11 / macOS。Linux 是 GPUI 预览面，不注册会议软件摄像头。"
+        }
     }
 }
 
@@ -106,6 +93,14 @@ mod tests {
                 | VirtualCameraStatus::Installed
                 | VirtualCameraStatus::NotInstalled
                 | VirtualCameraStatus::Active
+                | VirtualCameraStatus::Unsupported
         ));
+    }
+
+    #[cfg(not(all(windows, feature = "windows-vcam")))]
+    #[test]
+    fn linux_preview_host_reports_unsupported() {
+        assert_eq!(detect_vcam_status(), VirtualCameraStatus::Unsupported);
+        assert!(vcam_repair_hint(VirtualCameraStatus::Unsupported).contains("Linux"));
     }
 }

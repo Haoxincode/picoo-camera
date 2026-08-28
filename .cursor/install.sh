@@ -56,6 +56,25 @@ if ! command -v protoc >/dev/null 2>&1; then
   sudo apt-get install -y -qq protobuf-compiler
 fi
 
+if [ "${PICOO_INSTALL_GPUI:-0}" = "1" ]; then
+  log "安装 Linux GPUI 预览依赖（REQ-PICOO-UI-010）"
+  sudo apt-get update -qq
+  sudo apt-get install -y -qq \
+    libfontconfig1-dev \
+    libfreetype6-dev \
+    libx11-dev \
+    libxcb1-dev \
+    libxcb-xfixes0-dev \
+    libxcb-shape0-dev \
+    libxkbcommon-dev \
+    libxkbcommon-x11-dev \
+    libvulkan-dev \
+    mesa-vulkan-drivers \
+    xvfb \
+    x11-apps \
+    scrot
+fi
+
 install_lychee
 
 if [ "${PICOO_INSTALL_ANDROID:-0}" = "1" ]; then

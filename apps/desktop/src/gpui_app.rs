@@ -25,6 +25,7 @@ use smallvec::smallvec;
 use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::model::VirtualCameraStatus;
 use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
+use crate::preview_page::{preview_page_from_env, UiPreviewPage};
 use crate::qr_display;
 use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary};
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
@@ -66,17 +67,20 @@ impl PicooDesktopApp {
         display_name_input: Entity<InputState>,
         vcam_status: VirtualCameraStatus,
     ) -> Self {
-        let page = if prefs.first_launch_completed {
-            DesktopPage::Waiting
-        } else {
-            DesktopPage::FirstLaunch
+        let (page, settings_open) = match preview_page_from_env() {
+            Some(UiPreviewPage::FirstLaunch) => (DesktopPage::FirstLaunch, false),
+            Some(UiPreviewPage::Waiting) => (DesktopPage::Waiting, false),
+            Some(UiPreviewPage::Live) => (DesktopPage::Live, false),
+            Some(UiPreviewPage::Settings) => (DesktopPage::Waiting, true),
+            None if prefs.first_launch_completed => (DesktopPage::Waiting, false),
+            None => (DesktopPage::FirstLaunch, false),
         };
         Self {
             runtime,
             prefs: prefs.clone(),
             tray_policy: crate::tray::TrayPolicy::from_pref(prefs.minimize_to_tray),
             page,
-            settings_open: false,
+            settings_open,
             show_qr: true,
             pump_started: false,
             video_surface: VideoSurface::default(),
@@ -177,8 +181,10 @@ impl PicooDesktopApp {
         #[cfg(not(all(windows, feature = "windows-vcam")))]
         {
             self.refresh_vcam_status();
-            self.diagnostics_message =
-                Some("当前构建未启用 windows-vcam；Linux CI 仅做环路探测。".into());
+            self.diagnostics_message = Some(
+                "Linux 是 GPUI 预览宿主，不注册虚拟摄像头。会议软件接入只在 Windows / macOS。"
+                    .into(),
+            );
         }
     }
 
@@ -408,21 +414,26 @@ impl PicooDesktopApp {
                 vcam_label_zh(self.vcam_status)
             ))
             .child(vcam_repair_hint(self.vcam_status))
-            .child(
-                Button::new("refresh-vcam")
-                    .label("重新检测虚拟摄像头")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.refresh_vcam_status();
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("install-vcam")
-                    .label("安装 / 激活虚拟摄像头")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.try_register_vcam();
-                        cx.notify();
-                    })),
+            .when(
+                self.vcam_status != VirtualCameraStatus::Unsupported,
+                |this| {
+                    this.child(
+                        Button::new("refresh-vcam")
+                            .label("重新检测虚拟摄像头")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.refresh_vcam_status();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("install-vcam")
+                            .label("安装 / 激活虚拟摄像头")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.try_register_vcam();
+                                cx.notify();
+                            })),
+                    )
+                },
             )
             .children(
                 self.diagnostics_message
@@ -560,13 +571,18 @@ impl PicooDesktopApp {
                                         .text_center()
                                         .child(vcam_repair_hint(self.vcam_status)),
                                 )
-                                .child(
-                                    Button::new("waiting-vcam-repair")
-                                        .label("修复虚拟摄像头注册")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.try_register_vcam();
-                                            cx.notify();
-                                        })),
+                                .when(
+                                    self.vcam_status != VirtualCameraStatus::Unsupported,
+                                    |this| {
+                                        this.child(
+                                            Button::new("waiting-vcam-repair")
+                                                .label("修复虚拟摄像头注册")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.try_register_vcam();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    },
                                 )
                                 .children(
                                     self.diagnostics_message
@@ -1257,15 +1273,23 @@ impl PicooDesktopApp {
                     .child(vcam_repair_hint(self.vcam_status))
                     .child(match &snapshot.shared_ring_error {
                         Some(err) => format!("Shared Frame Ring：附着失败 — {err}"),
+                        None if self.vcam_status == VirtualCameraStatus::Unsupported => {
+                            "Shared Frame Ring：本机预览可用；不向会议软件输出".into()
+                        }
                         None => "Shared Frame Ring：已附着（VCam DLL 可读帧）".into(),
                     })
-                    .child(
-                        Button::new("repair-vcam")
-                            .label("重新检测 / 修复引导")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.try_register_vcam();
-                                cx.notify();
-                            })),
+                    .when(
+                        self.vcam_status != VirtualCameraStatus::Unsupported,
+                        |this| {
+                            this.child(
+                                Button::new("repair-vcam")
+                                    .label("重新检测 / 修复引导")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.try_register_vcam();
+                                        cx.notify();
+                                    })),
+                            )
+                        },
                     )
                     .children(
                         self.diagnostics_message
@@ -1376,6 +1400,7 @@ fn vcam_label(status: VirtualCameraStatus) -> &'static str {
         VirtualCameraStatus::Installed => "Installed",
         VirtualCameraStatus::NotInstalled => "Not Installed",
         VirtualCameraStatus::Active => "Active",
+        VirtualCameraStatus::Unsupported => "Unsupported",
     }
 }
 
@@ -1385,6 +1410,7 @@ fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
         VirtualCameraStatus::Installed => "就绪 (Ready)",
         VirtualCameraStatus::NotInstalled => "未安装 (Not Installed)",
         VirtualCameraStatus::Active => "就绪 (Active)",
+        VirtualCameraStatus::Unsupported => "本平台不适用",
     }
 }
 

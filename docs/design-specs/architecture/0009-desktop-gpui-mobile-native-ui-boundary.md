@@ -17,8 +17,11 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 | iOS Sender | SwiftUI |
 | Windows Receiver | GPUI + gpui-component |
 | macOS Receiver | GPUI + gpui-component |
+| Linux 预览宿主 | 同一套 GPUI + gpui-component（非产品 Receiver） |
 
 不引入：Flutter、React Native、Electron、Tauri、WebView、GPUI Mobile。
+
+Linux 运行同一套桌面壳，用于预览 First Launch / Waiting / Live / Settings，以及在有显示器或 Xvfb 时截取像素。Linux 预览宿主不是产品 Receiver：它不注册虚拟摄像头，不进入会议软件，不把 `PUC-004` 扩到 Linux。虚拟摄像头状态必须是 `Unsupported`，不得伪装成检测中或未安装。
 
 ### gpui-component 使用方式
 
@@ -80,9 +83,13 @@ struct DesktopAppState {
 
 ## 不采用的方案
 
+### 把 Linux GPUI 预览宿主做成产品 Receiver
+
+不采用。产品 Receiver 仍是 Windows / macOS，并驱动虚拟摄像头。Linux 只共享 GPUI 壳，不引入 v4l2loopback，也不宣称会议软件接入。
+
 ### 桌面 Electron / WebView UI
 
-不采用。与 GPUI 跨 Windows/macOS 代码共享目标冲突，且增加运行时体积。
+不采用。与 GPUI 跨桌面代码共享目标冲突，且增加运行时体积。
 
 ### 手机端 GPUI 或 Flutter
 
@@ -112,5 +119,6 @@ struct DesktopAppState {
 ## 相关 Requirements
 
 - [REQ-PICOO-UI-0001（全端 UI 交互设计与细化验收规范）](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
-- `REQ-PICOO-UI-001` … `REQ-PICOO-UI-009`（见 [requirements/ui.md](../requirements/ui.md)）
+- `REQ-PICOO-UI-001` … `REQ-PICOO-UI-010`（见 [requirements/ui.md](../requirements/ui.md)）
 - 桌面远程摄像头控制：`REQ-PICOO-UI-009`（PUC-005）
+- Linux GPUI 预览宿主：`REQ-PICOO-UI-010`

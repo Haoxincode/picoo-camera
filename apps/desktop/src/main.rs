@@ -5,6 +5,7 @@ mod logging;
 mod model;
 mod network_quality;
 mod prefs;
+mod preview_page;
 mod qr_display;
 mod receiver_runtime;
 mod startup;
@@ -101,7 +102,8 @@ fn main() {
         return;
     }
 
-    #[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
+    // REQ-PICOO-UI-010: Linux uses the same GPUI shell as a preview host.
+    #[cfg(feature = "gpui-ui")]
     if args.len() <= 1 {
         if let Err(err) = gpui_app::run_gpui_app() {
             eprintln!("GPUI app failed: {err}");

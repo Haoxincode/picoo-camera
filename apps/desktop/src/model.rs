@@ -20,13 +20,15 @@ pub struct SessionSummary {
     pub fps: u32,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VirtualCameraStatus {
     #[default]
     Unknown,
     Installed,
     NotInstalled,
     Active,
+    /// Linux / non-Windows preview host: VCam is out of product scope.
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

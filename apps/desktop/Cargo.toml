@@ -1,6 +1,6 @@
 [package]
 name = "picoo-desktop"
-description = "Windows/macOS GPUI Receiver desktop application"
+description = "GPUI desktop shell: Windows/macOS Receiver, Linux preview host"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
