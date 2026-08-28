@@ -52,7 +52,7 @@
 | AC | 状态 | 说明 |
 | --- | --- | --- |
 | AC-M-SET-01 | ✅ | Chevron 返回 |
-| AC-M-SET-02 | ⏳ | 自动直连开关 + 默认画质 toggle；配对管理跳回 Devices；无公钥指纹 sheet |
+| AC-M-SET-02 | ⏳ | 自动直连 + 默认画质；配对列表展示 **公钥短指纹** ✅；无独立 sheet |
 
 ## 桌面 Receiver（GPUI）
 
