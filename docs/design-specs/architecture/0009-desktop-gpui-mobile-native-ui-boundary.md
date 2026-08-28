@@ -111,4 +111,4 @@ struct DesktopAppState {
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICOO-UI-*`
+- [REQ-PICOO-UI-0001 (全端 UI 交互设计与细化验收规范)](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
