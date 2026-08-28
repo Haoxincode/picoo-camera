@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -46,11 +47,13 @@ import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.SenderTab
+import com.picoo.camera.network.WifiNetworkInfo
 import com.picoo.camera.ui.screens.DevicesScreen
 import com.picoo.camera.ui.screens.PairingScreen
 import com.picoo.camera.ui.screens.QrScanScreen
 import com.picoo.camera.ui.screens.SettingsScreen
 import com.picoo.camera.ui.screens.StreamingScreen
+import com.picoo.camera.ui.screens.WaitOutcome
 import com.picoo.camera.ui.screens.WaitScreen
 import com.picoo.camera.ui.theme.PicooCameraTheme
 import kotlinx.coroutines.delay
@@ -239,6 +242,12 @@ private fun SenderHomeScreen(
     var qrSuccessName by remember { mutableStateOf<String?>(null) }
     var qrHostPort by remember { mutableStateOf<String?>(null) }
     var discoveryComplete by remember { mutableStateOf(false) }
+    var wifiPillText by remember { mutableStateOf("Wi‑Fi · 局域网") }
+    var pairingRemainingSeconds by remember { mutableIntStateOf(60) }
+    var pairingExpired by remember { mutableStateOf(false) }
+    var pairingStartedAtMs by remember { mutableLongStateOf(0L) }
+    var waitOutcome by remember { mutableStateOf(WaitOutcome.Pending) }
+    var waitUserCancelled by remember { mutableStateOf(false) }
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
     val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 
@@ -289,6 +298,51 @@ private fun SenderHomeScreen(
             }
         } else {
             discoveryComplete = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            wifiPillText = WifiNetworkInfo.pillText(context)
+            delay(5_000)
+        }
+    }
+
+    LaunchedEffect(pairingCode, senderTab) {
+        if (pairingCode.isNotEmpty() && senderTab == SenderTab.Pairing) {
+            pairingStartedAtMs = System.currentTimeMillis()
+            pairingExpired = false
+            pairingRemainingSeconds = 60
+        }
+    }
+
+    LaunchedEffect(pairingStartedAtMs, pairingCode, senderTab, pairingExpired) {
+        if (pairingCode.isEmpty() || senderTab != SenderTab.Pairing || pairingExpired) {
+            return@LaunchedEffect
+        }
+        while (pairingRemainingSeconds > 0 && senderTab == SenderTab.Pairing) {
+            delay(1_000)
+            val elapsed = ((System.currentTimeMillis() - pairingStartedAtMs) / 1_000).toInt()
+            pairingRemainingSeconds = (60 - elapsed).coerceAtLeast(0)
+            if (pairingRemainingSeconds == 0) {
+                pairingExpired = true
+            }
+        }
+    }
+
+    LaunchedEffect(phonePairingConfirmed, senderTab) {
+        if (!phonePairingConfirmed || senderTab != SenderTab.Wait) {
+            return@LaunchedEffect
+        }
+        waitUserCancelled = false
+        waitOutcome = WaitOutcome.Pending
+        val waitStartedAt = System.currentTimeMillis()
+        while (senderTab == SenderTab.Wait && waitOutcome == WaitOutcome.Pending) {
+            delay(1_000)
+            val elapsed = ((System.currentTimeMillis() - waitStartedAt) / 1_000).toInt()
+            if (elapsed >= 60) {
+                waitOutcome = WaitOutcome.Timeout
+            }
         }
     }
 
@@ -392,7 +446,21 @@ private fun SenderHomeScreen(
         viaQr = false
         qrSuccessName = null
         qrHostPort = null
+        pairingExpired = false
+        pairingRemainingSeconds = 60
+        waitOutcome = WaitOutcome.Pending
+        waitUserCancelled = false
         errorText = null
+    }
+
+    fun regeneratePairing() {
+        pairingExpired = false
+        pairingRemainingSeconds = 60
+        phonePairingConfirmed = false
+        waitOutcome = WaitOutcome.Pending
+        PicooNative.disconnect(senderHandle)
+        val port = portText.toIntOrNull() ?: 4433
+        connectToReceiver(hostText, port, selectedReceiverId)
     }
 
     LaunchedEffect(senderHandle, trustedStorePath) {
@@ -622,6 +690,14 @@ private fun SenderHomeScreen(
                     encoder.requestKeyFrame()
                     streamConfigDirty.set(true)
                 }
+                if (senderTab == SenderTab.Wait &&
+                    phonePairingConfirmed &&
+                    !waitUserCancelled &&
+                    senderStatus == PicooNative.STATUS_DISCONNECTED &&
+                    previousStatus != PicooNative.STATUS_DISCONNECTED
+                ) {
+                    waitOutcome = WaitOutcome.Rejected
+                }
                 if (senderStatus == PicooNative.STATUS_DISCONNECTED &&
                     previousStatus != PicooNative.STATUS_DISCONNECTED &&
                     !suppressAutoConnect
@@ -657,8 +733,18 @@ private fun SenderHomeScreen(
                 senderTab = SenderTab.Wait
             (pairingCode.isNotEmpty() || senderStatus == PicooNative.STATUS_PAIRING) &&
                 !phonePairingConfirmed &&
-                (qrSuccessName != null || senderTab != SenderTab.Qr) ->
+                senderTab != SenderTab.Qr ->
                 senderTab = SenderTab.Pairing
+            waitOutcome != WaitOutcome.Pending &&
+                senderTab == SenderTab.Wait -> Unit
+        }
+    }
+
+    LaunchedEffect(qrSuccessName, pairingCode, senderStatus) {
+        if (qrSuccessName != null &&
+            (pairingCode.isNotEmpty() || senderStatus == PicooNative.STATUS_PAIRING)
+        ) {
+            senderTab = SenderTab.Pairing
         }
     }
 
@@ -688,6 +774,7 @@ private fun SenderHomeScreen(
                 pairedReceiverIds = pairedReceiverIds.value,
                 nearbyWifiGranted = nearbyWifiGranted,
                 discoveryComplete = discoveryComplete,
+                wifiPillText = wifiPillText,
                 errorText = errorText,
                 onSelectReceiver = { receiver ->
                     selectedReceiverName = receiver.displayName
@@ -719,6 +806,13 @@ private fun SenderHomeScreen(
                     } else {
                         errorText = "删除失败 ($rc)"
                     }
+                },
+                onOfflinePairedClick = { device ->
+                    Toast.makeText(
+                        context,
+                        "${device.deviceName} 当前不在线，请确认电脑端 Picoo Camera 已启动",
+                        Toast.LENGTH_SHORT,
+                    ).show()
                 },
                 onRequestNearbyWifi = onRequestNearbyWifi,
                 onOpenSettings = { senderTab = SenderTab.Settings },
@@ -758,7 +852,6 @@ private fun SenderHomeScreen(
                         selectedReceiverName = name
                     }
                 },
-                onContinuePairing = { senderTab = SenderTab.Pairing },
                 onRequestCamera = { onRequestCamera(null) },
                 onManualConnect = { host, port ->
                     hostText = host
@@ -774,8 +867,11 @@ private fun SenderHomeScreen(
                 receiverName = pairingDisplayName,
                 pairingCode = pairingCode,
                 viaQr = viaQr,
+                remainingSeconds = pairingRemainingSeconds,
+                expired = pairingExpired,
                 errorText = errorText,
                 onConfirm = {
+                    if (pairingExpired) return@PairingScreen
                     val receiverId =
                         connectedReceiverId.ifEmpty {
                             selectedReceiverId.ifEmpty { "windows-receiver" }
@@ -785,29 +881,42 @@ private fun SenderHomeScreen(
                         errorText = null
                         reloadTrustedStore()
                         phonePairingConfirmed = true
+                        waitOutcome = WaitOutcome.Pending
                         senderTab = SenderTab.Wait
                     } else {
                         errorText = "配对确认失败 ($rc)"
                     }
                 },
+                onRegenerate = { regeneratePairing() },
                 onCancel = {
                     PicooNative.disconnect(senderHandle)
                     pairingCode = ""
                     connectedReceiverId = ""
                     connectedReceiverName = ""
                     phonePairingConfirmed = false
+                    pairingExpired = false
                     suppressAutoConnect = true
                     resetToDevices()
                 },
             )
             SenderTab.Wait -> WaitScreen(
                 receiverName = pairingDisplayName,
+                outcome = waitOutcome,
                 onCancel = {
+                    waitUserCancelled = true
                     PicooNative.disconnect(senderHandle)
                     phonePairingConfirmed = false
                     suppressAutoConnect = true
                     resetToDevices()
                 },
+                onBackToDevices = {
+                    waitUserCancelled = true
+                    PicooNative.disconnect(senderHandle)
+                    phonePairingConfirmed = false
+                    suppressAutoConnect = true
+                    resetToDevices()
+                },
+                onRegenerate = { regeneratePairing() },
             )
             SenderTab.Streaming -> StreamingScreen(
                 cameraGranted = cameraGranted,

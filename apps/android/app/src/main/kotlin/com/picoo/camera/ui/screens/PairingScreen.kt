@@ -14,26 +14,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
+import com.picoo.camera.ui.formatPairingCode
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
 
-/** REQ-PICOO-UI-003 — 配对页，对齐 m-screen-pairing。 */
+/** REQ-PICOO-UI-0001 AC-M-PAIR-01/02 — 配对页，对齐 m-screen-pairing。 */
 @Composable
 fun PairingScreen(
     receiverName: String,
     pairingCode: String,
     viaQr: Boolean,
+    remainingSeconds: Int,
+    expired: Boolean,
     errorText: String?,
     onConfirm: () -> Unit,
+    onRegenerate: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val formattedCode = formatPairingCode(pairingCode)
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -68,44 +74,63 @@ fun PairingScreen(
         )
         Spacer(modifier = Modifier.height(18.dp))
         Text(
-            text = pairingCode.ifBlank { "······" },
-            fontFamily = PicooFont.Display,
+            text = formattedCode.ifBlank { "······" },
+            fontFamily = PicooFont.Mono,
             fontSize = 51.sp,
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 10.sp,
-            style = androidx.compose.ui.text.TextStyle(
-                brush = Brush.verticalGradient(
-                    colors = listOf(Color.White, Color(0xFFFFD2BF)),
-                ),
-            ),
+            letterSpacing = 8.sp,
+            style = if (expired) {
+                TextStyle(color = PicooColors.MutedDark)
+            } else {
+                TextStyle(
+                    brush = Brush.verticalGradient(
+                        colors = listOf(Color.White, Color(0xFFFFD2BF)),
+                    ),
+                )
+            },
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "短码 60 秒内有效",
-            color = PicooColors.Muted,
+            text = if (expired) {
+                "短码已过期"
+            } else {
+                "短码 ${remainingSeconds.coerceAtLeast(0)} 秒内有效"
+            },
+            color = if (expired) PicooColors.Danger else PicooColors.Muted,
             fontSize = 13.sp,
+            fontFamily = PicooFont.Mono,
         )
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "核对手机与电脑屏幕上是否显示相同数字。",
+            text = if (expired) {
+                "60 秒内未完成双向确认，请重新生成短码。"
+            } else {
+                "核对手机与电脑屏幕上是否显示相同数字。"
+            },
             color = PicooColors.Muted,
             fontSize = 14.sp,
             lineHeight = 20.sp,
             textAlign = TextAlign.Center,
         )
-        Text(
-            text = "数字不一致？可能连错设备，请取消。",
-            color = Color(0xFFC8873F),
-            fontSize = 12.sp,
-            modifier = Modifier.padding(top = 4.dp),
-            textAlign = TextAlign.Center,
-        )
+        if (!expired) {
+            Text(
+                text = "数字不一致？可能连错设备，请取消。",
+                color = Color(0xFFC8873F),
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 4.dp),
+                textAlign = TextAlign.Center,
+            )
+        }
         Spacer(modifier = Modifier.height(24.dp))
-        PicooPrimaryButton(
-            text = "两端数字一致，确认配对",
-            onClick = onConfirm,
-            enabled = pairingCode.isNotEmpty(),
-        )
+        if (expired) {
+            PicooPrimaryButton(text = "重新生成短码", onClick = onRegenerate)
+        } else {
+            PicooPrimaryButton(
+                text = "两端数字一致，确认配对",
+                onClick = onConfirm,
+                enabled = pairingCode.isNotEmpty(),
+            )
+        }
         Spacer(modifier = Modifier.height(10.dp))
         PicooGhostButton(text = "取消", onClick = onCancel)
         errorText?.let {

@@ -50,6 +50,7 @@ import com.picoo.camera.ui.components.DiscoveryPulseDot
 import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooPill
+import com.picoo.camera.ui.components.PicooPrimaryButton
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
 
@@ -61,11 +62,13 @@ fun DevicesScreen(
     pairedReceiverIds: Set<String>,
     nearbyWifiGranted: Boolean,
     discoveryComplete: Boolean,
+    wifiPillText: String,
     errorText: String?,
     onSelectReceiver: (PicooNative.DiscoveredReceiver) -> Unit,
     onScanQr: () -> Unit,
     onCheckPermissions: () -> Unit,
     onRemovePaired: (PicooNative.TrustedDevice) -> Unit,
+    onOfflinePairedClick: (PicooNative.TrustedDevice) -> Unit,
     onRequestNearbyWifi: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
@@ -100,7 +103,7 @@ fun DevicesScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                PicooPill(text = "Wi‑Fi · 局域网")
+                PicooPill(text = wifiPillText)
                 PicooIconButton(onClick = onOpenSettings) {
                     Icon(
                         imageVector = Icons.Default.Settings,
@@ -190,7 +193,7 @@ fun DevicesScreen(
                     badge = "不在线",
                     paired = true,
                     offline = true,
-                    onClick = {},
+                    onClick = { onOfflinePairedClick(device) },
                     onRemove = { onRemovePaired(device) },
                 )
             }
@@ -200,7 +203,14 @@ fun DevicesScreen(
             }
 
             Spacer(modifier = Modifier.height(14.dp))
-            ScanQrGhostButton(onClick = onScanQr)
+            if (empty) {
+                PicooPrimaryButton(
+                    text = "扫描电脑端二维码连接",
+                    onClick = onScanQr,
+                )
+            } else {
+                ScanQrGhostButton(onClick = onScanQr)
+            }
             Spacer(modifier = Modifier.height(8.dp))
             PicooGhostButton(
                 text = "权限未开？点此检查",

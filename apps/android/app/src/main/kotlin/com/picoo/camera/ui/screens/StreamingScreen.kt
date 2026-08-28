@@ -29,6 +29,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.components.PicooGhostButton
@@ -80,6 +82,13 @@ fun StreamingScreen(
     var uiLocked by remember { mutableStateOf(false) }
     var showEvPanel by remember { mutableStateOf(false) }
     var shutterArmed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(shutterArmed) {
+        if (shutterArmed) {
+            delay(3_000)
+            shutterArmed = false
+        }
+    }
 
     Box(
         modifier = modifier
@@ -146,7 +155,7 @@ fun StreamingScreen(
                             text = latency,
                             color = PicooColors.Ready,
                             fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
+                            fontFamily = PicooFont.Mono,
                         )
                     }
                 }
@@ -278,35 +287,27 @@ fun StreamingScreen(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "断开连接",
+                            text = if (shutterArmed) "再次点击确认断开" else "断开连接",
                             color = if (shutterArmed) PicooColors.DangerText else PicooColors.Muted,
                             fontSize = 11.sp,
                             fontWeight = if (shutterArmed) FontWeight.Bold else FontWeight.SemiBold,
                         )
                     }
 
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Box(
-                            modifier = Modifier
-                                .size(46.dp)
-                                .clip(CircleShape)
-                                .border(1.dp, Color(0x2FFFFFFF), CircleShape)
-                                .background(Color(0x14FFFFFF))
-                                .clickable(onClick = onFlipCamera),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Cameraswitch,
-                                contentDescription = "切换前后摄像头",
-                                tint = Color.White,
-                                modifier = Modifier.size(22.dp),
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (lensFacing == LensFacing.Front) "前置" else "后置",
-                            color = PicooColors.Muted,
-                            fontSize = 11.sp,
+                    Box(
+                        modifier = Modifier
+                            .size(46.dp)
+                            .clip(CircleShape)
+                            .border(1.dp, Color(0x2FFFFFFF), CircleShape)
+                            .background(Color(0x14FFFFFF))
+                            .clickable(onClick = onFlipCamera),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Cameraswitch,
+                            contentDescription = "切换前后摄像头",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 }
@@ -388,6 +389,14 @@ private fun ReconnectOverlay(onStopReconnect: () -> Unit) {
 
 @Composable
 private fun EvPanel(exposureEv: Int, onEvStep: () -> Unit) {
+    val label = when (exposureEv) {
+        0 -> "自动"
+        1 -> "提亮 +1"
+        2 -> "提亮 +2"
+        -1 -> "压暗 -1"
+        -2 -> "压暗 -2"
+        else -> "EV $exposureEv"
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -399,11 +408,20 @@ private fun EvPanel(exposureEv: Int, onEvStep: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(text = "−", color = PicooColors.Text, modifier = Modifier.clickable { onEvStep() })
-        Text(
-            text = if (exposureEv == 0) "☀️ 自动" else "EV $exposureEv",
-            color = PicooColors.Text,
-            fontSize = 13.sp,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Icon(
+                imageVector = Icons.Default.BrightnessHigh,
+                contentDescription = null,
+                tint = PicooColors.Accent2,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                text = label,
+                color = PicooColors.Text,
+                fontSize = 13.sp,
+                fontFamily = PicooFont.Mono,
+            )
+        }
         Text(text = "＋", color = PicooColors.Text, modifier = Modifier.clickable { onEvStep() })
     }
 }
@@ -458,7 +476,7 @@ private fun ResPill(text: String, throttled: Boolean, onClick: () -> Unit) {
         color = fg,
         fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = PicooFont.Mono,
     )
 }
 
@@ -477,13 +495,13 @@ private fun StatPill(bitrate: String, packetLossLabel: String) {
             color = Color.White,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = PicooFont.Mono,
         )
         Text(
             text = "30 FPS · $packetLossLabel",
             color = PicooColors.Ready,
             fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = PicooFont.Mono,
         )
     }
 }

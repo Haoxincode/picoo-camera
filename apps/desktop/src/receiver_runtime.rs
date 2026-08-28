@@ -68,6 +68,10 @@ pub struct ReceiverSnapshot {
     pub pairing_short_code: Option<String>,
     pub qr_json: Option<String>,
     pub qr_ascii: Option<String>,
+    /// Active QR nonce for display (REQ-PICOO-UI-0001 AC-D-IDLE-03).
+    pub qr_nonce: Option<String>,
+    /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
+    pub link_jitter_ms: f64,
     pub ingress: IngressStats,
     pub stream_config: Option<StreamConfig>,
     pub stream_metrics: picoo_metrics::StreamMetrics,
@@ -349,6 +353,11 @@ impl ReceiverRuntime {
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
             qr_json: self.qr_json.clone(),
             qr_ascii: self.qr_ascii.clone(),
+            qr_nonce: self
+                .receiver
+                .active_qr_nonce()
+                .map(|(nonce, _)| nonce.to_string()),
+            link_jitter_ms: self.receiver.last_stats().map(|s| s.jitter_ms).unwrap_or(0.0),
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
             stream_metrics: {

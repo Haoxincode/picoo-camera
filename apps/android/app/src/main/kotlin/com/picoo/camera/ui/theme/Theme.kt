@@ -6,9 +6,11 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.picoo.camera.R
 
 /** REQ-PICOO-UI-003 — tokens from picoo-camera-ui-prototype.html :root */
 object PicooColors {
@@ -36,7 +38,7 @@ object PicooColors {
 object PicooFont {
     val Display = FontFamily.SansSerif
     val Body = FontFamily.SansSerif
-    val Mono = FontFamily.Monospace
+    val Mono = FontFamily(Font(R.font.jetbrains_mono_regular, FontWeight.Normal))
 }
 
 private val PicooTypography = Typography(

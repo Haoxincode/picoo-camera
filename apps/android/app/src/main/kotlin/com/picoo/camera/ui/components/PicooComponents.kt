@@ -201,6 +201,15 @@ fun DeviceBadge(label: String, paired: Boolean, offline: Boolean = false) {
 
 @Composable
 fun DiscoveryPulseDot(searching: Boolean) {
+    if (!searching) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(PicooColors.Ready),
+        )
+        return
+    }
     val transition = rememberInfiniteTransition(label = "pulse")
     val scale by transition.animateFloat(
         initialValue = 0.85f,

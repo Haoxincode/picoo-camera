@@ -562,6 +562,14 @@ impl PicooDesktopApp {
                             .text_color(rgba(0xffb347ff))
                             .child(endpoint),
                     )
+                    .when_some(snapshot.qr_nonce.clone(), |this, nonce| {
+                        this.child(
+                            div()
+                                .text_xs()
+                                .text_color(proto_muted_fg())
+                                .child(format!("Nonce · {nonce}")),
+                        )
+                    })
                     .when(self.show_qr, |this| {
                         this.child(Button::new("toggle-qr").label("隐藏二维码").on_click(
                             cx.listener(|this, _, _, cx| {
@@ -582,6 +590,18 @@ impl PicooDesktopApp {
             .pairing_short_code
             .clone()
             .unwrap_or_else(|| "······".into());
+        let pairing_digits: Vec<char> = pairing.chars().filter(|c| c.is_ascii_digit()).collect();
+        let first_time = snapshot.trusted_device_count == 0
+            || snapshot
+                .active_sender
+                .as_ref()
+                .map(|s| {
+                    !snapshot
+                        .trusted_devices
+                        .iter()
+                        .any(|d| d.device_id == s.sender_id)
+                })
+                .unwrap_or(true);
         let sender_name = snapshot
             .active_sender
             .as_ref()
@@ -618,7 +638,8 @@ impl PicooDesktopApp {
                             .text_sm()
                             .text_color(proto_muted_fg())
                             .child(format!(
-                                "来自 {sender_name} 的连接请求。请确认手机上显示相同的 6 位数字："
+                                "来自 {sender_name} 的{}连接请求。请确认手机上显示相同的 6 位数字：",
+                                if first_time { "首次" } else { "" }
                             )),
                     )
                     .child(
@@ -632,10 +653,22 @@ impl PicooDesktopApp {
                             .bg(rgba(0x14171fff))
                             .child(
                                 div()
-                                    .text_3xl()
-                                    .font_weight(FontWeight::BOLD)
-                                    .text_color(rgb(0xffffff))
-                                    .child(pairing),
+                                    .h_flex()
+                                    .gap_2()
+                                    .children(if pairing_digits.len() == 6 {
+                                        pairing_digits
+                                            .into_iter()
+                                            .map(|digit| pairing_code_box(digit))
+                                            .collect::<Vec<_>>()
+                                    } else {
+                                        vec![div()
+                                            .text_3xl()
+                                            .font_weight(FontWeight::BOLD)
+                                            .font_family("monospace")
+                                            .text_color(rgb(0xffffff))
+                                            .child(format_pairing_code(&pairing))
+                                            .into_any_element()]
+                                    }),
                             )
                             .child(
                                 div()
@@ -698,6 +731,7 @@ impl PicooDesktopApp {
         let bitrate = snapshot.stream_metrics.bitrate_bps as f64 / 1_000_000.0;
         let rtt = snapshot.stream_metrics.latency_ms;
         let loss_pct = snapshot.stream_metrics.packet_loss * 100.0;
+        let jitter = snapshot.link_jitter_ms;
 
         div()
             .v_flex()
@@ -735,14 +769,17 @@ impl PicooDesktopApp {
                     .border_color(rgba(0x14ffffff))
                     .child(
                         div()
-                            .grid()
-                            .grid_cols(3)
-                            .gap_3()
+                            .h_flex()
+                            .gap_2()
+                            .flex_wrap()
                             .child(telemetry_cell("画质规格", res_label))
                             .child(telemetry_cell("实时帧率", fps))
                             .child(telemetry_cell("接收码率", format!("{bitrate:.1} Mbps")))
                             .child(telemetry_cell("RTT 延迟", format!("{rtt:.0} ms")))
-                            .child(telemetry_cell("丢包 / 抖动", format!("{loss_pct:.1}% · —")))
+                            .child(telemetry_cell(
+                                "丢包 / 抖动",
+                                format!("{loss_pct:.1}% · {jitter:.0} ms"),
+                            ))
                             .child(telemetry_cell("网络质量", quality.into())),
                     )
                     .child(
@@ -759,13 +796,27 @@ impl PicooDesktopApp {
                                 }),
                             ))
                             .child(
-                                Button::new("disconnect")
-                                    .label("断开会话")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.runtime.disconnect();
-                                        this.page = DesktopPage::Waiting;
-                                        cx.notify();
-                                    })),
+                                div()
+                                    .id("disconnect")
+                                    .px_3()
+                                    .py_1p5()
+                                    .rounded_md()
+                                    .bg(rgba(0x33ff4757))
+                                    .border_1()
+                                    .border_color(rgba(0x66ff4757))
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(rgb(0xffb0b8))
+                                    .cursor_pointer()
+                                    .on_mouse_down(
+                                        gpui::MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.runtime.disconnect();
+                                            this.page = DesktopPage::Waiting;
+                                            cx.notify();
+                                        }),
+                                    )
+                                    .child("断开会话"),
                             ),
                     ),
             )
@@ -1022,7 +1073,7 @@ fn live_hud_pill(label: String) -> impl IntoElement {
     div()
         .px_3()
         .py_1p5()
-        .rounded_md()
+        .rounded(px(8.))
         .bg(rgba(0xb30a0c12))
         .border_1()
         .border_color(rgba(0x1fffffff))
@@ -1030,6 +1081,33 @@ fn live_hud_pill(label: String) -> impl IntoElement {
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(rgb(0xf4f2ed))
         .child(label)
+}
+
+fn format_pairing_code(code: &str) -> String {
+    let digits: String = code.chars().filter(|c| c.is_ascii_digit()).take(6).collect();
+    if digits.len() <= 3 {
+        return digits;
+    }
+    format!("{} {}", &digits[..3], &digits[3..])
+}
+
+fn pairing_code_box(digit: char) -> gpui::AnyElement {
+    div()
+        .w(px(40.))
+        .h(px(48.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .border_1()
+        .border_color(rgba(0x29ffffff))
+        .bg(rgba(0x242b3bff))
+        .text_xl()
+        .font_family("monospace")
+        .font_weight(FontWeight::BOLD)
+        .text_color(rgb(0xffffff))
+        .child(digit.to_string())
+        .into_any_element()
 }
 
 fn telemetry_cell(label: &'static str, value: String) -> impl IntoElement {

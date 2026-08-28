@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -58,7 +59,6 @@ fun QrScanScreen(
     errorText: String?,
     onBack: () -> Unit,
     onQrDetected: (String) -> Unit,
-    onContinuePairing: () -> Unit,
     onRequestCamera: () -> Unit,
     onManualConnect: (host: String, port: Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -95,10 +95,9 @@ fun QrScanScreen(
                     )
                 }
                 success -> {
-                    SuccessPanel(
+                    ConnectingPanel(
                         qrSuccessName = qrSuccessName.orEmpty(),
                         qrHostPort = qrHostPort,
-                        onContinuePairing = onContinuePairing,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -226,10 +225,9 @@ private fun QrViewportChrome() {
 }
 
 @Composable
-private fun SuccessPanel(
+private fun ConnectingPanel(
     qrSuccessName: String,
     qrHostPort: String?,
-    onContinuePairing: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -237,7 +235,7 @@ private fun SuccessPanel(
             .fillMaxWidth()
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalArrangement = Arrangement.Center,
     ) {
         Text(
             text = "识别成功 · $qrSuccessName",
@@ -254,10 +252,20 @@ private fun SuccessPanel(
         )
         if (!qrHostPort.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(8.dp))
-            Text(text = qrHostPort, color = PicooColors.Muted, fontSize = 13.sp)
+            Text(
+                text = qrHostPort,
+                color = PicooColors.Muted,
+                fontSize = 13.sp,
+                fontFamily = PicooFont.Mono,
+            )
         }
         Spacer(modifier = Modifier.height(16.dp))
-        PicooPrimaryButton(text = "继续配对", onClick = onContinuePairing)
+        Text(
+            text = "正在建立 QUIC 连接…",
+            color = PicooColors.Muted,
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center,
+        )
     }
 }
 
