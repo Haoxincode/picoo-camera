@@ -12,6 +12,21 @@
 
 宁可保留一个小但符合概念模型的实现，也不要接受一个看似功能更多但架构方向错误的实现。
 
+## 外部 UI Skills（只 vendor，不改内容）
+
+框架怎么写，用 `.agents/skills/` 里从上游拷来的 Skill。Picoo 长什么样，仍以 Design Specs 和 HTML 原型为准。不要装 `frontend-design` 或 Material Design 3 Skill。
+
+| 场景 | Skill | 来源 |
+| --- | --- | --- |
+| GPUI 框架 | [gpui](.agents/skills/gpui/SKILL.md) | [longbridge/gpui-component](https://github.com/longbridge/gpui-component) |
+| gpui-component 组件 / 官方 Design Guides | [gpui-component](.agents/skills/gpui-component/SKILL.md) | 同上 |
+| Compose 状态与副作用 | [compose-state-and-effects](.agents/skills/compose-state-and-effects/SKILL.md) | [chrisbanes/skills](https://github.com/chrisbanes/skills) |
+| Compose 组件 API | [compose-component-design](.agents/skills/compose-component-design/SKILL.md) | 同上 |
+| Compose 动效 | [compose-animations](.agents/skills/compose-animations/SKILL.md) | 同上 |
+| Compose UI 测试 | [compose-ui-testing-patterns](.agents/skills/compose-ui-testing-patterns/SKILL.md) | 同上 |
+
+更新：`npx skills update`（锁文件 `skills-lock.json`）。
+
 ## Design Specs 上下文
 
 设计规范、需求分解、追溯 ID、代码映射和核心术语以 [docs/design-specs/context.md](docs/design-specs/context.md) 为准。
