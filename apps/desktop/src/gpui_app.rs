@@ -633,15 +633,10 @@ impl PicooDesktopApp {
                             .text_color(rgb(0xf4f2ed))
                             .child("核对配对短码"),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(proto_muted_fg())
-                            .child(format!(
-                                "来自 {sender_name} 的{}连接请求。请确认手机上显示相同的 6 位数字：",
-                                if first_time { "首次" } else { "" }
-                            )),
-                    )
+                    .child(div().text_sm().text_color(proto_muted_fg()).child(format!(
+                        "来自 {sender_name} 的{}连接请求。请确认手机上显示相同的 6 位数字：",
+                        if first_time { "首次" } else { "" }
+                    )))
                     .child(
                         div()
                             .v_flex()
@@ -1084,7 +1079,11 @@ fn live_hud_pill(label: String) -> impl IntoElement {
 }
 
 fn format_pairing_code(code: &str) -> String {
-    let digits: String = code.chars().filter(|c| c.is_ascii_digit()).take(6).collect();
+    let digits: String = code
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .take(6)
+        .collect();
     if digits.len() <= 3 {
         return digits;
     }

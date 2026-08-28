@@ -357,7 +357,11 @@ impl ReceiverRuntime {
                 .receiver
                 .active_qr_nonce()
                 .map(|(nonce, _)| nonce.to_string()),
-            link_jitter_ms: self.receiver.last_stats().map(|s| s.jitter_ms).unwrap_or(0.0),
+            link_jitter_ms: self
+                .receiver
+                .last_stats()
+                .map(|s| s.jitter_ms)
+                .unwrap_or(0.0),
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
             stream_metrics: {
