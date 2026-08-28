@@ -14,7 +14,7 @@
 
 1. [ ] 安装 `PicooCamera.msi`（或解压 `windows-bundle` 后以管理员运行 `register-vcam.ps1`）
 2. [ ] 启动 `picoo-desktop.exe`（开始菜单 **Picoo Camera**）
-3. [ ] 设置页 VCam 状态：**Installed / Active**
+3. [ ] 设置页 VCam 状态：**就绪 (Ready)** / **Active**（非 `0x80040154`）
 4. [ ] 打开 **Windows 相机** 或 **设置 → 蓝牙和设备 → 摄像头**，确认列表有 **Picoo Camera**
 5. [ ] 未连接手机时，相机预览为占位（黑底 + Waiting for phone…）
 
@@ -49,6 +49,7 @@
 | 操作 | 通过 |
 | --- | --- |
 | 手机切前置/后置 | [ ] 3s 内恢复，画面方向正确 |
+| 手机或桌面切 1080p → 720p → 480p（画质药丸点按轮换） | [ ] 分辨率变化，480p 弱网可用 |
 | 手机或桌面切 720p ↔ 1080p | [ ] 分辨率变化，无明显崩溃 |
 | 远端镜像开关 | [ ] 会议/预览与预期一致 |
 | EV ± | [ ] 亮度变化可见 |
@@ -92,6 +93,7 @@
 | --- | --- |
 | 手机发现不到 PC | 同网段、4433 防火墙、PC 托盘运行中、Android 13+ Nearby Wi‑Fi |
 | 配对码不一致 | 两端时钟、是否连错 PC、QR nonce 是否过期 |
-| VCam 列表无 Picoo Camera | 重装 MSI；管理员 `register-vcam.ps1`；重启 Frame Server 服务 |
+| VCam 列表无 Picoo Camera | 重装 MSI（管理员）；日志无 `0x80040154`；设置 → **安装/激活虚拟摄像头**；或管理员 `regsvr32 /s PicooVirtualCameraSource.dll` + `--register-vcam --no-wait` |
+| 日志 `0x80040154` / 类未注册 | 确认 MSI tip ≥ `83ca647`；管理员安装；DLL 与 exe 同目录；见 [vcam-meeting-apps.md](vcam-meeting-apps.md) §0 |
 | VCam 有设备但黑屏 | Shared Frame Ring；桌面是否在 Streaming；`picoo-vcam-ring-reader.exe` |
 | Android 安装后闪退 | 16KB 页设备需 CI 绿 run 的 APK（含 16KB 对齐 `.so`） |

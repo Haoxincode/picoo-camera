@@ -17,7 +17,7 @@
 | `PicooCamera.msi` | 推荐：安装文件 + COM 注册（WiX 注册表）+ 防火墙规则 + **安装结束时自动 MF 注册**（`--register-vcam --no-wait`） |
 | 或 `windows-bundle` 解压 | 开发态：`register-vcam.ps1`（**管理员** PowerShell） |
 
-**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 由 WiX 写入注册表（等效 `DllRegisterServer`），**不再**在安装末尾执行 `regsvr32`（旧版 `Return=check` 自定义动作在干净 Win11 上常因 DLL 加载/`DllRegisterServer` 失败而中止安装）。MF 虚拟相机在 `InstallFiles` 之后由 MSI 自动调用 `picoo-desktop --register-vcam --no-wait` 完成（system lifetime，无需用户手动操作）。
+**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 由 WiX 声明式注册表写入；`InstallFiles` 后 MSI 还会以 `RegisterVcamComDll`（`regsvr32.exe /s`，`Return=ignore`）兜底 COM，再调用 `picoo-desktop --register-vcam --no-wait` 注册 MF（system lifetime）。若仍见 `0x80040154`（类未注册），桌面启动时会自动尝试 `regsvr32`；亦可手动：
 
 ```powershell
 # 开发态示例（在解压后的 bundle 目录）
