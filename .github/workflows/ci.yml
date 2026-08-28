@@ -38,7 +38,13 @@ jobs:
           distribution: temurin
           java-version: "17"
       - run: PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
-      - run: echo "sdk.dir=${ANDROID_HOME}" >> apps/android/local.properties
+      - name: Point Gradle at installed SDK
+        run: |
+          test -n "${ANDROID_HOME}"
+          test -d "${ANDROID_HOME}/ndk/28.0.12674087"
+          echo "sdk.dir=${ANDROID_HOME}" > apps/android/local.properties
+          echo "Using ANDROID_HOME=${ANDROID_HOME}"
+          ls "${ANDROID_HOME}/licenses"
       - run: cargo run -p xtask -- build android
       - name: Android unit tests
         run: ./apps/android/gradlew -p apps/android testDebugUnitTest
