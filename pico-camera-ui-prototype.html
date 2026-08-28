@@ -1,0 +1,2293 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pico Camera · 全端 UI 交互原型 (Sender & Receiver)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0b0d11;
+      --panel: #14171f;
+      --panel-2: #1b202c;
+      --panel-3: #242b3b;
+      --line: rgba(255, 255, 255, 0.08);
+      --line-subtle: rgba(255, 255, 255, 0.04);
+      --line-bold: rgba(255, 255, 255, 0.16);
+      --text: #f4f2ed;
+      --muted: #959dae;
+      --muted-dark: #656d7d;
+      --accent: #ff6a3d;
+      --accent-hover: #ff7d54;
+      --accent-2: #ffb347;
+      --ready: #3ecf8e;
+      --warn: #f0c14a;
+      --danger: #ff5c6c;
+      --danger-bg: rgba(255, 92, 108, 0.14);
+      --radius-sm: 10px;
+      --radius-md: 16px;
+      --radius-lg: 24px;
+      --radius-xl: 36px;
+      --shadow-xl: 0 32px 80px rgba(0, 0, 0, 0.55);
+      --shadow-md: 0 12px 32px rgba(0, 0, 0, 0.35);
+      --font-display: "Bricolage Grotesque", sans-serif;
+      --font-body: "Figtree", sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, monospace;
+    }
+
+    .lucide-icon {
+      display: inline-block;
+      vertical-align: middle;
+      stroke: currentColor;
+      flex-shrink: 0;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; min-height: 100%; }
+    body {
+      font-family: var(--font-body);
+      color: var(--text);
+      background:
+        radial-gradient(1200px 700px at 15% -5%, rgba(255, 106, 61, 0.16), transparent 55%),
+        radial-gradient(1000px 600px at 85% 15%, rgba(62, 207, 142, 0.08), transparent 50%),
+        radial-gradient(800px 500px at 50% 95%, rgba(255, 179, 71, 0.06), transparent 50%),
+        linear-gradient(170deg, #13161e 0%, var(--ink) 50%, #06070a 100%);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ================= Top Bar / Header ================= */
+    .proto-nav {
+      border-bottom: 1px solid var(--line);
+      background: rgba(14, 16, 22, 0.85);
+      backdrop-filter: blur(16px);
+      position: sticky; top: 0; z-index: 100;
+      padding: 12px 28px;
+      display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    }
+    .nav-brand {
+      display: flex; align-items: center; gap: 12px;
+      font-family: var(--font-display); font-weight: 800; font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+    .nav-brand .mark {
+      width: 32px; height: 32px; border-radius: 50%;
+      background:
+        radial-gradient(circle at 35% 35%, #ffffffaa, transparent 40%),
+        conic-gradient(from 210deg, var(--accent), var(--accent-2), #ff845e, var(--accent));
+      box-shadow: 0 0 0 3px rgba(255,106,61,0.22);
+    }
+    .view-switcher {
+      display: flex; background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: 999px; padding: 3px; gap: 3px;
+    }
+    .view-btn {
+      appearance: none; border: 0; background: transparent;
+      color: var(--muted); font: inherit; font-size: 0.84rem; font-weight: 600;
+      padding: 6px 14px; border-radius: 999px; cursor: pointer;
+      display: flex; align-items: center; gap: 6px;
+      transition: all .2s;
+    }
+    .view-btn:hover { color: var(--text); }
+    .view-btn.active {
+      background: linear-gradient(135deg, var(--accent), #ff845e);
+      color: #110704; font-weight: 700;
+      box-shadow: 0 2px 10px rgba(255,106,61,0.3);
+    }
+    .nav-right {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .badge-spec {
+      font-size: 0.72rem; font-weight: 600; font-family: var(--font-mono);
+      background: rgba(255, 179, 71, 0.12); color: var(--accent-2);
+      border: 1px solid rgba(255, 179, 71, 0.25);
+      border-radius: 6px; padding: 4px 8px;
+    }
+
+    /* ================= Layout & Stage ================= */
+    .proto-container {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 28px 24px 60px;
+    }
+
+    .view-grid {
+      display: grid;
+      gap: 32px;
+      align-items: start;
+      transition: all .3s;
+    }
+    /* Mode layout classes */
+    .view-grid.mode-dual {
+      grid-template-columns: 310px auto 1fr;
+    }
+    .view-grid.mode-mobile {
+      grid-template-columns: 320px auto 1fr;
+    }
+    .view-grid.mode-desktop {
+      grid-template-columns: 320px 1fr;
+    }
+
+    /* ================= Story / Scenario Panel (Left) ================= */
+    .scenario-sidebar {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      padding: 22px 18px;
+      position: sticky; top: 80px;
+      max-height: calc(100vh - 110px);
+      overflow-y: auto;
+    }
+    .scenario-sidebar h3 {
+      margin: 0 0 4px; font-family: var(--font-display); font-size: 1.15rem;
+      letter-spacing: -0.02em;
+    }
+    .scenario-sidebar .sub-desc {
+      color: var(--muted); font-size: 0.82rem; line-height: 1.45; margin: 0 0 16px;
+    }
+    .scenario-list {
+      display: grid; gap: 8px;
+    }
+    .scenario-btn {
+      appearance: none; border: 1px solid var(--line);
+      background: var(--panel-2); color: var(--text);
+      border-radius: var(--radius-sm); padding: 10px 12px;
+      font: inherit; font-size: 0.82rem; text-align: left;
+      cursor: pointer; display: flex; flex-direction: column; gap: 2px;
+      transition: all .15s;
+    }
+    .scenario-btn:hover {
+      border-color: rgba(255, 106, 61, 0.45);
+      transform: translateX(2px);
+    }
+    .scenario-btn.active {
+      border-color: var(--accent);
+      background: rgba(255, 106, 61, 0.12);
+    }
+    .scenario-btn .title { font-weight: 700; color: #fff; display: flex; align-items: center; gap: 6px; }
+    .scenario-btn .tag {
+      font-size: 0.68rem; font-family: var(--font-mono); color: var(--accent-2);
+    }
+    .scenario-btn .desc { color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
+
+    /* ================= Co-simulation Sync Status Bar ================= */
+    .sync-bar {
+      grid-column: 1 / -1;
+      background: linear-gradient(90deg, rgba(255,106,61,0.08), rgba(62,207,142,0.08));
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: 10px 16px;
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      font-size: 0.82rem; color: var(--muted);
+    }
+    .sync-status {
+      display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text);
+    }
+    .sync-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--ready);
+      box-shadow: 0 0 8px var(--ready);
+    }
+    .sync-dot.disconnected { background: var(--muted-dark); box-shadow: none; }
+    .sync-dot.connecting { background: var(--warn); animation: pulse 1s infinite; }
+    .sync-dot.error { background: var(--danger); }
+
+    /* ================= 📱 Mobile Sender Device Shell ================= */
+    .mobile-stage-wrapper {
+      display: flex; flex-direction: column; align-items: center; gap: 14px;
+    }
+    .device-label {
+      font-family: var(--font-display); font-size: 0.95rem; font-weight: 700;
+      color: var(--muted); display: flex; align-items: center; gap: 8px;
+    }
+    .device-label .badge {
+      font-size: 0.68rem; font-weight: 600; padding: 2px 7px; border-radius: 999px;
+      background: rgba(255,255,255,0.08); color: var(--text);
+    }
+
+    .phone-shell {
+      width: 380px; height: 780px;
+      border-radius: 44px; padding: 12px;
+      background: linear-gradient(165deg, #2b303d, #0d0f15 50%, #1c202a);
+      box-shadow: var(--shadow-xl), inset 0 0 0 1px rgba(255,255,255,0.1);
+      position: relative; flex: none;
+    }
+    .phone-island {
+      position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+      width: 110px; height: 26px; border-radius: 20px;
+      background: #000; z-index: 40;
+      display: flex; align-items: center; justify-content: flex-end; padding-right: 10px;
+    }
+    .phone-island .cam-lens {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: radial-gradient(circle at 40% 40%, #1a2f4c, #050a12);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .phone-screen-container {
+      height: 100%; border-radius: 34px; overflow: hidden;
+      background: var(--panel);
+      position: relative;
+      display: flex; flex-direction: column;
+    }
+
+    /* Mobile Screens */
+    .m-screen { display: none; flex: 1; flex-direction: column; min-height: 0; }
+    .m-screen.active { display: flex; }
+
+    .m-topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 44px 18px 10px; gap: 8px;
+    }
+    .m-topbar h2 {
+      margin: 0; font-family: var(--font-display); font-size: 1.3rem; letter-spacing: -0.02em;
+    }
+    .m-topbar .right { display: flex; align-items: center; gap: 8px; }
+    .m-pill {
+      font-size: 0.7rem; font-weight: 600;
+      padding: 5px 9px; border-radius: 999px;
+      background: rgba(62, 207, 142, 0.12);
+      color: var(--ready);
+      border: 1px solid rgba(62, 207, 142, 0.25);
+      white-space: nowrap;
+    }
+    .m-pill.warn { background: rgba(240,193,74,0.12); color: var(--warn); border-color: rgba(240,193,74,0.28); }
+    .m-pill.neutral { background: rgba(255,255,255,0.06); color: var(--muted); border-color: var(--line); }
+
+    .m-icon-btn {
+      appearance: none; border: 1px solid var(--line);
+      background: transparent; color: var(--muted);
+      width: 32px; height: 32px; border-radius: 10px;
+      font-size: 0.95rem; cursor: pointer;
+      display: grid; place-items: center;
+      transition: color .15s, border-color .15s;
+    }
+    .m-icon-btn:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+
+    .m-content { padding: 6px 18px 18px; flex: 1; overflow-y: auto; }
+    .m-hero-line {
+      font-family: var(--font-display); font-size: 1.3rem; line-height: 1.2;
+      letter-spacing: -0.02em; margin: 2px 0 4px;
+    }
+    .m-sub { color: var(--muted); font-size: 0.85rem; line-height: 1.45; margin: 0 0 14px; }
+
+    .m-searching {
+      display: flex; align-items: center; gap: 8px;
+      color: var(--muted); font-size: 0.82rem; margin-bottom: 10px;
+    }
+    .dot-pulse {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--accent);
+      animation: pulse 1.2s ease-in-out infinite;
+      flex: none;
+    }
+    .dot-pulse.done { background: var(--ready); animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; transform: scale(0.85); }
+      50% { opacity: 1; transform: scale(1.15); }
+    }
+
+    /* Device Card in Mobile */
+    .m-device-card {
+      display: flex; align-items: stretch;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.03), transparent), var(--panel-2);
+      border-radius: 16px; margin-bottom: 9px; overflow: hidden;
+      transition: all .2s;
+    }
+    .m-device-card:hover { border-color: rgba(255,106,61,0.45); transform: translateY(-1px); }
+    .m-device-main {
+      flex: 1; appearance: none; border: 0; background: transparent;
+      color: var(--text); font: inherit; text-align: left;
+      padding: 13px 4px 13px 14px; display: grid; gap: 3px; cursor: pointer;
+    }
+    .m-device-main .row1 { display: flex; align-items: center; gap: 8px; }
+    .m-device-main .name { font-family: var(--font-display); font-weight: 700; font-size: 0.98rem; }
+    .m-device-main .meta { color: var(--muted); font-size: 0.78rem; }
+    .m-badge {
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.03em;
+      color: var(--ready); background: rgba(62,207,142,0.12);
+      border: 1px solid rgba(62,207,142,0.22);
+      padding: 3px 6px; border-radius: 6px; white-space: nowrap;
+    }
+    .m-badge.paired { color: var(--accent-2); background: rgba(255,179,71,0.12); border-color: rgba(255,179,71,0.28); }
+    .m-badge.offline { color: var(--muted); background: rgba(255,255,255,0.05); border-color: var(--line); }
+    .m-device-more {
+      appearance: none; border: 0; border-left: 1px solid var(--line);
+      background: transparent; color: var(--muted);
+      width: 42px; font-size: 1.1rem; cursor: pointer;
+      display: grid; place-items: center;
+      transition: color .15s, background .15s;
+    }
+    .m-device-more:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+    .m-device-card.offline { opacity: 0.55; }
+
+    /* Mobile Buttons */
+    .btn {
+      appearance: none; border: 0; cursor: pointer;
+      font: inherit; font-weight: 700;
+      border-radius: 14px; padding: 13px 16px;
+      transition: transform .15s, filter .15s, background .15s;
+      width: 100%; text-align: center;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), #ff864f 55%, var(--accent-2));
+      color: #1a0d08;
+      box-shadow: 0 8px 24px rgba(255,106,61,0.25);
+    }
+    .btn-primary:hover { filter: brightness(1.06); }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.25); }
+    .btn-danger {
+      background: var(--danger-bg);
+      color: #ffb0b8;
+      border: 1px solid rgba(255, 92, 108, 0.28);
+    }
+    .btn-danger.armed {
+      background: var(--danger);
+      color: #fff; border-color: transparent;
+      box-shadow: 0 8px 24px rgba(255,92,108,0.35);
+    }
+    .btn-sm { padding: 8px 12px; font-size: 0.82rem; border-radius: 10px; }
+
+    /* Empty Hint */
+    .m-empty-hint {
+      text-align: center; padding: 20px 14px;
+      border: 1px dashed rgba(255,255,255,0.12);
+      border-radius: 16px; background: rgba(255,255,255,0.02);
+      margin-bottom: 12px;
+    }
+    .m-empty-hint .icon {
+      width: 44px; height: 44px; margin: 0 auto 10px;
+      border-radius: 12px; display: grid; place-items: center;
+      background: rgba(255,106,61,0.12); border: 1px solid rgba(255,106,61,0.25);
+      font-size: 1.3rem;
+    }
+    .m-empty-hint h4 { margin: 0 0 4px; font-family: var(--font-display); font-size: 0.95rem; }
+    .m-empty-hint p { margin: 0 0 4px; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+    .m-empty-hint .checks { text-align: left; margin: 10px auto 0; max-width: 230px; display: grid; gap: 5px; }
+    .m-empty-hint .checks span { color: var(--muted); font-size: 0.78rem; display: flex; gap: 6px; }
+    .m-empty-hint .checks span::before { content: "·"; color: var(--accent-2); }
+
+    /* Mobile Pairing Screen */
+    .m-pair-wrap {
+      flex: 1; display: flex; flex-direction: column; justify-content: center;
+      padding: 20px 18px; text-align: center;
+      background:
+        radial-gradient(400px 240px at 50% 30%, rgba(255,106,61,0.14), transparent 65%),
+        var(--panel);
+    }
+    .m-pair-kicker { color: var(--muted); margin-bottom: 6px; font-size: 0.88rem; }
+    .m-pair-title {
+      font-family: var(--font-display); font-size: 1.4rem; margin: 0 0 4px; letter-spacing: -0.02em;
+    }
+    .m-pair-code {
+      font-family: var(--font-display); font-weight: 800; font-size: 3.2rem;
+      letter-spacing: 0.25em; margin: 18px 0 4px 12px;
+      background: linear-gradient(180deg, #fff, #ffd2bf);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      transition: opacity .3s;
+    }
+    .m-pair-code.expired { opacity: 0.25; }
+    .m-code-ttl { font-size: 0.8rem; color: var(--muted); margin-bottom: 12px; }
+    .m-code-ttl.danger { color: var(--danger); font-weight: 600; }
+    .m-pair-hint { color: var(--muted); font-size: 0.84rem; line-height: 1.45; margin: 0 0 20px; }
+    .m-pair-hint .mismatch { color: #c8873f; font-size: 0.78rem; }
+
+    /* Mobile Wait / Result Screens */
+    .spinner-ring {
+      width: 40px; height: 40px; margin: 0 auto 16px;
+      border-radius: 50%; border: 3px solid rgba(255,255,255,0.1);
+      border-top-color: var(--accent);
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .m-wait-icon {
+      width: 52px; height: 52px; margin: 0 auto 14px;
+      border-radius: 16px; display: grid; place-items: center; font-size: 1.5rem;
+    }
+    .m-wait-icon.reject { background: var(--danger-bg); border: 1px solid rgba(255,92,108,0.3); }
+    .m-wait-icon.timeout { background: rgba(240,193,74,0.14); border: 1px solid rgba(240,193,74,0.3); }
+
+    /* Mobile Live Streaming Screen */
+    .m-live-container { position: relative; flex: 1; min-height: 0; background: #040507; overflow: hidden; }
+    .m-live-feed {
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0.2), transparent 25%, transparent 65%, rgba(0,0,0,0.75)),
+        radial-gradient(circle at 45% 35%, #344055, transparent 45%),
+        linear-gradient(145deg, #18202d, #0b0e15 50%, #1a1713);
+      animation: mDrift 14s ease-in-out infinite alternate;
+      transition: filter .3s, transform .3s;
+      cursor: pointer;
+    }
+    .m-live-feed.front-cam {
+      background:
+        linear-gradient(180deg, rgba(0,0,0,0.2), transparent 25%, transparent 65%, rgba(0,0,0,0.75)),
+        radial-gradient(circle at 50% 30%, #523b36, transparent 40%),
+        linear-gradient(145deg, #241c22, #0d0f14 50%, #151d28);
+    }
+    .m-live-feed.mirrored { transform: scaleX(-1); }
+    .m-live-feed.switching { filter: blur(18px) brightness(0.5); }
+    @keyframes mDrift {
+      from { filter: saturate(1.05) contrast(1.05); }
+      to { filter: saturate(1.18) contrast(1.08) brightness(1.05); }
+    }
+    .m-live-feed::after {
+      content: ""; position: absolute; inset: 20% 22%; border-radius: 50%;
+      background: radial-gradient(circle at 45% 40%, rgba(255,205,170,0.35), rgba(70,50,40,0.05) 55%, transparent 70%);
+      filter: blur(2px);
+    }
+    .m-safe-frame {
+      position: absolute; left: 5%; width: 90%;
+      top: 50%; transform: translateY(-50%);
+      aspect-ratio: 16 / 9;
+      border: 1.5px dashed rgba(255,255,255,0.35);
+      border-radius: 8px; pointer-events: none; z-index: 2;
+      transition: opacity .25s;
+    }
+    .m-safe-frame::before {
+      content: "电脑端画面 16:9 裁切框";
+      position: absolute; top: -20px; left: 0;
+      font-size: 0.65rem; color: rgba(255,255,255,0.55); letter-spacing: 0.04em;
+    }
+
+    /* Native Camera Style HUD & Controls */
+    .m-live-top {
+      position: absolute; top: 40px; left: 12px; right: 12px;
+      display: flex; align-items: center; justify-content: space-between; gap: 6px; z-index: 5;
+      transition: opacity .25s, transform .25s;
+    }
+    .cam-hud-badge {
+      backdrop-filter: blur(14px);
+      background: rgba(10,12,18,0.65);
+      border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 999px; padding: 5px 10px;
+      font-size: 0.72rem; font-weight: 600; color: var(--text);
+      display: flex; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .cam-hud-badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ready); box-shadow: 0 0 6px var(--ready); }
+
+    .cam-quick-tools {
+      display: flex; align-items: center; gap: 4px;
+      background: rgba(10,12,18,0.55); backdrop-filter: blur(14px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 999px; padding: 3px 5px;
+    }
+    .cam-tool-btn {
+      appearance: none; border: 0; background: transparent;
+      color: var(--muted); width: 28px; height: 28px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 0.85rem; cursor: pointer;
+      transition: all .15s;
+    }
+    .cam-tool-btn:hover { color: var(--text); background: rgba(255,255,255,0.1); }
+    .cam-tool-btn.active { color: var(--accent-2); background: rgba(255,179,71,0.2); }
+
+    /* Native Camera Style Resolution Switcher (Pill Toggle) */
+    .cam-res-pill {
+      appearance: none; border: 1px solid rgba(255,255,255,0.22);
+      background: rgba(10,12,18,0.7); backdrop-filter: blur(14px);
+      color: #fff; font-family: var(--font-mono); font-weight: 700; font-size: 0.72rem;
+      border-radius: 999px; padding: 5px 10px; cursor: pointer;
+      display: flex; align-items: center; gap: 4px; white-space: nowrap;
+      transition: all .2s;
+    }
+    .cam-res-pill:hover { border-color: var(--accent); background: rgba(255,106,61,0.2); }
+    .cam-res-pill.throttled {
+      border-color: rgba(240,193,74,0.5); background: rgba(240,193,74,0.2); color: var(--warn);
+    }
+
+    /* Native Camera Bottom Control Deck */
+    .m-live-bottom {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      padding: 10px 18px 24px; z-index: 5;
+      background: linear-gradient(180deg, transparent, rgba(3,4,6,0.95) 45%);
+      display: flex; flex-direction: column; gap: 8px;
+      transition: opacity .25s, transform .25s;
+    }
+    .cam-controls-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-top: 4px;
+    }
+
+    /* Telemetry Pill on bottom left */
+    .cam-stat-pill {
+      background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 12px; padding: 6px 10px; font-size: 0.7rem; font-family: var(--font-mono);
+      color: #cfd4e2; display: flex; flex-direction: column; gap: 1px; min-width: 76px;
+    }
+
+    /* Large Native Shutter/Stop Button */
+    .cam-shutter-wrap {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+    }
+    .cam-shutter-btn {
+      appearance: none; cursor: pointer; border: 3.5px solid rgba(255,255,255,0.85);
+      background: rgba(0,0,0,0.3); width: 64px; height: 64px; border-radius: 50%;
+      padding: 0; display: grid; place-items: center; transition: all .2s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 18px rgba(0,0,0,0.6);
+    }
+    .cam-shutter-inner {
+      width: 22px; height: 22px; border-radius: 5px;
+      background: var(--danger); transition: all .25s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    .cam-shutter-btn:active { transform: scale(0.94); }
+    .cam-shutter-btn.armed {
+      border-color: var(--danger);
+      animation: pulseArmed 1s infinite alternate;
+    }
+    .cam-shutter-btn.armed .cam-shutter-inner {
+      border-radius: 50%; width: 26px; height: 26px; background: #ff2d46;
+    }
+    @keyframes pulseArmed {
+      from { box-shadow: 0 0 10px rgba(255,92,108,0.5); }
+      to { box-shadow: 0 0 24px rgba(255,92,108,0.9); }
+    }
+    .cam-shutter-label {
+      font-size: 0.68rem; font-weight: 600; color: var(--muted);
+      transition: color .2s;
+    }
+    .cam-shutter-btn.armed + .cam-shutter-label { color: #ffb0b8; font-weight: 700; }
+
+    /* Native Camera Flip Lens Button */
+    .cam-flip-btn {
+      appearance: none; border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08); backdrop-filter: blur(14px);
+      color: #fff; width: 46px; height: 46px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 1.35rem; cursor: pointer;
+      transition: all .25s;
+    }
+    .cam-flip-btn:hover { background: rgba(255,255,255,0.18); border-color: rgba(255,255,255,0.35); transform: scale(1.05); }
+    .cam-flip-btn.flipping { transform: rotate(180deg) scale(0.92); }
+
+    /* Focus Ring Animation */
+    .cam-focus-ring {
+      position: absolute; width: 56px; height: 56px; border: 1.5px solid #ffdc52;
+      border-radius: 8px; pointer-events: none; transform: translate(-50%, -50%) scale(1.2);
+      opacity: 0; transition: transform .2s ease-out, opacity .2s ease-out; z-index: 10;
+    }
+    .cam-focus-ring.active {
+      transform: translate(-50%, -50%) scale(1); opacity: 1;
+    }
+
+    /* Immersive & Lock Modes */
+    #m-screen-streaming.immersive .m-live-top,
+    #m-screen-streaming.immersive .m-live-bottom,
+    #m-screen-streaming.immersive .m-safe-frame { opacity: 0; pointer-events: none; }
+    #m-screen-streaming.locked .m-live-bottom,
+    #m-screen-streaming.locked .m-safe-frame,
+    #m-screen-streaming.locked .m-live-top .cam-quick-tools,
+    #m-screen-streaming.locked .m-live-top .cam-res-pill { opacity: 0; pointer-events: none; }
+
+    /* Mobile Reconnect Overlay */
+    .m-reconnect-overlay {
+      display: none; position: absolute; inset: 0; z-index: 20;
+      background: rgba(5,6,8,0.85); backdrop-filter: blur(8px);
+      flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 24px;
+    }
+    .m-reconnect-overlay.show { display: flex; }
+    .m-reconnect-overlay h3 { font-family: var(--font-display); margin: 0 0 4px; font-size: 1.15rem; }
+    .m-reconnect-overlay p { color: var(--muted); font-size: 0.82rem; margin: 0 0 16px; line-height: 1.45; }
+
+    /* Mobile QR Scan Screen */
+    .m-qr-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #040507; }
+    .m-qr-top { display: flex; align-items: center; justify-content: space-between; padding: 44px 16px 10px; z-index: 2; }
+    .m-qr-viewport {
+      flex: 1; position: relative; margin: 0 14px;
+      border-radius: 20px; overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 40%, rgba(80,90,110,0.35), rgba(20,24,32,0.9) 70%),
+        linear-gradient(180deg, #181d2a, #080a0e);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .m-qr-viewport::before {
+      content: ""; position: absolute; inset: 18% 14%;
+      border: 2px solid rgba(255,106,61,0.8); border-radius: 14px;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0.38);
+    }
+    .m-qr-scanline {
+      position: absolute; left: 14%; right: 14%; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: scan 2.2s ease-in-out infinite; opacity: 0.85;
+    }
+    @keyframes scan { 0%, 100% { top: 22%; } 50% { top: 72%; } }
+    .m-qr-label {
+      position: absolute; left: 0; right: 0; bottom: 14px;
+      text-align: center; font-size: 0.8rem; color: #d7dbe6; padding: 0 16px; z-index: 2;
+    }
+    .m-qr-bottom { padding: 12px 16px 18px; display: grid; gap: 8px; }
+    .m-qr-denied {
+      flex: 1; display: none; flex-direction: column; justify-content: center;
+      padding: 20px; text-align: center;
+    }
+    .m-qr-wrap.denied .m-qr-viewport, .m-qr-wrap.denied .m-qr-bottom { display: none; }
+    .m-qr-wrap.denied .m-qr-denied { display: flex; }
+    .manual-ip-input {
+      font: inherit; font-family: var(--font-mono); color: var(--text);
+      background: rgba(255,255,255,0.05); border: 1px solid var(--line);
+      border-radius: 12px; padding: 11px 12px; outline: none; width: 100%; font-size: 0.85rem;
+    }
+    .manual-ip-input:focus { border-color: rgba(255,106,61,0.55); }
+
+    /* Mobile Settings Rows */
+    .m-set-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 13px 2px; border-bottom: 1px solid var(--line); cursor: pointer;
+    }
+    .m-set-row .l { display: grid; gap: 2px; }
+    .m-set-row .t { font-weight: 600; font-size: 0.9rem; }
+    .m-set-row .d { color: var(--muted); font-size: 0.75rem; line-height: 1.35; }
+    .m-set-row .v { color: var(--muted); font-size: 0.8rem; white-space: nowrap; }
+    .m-switch {
+      width: 44px; height: 26px; border-radius: 999px;
+      background: rgba(255,255,255,0.12); border: 1px solid var(--line);
+      position: relative; flex: none; transition: background .2s;
+    }
+    .m-switch::after {
+      content: ""; position: absolute; top: 2px; left: 2px;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #cfd3dc; transition: transform .2s, background .2s;
+    }
+    .m-switch.on { background: rgba(255,106,61,0.65); }
+    .m-switch.on::after { transform: translateX(18px); background: #fff; }
+
+    /* Mobile Sheets & Dialogs */
+    .m-sheet-backdrop {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.55); z-index: 30;
+      opacity: 0; pointer-events: none; transition: opacity .22s;
+    }
+    .m-sheet-backdrop.show { opacity: 1; pointer-events: auto; }
+    .m-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0; z-index: 32;
+      background: var(--panel-2); border-radius: 22px 22px 0 0;
+      border-top: 1px solid rgba(255,255,255,0.1); padding: 12px 16px 22px;
+      transform: translateY(105%); transition: transform .26s cubic-bezier(.3,.9,.3,1);
+    }
+    .m-sheet.show { transform: translateY(0); }
+    .m-sheet::before {
+      content: ""; display: block; width: 36px; height: 4px; border-radius: 2px;
+      background: rgba(255,255,255,0.2); margin: 0 auto 12px;
+    }
+    .m-sheet h4 { margin: 0 0 3px; font-family: var(--font-display); font-size: 1.05rem; }
+    .m-sheet .desc { color: var(--muted); font-size: 0.8rem; margin: 0 0 12px; line-height: 1.4; }
+    .m-sheet-row {
+      appearance: none; border: 1px solid var(--line);
+      background: rgba(255,255,255,0.03); color: var(--text);
+      width: 100%; text-align: left; font: inherit; border-radius: 12px;
+      padding: 11px 12px; margin-bottom: 7px; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .m-sheet-row:hover { border-color: rgba(255,106,61,0.4); }
+    .m-sheet-row.selected { border-color: rgba(255,106,61,0.55); background: rgba(255,106,61,0.1); }
+    .m-sheet-row.selected::after { content: "✓"; color: var(--accent-2); font-weight: 700; }
+    .m-sheet-row.danger { color: #ffb0b8; border-color: rgba(255,92,108,0.28); }
+
+    .m-toast {
+      position: absolute; left: 14px; right: 14px; bottom: 20px;
+      background: rgba(20,24,32,0.96); border: 1px solid var(--line);
+      border-radius: 12px; padding: 10px 12px; font-size: 0.82rem;
+      transform: translateY(130%); opacity: 0; transition: .25s ease; z-index: 35;
+      text-align: center; box-shadow: var(--shadow-md);
+    }
+    .m-toast.show { transform: translateY(0); opacity: 1; }
+
+    /* ================= 🖥️ Desktop Receiver GPUI Window ================= */
+    .desktop-stage-wrapper {
+      display: flex; flex-direction: column; gap: 14px; flex: 1; min-width: 0;
+    }
+    .desktop-window {
+      background: var(--panel);
+      border: 1px solid var(--line-bold);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-xl);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      height: 780px;
+      position: relative;
+    }
+    .desktop-titlebar {
+      background: rgba(20, 23, 31, 0.95);
+      border-bottom: 1px solid var(--line);
+      padding: 12px 18px;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      user-select: none;
+    }
+    .mac-traffic-lights {
+      display: flex; align-items: center; gap: 8px;
+    }
+    .traffic-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .traffic-dot.close { background: #ff5f56; }
+    .traffic-dot.min { background: #ffbd2e; }
+    .traffic-dot.max { background: #27c93f; }
+    .desktop-app-title {
+      font-family: var(--font-display); font-weight: 700; font-size: 0.95rem;
+      letter-spacing: -0.01em; display: flex; align-items: center; gap: 8px;
+    }
+    .desktop-app-title .gpui-badge {
+      font-size: 0.65rem; font-family: var(--font-mono); padding: 2px 6px; border-radius: 4px;
+      background: rgba(255,106,61,0.15); color: var(--accent);
+    }
+    .desktop-tb-actions { display: flex; align-items: center; gap: 8px; }
+
+    /* Desktop Content Views */
+    .d-view { display: none; flex: 1; flex-direction: column; min-height: 0; position: relative; }
+    .d-view.active { display: flex; }
+
+    /* Desktop Idle / Waiting View */
+    .d-idle-container {
+      flex: 1; padding: 28px 36px; display: flex; flex-direction: column;
+      justify-content: center; align-items: center; text-align: center;
+      background:
+        radial-gradient(700px 350px at 50% 30%, rgba(255,106,61,0.08), transparent 60%),
+        var(--panel);
+    }
+    .d-idle-brand-logo {
+      width: 72px; height: 72px; border-radius: 50%; margin: 0 auto 20px;
+      background:
+        radial-gradient(circle at 35% 35%, #ffffffaa, transparent 40%),
+        conic-gradient(from 210deg, var(--accent), var(--accent-2), #ff845e, var(--accent));
+      box-shadow: 0 0 0 6px rgba(255,106,61,0.18), 0 16px 40px rgba(255,106,61,0.3);
+      display: grid; place-items: center; font-size: 2rem;
+    }
+    .d-idle-title { font-family: var(--font-display); font-size: 1.8rem; margin: 0 0 6px; }
+    .d-idle-sub { color: var(--muted); font-size: 0.95rem; max-width: 46ch; margin: 0 0 24px; line-height: 1.5; }
+    .d-vcam-status-pill {
+      display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px;
+      border-radius: 999px; background: rgba(62, 207, 142, 0.1);
+      border: 1px solid rgba(62, 207, 142, 0.25); color: var(--ready);
+      font-size: 0.85rem; font-weight: 600; margin-bottom: 24px;
+    }
+    .d-vcam-status-pill.uninstalled {
+      background: rgba(255, 92, 108, 0.1); border-color: rgba(255, 92, 108, 0.25);
+      color: #ff9da8;
+    }
+
+    /* QR Code Modal / Card on Desktop */
+    .d-qr-card {
+      background: var(--panel-2); border: 1px solid var(--line);
+      border-radius: var(--radius-md); padding: 20px 24px;
+      display: flex; align-items: center; gap: 24px; max-width: 480px; text-align: left;
+      margin-top: 10px;
+    }
+    .d-qr-matrix {
+      width: 120px; height: 120px; border-radius: 12px; background: #fff;
+      padding: 8px; flex: none; display: grid; place-items: center; position: relative;
+    }
+    .d-qr-matrix .mock-qr {
+      width: 100%; height: 100%;
+      background:
+        repeating-linear-gradient(0deg, #111 0px, #111 4px, #fff 4px, #fff 8px),
+        repeating-linear-gradient(90deg, #111 0px, #111 4px, #fff 4px, #fff 8px);
+      background-blend-mode: difference;
+      border-radius: 4px;
+    }
+    .d-qr-info h4 { margin: 0 0 4px; font-family: var(--font-display); font-size: 1rem; }
+    .d-qr-info p { margin: 0 0 8px; color: var(--muted); font-size: 0.8rem; line-height: 1.4; }
+    .d-qr-info .ip-tag {
+      font-family: var(--font-mono); font-size: 0.78rem; color: var(--accent-2);
+      background: rgba(255,179,71,0.12); padding: 3px 6px; border-radius: 6px;
+    }
+
+    /* Desktop Live Streaming View (VideoSurface) */
+    .d-live-layout {
+      flex: 1; display: flex; flex-direction: column; min-height: 0; background: #07090d;
+    }
+    .d-videosurface-wrap {
+      flex: 1; position: relative; display: grid; place-items: center;
+      background: #020305; overflow: hidden;
+    }
+    .d-videosurface-canvas {
+      width: 100%; height: 100%; max-aspect-ratio: 16/9;
+      background:
+        radial-gradient(circle at 45% 35%, #2a3548, transparent 40%),
+        linear-gradient(145deg, #141c28, #0a0c10 50%, #171512);
+      animation: dDrift 14s ease-in-out infinite alternate;
+      position: relative; transition: filter .3s, transform .3s;
+    }
+    .d-videosurface-canvas.front-cam {
+      background:
+        radial-gradient(circle at 50% 30%, #4a342f, transparent 40%),
+        linear-gradient(145deg, #22181c, #0c0d12 50%, #121822);
+    }
+    .d-videosurface-canvas.mirrored { transform: scaleX(-1); }
+    .d-videosurface-canvas.placeholder-mode {
+      animation: none;
+      background: linear-gradient(135deg, #121620, #0a0c12);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    @keyframes dDrift {
+      from { filter: saturate(1.05) contrast(1.05); }
+      to { filter: saturate(1.16) contrast(1.08) brightness(1.04); }
+    }
+    .d-videosurface-canvas::after {
+      content: ""; position: absolute; inset: 18% 25%; border-radius: 50%;
+      background: radial-gradient(circle at 45% 40%, rgba(255,205,170,0.35), rgba(70,50,40,0.05) 55%, transparent 70%);
+      filter: blur(4px);
+    }
+    .d-videosurface-canvas.placeholder-mode::after { display: none; }
+    .d-placeholder-content {
+      position: absolute; inset: 0; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; gap: 12px; color: var(--muted);
+    }
+    .d-placeholder-content .p-icon {
+      width: 64px; height: 64px; border-radius: 50%;
+      background: var(--panel-2); border: 1px solid var(--line);
+      display: grid; place-items: center; font-size: 1.8rem;
+    }
+
+    /* Video HUD Overlay on Desktop */
+    .d-video-hud {
+      position: absolute; top: 14px; left: 16px; right: 16px;
+      display: flex; align-items: center; justify-content: space-between; z-index: 10;
+      pointer-events: none;
+    }
+    .d-hud-pill {
+      pointer-events: auto; backdrop-filter: blur(12px);
+      background: rgba(10,12,18,0.7); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 8px; padding: 6px 12px; font-size: 0.78rem; font-weight: 600;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .d-hud-pill .live-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--ready);
+      box-shadow: 0 0 8px var(--ready);
+    }
+
+    /* Desktop Bottom Telemetry & Control Bar */
+    .d-bottom-bar {
+      background: var(--panel-2);
+      border-top: 1px solid var(--line);
+      padding: 14px 20px;
+      display: flex; align-items: center; justify-content: space-between; gap: 20px;
+    }
+    .d-telemetry-grid {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    }
+    .d-telem-item {
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .d-telem-item .k { font-size: 0.68rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+    .d-telem-item .v { font-size: 0.88rem; font-family: var(--font-mono); font-weight: 700; color: var(--text); }
+    .d-actions-group {
+      display: flex; align-items: center; gap: 10px; flex: none;
+    }
+
+    /* Desktop Dialogs / Modals (GPUI Dialog Style) */
+    .d-modal-backdrop {
+      position: absolute; inset: 0; background: rgba(0,0,0,0.65); backdrop-filter: blur(4px);
+      z-index: 50; display: none; align-items: center; justify-content: center; padding: 24px;
+    }
+    .d-modal-backdrop.show { display: flex; }
+    .d-modal-dialog {
+      background: var(--panel-2); border: 1px solid var(--line-bold);
+      border-radius: var(--radius-md); box-shadow: var(--shadow-xl);
+      max-width: 460px; width: 100%; padding: 24px;
+      animation: modalPop .2s ease-out;
+    }
+    @keyframes modalPop {
+      from { transform: scale(0.95); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .d-modal-dialog h3 {
+      margin: 0 0 6px; font-family: var(--font-display); font-size: 1.3rem; letter-spacing: -0.01em;
+    }
+    .d-modal-dialog .desc { color: var(--muted); font-size: 0.86rem; line-height: 1.45; margin: 0 0 18px; }
+    .d-pair-code-box {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px; text-align: center; margin-bottom: 18px;
+    }
+    .d-pair-code-num {
+      font-family: var(--font-display); font-size: 2.8rem; font-weight: 800;
+      letter-spacing: 0.25em; color: #fff; margin: 0 0 0 10px;
+    }
+    .d-modal-footer {
+      display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 20px;
+    }
+
+    /* Desktop Settings Modal */
+    .d-settings-modal {
+      max-width: 620px; max-height: 85vh; display: flex; flex-direction: column;
+    }
+    .d-settings-content {
+      overflow-y: auto; padding-right: 4px; display: grid; gap: 14px;
+    }
+    .d-settings-group {
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: 12px; padding: 14px 16px;
+    }
+    .d-settings-group h5 {
+      margin: 0 0 10px; font-size: 0.75rem; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.06em; font-weight: 700;
+    }
+    .d-set-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 8px 0;
+    }
+    .d-set-row + .d-set-row { border-top: 1px solid var(--line-subtle); }
+    .d-set-row .label-col { display: grid; gap: 2px; }
+    .d-set-row .title { font-weight: 600; font-size: 0.88rem; }
+    .d-set-row .hint { font-size: 0.75rem; color: var(--muted); }
+
+    /* Toast in Desktop */
+    .d-toast {
+      position: absolute; top: 58px; right: 20px;
+      background: var(--panel-3); border: 1px solid var(--line-bold);
+      border-radius: 8px; padding: 10px 14px; font-size: 0.82rem;
+      transform: translateY(-20px); opacity: 0; transition: .2s ease; z-index: 60;
+      box-shadow: var(--shadow-md);
+    }
+    .d-toast.show { transform: translateY(0); opacity: 1; }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .view-grid.mode-dual { grid-template-columns: 1fr; }
+      .scenario-sidebar { position: static; max-height: none; }
+      .phone-shell { margin: 0 auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================= Top Navigation ================= -->
+  <header class="proto-nav">
+    <div class="nav-brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span>Pico Camera</span>
+      <span style="color:var(--muted);font-weight:500;font-size:0.9rem">· 完整前端 UI 交互原型</span>
+    </div>
+
+    <!-- View Switcher -->
+    <div class="view-switcher" role="tablist">
+      <button class="view-btn active" data-mode="dual" type="button" id="btn-mode-dual">
+        <span>📱🖥️ 双端联动沙盒</span>
+      </button>
+      <button class="view-btn" data-mode="mobile" type="button" id="btn-mode-mobile">
+        <span>📱 手机端 Sender</span>
+      </button>
+      <button class="view-btn" data-mode="desktop" type="button" id="btn-mode-desktop">
+        <span>🖥️ 桌面端 Receiver (GPUI)</span>
+      </button>
+    </div>
+
+    <div class="nav-right">
+      <span class="badge-spec">PCP/1 · QUIC</span>
+      <span class="badge-spec">GPUI + Compose/SwiftUI</span>
+    </div>
+  </header>
+
+  <!-- ================= Main Prototype Container ================= -->
+  <main class="proto-container">
+    <div class="view-grid mode-dual" id="view-grid">
+
+      <!-- ================= 1. Scenario / Story Sidebar ================= -->
+      <aside class="scenario-sidebar" aria-label="交互剧本">
+        <h3>交互演练与剧本</h3>
+        <p class="sub-desc">点击以下典型场景，自动同步手机与电脑状态，体验完整业务流与边缘兜底。</p>
+
+        <div class="scenario-list">
+          <button class="scenario-btn active" data-story="story-1" type="button">
+            <span class="title"><span class="tag">PUC-001</span>① 首次配对全流程</span>
+            <span class="desc">发现新电脑 → 双方核对 6 位短码 → 两端确认 → 建立会话</span>
+          </button>
+          <button class="scenario-btn" data-story="story-2" type="button">
+            <span class="title"><span class="tag">PUC-001</span>② 配对被电脑端拒绝</span>
+            <span class="desc">手机发起配对 → 电脑端点击拒绝 → 手机提示并可安全返回</span>
+          </button>
+          <button class="scenario-btn" data-story="story-3" type="button">
+            <span class="title"><span class="tag">PUC-001</span>③ 短码 60s 超时失效</span>
+            <span class="desc">倒计时归零后短码变灰不可用，支持重新生成派生短码</span>
+          </button>
+          <button class="scenario-btn" data-story="story-4" type="button">
+            <span class="title"><span class="tag">PUC-002</span>④ 已配对设备秒级直连</span>
+            <span class="desc">固定公钥验证通过，一键直接进入推流，无需重复核对短码</span>
+          </button>
+          <button class="scenario-btn" data-story="story-5" type="button">
+            <span class="title"><span class="tag">PUC-003</span>⑤ mDNS 发现为空 → 扫码兜底</span>
+            <span class="desc">企业网络屏蔽多播，电脑生成 QR Code，手机扫码绕过 mDNS</span>
+          </button>
+          <button class="scenario-btn" data-story="story-6" type="button">
+            <span class="title"><span class="tag">PUC-003</span>⑥ 相机权限被拒 → 手动 IP</span>
+            <span class="desc">扫码时相机权限未授予，兜底手动输入电脑端 IP:端口 直连</span>
+          </button>
+          <button class="scenario-btn" data-story="story-7" type="button">
+            <span class="title"><span class="tag">PUC-005</span>⑦ 推流中切换前后摄 / 画质 / 画面亮度</span>
+            <span class="desc">切换摄头触发 epoch+1 与 IDR 重建；分辨率三档切换；画面亮度微调 (提亮/压暗/恢复自动)</span>
+          </button>
+          <button class="scenario-btn" data-story="story-8" type="button">
+            <span class="title"><span class="tag">PUC-005</span>⑧ 设备过热自动降档保护</span>
+            <span class="desc">手机偏热时强制切为 720p 稳住推流，并在画质选项中禁用 1080p</span>
+          </button>
+          <button class="scenario-btn" data-story="story-9" type="button">
+            <span class="title"><span class="tag">PUC-006</span>⑨ 网络抖动断线 → 自动退避重连</span>
+            <span class="desc">Wi-Fi 短暂中断，进入 Reconnecting 退避重试，恢复后秒级还原画面</span>
+          </button>
+          <button class="scenario-btn" data-story="story-10" type="button">
+            <span class="title"><span class="tag">PUC-007</span>⑩ 管理已配对设备与撤销信任</span>
+            <span class="desc">在设置中查看信任设备指纹，删除后下次连接强制重新配对</span>
+          </button>
+          <button class="scenario-btn" data-story="story-11" type="button">
+            <span class="title"><span class="tag">PUC-001</span>⑪ 虚拟摄像头未就绪与一键安装</span>
+            <span class="desc">首次启动桌面端引导安装 Media Foundation / CMIO 虚拟扩展</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- ================= 2. 📱 Mobile Sender (Android / iOS) ================= -->
+      <div class="mobile-stage-wrapper" id="mobile-stage-wrapper">
+        <div class="device-label">
+          <span>📱 手机端 Sender</span>
+          <span class="badge">Compose / SwiftUI</span>
+        </div>
+
+        <div class="phone-shell" aria-label="Mobile Sender Phone Shell">
+          <div class="phone-island">
+            <div class="cam-lens"></div>
+          </div>
+
+          <div class="phone-screen-container" id="phone-screen-container">
+
+            <!-- Screen 1: Device List & Discovery -->
+            <section class="m-screen active" data-screen="devices" id="m-screen-devices">
+              <div class="m-topbar">
+                <h2>Pico Camera</h2>
+                <div class="right">
+                  <span class="m-pill" id="m-wifi-pill">Wi‑Fi · Office‑5G</span>
+                  <button class="m-icon-btn" data-action="m-open-settings" type="button" aria-label="设置">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="m-content">
+                <div class="m-hero-line">把手机变成无线摄像头</div>
+                <p class="m-sub">选择同一 Wi‑Fi 下的电脑，已配对设备点按直连。</p>
+
+                <div class="m-searching" id="m-searching-row">
+                  <span class="dot-pulse" id="m-search-dot"></span>
+                  <span id="m-search-text">正在发现附近电脑…</span>
+                </div>
+
+                <div id="m-discovery-list">
+                  <!-- Paired device -->
+                  <div class="m-device-card" id="m-dev-card-surface">
+                    <button class="m-device-main" data-action="m-connect-surface" type="button">
+                      <span class="row1">
+                        <span class="name">办公桌 Surface</span>
+                        <span class="m-badge paired">已配对</span>
+                      </span>
+                      <span class="meta">在线 · 192.168.1.102 · 点按直连</span>
+                    </button>
+                    <button class="m-device-more" data-action="m-device-menu" data-device="办公桌 Surface" type="button" aria-label="更多操作">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                    </button>
+                  </div>
+
+                  <!-- Discovered new device -->
+                  <div class="m-device-card" id="m-dev-card-studio">
+                    <button class="m-device-main" data-action="m-connect-studio" type="button">
+                      <span class="row1">
+                        <span class="name">Studio PC (当前电脑)</span>
+                        <span class="m-badge">在线</span>
+                      </span>
+                      <span class="meta">Windows · 首次连接需配对短码</span>
+                    </button>
+                    <button class="m-device-more" data-action="m-device-menu" data-device="Studio PC (当前电脑)" type="button" aria-label="更多操作">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                    </button>
+                  </div>
+
+                  <!-- Offline device -->
+                  <div class="m-device-card offline" id="m-dev-card-home">
+                    <button class="m-device-main" data-action="m-offline-tap" type="button">
+                      <span class="row1">
+                        <span class="name">家里台式机</span>
+                        <span class="m-badge offline">不在线</span>
+                      </span>
+                      <span class="meta">已配对 · 上次连接 3 天前</span>
+                    </button>
+                    <button class="m-device-more" data-action="m-device-menu" data-device="家里台式机" type="button" aria-label="更多操作">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Empty State Hint -->
+                <div class="m-empty-hint" id="m-empty-discovery" hidden>
+                  <div class="icon" aria-hidden="true">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.93 19.07A10 10 0 0 1 2 12h4a6 6 0 0 0 1.76 4.24l-2.83 2.83Z"/><path d="M19.07 4.93A10 10 0 0 1 22 12h-4a6 6 0 0 0-1.76-4.24l2.83-2.83Z"/><circle cx="12" cy="12" r="2"/></svg>
+                  </div>
+                  <h4>未发现附近电脑</h4>
+                  <p>企业网络或路由器可能屏蔽了 mDNS 服务广播</p>
+                  <div class="checks">
+                    <span>手机与电脑连接同一 Wi‑Fi？</span>
+                    <span>电脑端 Pico Camera 已启动？</span>
+                    <span>改用扫码直连，绕过 mDNS 限制 ↓</span>
+                  </div>
+                </div>
+
+                <div style="margin-top: 14px;">
+                  <button class="btn btn-ghost" data-action="m-scan-qr" type="button" id="m-btn-scan-qr" style="display:flex;align-items:center;justify-content:center;gap:8px;">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/></svg>
+                    <span>扫描电脑端二维码连接</span>
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <!-- Screen 2: QR Scanner -->
+            <section class="m-screen" data-screen="qr" id="m-screen-qr">
+              <div class="m-qr-wrap" id="m-qr-wrap">
+                <div class="m-qr-top">
+                  <button class="m-icon-btn" data-action="m-qr-back" type="button" aria-label="返回" title="返回">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                  </button>
+                  <span class="m-pill warn">扫码直连</span>
+                </div>
+
+                <div class="m-qr-viewport">
+                  <div class="m-qr-scanline"></div>
+                  <div class="m-qr-label">
+                    对准电脑端 <b>Show QR Code</b><br />
+                    <span style="color:var(--muted);font-size:0.74rem">识别成功将自动建立 QUIC 连接</span>
+                  </div>
+                </div>
+                <div class="m-qr-bottom">
+                  <button class="btn btn-primary" data-action="m-simulate-scan-success" type="button">模拟：扫描成功（自动继续）</button>
+                  <button class="btn btn-ghost btn-sm" data-action="m-trigger-qr-denied" type="button" style="border:0;text-decoration:underline;">模拟相机权限被拒 / 手动输入</button>
+                </div>
+
+                <!-- QR Camera Denied State -->
+                <div class="m-qr-denied" id="m-qr-denied-box">
+                  <div style="margin-bottom: 8px;">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="32" height="32" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m4.93 4.93 14.14 14.14"/></svg>
+                  </div>
+                  <h3 style="margin:0 0 6px;font-family:var(--font-display);">未开启相机权限</h3>
+                  <p style="color:var(--muted);font-size:0.8rem;margin:0 0 14px;line-height:1.4;">无法使用取景扫码。可在下方直接输入电脑端显示的连接地址。</p>
+                  <div style="display:grid;gap:8px;text-align:left;">
+                    <label style="font-size:0.75rem;color:var(--muted);font-weight:600;">电脑连接地址 (IP:端口)</label>
+                    <input class="manual-ip-input" id="m-input-manual-ip" type="text" value="192.168.1.108:4433" />
+                    <button class="btn btn-primary" data-action="m-manual-ip-connect" type="button">直连电脑</button>
+                    <button class="btn btn-ghost btn-sm" data-action="m-qr-back" type="button">取消并返回</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Screen 3: Pairing Code Confirmation -->
+            <section class="m-screen" data-screen="pairing" id="m-screen-pairing">
+              <div class="m-pair-wrap">
+                <div class="m-pair-kicker" id="m-pair-kicker">连接到 Studio PC (当前电脑)</div>
+                <h2 class="m-pair-title">核对 6 位配对短码</h2>
+                <div class="m-pair-code" id="m-pair-code-val">482917</div>
+                <div class="m-code-ttl" id="m-code-ttl">短码 60 秒内有效</div>
+                <p class="m-pair-hint">
+                  核对手机与电脑屏幕上是否显示相同数字。<br />
+                  <span class="mismatch">数字不一致？可能连错设备，请取消。</span>
+                </p>
+                <div style="display:grid;gap:10px;">
+                  <button class="btn btn-primary" data-action="m-confirm-pairing" type="button" id="m-btn-pair-primary">两端数字一致，确认配对</button>
+                  <button class="btn btn-ghost" data-action="m-cancel-pairing" type="button">取消</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- Screen 4: Waiting For Peer Confirmation -->
+            <section class="m-screen" data-screen="wait" id="m-screen-wait">
+              <div class="m-pair-wrap">
+                <div id="m-wait-pending-box">
+                  <div class="spinner-ring" aria-hidden="true"></div>
+                  <h2 class="m-pair-title">等待电脑端确认…</h2>
+                  <p class="m-pair-hint">请在电脑端 GPUI 弹窗中点击「确认配对」<br />双方确认后将固定公钥并自动开始推流</p>
+                  <div style="display:grid;gap:8px;">
+                    <button class="btn btn-ghost" data-action="m-cancel-wait" type="button">取消</button>
+                  </div>
+                </div>
+
+                <!-- Peer Rejected Box -->
+                <div id="m-wait-reject-box" hidden>
+                  <div class="m-wait-icon reject">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--danger)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                  </div>
+                  <h2 class="m-pair-title">电脑端拒绝了连接</h2>
+                  <p class="m-pair-hint">电脑使用者点击了拒绝。<br />确认电脑归属后可重新发起连接。</p>
+                  <button class="btn btn-primary" data-action="m-wait-back-devices" type="button">返回设备列表</button>
+                </div>
+
+                <!-- Timeout Box -->
+                <div id="m-wait-timeout-box" hidden>
+                  <div class="m-wait-icon timeout">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                  </div>
+                  <h2 class="m-pair-title">配对已超时</h2>
+                  <p class="m-pair-hint">60 秒内未完成双向确认，短码已失效。<br />请重新发起连接。</p>
+                  <button class="btn btn-primary" data-action="m-regen-pairing-code" type="button">重新生成短码</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- Screen 5: Live Streaming & Camera Controls (Native Camera Style) -->
+            <section class="m-screen" data-screen="streaming" id="m-screen-streaming">
+              <div class="m-live-container" id="m-live-container">
+                <div class="m-live-feed" id="m-live-feed" data-action="m-feed-tap" title="轻触对焦 / 双击切换全屏"></div>
+                <div class="m-safe-frame" aria-hidden="true"></div>
+                <div class="cam-focus-ring" id="m-cam-focus-ring"></div>
+
+                <!-- Top Floating Camera HUD (Native Style) -->
+                <div class="m-live-top">
+                  <!-- Left: Peer & Latency Badge -->
+                  <div class="cam-hud-badge">
+                    <span class="dot"></span>
+                    <span id="m-live-target-name">Studio PC</span>
+                    <span id="m-live-latency-chip" style="color:var(--ready);font-family:var(--font-mono);margin-left:2px;">18ms</span>
+                  </div>
+
+                  <!-- Center: Quick Tools (Brightness, Mirror, Lock) -->
+                  <div class="cam-quick-tools">
+                    <button class="cam-tool-btn" data-action="m-toggle-ev" type="button" id="m-btn-ev-tool" title="画面亮度微调">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+                    </button>
+                    <button class="cam-tool-btn" data-action="m-toggle-mirror" type="button" id="m-btn-mirror-tool" title="本机预览镜像">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 7 5 5-5 5V7"/><path d="m21 7-5 5 5 5V7"/><path d="M12 20v2"/><path d="M12 14v2"/><path d="M12 8v2"/><path d="M12 2v2"/></svg>
+                    </button>
+                    <button class="cam-tool-btn" data-action="m-toggle-lock" type="button" id="m-btn-lock-tool" title="防误触屏幕锁定">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
+                    </button>
+                  </div>
+
+                  <!-- Right: Native Camera Resolution Switcher Pill (Tap to Cycle 1080P/720P/480P) -->
+                  <button class="cam-res-pill" data-action="m-cycle-res" type="button" id="m-btn-res-pill" title="轻按切换 1080P / 720P / 480P">
+                    <span id="m-res-pill-text">1080P · 30</span>
+                  </button>
+                </div>
+
+                <!-- Bottom Native Camera Control Deck -->
+                <div class="m-live-bottom">
+                  <!-- Thermal Warning -->
+                  <div class="m-thermal-alert" id="m-thermal-alert">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:4px;"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg>
+                    <b>设备偏热保护</b>：已自动降至 720P 稳住帧率，1080P 暂不可选
+                  </div>
+
+                  <!-- Compact Brightness Stepper Panel (Toggled by ☀️) -->
+                  <div class="m-ev-panel" id="m-ev-panel" hidden>
+                    <button data-action="m-ev-minus" type="button" aria-label="压暗画面" title="让画面变暗">−</button>
+                    <span class="val" id="m-ev-val">☀️ 自动</span>
+                    <button data-action="m-ev-plus" type="button" aria-label="提亮画面" title="让画面变亮">＋</button>
+                    <button class="reset" data-action="m-ev-reset" type="button" aria-label="恢复默认自动测光" title="恢复自动测光">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+                    </button>
+                  </div>
+
+                  <!-- Native 3-Column Camera Control Bar -->
+                  <div class="cam-controls-row">
+                    <!-- Left: Stream Telemetry Pill (Clean indicators, no redundant lens text) -->
+                    <div class="cam-stat-pill">
+                      <span id="m-metric-br" style="font-weight:700;color:#fff;">5.2 Mbps</span>
+                      <span style="font-size:0.62rem;color:var(--ready)">30 FPS · 0% 丢包</span>
+                    </div>
+
+                    <!-- Center: Native Stop/Disconnect Shutter Button (Clean Outer Circle & Inner Stop Square) -->
+                    <div class="cam-shutter-wrap">
+                      <button class="cam-shutter-btn" data-action="m-disconnect-press" type="button" id="m-btn-shutter" title="断开无线摄像头连接" aria-label="断开推流">
+                        <div class="cam-shutter-inner"></div>
+                      </button>
+                      <span class="cam-shutter-label" id="m-shutter-label">断开连接</span>
+                    </div>
+
+                    <!-- Right: Native Camera Flip Lens Button (Clean Lucide Switch Camera SVG) -->
+                    <button class="cam-flip-btn" data-action="m-flip-camera" type="button" id="m-btn-flip" title="切换前后摄像头" aria-label="翻转镜头">
+                      <svg class="lucide-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5"/><path d="M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/><circle cx="12" cy="12" r="3"/><path d="m18 22-3-3 3-3"/><path d="m6 2 3 3-3 3"/></svg>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Auto Reconnecting Overlay -->
+                <div class="m-reconnect-overlay" id="m-reconnect-overlay">
+                  <div class="spinner-ring" aria-hidden="true"></div>
+                  <h3>网络中断，正在重连…</h3>
+                  <p id="m-reconnect-msg">QUIC 会话重试中 · 第 1 次 (500ms)<br />连接恢复后将自动请求 IDR 关键帧</p>
+                  <button class="btn btn-ghost btn-sm" data-action="m-stop-reconnect" type="button">停止重连并退出</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- Screen 6: Mobile Settings -->
+            <section class="m-screen" data-screen="settings" id="m-screen-settings">
+              <div class="m-topbar">
+                <button class="m-icon-btn" data-action="m-settings-back" type="button" aria-label="返回" title="返回">
+                  <svg class="lucide-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                </button>
+                <h2>手机端设置</h2>
+                <span style="width:32px"></span>
+              </div>
+              <div class="m-content">
+                <div class="m-set-row" data-action="m-toggle-autoconnect">
+                  <div class="l">
+                    <span class="t">打开 App 自动直连</span>
+                    <span class="d">上次连接的电脑在线时，3秒倒计时后自动直连</span>
+                  </div>
+                  <div class="m-switch" id="m-sw-autoconnect"></div>
+                </div>
+
+                <div class="m-set-row" data-action="m-open-default-res">
+                  <div class="l">
+                    <span class="t">默认初始画质</span>
+                    <span class="d">新连接建立时的起步分辨率档位</span>
+                  </div>
+                  <span class="v" id="m-val-default-res">1080p30 ›</span>
+                </div>
+
+                <div class="m-set-row" data-action="m-open-paired-list">
+                  <div class="l">
+                    <span class="t">已配对信任电脑</span>
+                    <span class="d">管理已固定的对端公钥（PUC-007）</span>
+                  </div>
+                  <span class="v" id="m-val-paired-count">2 台 ›</span>
+                </div>
+
+                <div class="m-set-row" data-action="m-open-perm-check">
+                  <div class="l">
+                    <span class="t">权限就绪状态</span>
+                    <span class="d">相机 / 局域网广播 / 前台保活</span>
+                  </div>
+                  <span class="v" style="color:var(--ready)">全部就绪 ›</span>
+                </div>
+
+                <div class="m-set-row">
+                  <div class="l">
+                    <span class="t">关于 Pico Camera</span>
+                    <span class="d">协议 PCP/1 · Rust Core v1.0.0</span>
+                  </div>
+                  <span class="v">v1.0 (Build 2026)</span>
+                </div>
+              </div>
+            </section>
+
+            <!-- ================= Mobile Sheets & Modals ================= -->
+            <div class="m-sheet-backdrop" id="m-sheet-backdrop" data-action="m-close-sheets"></div>
+
+            <!-- Resolution Sheet -->
+            <div class="m-sheet" id="m-sheet-res">
+              <h4>发送画质规格</h4>
+              <p class="desc">切换画质将递增 epoch 并请求硬件编码器重置 IDR</p>
+              <button class="m-sheet-row" data-action="m-pick-res" data-res="1080" type="button" id="m-res-item-1080">
+                <span>1080p30 (Full HD)<br /><small style="color:var(--muted)">推荐带宽 ≥ 5.2 Mbps</small></span>
+              </button>
+              <button class="m-sheet-row" data-action="m-pick-res" data-res="720" type="button" id="m-res-item-720">
+                <span>720p30 (Standard HD)<br /><small style="color:var(--muted)">推荐带宽 ≥ 3.4 Mbps · 功耗平衡</small></span>
+              </button>
+              <button class="m-sheet-row" data-action="m-pick-res" data-res="480" type="button" id="m-res-item-480">
+                <span>480p30 (Low Bandwidth)<br /><small style="color:var(--muted)">推荐带宽 ≥ 1.8 Mbps · 弱网保底</small></span>
+              </button>
+            </div>
+
+            <!-- Device Manage Sheet -->
+            <div class="m-sheet" id="m-sheet-device-manage">
+              <h4 id="m-sheet-dev-name">设备详情与管理</h4>
+              <p class="desc" id="m-sheet-dev-meta">已配对的信任电脑 · 公钥指纹: e4f8:2a01:99c2</p>
+              <button class="m-sheet-row danger" data-action="m-delete-paired-device" type="button">
+                <span>撤销信任并删除配对<br /><small style="color:#ffb0b8">下次连接需重新在两端核对 6 位短码</small></span>
+              </button>
+              <button class="m-sheet-row" data-action="m-close-sheets" type="button">取消</button>
+            </div>
+
+            <!-- Mobile Toast -->
+            <div class="m-toast" id="m-toast"></div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= 3. 🖥️ Desktop Receiver (GPUI Window) ================= -->
+      <div class="desktop-stage-wrapper" id="desktop-stage-wrapper">
+        <div class="device-label">
+          <span>🖥️ 桌面端 Receiver</span>
+          <span class="badge">GPUI + gpui-component (Windows / macOS)</span>
+        </div>
+
+        <div class="desktop-window" id="desktop-window" aria-label="Desktop GPUI Window">
+          <!-- Desktop Title Bar -->
+          <div class="desktop-titlebar">
+            <div class="mac-traffic-lights">
+              <div class="traffic-dot close"></div>
+              <div class="traffic-dot min"></div>
+              <div class="traffic-dot max"></div>
+            </div>
+            <div class="desktop-app-title">
+              <span>Pico Camera Receiver</span>
+              <span class="gpui-badge">GPUI Native</span>
+            </div>
+            <div class="desktop-tb-actions">
+              <button class="m-icon-btn" data-action="d-open-settings" type="button" title="设置中心">
+                <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- View A: Desktop Idle / Waiting for Phone -->
+          <div class="d-view active" data-view="idle" id="d-view-idle">
+            <div class="d-idle-container">
+              <div class="d-idle-brand-logo">
+                <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+              </div>
+              <h2 class="d-idle-title">等待手机连接…</h2>
+              <p class="d-idle-sub">
+                在同一 Wi‑Fi 下打开手机端 Pico Camera，将自动发现本电脑。也可通过手机直接扫描下方二维码建立直连。
+              </p>
+
+              <div class="d-vcam-status-pill" id="d-vcam-pill">
+                <span>● 虚拟摄像头驱动：就绪 (Ready)</span>
+              </div>
+
+              <!-- Desktop QR Card -->
+              <div class="d-qr-card">
+                <div class="d-qr-matrix">
+                  <div class="mock-qr"></div>
+                </div>
+                <div class="d-qr-info">
+                  <h4>Show QR Code (扫码直连)</h4>
+                  <p>企业网络 mDNS 受限时扫码直连 QUIC 端口</p>
+                  <div>
+                    <span class="ip-tag" id="d-quic-endpoint">192.168.1.108:4433</span>
+                    <span style="font-size:0.72rem;color:var(--muted);margin-left:6px;">Nonce: 8f2a</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- View B: Desktop Live Receiver (VideoSurface Active) -->
+          <div class="d-view" data-view="live" id="d-view-live">
+            <div class="d-live-layout">
+              <!-- VideoSurface Canvas Container -->
+              <div class="d-videosurface-wrap">
+                <div class="d-videosurface-canvas" id="d-videosurface-canvas">
+                  <!-- In placeholder mode, shows logo/icon -->
+                  <div class="d-placeholder-content" id="d-placeholder-content" hidden>
+                    <div class="p-icon">
+                      <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+                    </div>
+                    <h3 style="margin:0;color:#fff;font-family:var(--font-display);">Pico Camera</h3>
+                    <p style="margin:0;font-size:0.85rem;">等待视频帧输入 · 虚拟摄像头正常输出占位图</p>
+                  </div>
+                </div>
+
+                <!-- Video HUD Overlay -->
+                <div class="d-video-hud">
+                  <div class="d-hud-pill">
+                    <span class="live-dot"></span>
+                    <span id="d-hud-peer-name">Xiaomi 14 Ultra (Sender)</span>
+                  </div>
+                  <div class="d-hud-pill">
+                    <span style="color:var(--ready)">Virtual Camera: ACTIVE</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Bottom Telemetry & Control Bar -->
+              <div class="d-bottom-bar">
+                <div class="d-telemetry-grid">
+                  <div class="d-telem-item">
+                    <span class="k">画质规格</span>
+                    <span class="v" id="d-stat-res">1080p30</span>
+                  </div>
+                  <div class="d-telem-item">
+                    <span class="k">实时帧率</span>
+                    <span class="v" id="d-stat-fps">30.0 FPS</span>
+                  </div>
+                  <div class="d-telem-item">
+                    <span class="k">接收码率</span>
+                    <span class="v" id="d-stat-br">5.2 Mbps</span>
+                  </div>
+                  <div class="d-telem-item">
+                    <span class="k">RTT 延迟</span>
+                    <span class="v" id="d-stat-rtt" style="color:var(--ready)">18 ms</span>
+                  </div>
+                  <div class="d-telem-item">
+                    <span class="k">丢包 / 抖动</span>
+                    <span class="v" id="d-stat-loss">0.0% · 1.2ms</span>
+                  </div>
+                  <div class="d-telem-item">
+                    <span class="k">网络质量</span>
+                    <span class="v" id="d-stat-quality" style="color:var(--ready)">极佳 (Good)</span>
+                  </div>
+                </div>
+
+                <div class="d-actions-group">
+                  <button class="btn btn-ghost btn-sm" data-action="d-request-idr" type="button" title="向手机请求重发 IDR 关键帧">请求关键帧</button>
+                  <button class="btn btn-danger btn-sm" data-action="d-disconnect-session" type="button">断开会话</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ================= Desktop GPUI Modals ================= -->
+
+          <!-- Modal 1: Pairing Confirmation Dialog -->
+          <div class="d-modal-backdrop" id="d-modal-pairing">
+            <div class="d-modal-dialog">
+              <h3>核对配对短码</h3>
+              <p class="desc">来自 <b id="d-pair-incoming-dev" style="color:#fff;">Xiaomi 14 Ultra</b> 的首次连接请求。请确认手机上显示相同的 6 位数字：</p>
+              <div class="d-pair-code-box">
+                <div class="d-pair-code-num" id="d-pair-code-val">482917</div>
+                <div style="font-size:0.75rem;color:var(--muted);margin-top:4px;">握手上下文派生短码 · 60s 内有效</div>
+              </div>
+              <div class="d-modal-footer">
+                <button class="btn btn-ghost btn-sm" data-action="d-pair-reject" type="button">拒绝</button>
+                <button class="btn btn-primary btn-sm" data-action="d-pair-accept" type="button">数字一致，确认配对</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Modal 2: Settings Dialog -->
+          <div class="d-modal-backdrop" id="d-modal-settings">
+            <div class="d-modal-dialog d-settings-modal">
+              <h3>桌面端设置中心</h3>
+              <p class="desc">Receiver 运行参数、虚拟摄像头状态与已配对设备管理</p>
+
+              <div class="d-settings-content">
+                <!-- Group 1: General -->
+                <div class="d-settings-group">
+                  <h5>基础偏好设置</h5>
+                  <div class="d-set-row">
+                    <div class="label-col">
+                      <span class="title">电脑显示名称</span>
+                      <span class="hint">在手机发现列表中显示的设备名</span>
+                    </div>
+                    <input class="manual-ip-input" id="d-input-dev-name" type="text" value="Studio PC" style="width:160px;padding:6px 10px;" />
+                  </div>
+                  <div class="d-set-row">
+                    <div class="label-col">
+                      <span class="title">自动接受已配对设备</span>
+                      <span class="hint">已验证固定公钥的手机连接时直接开始推流</span>
+                    </div>
+                    <input type="checkbox" id="d-cb-autoaccept" checked style="accent-color:var(--accent);width:18px;height:18px;" />
+                  </div>
+                  <div class="d-set-row">
+                    <div class="label-col">
+                      <span class="title">最小化到系统托盘</span>
+                      <span class="hint">关闭窗口后保持后台虚拟摄像头服务运行</span>
+                    </div>
+                    <input type="checkbox" checked style="accent-color:var(--accent);width:18px;height:18px;" />
+                  </div>
+                </div>
+
+                <!-- Group 2: Virtual Camera Driver -->
+                <div class="d-settings-group">
+                  <h5>虚拟摄像头管理 (Virtual Camera)</h5>
+                  <div class="d-set-row">
+                    <div class="label-col">
+                      <span class="title">系统虚拟摄像头驱动状态</span>
+                      <span class="hint" id="d-vcam-driver-desc">Windows Media Foundation / macOS CMIO Extension: 就绪</span>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" data-action="d-reinstall-vcam" type="button" id="d-btn-fix-vcam">修复 / 重新激活</button>
+                  </div>
+                  <div class="d-set-row">
+                    <div class="label-col">
+                      <span class="title">未推流时默认占位画面</span>
+                      <span class="hint">无视频流输入时向会议软件输出的画面</span>
+                    </div>
+                    <select class="manual-ip-input" id="d-select-placeholder" style="width:150px;padding:6px 8px;">
+                      <option value="logo">Pico Camera Logo</option>
+                      <option value="black">纯黑画面 (Black)</option>
+                      <option value="bars">测试彩条 (SMPTE Bars)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <!-- Group 3: Security & Paired List -->
+                <div class="d-settings-group">
+                  <h5>信任设备管理 (PUC-007)</h5>
+                  <div style="display:grid;gap:8px;" id="d-paired-manage-list">
+                    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--panel-2);padding:8px 10px;border-radius:8px;font-size:0.82rem;">
+                      <div>
+                        <b>Xiaomi 14 Ultra (本机演示)</b><br />
+                        <small style="color:var(--muted)">公钥指纹: a83b:19c0:77e2 · 上次连接: 刚刚</small>
+                      </div>
+                      <button class="btn btn-danger btn-sm" data-action="d-delete-paired-sender" type="button">撤销信任</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Group 4: Diagnostics -->
+                <div class="d-settings-group">
+                  <h5>诊断与隐私</h5>
+                  <div class="d-set-row">
+                    <div class="label-col">
+                      <span class="title">日志脱敏导出</span>
+                      <span class="hint">默认脱敏 IP、设备名与公钥指纹，不包含视频帧数据</span>
+                    </div>
+                    <button class="btn btn-ghost btn-sm" data-action="d-export-logs" type="button">导出诊断日志 (.json)</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="d-modal-footer">
+                <button class="btn btn-primary btn-sm" data-action="d-close-settings" type="button">完成并保存</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Desktop Toast -->
+          <div class="d-toast" id="d-toast"></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ================= Prototype State & Event Scripts ================= -->
+  <script>
+    // Global Unified State Model (Aligned with ARCH-PICO-UI-001 & DesktopAppState)
+    const appState = {
+      viewMode: "dual", // "dual" | "mobile" | "desktop"
+      mobileScreen: "devices", // "devices" | "qr" | "pairing" | "wait" | "streaming" | "settings"
+      desktopView: "idle", // "idle" | "live"
+
+      // Stream & Live States
+      isConnected: false,
+      isPairing: false,
+      isReconnecting: false,
+      targetDevice: "Studio PC (当前电脑)",
+      frontCamera: false,
+      resolution: "1080", // "1080" | "720" | "480"
+      mirrorPreview: false,
+      evLevel: 0,
+      isThermalThrottled: false,
+      isScreenLocked: false,
+      isImmersive: false,
+
+      // Discovery & Fallback States
+      discoveryEmpty: false,
+      autoConnectEnabled: false,
+      vcamInstalled: true,
+
+      // Telemetry & Metrics
+      currentPairingCode: "482917",
+      streamEpoch: 1,
+      rttMs: 18,
+      bitrateMbps: 5.2,
+      fps: 30.0,
+      lossPct: 0.0,
+    };
+
+    const timers = {};
+    const $ = (selector) => document.querySelector(selector);
+    const $$ = (selector) => document.querySelectorAll(selector);
+
+    const RES_MAP = {
+      "1080": { label: "1080p30", br: "5.2 Mbps", name: "1080p" },
+      "720": { label: "720p30", br: "3.4 Mbps", name: "720p" },
+      "480": { label: "480p30", br: "1.8 Mbps", name: "480p" },
+    };
+
+    function clearTimer(key) {
+      if (timers[key]) {
+        clearInterval(timers[key]);
+        clearTimeout(timers[key]);
+        timers[key] = null;
+      }
+    }
+
+    function showMobileToast(msg) {
+      const el = $("#m-toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimer("mToast");
+      timers.mToast = setTimeout(() => el.classList.remove("show"), 2200);
+    }
+
+    function showDesktopToast(msg) {
+      const el = $("#d-toast");
+      el.textContent = msg;
+      el.classList.add("show");
+      clearTimer("dToast");
+      timers.dToast = setTimeout(() => el.classList.remove("show"), 2400);
+    }
+
+    /* ================= Navigation & View Management ================= */
+    function setViewMode(mode) {
+      appState.viewMode = mode;
+      const grid = $("#view-grid");
+      grid.className = `view-grid mode-${mode}`;
+
+      $$(".view-btn").forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
+
+      const mWrapper = $("#mobile-stage-wrapper");
+      const dWrapper = $("#desktop-stage-wrapper");
+
+      if (mode === "mobile") {
+        mWrapper.style.display = "flex";
+        dWrapper.style.display = "none";
+      } else if (mode === "desktop") {
+        mWrapper.style.display = "none";
+        dWrapper.style.display = "flex";
+      } else {
+        mWrapper.style.display = "flex";
+        dWrapper.style.display = "flex";
+      }
+    }
+
+    function goMobileScreen(screen) {
+      appState.mobileScreen = screen;
+      $$(".m-screen").forEach((s) => s.classList.toggle("active", s.dataset.screen === screen));
+      closeMobileSheets();
+
+      if (screen !== "pairing") clearTimer("pairingCode");
+      if (screen !== "wait") clearTimer("peerWait");
+      if (screen !== "streaming") {
+        clearTimer("reconnect");
+        $("#m-reconnect-overlay").classList.remove("show");
+        setMobileLocked(false);
+        setMobileImmersive(false);
+        disarmMobileDisconnect();
+      }
+      if (screen === "qr") {
+        $("#m-qr-wrap").classList.remove("denied");
+      }
+    }
+
+    function setDesktopView(view) {
+      appState.desktopView = view;
+      $$(".d-view").forEach((v) => v.classList.toggle("active", v.dataset.view === view));
+    }
+
+    /* ================= Mobile Sheet Helpers ================= */
+    function openMobileSheet(id) {
+      $("#m-sheet-backdrop").classList.add("show");
+      $$(".m-sheet").forEach((s) => s.classList.toggle("show", s.id === id));
+      if (id === "m-sheet-res") refreshResSheetSelection();
+    }
+    function closeMobileSheets() {
+      $("#m-sheet-backdrop").classList.remove("show");
+      $$(".m-sheet").forEach((s) => s.classList.remove("show"));
+    }
+
+    /* ================= Live Streaming Controls ================= */
+    function startLiveStream() {
+      appState.isConnected = true;
+      appState.isPairing = false;
+      appState.isReconnecting = false;
+
+      // Mobile state
+      goMobileScreen("streaming");
+      updateMobileLiveUI();
+
+      // Desktop state
+      setDesktopView("live");
+      updateDesktopLiveUI();
+
+      showMobileToast("已连接到电脑 · 正在推流");
+      showDesktopToast("Pico Camera 视频流已就绪 · 虚拟摄像头 Active");
+    }
+
+    function terminateLiveStream(reason = "已断开连接") {
+      appState.isConnected = false;
+      appState.isReconnecting = false;
+
+      goMobileScreen("devices");
+      setDesktopView("idle");
+
+      showMobileToast(reason);
+      showDesktopToast(`会话已终止 (${reason})`);
+    }
+
+    function updateMobileLiveUI() {
+      const feed = $("#m-live-feed");
+      feed.classList.toggle("front-cam", appState.frontCamera);
+      feed.classList.toggle("mirrored", appState.mirrorPreview);
+
+      // Top Native Resolution Switcher Pill
+      const pillBtn = $("#m-btn-res-pill");
+      const pillText = $("#m-res-pill-text");
+      if (pillText) {
+        if (appState.isThermalThrottled) {
+          pillText.textContent = `${RES_MAP[appState.resolution].name.toUpperCase()} · 30 🔥`;
+          pillBtn.classList.add("throttled");
+        } else {
+          pillText.textContent = `${RES_MAP[appState.resolution].name.toUpperCase()} · 30`;
+          pillBtn.classList.remove("throttled");
+        }
+      }
+
+      // Quick Tools State
+      const mirrorTool = $("#m-btn-mirror-tool");
+      if (mirrorTool) mirrorTool.classList.toggle("active", appState.mirrorPreview);
+
+      const evTool = $("#m-btn-ev-tool");
+      if (evTool) evTool.classList.toggle("active", appState.evLevel !== 0);
+
+      // Bottom Camera Deck Info
+      const brEl = $("#m-metric-br");
+      if (brEl) brEl.textContent = RES_MAP[appState.resolution].br;
+
+      $("#m-thermal-alert").classList.toggle("show", appState.isThermalThrottled);
+    }
+
+    function updateDesktopLiveUI() {
+      const canvas = $("#d-videosurface-canvas");
+      canvas.classList.toggle("front-cam", appState.frontCamera);
+      canvas.classList.toggle("mirrored", appState.mirrorPreview);
+
+      $("#d-stat-res").textContent = RES_MAP[appState.resolution].label;
+      $("#d-stat-br").textContent = RES_MAP[appState.resolution].br;
+    }
+
+    function flipCamera() {
+      appState.streamEpoch += 1;
+      appState.frontCamera = !appState.frontCamera;
+
+      // Native Flip Button 180deg Rotation
+      const flipBtn = $("#m-btn-flip");
+      if (flipBtn) {
+        flipBtn.classList.add("flipping");
+        setTimeout(() => flipBtn.classList.remove("flipping"), 300);
+      }
+
+      // Visual flash animation simulating IDR reconfiguration
+      const mFeed = $("#m-live-feed");
+      const dCanvas = $("#d-videosurface-canvas");
+      mFeed.classList.add("switching");
+      dCanvas.classList.add("switching");
+
+      setTimeout(() => {
+        updateMobileLiveUI();
+        updateDesktopLiveUI();
+        mFeed.classList.remove("switching");
+        dCanvas.classList.remove("switching");
+        showMobileToast(`已翻转至${appState.frontCamera ? "前置" : "后置"}摄像头 (epoch:${appState.streamEpoch})`);
+        showDesktopToast(`Sender 翻转摄像头 · 已重建解码器 (epoch:${appState.streamEpoch})`);
+      }, 300);
+    }
+
+    // Native Camera Resolution Fast Cycle (1080P -> 720P -> 480P -> 1080P)
+    function cycleResolution() {
+      if (appState.isThermalThrottled) {
+        // In thermal throttle, cycle between 720 and 480
+        const next = appState.resolution === "720" ? "480" : "720";
+        setResolution(next);
+        showMobileToast(`🔥 设备偏热中 · 已切换至 ${RES_MAP[next].name.toUpperCase()}`);
+        return;
+      }
+
+      const cycleOrder = ["1080", "720", "480"];
+      const nextIdx = (cycleOrder.indexOf(appState.resolution) + 1) % cycleOrder.length;
+      const nextRes = cycleOrder[nextIdx];
+      setResolution(nextRes);
+    }
+
+    function setResolution(resKey) {
+      if (appState.isThermalThrottled && resKey === "1080") {
+        showMobileToast("🔥 设备偏热保护中，1080P 暂不可选");
+        return;
+      }
+      appState.resolution = resKey;
+      appState.streamEpoch += 1;
+      closeMobileSheets();
+      updateMobileLiveUI();
+      updateDesktopLiveUI();
+      showMobileToast(`画质已切换: ${RES_MAP[resKey].name.toUpperCase()} (30 FPS)`);
+      showDesktopToast(`画质重协商: ${RES_MAP[resKey].label} · 码率自适应`);
+    }
+
+    function toggleMobileMirror() {
+      appState.mirrorPreview = !appState.mirrorPreview;
+      updateMobileLiveUI();
+      showMobileToast(`本机预览镜像已${appState.mirrorPreview ? "开启" : "关闭"}`);
+    }
+
+    function toggleMobileEvPanel() {
+      const panel = $("#m-ev-panel");
+      panel.hidden = !panel.hidden;
+      const toolBtn = $("#m-btn-ev-tool");
+      if (toolBtn) toolBtn.classList.toggle("active", !panel.hidden || appState.evLevel !== 0);
+    }
+
+    function adjustEv(delta) {
+      if (delta === 0) appState.evLevel = 0;
+      else appState.evLevel = Math.max(-2, Math.min(2, appState.evLevel + delta));
+
+      let label = "☀️ 自动";
+      let toastMsg = "已恢复默认自动测光";
+      let brightnessFactor = 1.0;
+
+      if (appState.evLevel === 1) {
+        label = "☀️ 提亮 +1";
+        toastMsg = "画面已提亮 (+1 档)";
+        brightnessFactor = 1.16;
+      } else if (appState.evLevel === 2) {
+        label = "☀️ 提亮 +2";
+        toastMsg = "画面已强力补光 (+2 档)";
+        brightnessFactor = 1.32;
+      } else if (appState.evLevel === -1) {
+        label = "☀️ 压暗 -1";
+        toastMsg = "画面已压暗 (-1 档)";
+        brightnessFactor = 0.86;
+      } else if (appState.evLevel === -2) {
+        label = "☀️ 压暗 -2";
+        toastMsg = "画面已压暗 (-2 档)";
+        brightnessFactor = 0.72;
+      }
+
+      $("#m-ev-val").textContent = label;
+      const evTool = $("#m-btn-ev-tool");
+      if (evTool) evTool.classList.toggle("active", appState.evLevel !== 0 || !$("#m-ev-panel").hidden);
+
+      // Realistic visual feedback on live feeds
+      const mFeed = $("#m-live-feed");
+      const dCanvas = $("#d-videosurface-canvas");
+      if (mFeed) mFeed.style.filter = brightnessFactor !== 1.0 ? `brightness(${brightnessFactor})` : "";
+      if (dCanvas) dCanvas.style.filter = brightnessFactor !== 1.0 ? `brightness(${brightnessFactor})` : "";
+
+      showMobileToast(toastMsg);
+    }
+
+    function setMobileLocked(locked) {
+      appState.isScreenLocked = locked;
+      $("#m-screen-streaming").classList.toggle("locked", locked);
+      const lockTool = $("#m-btn-lock-tool");
+      if (lockTool) {
+        lockTool.classList.toggle("active", locked);
+        lockTool.innerHTML = locked
+          ? `<svg class="lucide-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+          : `<svg class="lucide-icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`;
+      }
+      if (locked) showMobileToast("屏幕已锁定 · 防误触保护中 (点按右上锁头解锁)");
+    }
+
+    function triggerCameraFocus(e) {
+      const ring = $("#m-cam-focus-ring");
+      if (!ring) return;
+
+      const rect = $("#m-live-container").getBoundingClientRect();
+      const x = e ? e.clientX - rect.left : rect.width / 2;
+      const y = e ? e.clientY - rect.top : rect.height / 2;
+
+      ring.style.left = `${x}px`;
+      ring.style.top = `${y}px`;
+      ring.classList.add("active");
+
+      clearTimeout(timers.focusRing);
+      timers.focusRing = setTimeout(() => ring.classList.remove("active"), 800);
+    }
+
+    let disconnectArmed = false;
+    let disconnectTimer = null;
+    function disarmMobileDisconnect() {
+      disconnectArmed = false;
+      if (disconnectTimer) clearTimeout(disconnectTimer);
+      const btn = $("#m-btn-shutter");
+      const label = $("#m-shutter-label");
+      if (btn) btn.classList.remove("armed");
+      if (label) {
+        label.textContent = "断开连接";
+        label.style.color = "";
+      }
+    }
+
+    function handleMobileDisconnectPress() {
+      const btn = $("#m-btn-shutter");
+      const label = $("#m-shutter-label");
+      if (!disconnectArmed) {
+        disconnectArmed = true;
+        if (btn) btn.classList.add("armed");
+        if (label) {
+          label.textContent = "再次点击确认断开";
+          label.style.color = "#ffb0b8";
+        }
+        showMobileToast("⚠️ 再次点击大圆钮确认断开连接");
+        disconnectTimer = setTimeout(() => disarmMobileDisconnect(), 3000);
+      } else {
+        disarmMobileDisconnect();
+        terminateLiveStream("手机端主动断开连接");
+      }
+    }
+
+    /* ================= Pairing & Short Code ================= */
+    function generateRandomCode() {
+      return String(Math.floor(100000 + Math.random() * 900000));
+    }
+
+    function initiatePairingFlow(targetName = "Studio PC (当前电脑)") {
+      appState.targetDevice = targetName;
+      appState.currentPairingCode = generateRandomCode();
+
+      // Mobile setup
+      $("#m-pair-kicker").textContent = `连接到 ${targetName}`;
+      $("#m-pair-code-val").textContent = appState.currentPairingCode;
+      $("#m-pair-code-val").classList.remove("expired");
+      $("#m-btn-pair-primary").textContent = "两端数字一致，确认配对";
+      $("#m-btn-pair-primary").dataset.action = "m-confirm-pairing";
+
+      let ttl = 60;
+      const ttlEl = $("#m-code-ttl");
+      ttlEl.classList.remove("danger");
+      ttlEl.textContent = `短码 ${ttl} 秒内有效`;
+
+      clearTimer("pairingCode");
+      timers.pairingCode = setInterval(() => {
+        ttl -= 1;
+        if (ttl <= 0) {
+          clearTimer("pairingCode");
+          ttlEl.classList.add("danger");
+          ttlEl.textContent = "短码已过期，请重新生成";
+          $("#m-pair-code-val").classList.add("expired");
+          $("#m-btn-pair-primary").textContent = "重新生成短码";
+          $("#m-btn-pair-primary").dataset.action = "m-regen-pairing-code";
+          return;
+        }
+        ttlEl.textContent = `短码 ${ttl} 秒内有效`;
+      }, 1000);
+
+      goMobileScreen("pairing");
+
+      // Desktop Dialog setup
+      $("#d-pair-incoming-dev").textContent = "Xiaomi 14 Ultra (手机端)";
+      $("#d-pair-code-val").textContent = appState.currentPairingCode;
+      $("#d-modal-pairing").classList.add("show");
+    }
+
+    /* ================= Scenario Executions ================= */
+    const stories = {
+      "story-1": () => {
+        // ① 首次配对全流程
+        terminateLiveStream();
+        initiatePairingFlow("Studio PC (当前电脑)");
+        showMobileToast("剧本①：首次配对开始，请在两端核对短码");
+      },
+      "story-2": () => {
+        // ② 配对被电脑拒绝
+        terminateLiveStream();
+        initiatePairingFlow("Studio PC (当前电脑)");
+        setTimeout(() => {
+          $("#d-modal-pairing").classList.remove("show");
+          goMobileScreen("wait");
+          $("#m-wait-pending-box").hidden = true;
+          $("#m-wait-reject-box").hidden = false;
+          $("#m-wait-timeout-box").hidden = true;
+          showDesktopToast("桌面端已点击拒绝连接");
+        }, 1200);
+      },
+      "story-3": () => {
+        // ③ 短码超时失效
+        terminateLiveStream();
+        initiatePairingFlow("Studio PC (当前电脑)");
+        clearTimer("pairingCode");
+        $("#m-code-ttl").classList.add("danger");
+        $("#m-code-ttl").textContent = "短码已过期 (60s 超时)";
+        $("#m-pair-code-val").classList.add("expired");
+        $("#m-btn-pair-primary").textContent = "重新生成短码";
+        $("#m-btn-pair-primary").dataset.action = "m-regen-pairing-code";
+        showMobileToast("剧本③：短码已过期，请点击重新生成");
+      },
+      "story-4": () => {
+        // ④ 已配对一键直连
+        startLiveStream();
+      },
+      "story-5": () => {
+        // ⑤ 发现为空 → 扫码兜底
+        terminateLiveStream();
+        appState.discoveryEmpty = true;
+        $("#m-discovery-list").hidden = true;
+        $("#m-empty-discovery").hidden = false;
+        $("#m-search-dot").className = "dot-pulse done";
+        $("#m-search-dot").style.background = "var(--warn)";
+        $("#m-search-text").textContent = "发现完成 · 未找到电脑 (mDNS 可能被企业网屏蔽)";
+        $("#m-btn-scan-qr").className = "btn btn-primary";
+        showMobileToast("剧本⑤：mDNS 未找到设备，已将扫码提升为主操作");
+      },
+      "story-6": () => {
+        // ⑥ 相机权限被拒 → 手动 IP
+        goMobileScreen("qr");
+        $("#m-qr-wrap").classList.add("denied");
+        showMobileToast("剧本⑥：模拟相机权限被拒，提供 IP 直连兜底");
+      },
+      "story-7": () => {
+        // ⑦ 推流中调整摄像头/画质/EV
+        if (!appState.isConnected) startLiveStream();
+        adjustEv(1);
+        flipCamera();
+      },
+      "story-8": () => {
+        // ⑧ 过热降档保护
+        if (!appState.isConnected) startLiveStream();
+        appState.isThermalThrottled = true;
+        setResolution("720");
+        updateMobileLiveUI();
+        showMobileToast("🔥 剧本⑧：手机触发过热保护，强制降至 720p 并禁用 1080p");
+      },
+      "story-9": () => {
+        // ⑨ 网络中断 → 自动退避重连
+        if (!appState.isConnected) startLiveStream();
+        appState.isReconnecting = true;
+        $("#m-reconnect-overlay").classList.add("show");
+        $("#d-videosurface-canvas").classList.add("placeholder-mode");
+        $("#d-placeholder-content").hidden = false;
+
+        let retryCount = 1;
+        const retryTimes = [500, 1000, 2000];
+        showMobileToast("模拟 Wi-Fi 抖动断线，开始退避重试…");
+        showDesktopToast("视频流接收中断 · 虚拟摄像头自动切换占位图");
+
+        const nextRetry = () => {
+          if (!appState.isReconnecting) return;
+          if (retryCount <= 2) {
+            $("#m-reconnect-msg").innerHTML = `QUIC 会话重试中 · 第 ${retryCount} 次 (${retryTimes[retryCount-1]}ms)<br />连接恢复后将自动请求 IDR 关键帧`;
+            retryCount++;
+            timers.reconnect = setTimeout(nextRetry, 1200);
+          } else {
+            // Reconnected!
+            appState.isReconnecting = false;
+            $("#m-reconnect-overlay").classList.remove("show");
+            $("#d-videosurface-canvas").classList.remove("placeholder-mode");
+            $("#d-placeholder-content").hidden = true;
+            appState.streamEpoch += 1;
+            showMobileToast("重连成功！已恢复推流 (IDR 关键帧已请求)");
+            showDesktopToast("连接恢复 · 虚拟摄像头恢复实时画面");
+          }
+        };
+        timers.reconnect = setTimeout(nextRetry, 1000);
+      },
+      "story-10": () => {
+        // ⑩ 管理已配对设备
+        goMobileScreen("settings");
+        openMobileSheet("m-sheet-device-manage");
+        showMobileToast("剧本⑩：管理信任设备与撤销配对");
+      },
+      "story-11": () => {
+        // ⑪ 虚拟摄像头未就绪与修复
+        setDesktopView("idle");
+        appState.vcamInstalled = false;
+        const pill = $("#d-vcam-pill");
+        pill.className = "d-vcam-status-pill uninstalled";
+        pill.innerHTML = "<span>⚠️ 虚拟摄像头驱动：未安装 / 未批准</span>";
+        $("#d-modal-settings").classList.add("show");
+        showDesktopToast("剧本⑪：虚拟摄像头未就绪，请在设置中修复");
+      }
+    };
+
+    /* ================= Global Click Delegate ================= */
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]") || e.target.closest("[data-mode]") || e.target.closest("[data-story]");
+      if (!btn) return;
+
+      // View Mode Switching
+      if (btn.dataset.mode) {
+        setViewMode(btn.dataset.mode);
+        return;
+      }
+
+      // Story Scenario Execution
+      if (btn.dataset.story) {
+        $$(".scenario-btn").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        if (stories[btn.dataset.story]) stories[btn.dataset.story]();
+        return;
+      }
+
+      const action = btn.dataset.action;
+
+      // Mobile Actions
+      if (action === "m-open-settings") goMobileScreen("settings");
+      else if (action === "m-settings-back") goMobileScreen("devices");
+      else if (action === "m-scan-qr") goMobileScreen("qr");
+      else if (action === "m-qr-back") goMobileScreen("devices");
+      else if (action === "m-connect-studio") initiatePairingFlow("Studio PC (当前电脑)");
+      else if (action === "m-connect-surface") startLiveStream();
+      else if (action === "m-offline-tap") showMobileToast("该电脑处于离线状态，请确认其已开机并启动应用");
+      else if (action === "m-device-menu") {
+        $("#m-sheet-dev-name").textContent = btn.dataset.device || "已配对设备";
+        openMobileSheet("m-sheet-device-manage");
+      }
+      else if (action === "m-delete-paired-device") {
+        closeMobileSheets();
+        showMobileToast("已撤销信任并删除配对记录，下次连接需重新核对短码");
+        showDesktopToast("已删除配对 Sender 设备");
+      }
+      else if (action === "m-confirm-pairing") {
+        clearTimer("pairingCode");
+        goMobileScreen("wait");
+        $("#m-wait-pending-box").hidden = false;
+        $("#m-wait-reject-box").hidden = true;
+        $("#m-wait-timeout-box").hidden = true;
+      }
+      else if (action === "m-cancel-pairing" || action === "m-cancel-wait" || action === "m-wait-back-devices") {
+        $("#d-modal-pairing").classList.remove("show");
+        goMobileScreen("devices");
+      }
+      else if (action === "m-regen-pairing-code") initiatePairingFlow(appState.targetDevice);
+      else if (action === "m-simulate-scan-success") {
+        showMobileToast("二维码扫描成功 · 直连 QUIC 端口");
+        initiatePairingFlow("Studio PC (扫码直连)");
+      }
+      else if (action === "m-trigger-qr-denied") $("#m-qr-wrap").classList.add("denied");
+      else if (action === "m-manual-ip-connect") {
+        showMobileToast("正在直连指定 IP 端口…");
+        initiatePairingFlow("Studio PC (IP 直连)");
+      }
+      else if (action === "m-feed-tap") triggerCameraFocus(e);
+      else if (action === "m-cycle-res") cycleResolution();
+      else if (action === "m-toggle-immersive") setMobileImmersive(!appState.isImmersive);
+      else if (action === "m-toggle-lock") setMobileLocked(!appState.isScreenLocked);
+      else if (action === "m-flip-camera") flipCamera();
+      else if (action === "m-toggle-mirror") toggleMobileMirror();
+      else if (action === "m-toggle-ev") toggleMobileEvPanel();
+      else if (action === "m-ev-plus") adjustEv(1);
+      else if (action === "m-ev-minus") adjustEv(-1);
+      else if (action === "m-ev-reset") adjustEv(0);
+      else if (action === "m-disconnect-press") handleMobileDisconnectPress();
+      else if (action === "m-stop-reconnect") terminateLiveStream("已取消重连");
+      else if (action === "m-close-sheets") closeMobileSheets();
+      else if (action === "m-toggle-autoconnect") {
+        appState.autoConnectEnabled = !appState.autoConnectEnabled;
+        $("#m-sw-autoconnect").classList.toggle("on", appState.autoConnectEnabled);
+        showMobileToast(`开机自动直连已${appState.autoConnectEnabled ? "开启" : "关闭"}`);
+      }
+      else if (action === "m-open-default-res") openMobileSheet("m-sheet-res");
+      else if (action === "m-open-paired-list") openMobileSheet("m-sheet-device-manage");
+      else if (action === "m-open-perm-check") showMobileToast("相机权限、局域网访问与防锁屏权限均已正常获得");
+
+      // Desktop Actions
+      else if (action === "d-pair-accept") {
+        $("#d-modal-pairing").classList.remove("show");
+        startLiveStream();
+      }
+      else if (action === "d-pair-reject") {
+        $("#d-modal-pairing").classList.remove("show");
+        goMobileScreen("wait");
+        $("#m-wait-pending-box").hidden = true;
+        $("#m-wait-reject-box").hidden = false;
+        $("#m-wait-timeout-box").hidden = true;
+        showDesktopToast("已拒绝来自手机端的连接请求");
+      }
+      else if (action === "d-disconnect-session") terminateLiveStream("桌面端主动断开会话");
+      else if (action === "d-request-idr") {
+        appState.streamEpoch += 1;
+        showDesktopToast(`已向手机发送 IDR 强制关键帧请求 (epoch:${appState.streamEpoch})`);
+        showMobileToast("收到桌面端 IDR 请求 · 硬件编码器已插入关键帧");
+      }
+      else if (action === "d-open-settings") $("#d-modal-settings").classList.add("show");
+      else if (action === "d-close-settings") $("#d-modal-settings").classList.remove("show");
+      else if (action === "d-reinstall-vcam") {
+        appState.vcamInstalled = true;
+        const pill = $("#d-vcam-pill");
+        pill.className = "d-vcam-status-pill";
+        pill.innerHTML = "<span>● 虚拟摄像头驱动：就绪 (Ready)</span>";
+        $("#d-vcam-driver-desc").textContent = "Windows Media Foundation / macOS CMIO Extension: 就绪";
+        showDesktopToast("虚拟摄像头驱动安装与激活成功！");
+      }
+      else if (action === "d-delete-paired-sender") {
+        $("#d-paired-manage-list").innerHTML = "<p style='color:var(--muted);font-size:0.8rem;margin:4px 0;'>暂无已信任的 Sender 设备</p>";
+        showDesktopToast("已撤销信任设备");
+      }
+      else if (action === "d-export-logs") {
+        showDesktopToast("已导出诊断日志 pico-camera-diag-2026.json (脱敏已完成)");
+      }
+    });
+
+    // Initial setup
+    setViewMode("dual");
+  </script>
+</body>
+</html>
