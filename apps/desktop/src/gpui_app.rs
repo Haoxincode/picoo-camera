@@ -405,6 +405,37 @@ impl PicooDesktopApp {
             )
     }
 
+    fn render_idle_brand_logo(&self) -> impl IntoElement {
+        div()
+            .size(px(72.))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(rgba(0xff6a3dff))
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_1()
+                    .child(
+                        div()
+                            .w(px(28.))
+                            .h(px(20.))
+                            .rounded(px(4.))
+                            .border_2()
+                            .border_color(rgb(0xffffff)),
+                    )
+                    .child(
+                        div()
+                            .w(px(10.))
+                            .h(px(12.))
+                            .rounded(px(2.))
+                            .bg(rgb(0xffffff)),
+                    ),
+            )
+    }
+
     fn render_waiting(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
         let endpoint = endpoint_label(snapshot);
         let vcam = vcam_label_zh(snapshot.virtual_camera);
@@ -425,18 +456,7 @@ impl PicooDesktopApp {
                     .items_center()
                     .gap_5()
                     .px_8()
-                    .child(
-                        div()
-                            .size(px(72.))
-                            .rounded_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .bg(rgba(0xff6a3dff))
-                            .text_xl()
-                            .text_color(rgb(0xffffff))
-                            .child("▶"),
-                    )
+                    .child(self.render_idle_brand_logo())
                     .child(
                         div()
                             .text_2xl()
@@ -1047,8 +1067,8 @@ fn vcam_label(status: VirtualCameraStatus) -> &'static str {
 fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
     match status {
         VirtualCameraStatus::Unknown => "检测中",
-        VirtualCameraStatus::Installed => "已安装",
-        VirtualCameraStatus::NotInstalled => "未安装",
+        VirtualCameraStatus::Installed => "就绪 (Ready)",
+        VirtualCameraStatus::NotInstalled => "未安装 (Not Installed)",
         VirtualCameraStatus::Active => "就绪 (Active)",
     }
 }
