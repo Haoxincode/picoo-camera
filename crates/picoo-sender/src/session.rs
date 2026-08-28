@@ -807,7 +807,8 @@ impl<T: PicooTransport> SenderSession<T> {
             self.persist_trusted()?;
         }
 
-        self.status = SenderStatus::Streaming;
+        // REQ-PICOO-SESSION-004: pairing → streaming must request IDR (same as reconnect).
+        self.enter_streaming();
         Ok(())
     }
 
@@ -1241,6 +1242,12 @@ mod tests {
         session
             .send_pairing_confirm("windows-receiver")
             .expect("confirm");
+
+        assert_eq!(session.status(), SenderStatus::Streaming);
+        assert!(
+            session.take_keyframe_request(),
+            "pairing confirm must request IDR before first encode"
+        );
 
         let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("load");
         assert!(loaded.is_paired("windows-receiver"));
