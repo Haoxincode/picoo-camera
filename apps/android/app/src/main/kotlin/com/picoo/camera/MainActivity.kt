@@ -465,19 +465,47 @@ private fun SenderHomeScreen(
         }
     }
 
-    LaunchedEffect(senderStatus) {
-        when (senderStatus) {
+    // REQ-PICOO-UI-005: camera FGS only while encode is active (Android 14+ camera type).
+    LaunchedEffect(senderStatus, cameraGranted, encoderState) {
+        val encoding = encoderState == CaptureState.Previewing
+        val liveEncode = cameraGranted && encoding && when (senderStatus) {
             PicooNative.STATUS_STREAMING,
             PicooNative.STATUS_NEGOTIATING,
-            PicooNative.STATUS_PAIRING,
-            PicooNative.STATUS_CONNECTING,
-            PicooNative.STATUS_NETWORK_UNSTABLE,
             PicooNative.STATUS_RECONNECTING,
-            -> {
-                onRequestNotifications()
-                StreamingForegroundService.start(context)
+            PicooNative.STATUS_NETWORK_UNSTABLE,
+            -> true
+            else -> false
+        }
+        if (liveEncode) {
+            onRequestNotifications()
+            StreamingForegroundService.start(context)
+        } else {
+            StreamingForegroundService.stop(context)
+        }
+    }
+
+    // REQ-PICOO-MEDIA-001: start Camera2→MediaCodec as soon as STREAMING, even before
+    // the Compose preview SurfaceTexture binds (codec-only session).
+    LaunchedEffect(senderStatus, cameraGranted) {
+        val shouldEncode = cameraGranted && when (senderStatus) {
+            PicooNative.STATUS_STREAMING,
+            PicooNative.STATUS_NEGOTIATING,
+            PicooNative.STATUS_RECONNECTING,
+            PicooNative.STATUS_NETWORK_UNSTABLE,
+            -> true
+            else -> false
+        }
+        if (shouldEncode) {
+            encoder.startPreview()
+            if (senderHandle != 0L && PicooNative.takeKeyframeRequest(senderHandle) == 1) {
+                encoder.requestKeyFrame()
             }
-            else -> StreamingForegroundService.stop(context)
+            encoderState = encoder.state
+        } else if (senderStatus == PicooNative.STATUS_DISCONNECTED &&
+            encoder.state == CaptureState.Previewing
+        ) {
+            encoder.stopPreview()
+            encoderState = encoder.state
         }
     }
 
@@ -520,6 +548,7 @@ private fun SenderHomeScreen(
             if (senderHandle != 0L) {
                 PicooNative.pump(senderHandle)
                 senderStatus = PicooNative.getSenderStatus(senderHandle)
+                encoderState = encoder.state
                 pairingCode = PicooNative.getPairingShortCode(senderHandle)
                 connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
                 connectedReceiverName =

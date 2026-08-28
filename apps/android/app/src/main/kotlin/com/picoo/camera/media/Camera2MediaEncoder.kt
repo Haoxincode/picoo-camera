@@ -96,20 +96,30 @@ class Camera2MediaEncoder(
     }
 
     override fun bindPreviewSurface(surface: Surface) {
+        val changed = previewSurface !== surface
         previewSurface = surface
-        if (_state.get() == CaptureState.Idle) {
-            startPreview()
+        when {
+            _state.get() == CaptureState.Idle -> startPreview()
+            changed && cameraDevice != null && codecInputSurface != null ->
+                rebuildCaptureSession(cameraDevice!!)
         }
     }
 
     override fun unbindPreviewSurface() {
+        if (previewSurface == null) return
         previewSurface = null
-        stopPreview()
+        // Keep H.264 encode alive when the Compose TextureView is torn down
+        // (tab switch / config change); rebuild a codec-only Camera2 session.
+        val camera = cameraDevice
+        if (_state.get() == CaptureState.Previewing && camera != null && codecInputSurface != null) {
+            rebuildCaptureSession(camera)
+        }
     }
 
     override fun startPreview() {
         if (_state.get() == CaptureState.Previewing) return
-        if (previewSurface == null) return
+        // Codec-only capture is allowed so STREAMING can encode before the
+        // local preview SurfaceTexture is ready (REQ-PICOO-MEDIA-001).
         lastError = null
         openCamera()
     }
@@ -239,12 +249,20 @@ class Camera2MediaEncoder(
         codec.setCallback(codecCallback, codecHandler)
         codec.start()
 
-        val preview = previewSurface ?: run {
-            fail("Preview surface missing")
+        rebuildCaptureSession(camera)
+    }
+
+    /** Create / replace the Camera2 session using preview (optional) + codec InputSurface. */
+    private fun rebuildCaptureSession(camera: CameraDevice) {
+        val codecSurface = codecInputSurface ?: run {
+            fail("Codec input surface missing")
             return
         }
-
-        val targets = listOf(preview, codecInputSurface!!)
+        closeCaptureSession()
+        val targets = buildList {
+            previewSurface?.let { add(it) }
+            add(codecSurface)
+        }
         runCatching {
             camera.createCaptureSession(
                 targets,
