@@ -5,6 +5,10 @@ import org.junit.Test
 
 class MediaBitrateTest {
     @Test
+    fun usesOnePointEightMbpsFor480p() {
+        assertEquals(1_800_000, MediaBitrate.forResolution(854, 480))
+    }
+
     fun usesThreeMbpsFor720p() {
         assertEquals(3_000_000, MediaBitrate.forResolution(1280, 720))
     }
@@ -16,6 +20,10 @@ class MediaBitrateTest {
 
     @Test
     fun laddersMatchAbrBounds() {
+        val ladder480 = MediaBitrate.ladderForHeight(480)
+        assertEquals(900_000, ladder480.minBps)
+        assertEquals(1_800_000, ladder480.initialBps)
+        assertEquals(2_500_000, ladder480.maxBps)
         val ladder720 = MediaBitrate.ladderForHeight(720)
         assertEquals(1_500_000, ladder720.minBps)
         assertEquals(5_000_000, ladder720.maxBps)

@@ -45,6 +45,7 @@ import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
+import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.network.WifiNetworkInfo
@@ -377,7 +378,9 @@ private fun SenderHomeScreen(
     }
 
     fun applyStreamConfigToSender() {
-        val (width, height) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
+        val res = StreamResolution.fromLabel(resolutionLabel)
+        val width = res.width
+        val height = res.height
         val bitrate = when {
             adaptiveBitrateBps > 0 -> adaptiveBitrateBps
             else -> MediaBitrate.forResolution(width, height)
@@ -589,7 +592,7 @@ private fun SenderHomeScreen(
             if (senderHandle != 0L) {
                 PicooNative.setThermalHold(senderHandle, force720)
             }
-            if (force720 && resolutionLabel != "720p") {
+            if (force720 && resolutionLabel == "1080p") {
                 resolutionLabel = "720p"
                 encoder.setResolution(1280, 720)
                 if (senderHandle != 0L) {
@@ -656,11 +659,12 @@ private fun SenderHomeScreen(
                             val w = camOut[0]
                             val h = camOut[1]
                             if (w > 0 && h > 0) {
-                                resolutionLabel = if (h >= 1080) "1080p" else "720p"
-                                preferredResolutionLabel = resolutionLabel
-                                encoder.setResolution(w, h)
-                                PicooNative.setPreferredHeight(senderHandle, h)
-                                PicooNative.syncEncodeHeight(senderHandle, h)
+                                val res = StreamResolution.fromHeight(h)
+                                resolutionLabel = res.label
+                                preferredResolutionLabel = res.label
+                                encoder.setResolution(res.width, res.height)
+                                PicooNative.setPreferredHeight(senderHandle, res.height)
+                                PicooNative.syncEncodeHeight(senderHandle, res.height)
                                 streamConfigDirty.set(true)
                                 encoder.requestKeyFrame()
                             }
@@ -672,7 +676,7 @@ private fun SenderHomeScreen(
                     }
                 }
                 if (PicooNative.takeResolutionDownshift(senderHandle) == 1 &&
-                    resolutionLabel != "720p"
+                    StreamResolution.fromLabel(resolutionLabel).height > 720
                 ) {
                     resolutionLabel = "720p"
                     encoder.setResolution(1280, 720)
@@ -842,8 +846,8 @@ private fun SenderHomeScreen(
                 onOpenPairedDevices = { senderTab = SenderTab.Devices },
                 onToggleAutoConnect = { suppressAutoConnect = !suppressAutoConnect },
                 onOpenDefaultResolution = {
-                    preferredResolutionLabel =
-                        if (preferredResolutionLabel == "1080p") "720p" else "1080p"
+                    val cur = StreamResolution.fromLabel(preferredResolutionLabel)
+                    preferredResolutionLabel = StreamResolution.next(cur, thermalForced720 = false).label
                 },
             )
             SenderTab.Qr -> QrScanScreen(
@@ -960,22 +964,24 @@ private fun SenderHomeScreen(
                     applyStreamConfigToSender()
                 },
                 onToggleResolution = {
+                    val current = StreamResolution.fromLabel(resolutionLabel)
+                    val next = StreamResolution.next(current, thermalForced720)
                     val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
-                    val want1080 = resolutionLabel == "720p"
-                    if (want1080 && maxH in 1 until 1080) {
-                        errorText = "接收端最高 ${maxH}p — 保持 720p"
+                    if (maxH in 1 until next.height) {
+                        errorText = "接收端最高 ${maxH}p — 无法切换至 ${next.label}"
                         return@StreamingScreen
                     }
-                    if (thermalForced720 && want1080) {
+                    if (thermalForced720 && next == StreamResolution.P1080) {
                         errorText = "设备过热，暂不可升 1080p"
                         return@StreamingScreen
                     }
-                    resolutionLabel = if (want1080) "1080p" else "720p"
-                    preferredResolutionLabel = resolutionLabel
-                    val (w, h) = if (resolutionLabel == "1080p") 1920 to 1080 else 1280 to 720
-                    PicooNative.setPreferredHeight(senderHandle, h)
-                    PicooNative.syncEncodeHeight(senderHandle, h)
-                    encoder.setResolution(w, h)
+                    resolutionLabel = next.label
+                    if (!thermalForced720) {
+                        preferredResolutionLabel = next.label
+                    }
+                    PicooNative.setPreferredHeight(senderHandle, next.height)
+                    PicooNative.syncEncodeHeight(senderHandle, next.height)
+                    encoder.setResolution(next.width, next.height)
                     encoderState = encoder.state
                     applyStreamConfigToSender()
                     errorText = null
