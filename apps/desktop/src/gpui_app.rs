@@ -24,9 +24,7 @@ use smallvec::smallvec;
 use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::model::VirtualCameraStatus;
 use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
-use crate::preview_page::{
-    preview_page_from_env, resolve_initial_shell, InitialDesktopPage,
-};
+use crate::preview_page::{preview_page_from_env, resolve_initial_shell, InitialDesktopPage};
 use crate::qr_display;
 use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSummary};
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
@@ -1175,20 +1173,16 @@ impl PicooDesktopApp {
                             .child(self.render_settings(snapshot, cx)),
                     )
                     .child(
-                        div()
-                            .h_flex()
-                            .justify_end()
-                            .flex_none()
-                            .child(
-                                Button::new("close-settings")
-                                    .primary()
-                                    .label("完成并保存")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.save_display_name(cx);
-                                        this.settings_open = false;
-                                        cx.notify();
-                                    })),
-                            ),
+                        div().h_flex().justify_end().flex_none().child(
+                            Button::new("close-settings")
+                                .primary()
+                                .label("完成并保存")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.save_display_name(cx);
+                                    this.settings_open = false;
+                                    cx.notify();
+                                })),
+                        ),
                     ),
             )
     }
@@ -1215,7 +1209,11 @@ impl PicooDesktopApp {
                             .h_flex()
                             .gap_2()
                             .items_center()
-                            .child(div().w(px(160.)).child(Input::new(&self.display_name_input)))
+                            .child(
+                                div()
+                                    .w(px(160.))
+                                    .child(Input::new(&self.display_name_input)),
+                            )
                             .child(
                                 Button::new("save-display-name")
                                     .ghost()
@@ -1272,72 +1270,83 @@ impl PicooDesktopApp {
                             .into_any_element(),
                     ))
             }))
-            .child(settings_group("虚拟摄像头管理 (Virtual Camera)", cx, |group| {
-                group
-                    .child(settings_row(
-                        "系统虚拟摄像头驱动状态",
-                        vcam_repair_hint(self.vcam_status),
-                        cx,
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(if self.vcam_status == VirtualCameraStatus::Unsupported {
-                                        cx.theme().danger_foreground
-                                    } else {
-                                        cx.theme().success
-                                    })
-                                    .child(vcam_label_zh(self.vcam_status)),
-                            )
-                            .when(
-                                self.vcam_status != VirtualCameraStatus::Unsupported,
-                                |this| {
-                                    this.child(
-                                        Button::new("repair-vcam")
-                                            .ghost()
-                                            .small()
-                                            .label("修复 / 重新激活")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.try_register_vcam();
+            .child(settings_group(
+                "虚拟摄像头管理 (Virtual Camera)",
+                cx,
+                |group| {
+                    group
+                        .child(settings_row(
+                            "系统虚拟摄像头驱动状态",
+                            vcam_repair_hint(self.vcam_status),
+                            cx,
+                            div()
+                                .h_flex()
+                                .gap_2()
+                                .items_center()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(
+                                            if self.vcam_status == VirtualCameraStatus::Unsupported
+                                            {
+                                                cx.theme().danger_foreground
+                                            } else {
+                                                cx.theme().success
+                                            },
+                                        )
+                                        .child(vcam_label_zh(self.vcam_status)),
+                                )
+                                .when(
+                                    self.vcam_status != VirtualCameraStatus::Unsupported,
+                                    |this| {
+                                        this.child(
+                                            Button::new("repair-vcam")
+                                                .ghost()
+                                                .small()
+                                                .label("修复 / 重新激活")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.try_register_vcam();
+                                                    cx.notify();
+                                                })),
+                                        )
+                                    },
+                                )
+                                .into_any_element(),
+                        ))
+                        .child(settings_row(
+                            "未推流时默认占位画面",
+                            ring_hint.as_str(),
+                            cx,
+                            div()
+                                .h_flex()
+                                .gap_1()
+                                .children(crate::prefs::PlaceholderModePref::ALL.iter().map(
+                                    |mode| {
+                                        let selected = self.prefs.placeholder_mode == *mode;
+                                        let mut button =
+                                            Button::new(format!("placeholder-{mode:?}"))
+                                                .small()
+                                                .ghost()
+                                                .label(mode.label());
+                                        if selected {
+                                            button = button.primary();
+                                        }
+                                        let mode = *mode;
+                                        button
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.prefs.placeholder_mode = mode;
+                                                this.runtime
+                                                    .set_placeholder_mode(mode.to_frame_hub());
+                                                let _ = this.persist_prefs();
                                                 cx.notify();
-                                            })),
-                                    )
-                                },
-                            )
-                            .into_any_element(),
-                    ))
-                    .child(settings_row(
-                        "未推流时默认占位画面",
-                        ring_hint.as_str(),
-                        cx,
-                        div()
-                            .h_flex()
-                            .gap_1()
-                            .children(crate::prefs::PlaceholderModePref::ALL.iter().map(|mode| {
-                                let selected = self.prefs.placeholder_mode == *mode;
-                                let mut button = Button::new(format!("placeholder-{mode:?}"))
-                                    .small()
-                                    .ghost()
-                                    .label(mode.label());
-                                if selected {
-                                    button = button.primary();
-                                }
-                                let mode = *mode;
-                                button
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.prefs.placeholder_mode = mode;
-                                        this.runtime.set_placeholder_mode(mode.to_frame_hub());
-                                        let _ = this.persist_prefs();
-                                        cx.notify();
-                                    }))
-                                    .into_any_element()
-                            }))
-                            .into_any_element(),
-                    ))
-            }))
+                                            }))
+                                            .into_any_element()
+                                    },
+                                ))
+                                .into_any_element(),
+                        ))
+                },
+            ))
             .child(settings_group("信任设备管理 (PUC-007)", cx, |group| {
                 group
                     .child(
