@@ -395,7 +395,7 @@ fn show_tray_context_menu(hwnd: windows::Win32::Foundation::HWND) {
             TPM_LEFTALIGN | TPM_RIGHTBUTTON,
             pt.x,
             pt.y,
-            Some(0),
+            0,
             hwnd,
             None,
         );
@@ -416,7 +416,7 @@ pub fn pump_win32_tray_messages() {
         };
         unsafe {
             let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+            while PeekMessageW(&mut msg, hwnd, 0, 0, PM_REMOVE).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }

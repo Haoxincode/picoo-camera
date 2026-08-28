@@ -197,8 +197,10 @@ impl PicooDesktopApp {
         ) {
             Ok(result) => {
                 self.diagnostics_error = None;
-                self.diagnostics_message =
-                    Some(format!("已导出至 {}（已脱敏，不含视频）", result.path));
+                self.diagnostics_message = Some(format!(
+                    "已导出至 {}（已脱敏，不含视频）",
+                    result.path.as_deref().unwrap_or("(未知路径)")
+                ));
             }
             Err(err) => {
                 self.diagnostics_message = None;
