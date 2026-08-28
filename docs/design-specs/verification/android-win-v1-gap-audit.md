@@ -1,6 +1,6 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · tip `b8c9d46`（PairingConfirm 回归测试 + fmt 修复）· 新 tip 待 CI 确认
+> 分支：`cursor/android-win-v1-gates-dbe3` · tip `65dd60a` · CI run [33140658307](https://github.com/Haoxincode/picoo-camera/actions/runs/33140658307) rust+android ✅ / windows MSI 注释已修 · 新 tip 待 CI
 >
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
