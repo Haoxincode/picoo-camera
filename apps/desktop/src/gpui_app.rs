@@ -15,6 +15,7 @@ use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
 use image::{Frame, ImageBuffer, Rgba};
+use picoo_discovery::DEFAULT_QUIC_PORT;
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 use smallvec::smallvec;
@@ -405,70 +406,103 @@ impl PicooDesktopApp {
     }
 
     fn render_waiting(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
-        let endpoint = snapshot
-            .bind_addr
-            .map(|a| a.to_string())
-            .unwrap_or_else(|| "—".into());
+        let endpoint = endpoint_label(snapshot);
         let vcam = vcam_label_zh(snapshot.virtual_camera);
+        let vcam_ready = matches!(
+            snapshot.virtual_camera,
+            VirtualCameraStatus::Installed | VirtualCameraStatus::Active
+        );
 
         div()
             .v_flex()
             .size_full()
             .items_center()
             .justify_center()
-            .gap_5()
-            .p_8()
+            .bg(rgba(0x14171fff))
             .child(
                 div()
-                    .text_2xl()
-                    .font_weight(FontWeight::BOLD)
-                    .child("等待手机连接…"),
-            )
-            .child(
-                div()
-                    .max_w_96()
-                    .text_center()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("在同一 Wi‑Fi 下打开手机端 Picoo Camera，将自动发现本电脑。也可通过手机直接扫描下方二维码建立直连。"),
-            )
-            .child(
-                div()
-                    .px_3()
-                    .py_1p5()
-                    .rounded_full()
-                    .bg(cx.theme().muted)
-                    .text_sm()
-                    .child(format!("● 虚拟摄像头：{vcam}")),
-            )
-            .child(self.render_qr_card(snapshot, cx))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!(
-                        "QUIC 监听 {endpoint} · 已配对 {} 台",
-                        snapshot.trusted_device_count
-                    )),
+                    .v_flex()
+                    .items_center()
+                    .gap_5()
+                    .px_8()
+                    .child(
+                        div()
+                            .size(px(72.))
+                            .rounded_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(rgba(0xff6a3dff))
+                            .text_xl()
+                            .text_color(rgb(0xffffff))
+                            .child("▶"),
+                    )
+                    .child(
+                        div()
+                            .text_2xl()
+                            .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xf4f2ed))
+                            .child("等待手机连接…"),
+                    )
+                    .child(
+                        div()
+                            .max_w_96()
+                            .text_center()
+                            .text_sm()
+                            .text_color(proto_muted_fg())
+                            .child("在同一 Wi‑Fi 下打开手机端 Picoo Camera，将自动发现本电脑。也可通过手机直接扫描下方二维码建立直连。"),
+                    )
+                    .child(
+                        div()
+                            .px_4()
+                            .py_2()
+                            .rounded_full()
+                            .when(vcam_ready, |this| {
+                                this.bg(rgba(0x1a3ecf8e)).border_1().border_color(rgba(0x403ecf8e))
+                            })
+                            .when(!vcam_ready, |this| {
+                                this.bg(rgba(0x1aff5c6c)).border_1().border_color(rgba(0x40ff5c6c))
+                            })
+                            .text_sm()
+                            .text_color(if vcam_ready {
+                                rgba(0x3ecf8eff)
+                            } else {
+                                rgba(0xff9da8ff)
+                            })
+                            .child(format!("● 虚拟摄像头驱动：{vcam}")),
+                    )
+                    .child(self.render_qr_card(snapshot, cx))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(proto_muted_fg())
+                            .child(format!(
+                                "QUIC 监听 {endpoint} · 已配对 {} 台",
+                                snapshot.trusted_device_count
+                            )),
+                    ),
             )
     }
 
     fn render_qr_card(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+        let endpoint = endpoint_label(snapshot);
         div()
             .h_flex()
-            .gap_4()
-            .p_4()
+            .gap_6()
+            .p_5()
             .rounded_lg()
             .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().muted)
+            .border_color(rgba(0x14ffffff))
+            .bg(rgba(0x1b202cff))
+            .max_w(px(480.))
             .child(
                 div()
-                    .w_32()
-                    .h_32()
+                    .w(px(120.))
+                    .h(px(120.))
                     .rounded_md()
                     .overflow_hidden()
-                    .bg(cx.theme().background)
+                    .bg(rgb(0xffffff))
+                    .p_2()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -504,18 +538,29 @@ impl PicooDesktopApp {
             .child(
                 div()
                     .v_flex()
-                    .gap_1()
+                    .gap_2()
                     .child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(0xf4f2ed))
                             .child("Show QR Code (扫码直连)"),
                     )
-                    .child("企业网络 mDNS 受限时扫码直连 QUIC 端口")
                     .child(
                         div()
-                            .font_family("monospace")
                             .text_sm()
-                            .child(endpoint_label(snapshot)),
+                            .text_color(proto_muted_fg())
+                            .child("企业网络 mDNS 受限时扫码直连 QUIC 端口"),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(rgba(0x1affb347))
+                            .text_sm()
+                            .font_family("monospace")
+                            .text_color(rgba(0xffb347ff))
+                            .child(endpoint),
                     )
                     .when(self.show_qr, |this| {
                         this.child(Button::new("toggle-qr").label("隐藏二维码").on_click(
@@ -546,39 +591,60 @@ impl PicooDesktopApp {
         div()
             .absolute()
             .inset_0()
-            .bg(rgba(0x08000000))
+            .bg(rgba(0xa6000000))
             .flex()
             .items_center()
             .justify_center()
             .child(
                 div()
                     .v_flex()
-                    .gap_3()
+                    .gap_4()
                     .p_6()
                     .w_96()
                     .rounded_lg()
                     .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().background)
+                    .border_color(rgba(0x29ffffff))
+                    .bg(rgba(0x1b202cff))
                     .shadow_lg()
                     .child(
                         div()
                             .text_lg()
                             .font_weight(FontWeight::BOLD)
+                            .text_color(rgb(0xf4f2ed))
                             .child("核对配对短码"),
                     )
-                    .child(format!(
-                        "来自 {sender_name} 的连接请求。请确认手机上显示相同的 6 位数字："
-                    ))
                     .child(
                         div()
-                            .text_3xl()
-                            .font_weight(FontWeight::BOLD)
-                            .text_center()
-                            .py_3()
-                            .child(pairing),
+                            .text_sm()
+                            .text_color(proto_muted_fg())
+                            .child(format!(
+                                "来自 {sender_name} 的连接请求。请确认手机上显示相同的 6 位数字："
+                            )),
                     )
-                    .child("握手上下文派生短码 · 60s 内有效")
+                    .child(
+                        div()
+                            .v_flex()
+                            .items_center()
+                            .p_4()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(rgba(0x14ffffff))
+                            .bg(rgba(0x14171fff))
+                            .child(
+                                div()
+                                    .text_3xl()
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(rgb(0xffffff))
+                                    .child(pairing),
+                            )
+                            .child(
+                                div()
+                                    .mt_1()
+                                    .text_xs()
+                                    .text_color(proto_muted_fg())
+                                    .child("握手上下文派生短码 · 60s 内有效"),
+                            ),
+                    )
                     .child(
                         div()
                             .h_flex()
@@ -636,24 +702,26 @@ impl PicooDesktopApp {
         div()
             .v_flex()
             .size_full()
+            .bg(rgb(0x07090d))
             .child(
                 div()
                     .flex_1()
                     .relative()
-                    .bg(cx.theme().muted)
+                    .bg(rgb(0x020305))
                     .overflow_hidden()
                     .child(self.video_surface.render_preview())
                     .child(
                         div()
                             .absolute()
                             .top_3()
-                            .left_3()
+                            .left_4()
+                            .right_4()
                             .h_flex()
-                            .gap_2()
+                            .justify_between()
                             .child(live_hud_pill(format!("● {sender_name}")))
                             .child(live_hud_pill(format!(
                                 "Virtual Camera: {}",
-                                vcam_label(snapshot.virtual_camera)
+                                vcam_label(snapshot.virtual_camera).to_uppercase()
                             ))),
                     ),
             )
@@ -662,13 +730,14 @@ impl PicooDesktopApp {
                     .v_flex()
                     .gap_3()
                     .p_4()
+                    .bg(rgba(0x1b202cff))
                     .border_t_1()
-                    .border_color(cx.theme().border)
+                    .border_color(rgba(0x14ffffff))
                     .child(
                         div()
                             .grid()
                             .grid_cols(3)
-                            .gap_2()
+                            .gap_3()
                             .child(telemetry_cell("画质规格", res_label))
                             .child(telemetry_cell("实时帧率", fps))
                             .child(telemetry_cell("接收码率", format!("{bitrate:.1} Mbps")))
@@ -689,13 +758,15 @@ impl PicooDesktopApp {
                                     cx.notify();
                                 }),
                             ))
-                            .child(Button::new("disconnect").label("断开会话").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.runtime.disconnect();
-                                    this.page = DesktopPage::Waiting;
-                                    cx.notify();
-                                }),
-                            )),
+                            .child(
+                                Button::new("disconnect")
+                                    .label("断开会话")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.runtime.disconnect();
+                                        this.page = DesktopPage::Waiting;
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             )
     }
@@ -936,21 +1007,28 @@ fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
     }
 }
 
+fn proto_muted_fg() -> Hsla {
+    rgba(0x959daeff).into()
+}
+
 fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
-    snapshot
-        .bind_addr
-        .map(|a| a.to_string())
-        .unwrap_or_else(|| "—".into())
+    if snapshot.advertise_host.is_empty() {
+        return "—".into();
+    }
+    format!("{}:{DEFAULT_QUIC_PORT}", snapshot.advertise_host)
 }
 
 fn live_hud_pill(label: String) -> impl IntoElement {
     div()
-        .px_2p5()
-        .py_1()
-        .rounded_full()
-        .bg(rgba(0x99000000))
+        .px_3()
+        .py_1p5()
+        .rounded_md()
+        .bg(rgba(0xb30a0c12))
+        .border_1()
+        .border_color(rgba(0x1fffffff))
         .text_xs()
-        .text_color(rgb(0xd7dbe6))
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(rgb(0xf4f2ed))
         .child(label)
 }
 
@@ -958,11 +1036,19 @@ fn telemetry_cell(label: &'static str, value: String) -> impl IntoElement {
     div()
         .v_flex()
         .gap_0p5()
-        .child(div().text_xs().text_color(rgb(0x959dae)).child(label))
+        .child(
+            div()
+                .text_xs()
+                .font_weight(FontWeight::BOLD)
+                .text_color(proto_muted_fg())
+                .child(label.to_uppercase()),
+        )
         .child(
             div()
                 .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
+                .font_family("monospace")
+                .font_weight(FontWeight::BOLD)
+                .text_color(rgb(0xf4f2ed))
                 .child(value),
         )
 }

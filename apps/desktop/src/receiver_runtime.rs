@@ -63,6 +63,8 @@ impl Default for ReceiverRuntimeConfig {
 pub struct ReceiverSnapshot {
     pub status: ReceiverStatus,
     pub bind_addr: Option<SocketAddr>,
+    /// Unicast IPv4 in mDNS / QR (never 0.0.0.0).
+    pub advertise_host: String,
     pub pairing_short_code: Option<String>,
     pub qr_json: Option<String>,
     pub qr_ascii: Option<String>,
@@ -343,6 +345,7 @@ impl ReceiverRuntime {
         ReceiverSnapshot {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
+            advertise_host: self.advertise_host.clone(),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
             qr_json: self.qr_json.clone(),
             qr_ascii: self.qr_ascii.clone(),

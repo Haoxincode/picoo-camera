@@ -728,6 +728,8 @@ private fun SenderHomeScreen(
                 cameraGranted = cameraGranted,
                 nearbyWifiGranted = nearbyWifiGranted,
                 notificationsGranted = notificationsGranted,
+                autoConnectEnabled = !suppressAutoConnect,
+                defaultResolutionLabel = preferredResolutionLabel,
                 onBack = { senderTab = SenderTab.Devices },
                 onCheckPermissions = {
                     onRequestNearbyWifi()
@@ -735,6 +737,11 @@ private fun SenderHomeScreen(
                     onRequestCamera(null)
                 },
                 onOpenPairedDevices = { senderTab = SenderTab.Devices },
+                onToggleAutoConnect = { suppressAutoConnect = !suppressAutoConnect },
+                onOpenDefaultResolution = {
+                    preferredResolutionLabel =
+                        if (preferredResolutionLabel == "1080p") "720p" else "1080p"
+                },
             )
             SenderTab.Qr -> QrScanScreen(
                 cameraGranted = cameraGranted,
@@ -812,6 +819,17 @@ private fun SenderHomeScreen(
                 localPreviewMirrored = localPreviewMirrored,
                 thermalForced720 = thermalForced720,
                 powerHint = if (thermalForced720) "" else powerHint,
+                reconnecting = senderStatus == PicooNative.STATUS_RECONNECTING ||
+                    senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
+                packetLossLabel = run {
+                    val link = PicooNative.getLinkStats(senderHandle)
+                    if (link != null && link.size >= 2) {
+                        val lossPct = (link[1] * 100).toInt()
+                        "$lossPct% 丢包"
+                    } else {
+                        "0% 丢包"
+                    }
+                },
                 onRequestCamera = { onRequestCamera(null) },
                 onFlipCamera = {
                     encoder.switchCamera()
@@ -852,6 +870,12 @@ private fun SenderHomeScreen(
                 exposureEv = exposureEv,
                 evSupported = !encoder.exposureCompensationRange.isEmpty(),
                 onDisconnect = {
+                    suppressAutoConnect = true
+                    PicooNative.disconnect(senderHandle)
+                    senderStatus = PicooNative.getSenderStatus(senderHandle)
+                    resetToDevices()
+                },
+                onStopReconnect = {
                     suppressAutoConnect = true
                     PicooNative.disconnect(senderHandle)
                     senderStatus = PicooNative.getSenderStatus(senderHandle)
