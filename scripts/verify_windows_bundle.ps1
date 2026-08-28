@@ -1,5 +1,6 @@
 # Verify staged Windows bundle embeds Picoo Camera identity (REQ-PICOO-VCAM-001).
-# Runs on windows-latest after `xtask package windows`. Does NOT replace Win11 meeting-app acceptance (VCAM-005).
+# Runs on windows-latest after `xtask package windows`. Does NOT install MSI or run regsvr32;
+# Win11 perMachine install acceptance remains manual (see vcam-meeting-apps.md).
 $ErrorActionPreference = "Stop"
 
 # scripts/ → repo root (one level up). Do NOT double-parent like installers/windows/*.ps1.

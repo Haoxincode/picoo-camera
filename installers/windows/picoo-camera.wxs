@@ -15,30 +15,9 @@
       <ComponentGroupRef Id="ProductComponents" />
     </Feature>
 
-    <!-- COM registration: deferred CA must use [#FileId] (not [INSTALLFOLDER]) so the
-         resolved install path is baked into the execute script. Run 64-bit regsvr32 from
-         SystemFolder with Impersonate=no (elevated perMachine install). -->
-    <CustomAction
-        Id="RegisterVcamDll"
-        Directory="SystemFolder"
-        ExeCommand="regsvr32.exe /s &quot;[#PicooVcamDll]&quot;"
-        Execute="deferred"
-        Impersonate="no"
-        Return="check" />
-    <CustomAction
-        Id="UnregisterVcamDll"
-        Directory="SystemFolder"
-        ExeCommand="regsvr32.exe /u /s &quot;[#PicooVcamDll]&quot;"
-        Execute="deferred"
-        Impersonate="no"
-        Return="check" />
-
-    <!-- MFCreateVirtualCamera Session is started by picoo-desktop on first launch (REQ-PICOO-VCAM-002). -->
-
-    <InstallExecuteSequence>
-      <Custom Action="RegisterVcamDll" After="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="UnregisterVcamDll" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
-    </InstallExecuteSequence>
+    <!-- COM registration: declarative registry (DllRegisterServer equivalent). Avoids
+         deferred regsvr32 ExeCommand failures (Return=check aborts install on clean Win11
+         when DLL load or DllRegisterServer fails). MF virtual camera remains first-launch. -->
   </Package>
 
   <Fragment>
@@ -72,6 +51,28 @@
       </Component>
       <Component Id="VcamDll" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E72">
         <File Id="PicooVcamDll" Source="!(bindpath.Bundle)\PicooVirtualCameraSource.dll" KeyPath="yes" />
+        <!-- CLSID must match picoo_vcam_ids.h / vcam_register.rs (REQ-PICOO-VCAM-002/004). -->
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}"
+            Name=""
+            Type="string"
+            Value="Picoo Camera"
+            KeyPath="no" />
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32"
+            Name=""
+            Type="string"
+            Value="[#PicooVcamDll]"
+            KeyPath="no" />
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32"
+            Name="ThreadingModel"
+            Type="string"
+            Value="Both"
+            KeyPath="no" />
       </Component>
       <Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73">
         <File Id="PicooRingReader" Source="!(bindpath.Bundle)\picoo-vcam-ring-reader.exe" KeyPath="yes" />

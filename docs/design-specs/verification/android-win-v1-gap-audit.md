@@ -103,9 +103,9 @@
 
 功能路径（NSD / QR / 配对 / 流控）已在 Compose 接线；**Android 侧 UX 缺口已收窄至字体/真机 UX 验收**。
 
-## Windows MSI / VCam 安装（`2b22237`）
+## Windows MSI / VCam 安装
 
-[`2b22237`](https://github.com/Haoxincode/picoo-camera/commit/2b22237) 修正 WiX deferred `regsvr32` 自定义动作：`SystemFolder` 作工作目录、`[#PicooVcamDll]` 解析已安装 DLL 路径（REQ-PICOO-VCAM-004）。仍须 Win11 真机验证 MSI 安装/卸载与 COM 枚举。
+[`2b22237`](https://github.com/Haoxincode/picoo-camera/commit/2b22237) 曾修正 deferred `regsvr32` 路径，但干净 Win11 上 `Return=check` 仍会因 `DllRegisterServer`/DLL 加载失败中止安装。**当前方案**：WiX 在 `VcamDll` 组件内声明式写入 COM CLSID 注册表（等效 `DllRegisterServer`），移除 deferred `regsvr32`；MF 仍由首次启动 `picoo-desktop` 注册（REQ-PICOO-VCAM-004）。仍须 Win11 真机验证 MSI 安装/卸载与 COM 枚举。
 
 ## 本会话建议的关闭顺序（真机）
 

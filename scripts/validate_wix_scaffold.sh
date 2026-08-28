@@ -36,22 +36,27 @@ need "$WXS" 'UpgradeCode="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E70"'
 need "$WXS" 'PicooVirtualCameraSource.dll'
 need "$WXS" 'picoo-desktop.exe'
 need "$WXS" 'picoo-vcam-ring-reader.exe'
-need "$WXS" 'Directory="SystemFolder"'
-need "$WXS" 'ExeCommand="regsvr32.exe /s &quot;[#PicooVcamDll]&quot;"'
-need "$WXS" 'ExeCommand="regsvr32.exe /u /s &quot;[#PicooVcamDll]&quot;"'
-need "$WXS" 'RegisterVcamDll'
-need "$WXS" 'UnregisterVcamDll'
+need "$WXS" 'Software\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}'
+need "$WXS" 'InprocServer32'
+need "$WXS" 'ThreadingModel'
+need "$WXS" 'Value="[#PicooVcamDll]"'
+need "$WXS" 'Value="Both"'
+need "$WXS" 'Value="Picoo Camera"'
 need "$WXS" 'FirewallQuic'
 need "$WXS" 'KeyPath="yes"'
-need "$WXS" 'Return="check"'
 need "$WXS" 'MajorUpgrade'
 need "$WXS" 'StartMenuDesktop'
-need "$WXS" 'Condition="NOT REMOVE"'
-need "$WXS" 'Condition="REMOVE~=&quot;ALL&quot;"'
 need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[1234]"'
 need "$WXS" 'Component Id="DesktopExe"'
 need "$WXS" 'Component Id="VcamDll"'
 need "$WXS" 'Component Id="RingReader"'
+# Deferred regsvr32 Return=check aborts MSI when DllRegisterServer fails on clean Win11.
+if grep -qF 'RegisterVcamDll' "$WXS" || grep -qF 'regsvr32.exe' "$WXS"; then
+  echo "picoo-camera.wxs must not use deferred regsvr32 (use declarative COM registry)"
+  fail=1
+else
+  echo "ok: picoo-camera.wxs avoids deferred regsvr32"
+fi
 # LAN QUIC firewall exception scaffolding (PRD §19.3)
 need "$WXS" 'FirewallException'
 need "$WXS" 'xmlns:fw='
