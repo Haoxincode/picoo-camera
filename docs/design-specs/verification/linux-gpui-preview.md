@@ -16,7 +16,7 @@ Windows 产品 Receiver（真 VCam / MSI）在这条闭环可验证之后再做�
 ## 要测什么
 
 1. **功能**：启动 Receiver runtime → Waiting 展示 QR / advertise endpoint / mDNS 已起来 → 设置可改显示名与偏好并落盘 → 有流时进入 Live → 配对中弹出短码框。
-2. **UI**：对照 HTML `d-view-idle`、`d-modal-settings`、`d-view-live`。强制 Dark Slate，标题栏为「Picoo Camera Receiver」+ GPUI badge + 设置齿轮，没有「等待连接 / 直播 / 设置」假导航。字体为 Bricolage Grotesque / Figtree / JetBrains Mono，不是系统默认 UI 字体。
+2. **UI**：对照 HTML `d-view-idle`、`d-modal-settings`、`d-view-live`。强制 Dark Slate，标题栏为「Picoo Camera Receiver」+ GPUI badge + 设置齿轮，没有「等待连接 / 直播 / 设置」假导航。拉丁字体为 Bricolage Grotesque / Figtree / JetBrains Mono；汉字回退 `Noto Sans SC`（Linux 嵌入）→ 苹方 / 雅黑，不是碰系统默认。
 
 ## 范围
 

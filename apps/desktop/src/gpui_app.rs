@@ -371,8 +371,7 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_sm()
-                            .font_family(crate::picoo_theme::FONT_DISPLAY)
-                            .font_weight(FontWeight::BOLD)
+                            .font(crate::picoo_theme::display_font(FontWeight::BOLD))
                             .text_color(cx.theme().foreground)
                             .child("Picoo Camera Receiver"),
                     )
@@ -414,8 +413,7 @@ impl PicooDesktopApp {
             .child(
                 div()
                     .text_2xl()
-                    .font_family(crate::picoo_theme::FONT_DISPLAY)
-                    .font_weight(FontWeight::EXTRA_BOLD)
+                    .font(crate::picoo_theme::display_font(FontWeight::EXTRA_BOLD))
                     .child("Picoo Camera"),
             )
             .child(
@@ -548,8 +546,7 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_2xl()
-                            .font_family(crate::picoo_theme::FONT_DISPLAY)
-                            .font_weight(FontWeight::EXTRA_BOLD)
+                            .font(crate::picoo_theme::display_font(FontWeight::EXTRA_BOLD))
                             .text_color(cx.theme().foreground)
                             .child("等待手机连接…"),
                     )
@@ -709,8 +706,7 @@ impl PicooDesktopApp {
                     .gap_2()
                     .child(
                         div()
-                            .font_family(crate::picoo_theme::FONT_DISPLAY)
-                            .font_weight(FontWeight::SEMIBOLD)
+                            .font(crate::picoo_theme::display_font(FontWeight::SEMIBOLD))
                             .text_color(cx.theme().foreground)
                             .child("Show QR Code (扫码直连)"),
                     )
@@ -811,8 +807,7 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .text_lg()
-                            .font_family(crate::picoo_theme::FONT_DISPLAY)
-                            .font_weight(FontWeight::BOLD)
+                            .font(crate::picoo_theme::display_font(FontWeight::BOLD))
                             .text_color(cx.theme().foreground)
                             .child("核对配对短码"),
                     )
@@ -1158,8 +1153,7 @@ impl PicooDesktopApp {
                             .child(
                                 div()
                                     .text_lg()
-                                    .font_family(crate::picoo_theme::FONT_DISPLAY)
-                                    .font_weight(FontWeight::BOLD)
+                                    .font(crate::picoo_theme::display_font(FontWeight::BOLD))
                                     .text_color(cx.theme().foreground)
                                     .child("桌面端设置中心"),
                             )
@@ -1769,7 +1763,11 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 });
                 // Tray uses a Win32 message-only host (FindWindowW fallback remains).
                 let _ = crate::tray::pump_win32_tray_messages();
-                cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
+                cx.new(|cx| {
+                    Root::new(view, window, cx)
+                        .bg(cx.theme().background)
+                        .font(crate::picoo_theme::body_font())
+                })
             },
         )
         .expect("open window");

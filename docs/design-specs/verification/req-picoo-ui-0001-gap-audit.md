@@ -87,4 +87,4 @@
 | 桌面 AC | 4 | 8 | 0 |
 | Anti-Pattern | 3 | 1 | 0 |
 
-**REQ-PICOO-UI-0001 仍不可宣称 `verified`。** 桌面验证面已落到 Linux 同一套 GPUI 壳（`REQ-PICOO-UI-010`）：可启动、可对照 `#d-view-idle` / `#d-modal-settings` 截图像素。字体已嵌入 Bricolage Grotesque / Figtree / JetBrains Mono。剩余：logo/遮罩精修、Live 真流、Windows 真 VCam。不要只因 Linux 窗口能打开就标 verified。
+**REQ-PICOO-UI-0001 仍不可宣称 `verified`。** 桌面验证面已落到 Linux 同一套 GPUI 壳（`REQ-PICOO-UI-010`）：可启动、可对照 `#d-view-idle` / `#d-modal-settings` 截图像素。字体已嵌入 Bricolage Grotesque / Figtree / JetBrains Mono；汉字回退 Noto Sans SC。剩余：logo/遮罩精修、Live 真流、Windows 真 VCam。不要只因 Linux 窗口能打开就标 verified。

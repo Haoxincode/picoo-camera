@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{rgb, rgba, App, Hsla, Rgba};
+use gpui::{rgb, rgba, App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Hsla, Rgba};
 use gpui_component::{Theme, ThemeMode, ThemeTokens};
 
 /// HTML `--font-display`. Titles and brand only.
@@ -16,6 +16,37 @@ pub const FONT_DISPLAY: &str = "Bricolage Grotesque";
 pub const FONT_BODY: &str = "Figtree";
 /// HTML `--font-mono`. Telemetry, short codes, IP:Port.
 pub const FONT_MONO: &str = "JetBrains Mono";
+/// Embedded Linux Han fallback. System aliases follow in [`han_fallbacks`].
+pub const FONT_HAN: &str = "Noto Sans SC";
+
+/// Figtree / Bricolage missing Han → SC gothic, then platform UI.
+pub fn han_fallbacks() -> FontFallbacks {
+    FontFallbacks::from_fonts(vec![
+        FONT_HAN.to_string(),
+        "Noto Sans CJK SC".into(),
+        "Source Han Sans SC".into(),
+        "PingFang SC".into(),
+        "Microsoft YaHei UI".into(),
+    ])
+}
+
+pub fn body_font() -> Font {
+    font_with_han(FONT_BODY, FontWeight::default())
+}
+
+pub fn display_font(weight: FontWeight) -> Font {
+    font_with_han(FONT_DISPLAY, weight)
+}
+
+fn font_with_han(family: &str, weight: FontWeight) -> Font {
+    Font {
+        family: family.into(),
+        features: FontFeatures::default(),
+        fallbacks: Some(han_fallbacks()),
+        weight,
+        style: FontStyle::default(),
+    }
+}
 
 /// Load OFL faces, then stamp prototype colors, type and tokens.
 pub fn apply_picoo_theme(cx: &mut App) {
@@ -105,7 +136,8 @@ pub fn apply_picoo_theme(cx: &mut App) {
 }
 
 fn load_picoo_fonts(cx: &App) {
-    let faces: Vec<Cow<'static, [u8]>> = vec![
+    #[allow(unused_mut)]
+    let mut faces: Vec<Cow<'static, [u8]>> = vec![
         Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Regular.ttf")),
         Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-Medium.ttf")),
         Cow::Borrowed(include_bytes!("../assets/fonts/Figtree-SemiBold.ttf")),
@@ -120,6 +152,13 @@ fn load_picoo_fonts(cx: &App) {
         Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Medium.ttf")),
         Cow::Borrowed(include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf")),
     ];
+    // Windows / macOS use PingFang / YaHei. Linux verification embeds Noto Sans SC.
+    #[cfg(target_os = "linux")]
+    {
+        faces.push(Cow::Borrowed(include_bytes!(
+            "../assets/fonts/NotoSansSC-Variable.ttf"
+        )));
+    }
     cx.text_system()
         .add_fonts(faces)
         .expect("load Picoo OFL fonts");
@@ -181,6 +220,18 @@ mod tests {
         assert_eq!(FONT_DISPLAY, "Bricolage Grotesque");
         assert_eq!(FONT_BODY, "Figtree");
         assert_eq!(FONT_MONO, "JetBrains Mono");
+        assert_eq!(FONT_HAN, "Noto Sans SC");
+    }
+
+    #[test]
+    fn han_fallback_prefers_source_han_then_platform() {
+        let fallbacks = han_fallbacks();
+        let names = fallbacks.fallback_list();
+        assert_eq!(names[0], FONT_HAN);
+        assert!(names.contains(&"PingFang SC".to_string()));
+        assert!(names.contains(&"Microsoft YaHei UI".to_string()));
+        assert_eq!(body_font().family.as_ref(), FONT_BODY);
+        assert_eq!(display_font(FontWeight::BOLD).family.as_ref(), FONT_DISPLAY);
     }
 
     #[test]
@@ -189,6 +240,8 @@ mod tests {
             include_bytes!("../assets/fonts/Figtree-Regular.ttf").as_slice(),
             include_bytes!("../assets/fonts/BricolageGrotesque-Bold.ttf").as_slice(),
             include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf").as_slice(),
+            #[cfg(target_os = "linux")]
+            include_bytes!("../assets/fonts/NotoSansSC-Variable.ttf").as_slice(),
         ] {
             assert!(
                 bytes.starts_with(b"\x00\x01\x00\x00") || bytes.starts_with(b"OTTO"),
