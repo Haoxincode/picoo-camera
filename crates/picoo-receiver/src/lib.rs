@@ -717,11 +717,30 @@ impl ReceiverSession {
 
     fn handle_control(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         if self.pending_pairing.is_some() {
-            // Prost will decode many unrelated blobs as PairingConfirm with an empty
-            // signature — only accept SHA-256-length confirm signatures.
+            // Prost will decode many unrelated blobs as PairingConfirm — require a
+            // SHA-256-length signature that verifies against the pending challenge.
             if let Ok(confirm) = PairingConfirm::decode(msg.as_ref()) {
                 if confirm.confirm_signature.len() == 32 {
-                    return self.handle_pairing_confirm(session, msg);
+                    if let Some(pending) = self.pending_pairing.as_ref() {
+                        if session == pending.session && self.local_pairing_confirmed {
+                            let sender_id = self
+                                .active_sender
+                                .as_ref()
+                                .map(|s| s.sender_id.as_str())
+                                .unwrap_or("");
+                            if verify_pairing_confirm(
+                                &pending.challenge_nonce,
+                                &self.identity.receiver_id,
+                                sender_id,
+                                &confirm.confirm_signature,
+                            )
+                            .is_ok()
+                            {
+                                return self.handle_pairing_confirm(session, msg);
+                            }
+                        }
+                    }
+                    // Unrelated control blob false-positive — keep waiting for real confirm.
                 }
             }
             // PAIRING-003: StartStream during pending pairing must be rejected explicitly.
