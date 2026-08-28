@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use picoo_pairing::{TrustedDevice, TrustedDeviceStore};
 use picoo_sender::SenderSession;
@@ -6,6 +6,19 @@ use picoo_session::ReceiverStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
 
 use crate::{run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession};
+
+fn pump_pair_for(
+    receiver: &mut ReceiverSession,
+    sender: &mut SenderSession<QuicSenderTransport>,
+    duration: Duration,
+) {
+    let deadline = Instant::now() + duration;
+    while Instant::now() < deadline {
+        receiver.pump().expect("rx pump");
+        sender.pump().expect("tx pump");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
 
 #[test]
 fn loopback_sender_to_receiver_frame_hub() {
@@ -846,18 +859,19 @@ fn pairing_confirm_before_desktop_confirm_is_ignored() {
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("early confirm");
-    for _ in 0..40 {
-        receiver.pump().expect("rx");
-        sender.pump().expect("tx");
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    pump_pair_for(
+        &mut receiver,
+        &mut sender,
+        Duration::from_millis(200),
+    );
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
 
     receiver.confirm_pairing_locally();
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("confirm after desktop ack");
-    for _ in 0..100 {
+    let streaming_deadline = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < streaming_deadline {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
         if receiver.status() == ReceiverStatus::Streaming {

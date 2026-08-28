@@ -87,7 +87,7 @@
 
 ## Compose UI vs HTML 原型（REQ-PICOO-UI-0001）
 
-[`63c9799`](https://github.com/Haoxincode/picoo-camera/commit/63c9799) + [`e57e1a6`](https://github.com/Haoxincode/picoo-camera/commit/e57e1a6) 对齐六屏 + P0 验收项：JetBrains Mono 短码、60s TTL、扫码自动继续、Wi‑Fi SSID pill、Wait 拒绝/超时、GPUI Nonce/遥测单行。详见 [req-picoo-ui-0001-gap-audit.md](req-picoo-ui-0001-gap-audit.md)。
+[`63c9799`](https://github.com/Haoxincode/picoo-camera/commit/63c9799) + [`e57e1a6`](https://github.com/Haoxincode/picoo-camera/commit/e57e1a6) 对齐六屏 + P0 验收项。tip `71bc304` 追加 P1：**480p 三档轮换**、**翻转 180° 动画**、**轻触对焦环/双击沉浸**、桌面 **idle 摄像机 logo**。详见 [req-picoo-ui-0001-gap-audit.md](req-picoo-ui-0001-gap-audit.md)。
 
 ## Windows MSI / VCam 安装
 
