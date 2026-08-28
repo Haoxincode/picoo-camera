@@ -859,11 +859,7 @@ fn pairing_confirm_before_desktop_confirm_is_ignored() {
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("early confirm");
-    pump_pair_for(
-        &mut receiver,
-        &mut sender,
-        Duration::from_millis(200),
-    );
+    pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(200));
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
 
     receiver.confirm_pairing_locally();
