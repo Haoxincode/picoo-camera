@@ -1139,11 +1139,9 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .gap_3()
-                    .p_6()
+                    .p_5()
                     .w(px(620.))
-                    .max_h(px(640.))
-                    // ScrollableElement must be in scope — Windows CI failed without it.
-                    .overflow_y_scrollbar()
+                    .h(px(560.))
                     .rounded_lg()
                     .border_1()
                     .border_color(cx.theme().border)
@@ -1153,6 +1151,7 @@ impl PicooDesktopApp {
                         div()
                             .v_flex()
                             .gap_1()
+                            .flex_none()
                             .child(
                                 div()
                                     .text_lg()
@@ -1167,11 +1166,19 @@ impl PicooDesktopApp {
                                     .child("Receiver 运行参数、虚拟摄像头状态与已配对设备管理"),
                             ),
                     )
-                    .child(self.render_settings(snapshot, cx))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            // ScrollableElement must be in scope — Windows CI failed without it.
+                            .overflow_y_scrollbar()
+                            .child(self.render_settings(snapshot, cx)),
+                    )
                     .child(
                         div()
                             .h_flex()
                             .justify_end()
+                            .flex_none()
                             .child(
                                 Button::new("close-settings")
                                     .primary()
