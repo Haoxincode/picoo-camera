@@ -1,6 +1,6 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · tip 待 push（WIX0104 scaffold guard）· 末次全绿 CI [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632)（`690cdbf`）
+> 分支：`cursor/android-win-v1-gates-dbe3` · tip `37fdf5b` · 全绿 CI [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632)（`690cdbf`）；含 WIX0104 scaffold guard
 >
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
