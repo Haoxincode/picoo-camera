@@ -208,7 +208,7 @@ impl ReceiverRuntime {
             .set_auto_accept_paired(prefs.auto_accept_paired);
         runtime
             .receiver
-            .set_use_default_placeholder(prefs.use_default_placeholder);
+            .set_placeholder_mode(prefs.placeholder_mode.to_frame_hub());
         // Refresh FrameHub/ring placeholder to match preference.
         let _ = runtime.receiver.publish_waiting_placeholder();
         Ok(runtime)
@@ -269,6 +269,12 @@ impl ReceiverRuntime {
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_use_default_placeholder(&mut self, enabled: bool) {
         self.receiver.set_use_default_placeholder(enabled);
+        let _ = self.receiver.publish_waiting_placeholder();
+    }
+
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+    pub fn set_placeholder_mode(&mut self, mode: picoo_frame_hub::PlaceholderMode) {
+        self.receiver.set_placeholder_mode(mode);
         let _ = self.receiver.publish_waiting_placeholder();
     }
 

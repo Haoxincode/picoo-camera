@@ -11,8 +11,8 @@ pub use nv12::{
     nv12_preview_rgba_max_width, nv12_rotate_clockwise,
 };
 pub use placeholder::{
-    nv12_black, nv12_byte_size, reconnecting_placeholder, waiting_placeholder, PLACEHOLDER_HEIGHT,
-    PLACEHOLDER_WIDTH,
+    color_bars_placeholder, nv12_black, nv12_byte_size, reconnecting_placeholder,
+    waiting_placeholder, PlaceholderMode, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
 pub use shared_ring::{
     SharedFrameRingConsumer, SharedFrameRingProducer, SharedFrameView, SharedRingError,

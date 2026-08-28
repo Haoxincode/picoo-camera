@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use picoo_frame_hub::{
-    nv12_black, reconnecting_placeholder, waiting_placeholder, FrameHub, FrameSlot,
-    SharedFrameRingProducer, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
+    FrameHub, FrameSlot, PlaceholderMode, SharedFrameRingProducer, PLACEHOLDER_HEIGHT,
+    PLACEHOLDER_WIDTH,
 };
 use picoo_jitter::{Frame as JitterFrame, JitterBuffer};
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError};
@@ -147,8 +147,8 @@ pub struct ReceiverSession {
     permit_unpaired_video: bool,
     /// When true (default), already-trusted senders skip short-code confirm (PUC-002).
     auto_accept_paired: bool,
-    /// When true (default), use branded waiting placeholder; else solid black (PRD §16).
-    use_default_placeholder: bool,
+    /// Idle placeholder style (PRD §16 / AC-D-SET-01).
+    placeholder_mode: picoo_frame_hub::PlaceholderMode,
     shared_ring: Option<SharedFrameRingProducer>,
     current_stream_config: Option<StreamConfig>,
     receiver_capabilities_sent: Option<()>,
@@ -192,7 +192,7 @@ impl ReceiverSession {
             stats_reporter: StatsReporter::new(),
             permit_unpaired_video: false,
             auto_accept_paired: true,
-            use_default_placeholder: true,
+            placeholder_mode: PlaceholderMode::Logo,
             shared_ring: None,
             current_stream_config: None,
             receiver_capabilities_sent: None,
@@ -258,11 +258,7 @@ impl ReceiverSession {
     }
 
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
-        let nv12 = if self.use_default_placeholder {
-            waiting_placeholder()
-        } else {
-            nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
-        };
+        let nv12 = self.placeholder_mode.waiting_frame();
         self.publish_nv12_frame(
             PLACEHOLDER_WIDTH,
             PLACEHOLDER_HEIGHT,
@@ -275,11 +271,7 @@ impl ReceiverSession {
 
     /// Publish reconnect-branded placeholder (REQ-PICOO-FRAME-005).
     pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
-        let nv12 = if self.use_default_placeholder {
-            reconnecting_placeholder()
-        } else {
-            nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
-        };
+        let nv12 = self.placeholder_mode.reconnecting_frame();
         self.publish_nv12_frame(
             PLACEHOLDER_WIDTH,
             PLACEHOLDER_HEIGHT,
@@ -300,12 +292,25 @@ impl ReceiverSession {
     }
 
     /// Prefer branded waiting frame (`true`) or solid black (`false`) — PRD §16.
+    /// Prefer [`set_placeholder_mode`] for Logo / Black / Bars.
     pub fn set_use_default_placeholder(&mut self, enabled: bool) {
-        self.use_default_placeholder = enabled;
+        self.placeholder_mode = if enabled {
+            PlaceholderMode::Logo
+        } else {
+            PlaceholderMode::Black
+        };
     }
 
     pub fn use_default_placeholder(&self) -> bool {
-        self.use_default_placeholder
+        matches!(self.placeholder_mode, PlaceholderMode::Logo)
+    }
+
+    pub fn set_placeholder_mode(&mut self, mode: PlaceholderMode) {
+        self.placeholder_mode = mode;
+    }
+
+    pub fn placeholder_mode(&self) -> PlaceholderMode {
+        self.placeholder_mode
     }
 
     pub fn set_display_name(&mut self, display_name: impl Into<String>) {

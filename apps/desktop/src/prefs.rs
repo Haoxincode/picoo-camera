@@ -47,6 +47,39 @@ impl LogLevel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaceholderModePref {
+    #[default]
+    Logo,
+    Black,
+    Bars,
+}
+
+impl PlaceholderModePref {
+    pub const ALL: [PlaceholderModePref; 3] = [
+        PlaceholderModePref::Logo,
+        PlaceholderModePref::Black,
+        PlaceholderModePref::Bars,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PlaceholderModePref::Logo => "Picoo Camera Logo",
+            PlaceholderModePref::Black => "纯黑画面",
+            PlaceholderModePref::Bars => "测试彩条",
+        }
+    }
+
+    pub fn to_frame_hub(self) -> picoo_frame_hub::PlaceholderMode {
+        match self {
+            PlaceholderModePref::Logo => picoo_frame_hub::PlaceholderMode::Logo,
+            PlaceholderModePref::Black => picoo_frame_hub::PlaceholderMode::Black,
+            PlaceholderModePref::Bars => picoo_frame_hub::PlaceholderMode::Bars,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopPreferences {
     pub first_launch_completed: bool,
@@ -54,7 +87,11 @@ pub struct DesktopPreferences {
     pub auto_accept_paired: bool,
     pub launch_at_startup: bool,
     pub minimize_to_tray: bool,
-    pub use_default_placeholder: bool,
+    #[serde(default)]
+    pub placeholder_mode: PlaceholderModePref,
+    /// Legacy bool; migrated into [`placeholder_mode`] on load when present.
+    #[serde(default, skip_serializing)]
+    pub use_default_placeholder: Option<bool>,
     pub log_level: LogLevel,
 }
 
@@ -66,8 +103,22 @@ impl Default for DesktopPreferences {
             auto_accept_paired: true,
             launch_at_startup: false,
             minimize_to_tray: true,
-            use_default_placeholder: true,
+            placeholder_mode: PlaceholderModePref::Logo,
+            use_default_placeholder: None,
             log_level: LogLevel::Info,
+        }
+    }
+}
+
+impl DesktopPreferences {
+    /// Apply legacy `use_default_placeholder` if `placeholder_mode` was defaulted from old prefs.
+    pub fn migrate_placeholder(&mut self) {
+        if let Some(use_logo) = self.use_default_placeholder.take() {
+            self.placeholder_mode = if use_logo {
+                PlaceholderModePref::Logo
+            } else {
+                PlaceholderModePref::Black
+            };
         }
     }
 }
@@ -96,10 +147,12 @@ pub fn prefs_path() -> PathBuf {
 
 pub fn load_prefs() -> DesktopPreferences {
     let path = prefs_path();
-    match fs::read_to_string(&path) {
+    let mut prefs = match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         Err(_) => DesktopPreferences::default(),
-    }
+    };
+    prefs.migrate_placeholder();
+    prefs
 }
 
 pub fn save_prefs(prefs: &DesktopPreferences) -> Result<(), String> {
@@ -123,5 +176,14 @@ mod tests {
         let parsed: DesktopPreferences = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.display_name, "Picoo Camera");
         assert!(parsed.auto_accept_paired);
+        assert_eq!(parsed.placeholder_mode, PlaceholderModePref::Logo);
+    }
+
+    #[test]
+    fn migrates_legacy_use_default_placeholder_false() {
+        let raw = r#"{"first_launch_completed":true,"display_name":"X","auto_accept_paired":true,"launch_at_startup":false,"minimize_to_tray":true,"use_default_placeholder":false,"log_level":"Info"}"#;
+        let mut prefs: DesktopPreferences = serde_json::from_str(raw).unwrap();
+        prefs.migrate_placeholder();
+        assert_eq!(prefs.placeholder_mode, PlaceholderModePref::Black);
     }
 }

@@ -1,9 +1,55 @@
 //! Placeholder NV12 frames — REQ-PICOO-FRAME-004 / FRAME-005.
 //!
 //! Black background + brand mark + status text drawn into the Y plane.
+//! Also: solid black and simple SMPTE-style color bars (PRD §16 / AC-D-SET-01).
 
 pub const PLACEHOLDER_WIDTH: u32 = 1280;
 pub const PLACEHOLDER_HEIGHT: u32 = 720;
+
+/// Idle / reconnect placeholder style selected in desktop settings (PRD §16).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PlaceholderMode {
+    /// Branded "Waiting for phone…" / "Reconnecting…" frame.
+    #[default]
+    Logo,
+    /// Solid black NV12.
+    Black,
+    /// Vertical color bars (weak-network / debug visual).
+    Bars,
+}
+
+impl PlaceholderMode {
+    pub const ALL: [PlaceholderMode; 3] = [
+        PlaceholderMode::Logo,
+        PlaceholderMode::Black,
+        PlaceholderMode::Bars,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PlaceholderMode::Logo => "Picoo Camera Logo",
+            PlaceholderMode::Black => "纯黑画面",
+            PlaceholderMode::Bars => "测试彩条",
+        }
+    }
+
+    pub fn waiting_frame(self) -> Vec<u8> {
+        match self {
+            PlaceholderMode::Logo => waiting_placeholder(),
+            PlaceholderMode::Black => nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT),
+            PlaceholderMode::Bars => color_bars_placeholder(),
+        }
+    }
+
+    pub fn reconnecting_frame(self) -> Vec<u8> {
+        match self {
+            PlaceholderMode::Logo => reconnecting_placeholder(),
+            PlaceholderMode::Black => nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT),
+            // Bars stay bars during reconnect (still a clear non-live signal).
+            PlaceholderMode::Bars => color_bars_placeholder(),
+        }
+    }
+}
 
 /// NV12 black frame (Y=0, UV=128).
 pub fn nv12_black(width: u32, height: u32) -> Vec<u8> {
@@ -22,6 +68,49 @@ pub fn waiting_placeholder() -> Vec<u8> {
 /// Reconnect placeholder after last-frame hold (REQ-PICOO-FRAME-005 / FR-VCAM-004).
 pub fn reconnecting_placeholder() -> Vec<u8> {
     branded_status_placeholder(b"Reconnecting...")
+}
+
+/// Simple 8-bar color pattern in NV12 (not full SMPTE, enough for VCam debug).
+pub fn color_bars_placeholder() -> Vec<u8> {
+    let w = PLACEHOLDER_WIDTH as usize;
+    let h = PLACEHOLDER_HEIGHT as usize;
+    let y_size = w * h;
+    let mut buf = vec![0u8; y_size + y_size / 2];
+    // Approximate Rec.601 Y/U/V for white, yellow, cyan, green, magenta, red, blue, black.
+    let bars: [(u8, u8, u8); 8] = [
+        (235, 128, 128),
+        (210, 16, 146),
+        (170, 166, 16),
+        (145, 54, 34),
+        (107, 202, 222),
+        (82, 90, 240),
+        (41, 240, 110),
+        (16, 128, 128),
+    ];
+    let bar_w = w / bars.len();
+    for (bi, &(y, u, v)) in bars.iter().enumerate() {
+        let x0 = bi * bar_w;
+        let x1 = if bi + 1 == bars.len() { w } else { x0 + bar_w };
+        for row in 0..h {
+            let row_off = row * w;
+            for x in x0..x1 {
+                buf[row_off + x] = y;
+            }
+        }
+        // UV plane is interleaved UV at half resolution.
+        let uv_base = y_size;
+        for row in 0..(h / 2) {
+            let uv_row = uv_base + row * w;
+            for x in (x0..x1).step_by(2) {
+                let i = uv_row + x;
+                if i + 1 < buf.len() {
+                    buf[i] = u;
+                    buf[i + 1] = v;
+                }
+            }
+        }
+    }
+    buf
 }
 
 fn branded_status_placeholder(status: &[u8]) -> Vec<u8> {
@@ -162,5 +251,17 @@ mod tests {
         );
         let y = &recon[..PLACEHOLDER_WIDTH as usize * PLACEHOLDER_HEIGHT as usize];
         assert!(y.iter().any(|&v| v > 0));
+    }
+
+    #[test]
+    fn color_bars_placeholder_is_valid_nv12_and_not_black() {
+        let frame = color_bars_placeholder();
+        assert_eq!(
+            frame.len(),
+            nv12_byte_size(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
+        );
+        let y_plane = &frame[..PLACEHOLDER_WIDTH as usize * PLACEHOLDER_HEIGHT as usize];
+        assert!(y_plane.iter().any(|&y| y > 16));
+        assert_eq!(PlaceholderMode::Bars.waiting_frame().len(), frame.len());
     }
 }

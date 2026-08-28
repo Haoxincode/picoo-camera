@@ -894,19 +894,27 @@ impl PicooDesktopApp {
                                 let _ = this.persist_prefs();
                                 cx.notify();
                             })),
-                    )
-                    .child(
-                        Switch::new("default-placeholder")
-                            .checked(self.prefs.use_default_placeholder)
-                            .label("默认占位画面")
-                            .on_click(cx.listener(|this, checked, _, cx| {
-                                this.prefs.use_default_placeholder = *checked;
-                                this.runtime.set_use_default_placeholder(*checked);
-                                let _ = this.persist_prefs();
-                                cx.notify();
-                            })),
                     ),
             )
+            .child(GroupBox::new().outline().title("未推流占位画面").children(
+                crate::prefs::PlaceholderModePref::ALL.iter().map(|mode| {
+                    let selected = self.prefs.placeholder_mode == *mode;
+                    let mut button =
+                        Button::new(format!("placeholder-{mode:?}")).label(mode.label());
+                    if selected {
+                        button = button.primary();
+                    }
+                    let mode = *mode;
+                    button
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.prefs.placeholder_mode = mode;
+                            this.runtime.set_placeholder_mode(mode.to_frame_hub());
+                            let _ = this.persist_prefs();
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }),
+            ))
             .child(
                 GroupBox::new()
                     .outline()
