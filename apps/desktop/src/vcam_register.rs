@@ -72,7 +72,7 @@ pub fn com_server_registered() -> bool {
 /// Register COM via `regsvr32` when WiX declarative keys are missing or stale (0x80040154).
 pub fn ensure_com_server_registered() -> Result<(), String> {
     let dll = resolve_vcam_dll().ok_or_else(|| {
-        "PicooVirtualCameraSource.dll not found beside picoo-desktop.exe; reinstall MSI or run from the Windows bundle directory".into()
+        "PicooVirtualCameraSource.dll not found beside picoo-desktop.exe; reinstall MSI or run from the Windows bundle directory".to_string()
     })?;
 
     if com_server_registered() {
@@ -132,14 +132,17 @@ fn read_inproc_server_path() -> Option<PathBuf> {
     let key_wide = wide(INPROC_SERVER_KEY);
     let mut hkey = Default::default();
     unsafe {
-        RegOpenKeyExW(
+        if RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
             PCWSTR(key_wide.as_ptr()),
             0,
             KEY_READ,
             &mut hkey,
         )
-        .ok()?;
+        .is_err()
+        {
+            return None;
+        }
     }
 
     let mut kind = REG_SZ;
@@ -198,7 +201,7 @@ fn register_com_server(dll: &Path) -> Result<(), String> {
     if !com_server_registered() {
         return Err(
             "COM registration still missing after regsvr32; run as Administrator or reinstall MSI"
-                .into(),
+                .to_string(),
         );
     }
     Ok(())
