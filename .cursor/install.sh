@@ -71,7 +71,7 @@ if [ "${PICOO_INSTALL_ANDROID:-0}" = "1" ]; then
     cargo install cargo-ndk --locked
   fi
   if command -v rustup >/dev/null 2>&1; then
-    rustup target add aarch64-linux-android >/dev/null 2>&1 || true
+    rustup target add aarch64-linux-android x86_64-linux-android >/dev/null 2>&1 || true
   fi
 fi
 

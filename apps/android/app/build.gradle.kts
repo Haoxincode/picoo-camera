@@ -6,6 +6,14 @@ plugins {
 
 val workspaceRoot = rootProject.projectDir.parentFile.parentFile
 
+// Default remains arm64-v8a for devices. Cloud / Linux emulator uses x86_64:
+//   PICOO_ANDROID_ABIS=x86_64 ./apps/android/gradlew -p apps/android assembleDebug
+val rustAbis =
+    (System.getenv("PICOO_ANDROID_ABIS") ?: "arm64-v8a")
+        .split(',')
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+
 android {
     namespace = "com.picoo.camera"
     compileSdk = 34
@@ -20,7 +28,7 @@ android {
         versionName = "0.1.0"
 
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += rustAbis
         }
 
         externalNativeBuild {
@@ -102,12 +110,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 }
 
-val rustAbi = "arm64-v8a"
+val rustPageAlignFlags = "-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-soname,libpicoo_ffi.so"
 val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
 
 tasks.register<Exec>("cargoBuildFfi") {
     group = "build"
-    description = "Build picoo-ffi Rust cdylib for Android arm64"
+    description = "Build picoo-ffi Rust cdylib for configured Android ABIs"
     workingDir = workspaceRoot
     val ndkHome = System.getenv("ANDROID_NDK_HOME") ?: android.ndkDirectory.absolutePath
     doFirst {
@@ -117,25 +125,25 @@ tasks.register<Exec>("cargoBuildFfi") {
             .filter { it.isFile && it.name.startsWith("libquiche-") && it.extension == "so" }
             .forEach { it.delete() }
     }
-    commandLine(
-        "cargo",
-        "ndk",
-        "-t",
-        rustAbi,
-        "-o",
-        jniLibsDir.asFile.absolutePath,
-        "build",
-        "--release",
-        "-p",
-        "picoo-ffi",
-    )
+    val cargoNdkArgs = mutableListOf("cargo", "ndk")
+    rustAbis.forEach { abi ->
+        cargoNdkArgs += listOf("-t", abi)
+    }
+    cargoNdkArgs +=
+        listOf(
+            "-o",
+            jniLibsDir.asFile.absolutePath,
+            "build",
+            "--release",
+            "-p",
+            "picoo-ffi",
+        )
+    commandLine(cargoNdkArgs)
     environment("ANDROID_NDK_HOME", ndkHome)
     // Ensure Rust cdylib LOAD segments are 16 KB aligned and expose a stable SONAME
     // so libpicoo_jni DT_NEEDED is "libpicoo_ffi.so" (not a host absolute path).
-    environment(
-        "CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS",
-        "-C link-arg=-Wl,-z,max-page-size=16384 -C link-arg=-Wl,-soname,libpicoo_ffi.so",
-    )
+    environment("CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS", rustPageAlignFlags)
+    environment("CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS", rustPageAlignFlags)
     doLast {
         jniLibsDir.asFile.walkTopDown()
             .filter { it.isFile && it.name.startsWith("libquiche-") && it.extension == "so" }

@@ -12,6 +12,9 @@ PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
 cargo xtask build android
 # 或
 ./apps/android/gradlew -p apps/android assembleDebug
+
+# Linux / Cloud Agent x86_64 仿真器（真机仍默认只编 arm64-v8a）
+PICOO_ANDROID_ABIS=x86_64 ./apps/android/gradlew -p apps/android assembleDebug
 ```
 
 产物：`apps/android/app/build/outputs/apk/debug/app-debug.apk`
