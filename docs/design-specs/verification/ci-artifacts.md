@@ -6,10 +6,10 @@
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33137894478](https://github.com/Haoxincode/picoo-camera/actions/runs/33137894478) |
+| Run ID | [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632) |
 | 分支 | `cursor/android-win-v1-gates-dbe3` |
-| Commit | `58bfff6` — MSI declarative COM + post-build MSI smoke |
-| 结论 | 6/6 jobs success（`rust-and-docs` + `android` + `windows` × push/PR） |
+| Commit | `690cdbf` — PairingConfirm 回归测试 + MSI WIX0104 修复 + CI 修复链 |
+| 结论 | 3/3 jobs success（`rust-and-docs` + `android` + `windows`） |
 
 后续 tip 绿 run 用法相同：在 Actions 页打开对应 run → 页面底部 **Artifacts** 区域下载。
 
