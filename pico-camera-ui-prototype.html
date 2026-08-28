@@ -906,29 +906,75 @@
       display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 20px;
     }
 
-    /* Desktop Settings Modal */
-    .d-settings-modal {
-      max-width: 620px; max-height: 85vh; display: flex; flex-direction: column;
+    /* Desktop Full Settings View (GPUI Split Pane) */
+    .d-settings-layout {
+      flex: 1; display: flex; min-height: 0; background: var(--panel);
     }
-    .d-settings-content {
-      overflow-y: auto; padding-right: 4px; display: grid; gap: 14px;
+    .d-settings-sidebar {
+      width: 200px; background: #0c0e14; border-right: 1px solid var(--line);
+      display: flex; flex-direction: column; flex-shrink: 0;
     }
-    .d-settings-group {
+    .d-settings-sidebar .sidebar-header {
+      display: flex; align-items: center; gap: 8px; padding: 14px 14px 10px;
+      border-bottom: 1px solid var(--line-subtle);
+    }
+    .d-settings-sidebar .sidebar-header h4 {
+      margin: 0; font-family: var(--font-display); font-size: 0.95rem; font-weight: 700;
+    }
+    .d-back-btn {
+      appearance: none; background: rgba(255,255,255,0.06); border: 1px solid var(--line);
+      color: #fff; width: 28px; height: 28px; border-radius: 6px; display: grid;
+      place-items: center; cursor: pointer; transition: all .2s;
+    }
+    .d-back-btn:hover { background: rgba(255,255,255,0.12); border-color: var(--line-bold); }
+    .d-settings-sidebar .sidebar-nav {
+      flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow-y: auto;
+    }
+    .d-settings-sidebar .nav-item {
+      appearance: none; background: transparent; border: 1px solid transparent;
+      color: var(--muted); border-radius: 8px; padding: 9px 10px; font-size: 0.82rem;
+      font-weight: 500; display: flex; align-items: center; gap: 9px; cursor: pointer;
+      text-align: left; transition: all .15s;
+    }
+    .d-settings-sidebar .nav-item:hover {
+      background: rgba(255,255,255,0.04); color: var(--text);
+    }
+    .d-settings-sidebar .nav-item.active {
+      background: rgba(255, 106, 61, 0.12); border-color: rgba(255, 106, 61, 0.25);
+      color: #fff; font-weight: 600;
+    }
+    .d-settings-sidebar .nav-item.active .lucide-icon { color: var(--accent); }
+    .d-settings-sidebar .sidebar-footer {
+      padding: 12px; border-top: 1px solid var(--line-subtle);
+    }
+
+    .d-settings-main {
+      flex: 1; overflow-y: auto; padding: 20px 24px; background: #131720;
+    }
+    .d-pane { display: none; }
+    .d-pane.active { display: block; animation: paneFade .15s ease-out; }
+    @keyframes paneFade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+    .pane-header { margin-bottom: 18px; }
+    .pane-header h3 { margin: 0 0 4px; font-family: var(--font-display); font-size: 1.15rem; font-weight: 700; }
+    .pane-header p { margin: 0; font-size: 0.82rem; color: var(--muted); }
+
+    .d-set-card {
       background: var(--panel); border: 1px solid var(--line);
-      border-radius: 12px; padding: 14px 16px;
+      border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;
     }
-    .d-settings-group h5 {
-      margin: 0 0 10px; font-size: 0.75rem; color: var(--muted); text-transform: uppercase;
+    .d-set-card h5 {
+      margin: 0 0 10px; font-size: 0.76rem; color: var(--muted); text-transform: uppercase;
       letter-spacing: 0.06em; font-weight: 700;
     }
     .d-set-row {
-      display: flex; align-items: center; justify-content: space-between; gap: 12px;
-      padding: 8px 0;
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 10px 0;
     }
     .d-set-row + .d-set-row { border-top: 1px solid var(--line-subtle); }
-    .d-set-row .label-col { display: grid; gap: 2px; }
-    .d-set-row .title { font-weight: 600; font-size: 0.88rem; }
-    .d-set-row .hint { font-size: 0.75rem; color: var(--muted); }
+    .d-set-row .label-col { display: grid; gap: 2px; flex: 1; }
+    .d-set-row .title { font-weight: 600; font-size: 0.86rem; color: #fff; }
+    .d-set-row .hint { font-size: 0.76rem; color: var(--muted); line-height: 1.35; }
 
     /* Toast in Desktop */
     .d-toast {
@@ -1522,6 +1568,228 @@
             </div>
           </div>
 
+          <!-- View C: Desktop Settings View (Full GPUI Split Pane View) -->
+          <div class="d-view" data-view="settings" id="d-view-settings">
+            <div class="d-settings-layout">
+              <!-- Left Navigation Sidebar -->
+              <div class="d-settings-sidebar">
+                <div class="sidebar-header">
+                  <button class="d-back-btn" data-action="d-close-settings" type="button" title="返回主界面" aria-label="返回">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+                  </button>
+                  <h4>设置中心</h4>
+                </div>
+                <div class="sidebar-nav">
+                  <button class="nav-item active" data-dtab="general" type="button">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <span>常规偏好</span>
+                  </button>
+                  <button class="nav-item" data-dtab="vcam" type="button">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+                    <span>虚拟摄像头</span>
+                  </button>
+                  <button class="nav-item" data-dtab="devices" type="button">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/></svg>
+                    <span>已信任设备</span>
+                  </button>
+                  <button class="nav-item" data-dtab="network" type="button">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h.01"/><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.859a10 10 0 0 1 14 0"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/></svg>
+                    <span>网络与发现</span>
+                  </button>
+                  <button class="nav-item" data-dtab="diagnostics" type="button">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+                    <span>诊断与隐私</span>
+                  </button>
+                  <button class="nav-item" data-dtab="about" type="button">
+                    <svg class="lucide-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+                    <span>关于应用</span>
+                  </button>
+                </div>
+                <div class="sidebar-footer">
+                  <button class="btn btn-ghost btn-sm" data-action="d-close-settings" type="button" style="width:100%;">完成设置</button>
+                </div>
+              </div>
+
+              <!-- Right Settings Detail Pane -->
+              <div class="d-settings-main">
+                <!-- Pane 1: General Preferences -->
+                <div class="d-pane active" data-pane="general">
+                  <div class="pane-header">
+                    <h3>常规偏好设置</h3>
+                    <p>配置 Receiver 基础运行参数与设备发现名称</p>
+                  </div>
+                  <div class="d-set-card">
+                    <h5>基础属性</h5>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">电脑显示名称 (Device Name)</span>
+                        <span class="hint">在局域网内向手机端广播显示的电脑名称</span>
+                      </div>
+                      <input class="manual-ip-input" id="d-input-dev-name" type="text" value="Studio PC" style="width:170px;padding:6px 10px;" />
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">自动接受已配对设备 (Auto Accept)</span>
+                        <span class="hint">已验证固定公钥指纹的可信手机发起连接时，无需每次弹窗人工确认</span>
+                      </div>
+                      <input type="checkbox" id="d-cb-autoaccept" checked style="accent-color:var(--accent);width:18px;height:18px;" />
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">关闭主窗口时最小化到系统托盘</span>
+                        <span class="hint">保持后台 QUIC 服务与虚拟摄像头驱动持续就绪</span>
+                      </div>
+                      <input type="checkbox" checked style="accent-color:var(--accent);width:18px;height:18px;" />
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">开机自动启动并在后台监听</span>
+                        <span class="hint">电脑开机进入桌面后自动启动 Receiver 服务</span>
+                      </div>
+                      <input type="checkbox" style="accent-color:var(--accent);width:18px;height:18px;" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Pane 2: Virtual Camera Management -->
+                <div class="d-pane" data-pane="vcam">
+                  <div class="pane-header">
+                    <h3>虚拟摄像头管理 (Virtual Camera)</h3>
+                    <p>向操作系统注册的「Pico Camera」虚拟驱动状态与占位图配置</p>
+                  </div>
+                  <div class="d-set-card">
+                    <h5>系统驱动就绪状态</h5>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">驱动框架：Windows Media Foundation / macOS CMIO Extension</span>
+                        <span class="hint" id="d-vcam-driver-desc" style="color:var(--ready)">● 状态正常 · 会议软件可直接选择「Pico Camera」作为输入源</span>
+                      </div>
+                      <button class="btn btn-ghost btn-sm" data-action="d-reinstall-vcam" type="button" id="d-btn-fix-vcam">重新注册驱动</button>
+                    </div>
+                  </div>
+                  <div class="d-set-card">
+                    <h5>未推流时默认输出画面 (Fallback Video Stream)</h5>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">占位画面模式</span>
+                        <span class="hint">手机未推流或网络暂时中断时，虚拟摄像头向会议软件输出的内容</span>
+                      </div>
+                      <select class="manual-ip-input" id="d-select-placeholder" style="width:180px;padding:6px 8px;">
+                        <option value="logo">Pico Camera Logo 标牌</option>
+                        <option value="black">纯黑画面 (Black)</option>
+                        <option value="bars">测试彩条 (SMPTE Bars)</option>
+                      </select>
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">输出色彩格式与分辨率上限</span>
+                        <span class="hint">Shared Frame Ring 共享内存格式：NV12 / 1080p 30 FPS</span>
+                      </div>
+                      <span style="font-size:0.8rem;color:var(--muted);font-family:var(--font-mono);">NV12 · 1920×1080 · 30.0 FPS</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Pane 3: Trusted Senders List -->
+                <div class="d-pane" data-pane="devices">
+                  <div class="pane-header">
+                    <h3>已信任设备管理 (PUC-007)</h3>
+                    <p>管理已通过 6 位短码双向核对并固定 Ed25519 公钥的手机列表</p>
+                  </div>
+                  <div class="d-set-card">
+                    <h5>可信 Sender 列表</h5>
+                    <div style="display:grid;gap:8px;" id="d-paired-manage-list">
+                      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--panel-2);padding:10px 14px;border-radius:8px;font-size:0.82rem;">
+                        <div>
+                          <b style="color:#fff;font-size:0.9rem;">Xiaomi 14 Ultra (本机演示)</b><br />
+                          <span style="color:var(--muted);font-family:var(--font-mono);font-size:0.75rem;">公钥指纹: a83b:19c0:77e2 · 上次连接: 刚刚 · IP: 192.168.1.108</span>
+                        </div>
+                        <button class="btn btn-danger btn-sm" data-action="d-delete-paired-sender" type="button">撤销信任并删除</button>
+                      </div>
+                    </div>
+                    <p style="font-size:0.75rem;color:var(--muted);margin:10px 0 0;">撤销信任后，该手机再次连接本电脑时必须重新输入 6 位配对短码。</p>
+                  </div>
+                </div>
+
+                <!-- Pane 4: Network & Discovery -->
+                <div class="d-pane" data-pane="network">
+                  <div class="pane-header">
+                    <h3>网络与服务发现 (QUIC & mDNS)</h3>
+                    <p>局域网服务广播与 QUIC 协议监听配置</p>
+                  </div>
+                  <div class="d-set-card">
+                    <h5>传输协议配置</h5>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">mDNS 局域网服务广播</span>
+                        <span class="hint">广播名称：_picocam._udp.local · 允许手机自动发现本电脑</span>
+                      </div>
+                      <input type="checkbox" checked style="accent-color:var(--accent);width:18px;height:18px;" />
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">QUIC 监听端口 (UDP Port)</span>
+                        <span class="hint">视频传输与控制流监听端口</span>
+                      </div>
+                      <input class="manual-ip-input" type="text" value="4433" style="width:100px;padding:6px 10px;font-family:var(--font-mono);" />
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">二维码动态 Nonce 刷新周期</span>
+                        <span class="hint">扫码直连随机数定期失效机制</span>
+                      </div>
+                      <span style="font-size:0.8rem;color:var(--muted);font-family:var(--font-mono);">300 秒 (5 分钟自动轮转)</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Pane 5: Diagnostics & Privacy -->
+                <div class="d-pane" data-pane="diagnostics">
+                  <div class="pane-header">
+                    <h3>诊断与隐私安全</h3>
+                    <p>运行状态监控、脱敏日志导出与局域网隐私保证</p>
+                  </div>
+                  <div class="d-set-card">
+                    <h5>隐私与局域网承诺</h5>
+                    <div style="font-size:0.82rem;color:var(--muted);line-height:1.5;margin-bottom:12px;">
+                      🛡️ <b>Local-Only 约束</b>：Pico Camera 仅在局域网内直接点对点传输视频流，不包含任何云端中转服务器、不采集用户人脸生物数据、不上传用户隐私。
+                    </div>
+                    <div class="d-set-row">
+                      <div class="label-col">
+                        <span class="title">导出脱敏诊断日志</span>
+                        <span class="hint">包含握手耗时、丢包重发与解码性能数据，默认脱敏 IP、设备名与公钥指纹</span>
+                      </div>
+                      <button class="btn btn-ghost btn-sm" data-action="d-export-logs" type="button">导出脱敏日志 (.json)</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Pane 6: About App -->
+                <div class="d-pane" data-pane="about">
+                  <div class="pane-header">
+                    <h3>关于 Pico Camera Receiver</h3>
+                    <p>局域网超低延迟无线手机摄像头系统</p>
+                  </div>
+                  <div class="d-set-card">
+                    <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
+                      <div class="d-idle-brand-logo" style="width:48px;height:48px;margin:0;">
+                        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+                      </div>
+                      <div>
+                        <h4 style="margin:0;font-family:var(--font-display);font-size:1.1rem;">Pico Camera Receiver (Desktop)</h4>
+                        <span style="font-size:0.78rem;color:var(--muted);font-family:var(--font-mono);">Version 1.0.0 (Build 2026.08.29) · GPUI Native</span>
+                      </div>
+                    </div>
+                    <div style="font-size:0.8rem;color:var(--muted);line-height:1.5;">
+                      Pico Camera 是面向 Windows 11 与 macOS 的跨平台局域网无线摄像头系统，基于 Rust Core、QUIC 传输与 GPUI 渲染引擎构建。
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
+
           <!-- ================= Desktop GPUI Modals ================= -->
 
           <!-- Modal 1: Pairing Confirmation Dialog -->
@@ -1536,95 +1804,6 @@
               <div class="d-modal-footer">
                 <button class="btn btn-ghost btn-sm" data-action="d-pair-reject" type="button">拒绝</button>
                 <button class="btn btn-primary btn-sm" data-action="d-pair-accept" type="button">数字一致，确认配对</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Modal 2: Settings Dialog -->
-          <div class="d-modal-backdrop" id="d-modal-settings">
-            <div class="d-modal-dialog d-settings-modal">
-              <h3>桌面端设置中心</h3>
-              <p class="desc">Receiver 运行参数、虚拟摄像头状态与已配对设备管理</p>
-
-              <div class="d-settings-content">
-                <!-- Group 1: General -->
-                <div class="d-settings-group">
-                  <h5>基础偏好设置</h5>
-                  <div class="d-set-row">
-                    <div class="label-col">
-                      <span class="title">电脑显示名称</span>
-                      <span class="hint">在手机发现列表中显示的设备名</span>
-                    </div>
-                    <input class="manual-ip-input" id="d-input-dev-name" type="text" value="Studio PC" style="width:160px;padding:6px 10px;" />
-                  </div>
-                  <div class="d-set-row">
-                    <div class="label-col">
-                      <span class="title">自动接受已配对设备</span>
-                      <span class="hint">已验证固定公钥的手机连接时直接开始推流</span>
-                    </div>
-                    <input type="checkbox" id="d-cb-autoaccept" checked style="accent-color:var(--accent);width:18px;height:18px;" />
-                  </div>
-                  <div class="d-set-row">
-                    <div class="label-col">
-                      <span class="title">最小化到系统托盘</span>
-                      <span class="hint">关闭窗口后保持后台虚拟摄像头服务运行</span>
-                    </div>
-                    <input type="checkbox" checked style="accent-color:var(--accent);width:18px;height:18px;" />
-                  </div>
-                </div>
-
-                <!-- Group 2: Virtual Camera Driver -->
-                <div class="d-settings-group">
-                  <h5>虚拟摄像头管理 (Virtual Camera)</h5>
-                  <div class="d-set-row">
-                    <div class="label-col">
-                      <span class="title">系统虚拟摄像头驱动状态</span>
-                      <span class="hint" id="d-vcam-driver-desc">Windows Media Foundation / macOS CMIO Extension: 就绪</span>
-                    </div>
-                    <button class="btn btn-ghost btn-sm" data-action="d-reinstall-vcam" type="button" id="d-btn-fix-vcam">修复 / 重新激活</button>
-                  </div>
-                  <div class="d-set-row">
-                    <div class="label-col">
-                      <span class="title">未推流时默认占位画面</span>
-                      <span class="hint">无视频流输入时向会议软件输出的画面</span>
-                    </div>
-                    <select class="manual-ip-input" id="d-select-placeholder" style="width:150px;padding:6px 8px;">
-                      <option value="logo">Pico Camera Logo</option>
-                      <option value="black">纯黑画面 (Black)</option>
-                      <option value="bars">测试彩条 (SMPTE Bars)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <!-- Group 3: Security & Paired List -->
-                <div class="d-settings-group">
-                  <h5>信任设备管理 (PUC-007)</h5>
-                  <div style="display:grid;gap:8px;" id="d-paired-manage-list">
-                    <div style="display:flex;align-items:center;justify-content:space-between;background:var(--panel-2);padding:8px 10px;border-radius:8px;font-size:0.82rem;">
-                      <div>
-                        <b>Xiaomi 14 Ultra (本机演示)</b><br />
-                        <small style="color:var(--muted)">公钥指纹: a83b:19c0:77e2 · 上次连接: 刚刚</small>
-                      </div>
-                      <button class="btn btn-danger btn-sm" data-action="d-delete-paired-sender" type="button">撤销信任</button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Group 4: Diagnostics -->
-                <div class="d-settings-group">
-                  <h5>诊断与隐私</h5>
-                  <div class="d-set-row">
-                    <div class="label-col">
-                      <span class="title">日志脱敏导出</span>
-                      <span class="hint">默认脱敏 IP、设备名与公钥指纹，不包含视频帧数据</span>
-                    </div>
-                    <button class="btn btn-ghost btn-sm" data-action="d-export-logs" type="button">导出诊断日志 (.json)</button>
-                  </div>
-                </div>
-              </div>
-
-              <div class="d-modal-footer">
-                <button class="btn btn-primary btn-sm" data-action="d-close-settings" type="button">完成并保存</button>
               </div>
             </div>
           </div>
@@ -2162,13 +2341,39 @@
         const pill = $("#d-vcam-pill");
         pill.className = "d-vcam-status-pill uninstalled";
         pill.innerHTML = "<span>⚠️ 虚拟摄像头驱动：未安装 / 未批准</span>";
-        $("#d-modal-settings").classList.add("show");
-        showDesktopToast("剧本⑪：虚拟摄像头未就绪，请在设置中修复");
+        openDesktopSettings("vcam");
+        showDesktopToast("剧本⑪：已进入桌面设置中心 · 虚拟摄像头驱动修复");
       }
     };
 
+    /* ================= Desktop Settings Navigation ================= */
+    function setDesktopSettingsTab(tab) {
+      $$(".d-settings-sidebar .nav-item").forEach(btn => btn.classList.toggle("active", btn.dataset.dtab === tab));
+      $$(".d-settings-main .d-pane").forEach(pane => pane.classList.toggle("active", pane.dataset.pane === tab));
+    }
+
+    function openDesktopSettings(tab = "general") {
+      if (appState.desktopView !== "settings") {
+        appState.prevDesktopView = appState.desktopView;
+      }
+      setDesktopView("settings");
+      setDesktopSettingsTab(tab);
+    }
+
+    function closeDesktopSettings() {
+      setDesktopView(appState.prevDesktopView || "idle");
+      showDesktopToast("已返回主界面 · 设置已生效");
+    }
+
     /* ================= Global Click Delegate ================= */
     document.addEventListener("click", (e) => {
+      // Desktop Settings Tab Switching
+      const dtabBtn = e.target.closest("[data-dtab]");
+      if (dtabBtn) {
+        setDesktopSettingsTab(dtabBtn.dataset.dtab);
+        return;
+      }
+
       const btn = e.target.closest("[data-action]") || e.target.closest("[data-mode]") || e.target.closest("[data-story]");
       if (!btn) return;
 
@@ -2267,19 +2472,19 @@
         showDesktopToast(`已向手机发送 IDR 强制关键帧请求 (epoch:${appState.streamEpoch})`);
         showMobileToast("收到桌面端 IDR 请求 · 硬件编码器已插入关键帧");
       }
-      else if (action === "d-open-settings") $("#d-modal-settings").classList.add("show");
-      else if (action === "d-close-settings") $("#d-modal-settings").classList.remove("show");
+      else if (action === "d-open-settings") openDesktopSettings("general");
+      else if (action === "d-close-settings") closeDesktopSettings();
       else if (action === "d-reinstall-vcam") {
         appState.vcamInstalled = true;
         const pill = $("#d-vcam-pill");
         pill.className = "d-vcam-status-pill";
         pill.innerHTML = "<span>● 虚拟摄像头驱动：就绪 (Ready)</span>";
-        $("#d-vcam-driver-desc").textContent = "Windows Media Foundation / macOS CMIO Extension: 就绪";
-        showDesktopToast("虚拟摄像头驱动安装与激活成功！");
+        $("#d-vcam-driver-desc").innerHTML = "● 状态正常 · 会议软件可直接选择「Pico Camera」作为输入源";
+        showDesktopToast("虚拟摄像头驱动重新注册与激活成功！");
       }
       else if (action === "d-delete-paired-sender") {
         $("#d-paired-manage-list").innerHTML = "<p style='color:var(--muted);font-size:0.8rem;margin:4px 0;'>暂无已信任的 Sender 设备</p>";
-        showDesktopToast("已撤销信任设备");
+        showDesktopToast("已撤销信任并删除该手机配对");
       }
       else if (action === "d-export-logs") {
         showDesktopToast("已导出诊断日志 pico-camera-diag-2026.json (脱敏已完成)");
