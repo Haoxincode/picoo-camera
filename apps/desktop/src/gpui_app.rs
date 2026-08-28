@@ -1167,7 +1167,9 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 Some(reg)
             }
             Err(err) => {
-                tracing::warn!("MF virtual camera start deferred: {err}");
+                tracing::warn!(
+                    "MF virtual camera start deferred: {err} (try Settings → 安装/激活虚拟摄像头, or run as Administrator)"
+                );
                 None
             }
         };

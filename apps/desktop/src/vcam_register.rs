@@ -2,19 +2,26 @@
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 
 use windows::core::{GUID, PCWSTR};
+use windows::Win32::Foundation::ERROR_SUCCESS;
 use windows::Win32::Media::MediaFoundation::{
     IMFVirtualCamera, MFCreateVirtualCamera, MFShutdown, MFStartup,
     MFVirtualCameraAccess_CurrentUser, MFVirtualCameraLifetime_Session,
     MFVirtualCameraLifetime_System, MFVirtualCameraType_SoftwareCameraSource, MF_VERSION,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows::Win32::System::Registry::{
+    RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ,
+};
 
 /// CLSID for `PicooVirtualCameraSource.dll` — must match `picoo_vcam_ids.h`.
 pub const PICOO_VCAM_CLSID: GUID = GUID::from_u128(0xa7c4e2f1_8b3d_4c6a_9e5f_1d2c3b4a5e6f);
 
 const FRIENDLY_NAME: &str = "Picoo Camera";
+const INPROC_SERVER_KEY: &str =
+    r"SOFTWARE\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32";
 
 pub struct VirtualCameraRegistration {
     camera: IMFVirtualCamera,
@@ -47,9 +54,39 @@ impl VirtualCameraRegistration {
     }
 }
 
+/// Resolve `PicooVirtualCameraSource.dll` beside the desktop executable (or dev paths).
+pub fn resolve_vcam_dll() -> Option<PathBuf> {
+    candidate_vcam_dll_paths()
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+/// Whether HKLM COM registration points at an existing DLL path.
+pub fn com_server_registered() -> bool {
+    match (resolve_vcam_dll(), read_inproc_server_path()) {
+        (Some(expected), Some(registered)) => paths_equivalent(&expected, &registered),
+        _ => false,
+    }
+}
+
+/// Register COM via `regsvr32` when WiX declarative keys are missing or stale (0x80040154).
+pub fn ensure_com_server_registered() -> Result<(), String> {
+    let dll = resolve_vcam_dll().ok_or_else(|| {
+        "PicooVirtualCameraSource.dll not found beside picoo-desktop.exe; reinstall MSI or run from the Windows bundle directory".into()
+    })?;
+
+    if com_server_registered() {
+        return Ok(());
+    }
+
+    register_com_server(&dll)
+}
+
 fn create_virtual_camera(
     lifetime: windows::Win32::Media::MediaFoundation::MFVirtualCameraLifetime,
 ) -> Result<VirtualCameraRegistration, String> {
+    ensure_com_server_registered()?;
+
     let _com = ComInit::new()?;
     let _mf = MfInit::new()?;
 
@@ -75,6 +112,96 @@ fn create_virtual_camera(
     }
 
     Ok(VirtualCameraRegistration { camera })
+}
+
+pub fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            paths.push(dir.join("PicooVirtualCameraSource.dll"));
+            paths.push(dir.join("extensions").join("PicooVirtualCameraSource.dll"));
+        }
+    }
+    paths.push(PathBuf::from(
+        "extensions/windows-virtual-camera/mf-source/build/PicooVirtualCameraSource.dll",
+    ));
+    paths
+}
+
+fn read_inproc_server_path() -> Option<PathBuf> {
+    let key_wide = wide(INPROC_SERVER_KEY);
+    let mut hkey = Default::default();
+    unsafe {
+        RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(key_wide.as_ptr()),
+            0,
+            KEY_READ,
+            &mut hkey,
+        )
+        .ok()?;
+    }
+
+    let mut kind = REG_SZ;
+    let mut bytes = vec![0u8; 1024];
+    let mut size = bytes.len() as u32;
+    let query = unsafe {
+        RegQueryValueExW(
+            hkey,
+            PCWSTR::null(),
+            None,
+            Some(&mut kind),
+            Some(bytes.as_mut_ptr()),
+            Some(&mut size),
+        )
+    };
+    unsafe {
+        let _ = RegCloseKey(hkey);
+    }
+    if query != ERROR_SUCCESS || kind != REG_SZ || size < 2 {
+        return None;
+    }
+    bytes.truncate(size as usize);
+    let wide_path: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .take_while(|&c| c != 0)
+        .collect();
+    if wide_path.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(String::from_utf16_lossy(&wide_path)))
+}
+
+fn paths_equivalent(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn register_com_server(dll: &Path) -> Result<(), String> {
+    let status = std::process::Command::new("regsvr32")
+        .arg("/s")
+        .arg(dll)
+        .status()
+        .map_err(|e| format!("regsvr32 spawn failed: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "regsvr32 failed ({status}) for {}; run picoo-desktop as Administrator or reinstall PicooCamera.msi",
+            dll.display()
+        ));
+    }
+    if !com_server_registered() {
+        return Err(
+            "COM registration still missing after regsvr32; run as Administrator or reinstall MSI"
+                .into(),
+        );
+    }
+    Ok(())
 }
 
 struct ComInit;
@@ -149,5 +276,11 @@ mod tests {
             guid_string(PICOO_VCAM_CLSID),
             "A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F"
         );
+    }
+
+    #[test]
+    fn candidate_paths_include_exe_dir() {
+        let paths = candidate_vcam_dll_paths();
+        assert!(!paths.is_empty());
     }
 }

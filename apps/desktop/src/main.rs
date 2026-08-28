@@ -155,7 +155,9 @@ fn run_register_vcam(no_wait: bool) {
         }
         Err(err) => {
             eprintln!("Virtual camera registration failed: {err}");
-            eprintln!("Ensure PicooVirtualCameraSource.dll is registered (regsvr32) and reachable by Frame Server.");
+            eprintln!(
+                "Ensure PicooVirtualCameraSource.dll is beside picoo-desktop.exe; COM registers via regsvr32 (Administrator) or PicooCamera.msi."
+            );
             std::process::exit(1);
         }
     }

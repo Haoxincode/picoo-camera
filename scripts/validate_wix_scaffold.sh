@@ -75,13 +75,17 @@ need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[1234]"'
 need "$WXS" 'Component Id="DesktopExe"'
 need "$WXS" 'Component Id="VcamDll"'
 need "$WXS" 'Component Id="RingReader"'
-# Deferred regsvr32 Return=check aborts MSI when DllRegisterServer fails on clean Win11.
-if grep -qF 'RegisterVcamDll' "$WXS" || grep -qF 'regsvr32.exe' "$WXS"; then
-  echo "picoo-camera.wxs must not use deferred regsvr32 (use declarative COM registry)"
+# Deferred regsvr32 with Return=check aborts MSI when DllRegisterServer fails on clean Win11.
+if grep -qF 'RegisterVcamDll' "$WXS"; then
+  echo "picoo-camera.wxs must not use legacy RegisterVcamDll custom action"
+  fail=1
+elif grep -qF 'regsvr32.exe' "$WXS" && ! grep -qF 'Return="ignore"' "$WXS"; then
+  echo "picoo-camera.wxs: regsvr32 custom actions must use Return=\"ignore\""
   fail=1
 else
-  echo "ok: picoo-camera.wxs avoids deferred regsvr32"
+  echo "ok: picoo-camera.wxs regsvr32 policy (ignore-on-failure COM fallback)"
 fi
+need "$WXS" 'RegisterVcamComDll'
 need "$WXS" 'RegisterVcamOnInstall'
 need "$WXS" '--register-vcam --no-wait'
 need "$WXS" 'WixQuietExec'

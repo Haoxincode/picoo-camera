@@ -22,6 +22,19 @@
          InstallFiles via picoo-desktop register-vcam with no-wait (system lifetime). -->
 
     <SetProperty
+        Id="RegisterVcamComDll"
+        Value="regsvr32.exe /s &quot;[#PicooVcamDll]&quot;"
+        Before="RegisterVcamComDll"
+        Sequence="execute" />
+    <CustomAction
+        Id="RegisterVcamComDll"
+        BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+        DllEntry="WixQuietExec"
+        Execute="deferred"
+        Impersonate="no"
+        Return="ignore" />
+
+    <SetProperty
         Id="RegisterVcamOnInstall"
         Value="&quot;[#PicooDesktop]&quot; --register-vcam --no-wait"
         Before="RegisterVcamOnInstall"
@@ -48,7 +61,8 @@
         Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="RegisterVcamOnInstall" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="RegisterVcamComDll" After="InstallFiles" Condition="NOT REMOVE" />
+      <Custom Action="RegisterVcamOnInstall" After="RegisterVcamComDll" Condition="NOT REMOVE" />
       <Custom Action="UnregisterVcamOnRemove" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>
   </Package>
