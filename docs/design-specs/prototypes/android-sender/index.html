@@ -444,6 +444,123 @@
     }
     .story-btns button:hover { border-color: rgba(255,106,61,0.4); }
 
+    .empty-hint {
+      text-align: center;
+      padding: 28px 12px 18px;
+      border: 1px dashed rgba(255,255,255,0.12);
+      border-radius: 18px;
+      background: rgba(255,255,255,0.02);
+      margin-bottom: 14px;
+    }
+    .empty-hint .icon {
+      width: 48px; height: 48px; margin: 0 auto 12px;
+      border-radius: 14px;
+      display: grid; place-items: center;
+      background: rgba(255,106,61,0.12);
+      border: 1px solid rgba(255,106,61,0.25);
+      font-size: 1.4rem;
+    }
+    .empty-hint p { margin: 0; color: var(--muted); font-size: 0.92rem; line-height: 1.45; }
+
+    .brief .desktop-hint {
+      display: none;
+      margin-top: 18px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255,106,61,0.10);
+      border: 1px solid rgba(255,106,61,0.28);
+      color: #ffd7c8;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    .brief .desktop-hint.show { display: block; }
+    .brief .desktop-hint b { color: var(--text); }
+
+    /* QR scan */
+    .qr-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: #050607;
+    }
+    .qr-top {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 48px 16px 12px;
+      z-index: 2;
+    }
+    .qr-back {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(10,12,16,0.55);
+      color: var(--text);
+      border-radius: 12px;
+      padding: 8px 12px;
+      font: inherit;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .qr-viewport {
+      flex: 1;
+      position: relative;
+      margin: 0 16px;
+      border-radius: 22px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 40%, rgba(80,90,110,0.35), rgba(20,24,32,0.9) 70%),
+        linear-gradient(180deg, #1a2030, #0a0c10);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    .qr-viewport::before {
+      content: "";
+      position: absolute; inset: 18% 14%;
+      border: 2px solid rgba(255,106,61,0.75);
+      border-radius: 16px;
+      box-shadow: 0 0 0 9999px rgba(0,0,0,0.35);
+    }
+    .qr-scanline {
+      position: absolute; left: 14%; right: 14%; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      animation: scan 2.2s ease-in-out infinite;
+      opacity: 0.85;
+    }
+    @keyframes scan {
+      0%, 100% { top: 22%; }
+      50% { top: 72%; }
+    }
+    .qr-label {
+      position: absolute; left: 0; right: 0; bottom: 16px;
+      text-align: center;
+      font-size: 0.88rem;
+      color: #d7dbe6;
+      padding: 0 20px;
+      z-index: 2;
+    }
+    .qr-bottom {
+      padding: 16px 20px 24px;
+      display: grid;
+      gap: 10px;
+    }
+    .qr-success {
+      display: none;
+      text-align: center;
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(62,207,142,0.12);
+      border: 1px solid rgba(62,207,142,0.28);
+      color: var(--ready);
+      font-weight: 600;
+      font-size: 0.95rem;
+    }
+    .qr-success.show { display: block; }
+    .qr-meta {
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.4;
+    }
+
     @media (max-width: 980px) {
       .stage {
         grid-template-columns: 1fr;
@@ -459,12 +576,16 @@
     <aside class="brief">
       <div class="brand"><span class="mark" aria-hidden="true"></span> Picoo Camera</div>
       <h1>手机 Sender<br />交互原型</h1>
-      <p>对齐 PRD §17 / REQ-PICOO-UI-003：设备列表 → 六位短码配对 → 全屏预览传输。点右侧手机即可走完主路径。</p>
+      <p>对齐 PRD §17 / REQ-PICOO-UI-003 / PUC-003：发现 →（可选 QR 兜底）→ 六位短码配对 → 全屏预览传输。点右侧手机即可走完主路径。</p>
       <ol>
-        <li><span class="num">1</span><span><b>发现</b>：局域网电脑列表，已配对优先，二维码兜底</span></li>
+        <li><span class="num">1</span><span><b>发现</b>：局域网电脑列表，已配对优先；未发现时 QR 兜底</span></li>
+        <li><span class="num">1b</span><span><b>扫码</b>：mDNS 不可用时，扫电脑端 Show QR Code</span></li>
         <li><span class="num">2</span><span><b>配对</b>：双端同一短码，确认后才开流</span></li>
         <li><span class="num">3</span><span><b>传输</b>：预览是主角；控制收在底部，暗色低干扰</span></li>
       </ol>
+      <div class="desktop-hint" id="desktop-hint">
+        <b>电脑端操作：</b>Receiver 等待连接页 → <b>Show QR Code</b>，二维码含 host / port / nonce。手机扫码后直连 QUIC，跳过 mDNS。
+      </div>
     </aside>
 
     <div class="phone-shell" aria-label="Android Sender prototype">
@@ -479,29 +600,55 @@
             <div class="hero-line">把手机变成<br />电脑摄像头</div>
             <p class="sub">选择同一 Wi‑Fi 下的电脑。已配对设备可一键直连。</p>
 
-            <div class="searching"><span class="dot"></span> 正在发现附近电脑…</div>
+            <div class="searching" id="searching-row"><span class="dot"></span> 正在发现附近电脑…</div>
 
-            <button class="device" data-action="connect-new" type="button">
-              <span class="name">Studio PC</span>
-              <span class="badge">Ready</span>
-              <span class="meta">Windows · 首次连接需配对</span>
-            </button>
-            <button class="device" data-action="connect-paired" type="button">
-              <span class="name">办公桌 Surface</span>
-              <span class="badge paired">Paired</span>
-              <span class="meta">Windows · 上次连接今天</span>
-            </button>
+            <div id="discovery-list">
+              <button class="device" data-action="connect-new" type="button">
+                <span class="name">Studio PC</span>
+                <span class="badge">Ready</span>
+                <span class="meta">Windows · 首次连接需配对</span>
+              </button>
+              <button class="device" data-action="connect-paired" type="button">
+                <span class="name">办公桌 Surface</span>
+                <span class="badge paired">Paired</span>
+                <span class="meta">Windows · 上次连接今天</span>
+              </button>
 
-            <div class="section-label">已配对</div>
-            <button class="device" data-action="manage-paired" type="button">
-              <span class="name">办公桌 Surface</span>
-              <span class="badge paired">信任</span>
-              <span class="meta">点按可删除并要求重新配对</span>
-            </button>
+              <div class="section-label">已配对</div>
+              <button class="device" data-action="manage-paired" type="button">
+                <span class="name">办公桌 Surface</span>
+                <span class="badge paired">信任</span>
+                <span class="meta">点按可删除并要求重新配对</span>
+              </button>
+            </div>
+
+            <div class="empty-hint" id="empty-discovery" hidden>
+              <div class="icon" aria-hidden="true">📡</div>
+              <p>未发现附近电脑<br />可能是企业 Wi‑Fi 屏蔽了 mDNS</p>
+            </div>
 
             <div class="stack">
-              <button class="btn btn-primary" data-action="scan-qr" type="button">扫描二维码连接</button>
+              <button class="btn btn-ghost" data-action="scan-qr" type="button" id="btn-scan-qr">扫描二维码连接</button>
               <button class="btn btn-ghost" data-action="perm" type="button">权限未开？点此检查</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- QR Scan -->
+        <section class="screen" data-screen="qr" id="screen-qr">
+          <div class="qr-wrap">
+            <div class="qr-top">
+              <button class="qr-back" data-action="qr-cancel" type="button">← 返回</button>
+              <span class="pill warn">扫码兜底</span>
+            </div>
+            <div class="qr-viewport" aria-label="模拟相机取景">
+              <div class="qr-scanline" id="qr-scanline"></div>
+              <div class="qr-label">对准电脑端 <b>Show QR Code</b></div>
+            </div>
+            <div class="qr-bottom">
+              <div class="qr-success" id="qr-success">识别成功 · Studio PC</div>
+              <p class="qr-meta">QR 含 host / port / receiver_id / nonce<br />绕过 mDNS，直连 QUIC</p>
+              <button class="btn btn-primary" data-action="qr-simulate" type="button" id="btn-qr-sim">模拟识别成功</button>
             </div>
           </div>
         </section>
@@ -558,11 +705,14 @@
         <li>传输页预览全出血；状态与控制压在底部，避免仪表盘感。</li>
         <li>配对页只有短码 + 确认/取消，不做多余说明堆叠。</li>
         <li>已配对用琥珀色标签，Ready 用绿色，避免两态混淆。</li>
+        <li>QR 是发现兜底（PUC-003），不替代 mDNS 主路径；列表为空时扫码升为首要操作。</li>
         <li>实现仍走 Compose（非 WebView）；本页只作交互与视觉契约。</li>
       </ul>
       <div class="story-btns">
         <button type="button" data-action="story-new">演示：首次配对 Studio PC</button>
         <button type="button" data-action="story-paired">演示：已配对直连</button>
+        <button type="button" data-action="story-qr-empty">演示：发现为空 → 扫码配对</button>
+        <button type="button" data-action="story-qr-tap">演示：列表有设备 → 手动扫码</button>
         <button type="button" data-action="story-thermal">演示：过热降到 720p</button>
       </div>
     </aside>
@@ -576,6 +726,8 @@
       res1080: true,
       mirror: false,
       ev: 0,
+      discoveryEmpty: false,
+      viaQr: false,
     };
 
     const $ = (sel) => document.querySelector(sel);
@@ -589,9 +741,36 @@
       showToast._t = setTimeout(() => el.classList.remove("show"), 1800);
     }
 
+    function refreshDiscovery() {
+      const empty = state.discoveryEmpty;
+      $("#discovery-list").hidden = empty;
+      $("#empty-discovery").hidden = !empty;
+      $("#searching-row").innerHTML = empty
+        ? '<span class="dot"></span> 发现完成 · 未找到可用电脑'
+        : '<span class="dot"></span> 正在发现附近电脑…';
+      const scanBtn = $("#btn-scan-qr");
+      scanBtn.classList.toggle("btn-primary", empty);
+      scanBtn.classList.toggle("btn-ghost", !empty);
+    }
+
+    function resetQrScreen() {
+      $("#qr-success").classList.remove("show");
+      $("#qr-scanline").style.display = "";
+      $("#btn-qr-sim").textContent = "模拟识别成功";
+      $("#btn-qr-sim").dataset.action = "qr-simulate";
+    }
+
     function go(screen) {
       state.screen = screen;
       screens.forEach((s) => s.classList.toggle("active", s.dataset.screen === screen));
+      $("#desktop-hint").classList.toggle("show", screen === "qr");
+      if (screen !== "qr") resetQrScreen();
+    }
+
+    function openQrScan() {
+      state.viaQr = true;
+      go("qr");
+      showToast("请求相机权限 · 打开扫码（PUC-003）");
     }
 
     function refreshLive() {
@@ -634,16 +813,40 @@
           showToast("配对完成 · 正在请求关键帧");
           break;
         case "cancel-pair":
+          state.viaQr = false;
+          document.querySelector(".pair-kicker").textContent = "连接到 Studio PC";
           go("devices");
           showToast("已取消配对");
           break;
         case "disconnect":
           go("devices");
+          state.viaQr = false;
+          document.querySelector(".pair-kicker").textContent = "连接到 Studio PC";
           $("#thermal").classList.remove("show");
           showToast("已断开，不再自动重连");
           break;
         case "scan-qr":
-          showToast("打开相机扫码（QR 含 host/port/nonce）");
+          openQrScan();
+          break;
+        case "qr-cancel":
+          state.viaQr = false;
+          go("devices");
+          showToast("已取消扫码");
+          break;
+        case "qr-simulate": {
+          $("#qr-success").classList.add("show");
+          $("#qr-scanline").style.display = "none";
+          btn.textContent = "继续配对";
+          btn.dataset.action = "qr-continue";
+          state.target = "Studio PC";
+          showToast("已解析 QR · host:192.168.1.42:4433");
+          break;
+        }
+        case "qr-continue":
+          $("#pair-code").textContent = randomCode();
+          document.querySelector(".pair-kicker").textContent = "连接到 Studio PC（扫码）";
+          go("pairing");
+          showToast("进入配对 · 与 mDNS 路径相同短码流程");
           break;
         case "perm":
           showToast("按需请求：附近 Wi‑Fi / 相机 / 通知");
@@ -671,11 +874,27 @@
           refreshLive();
           break;
         case "story-new":
+          state.discoveryEmpty = false;
+          refreshDiscovery();
           go("devices");
           setTimeout(() => document.querySelector('[data-action="connect-new"]').click(), 350);
           break;
         case "story-paired":
+          state.discoveryEmpty = false;
+          refreshDiscovery();
           document.querySelector('[data-action="connect-paired"]').click();
+          break;
+        case "story-qr-empty":
+          state.discoveryEmpty = true;
+          refreshDiscovery();
+          go("devices");
+          setTimeout(() => openQrScan(), 400);
+          break;
+        case "story-qr-tap":
+          state.discoveryEmpty = false;
+          refreshDiscovery();
+          go("devices");
+          setTimeout(() => openQrScan(), 350);
           break;
         case "story-thermal":
           if (state.screen !== "streaming") {
@@ -691,6 +910,7 @@
     });
 
     refreshLive();
+    refreshDiscovery();
   </script>
 </body>
 </html>
