@@ -17,7 +17,9 @@ dotnet tool install --global wix
 powershell -ExecutionPolicy Bypass -File installers/windows/build-msi.ps1
 ```
 
-`picoo-camera.wxs` installs to `Program Files\Picoo Camera`, writes COM CLSID registry keys (equivalent to `DllRegisterServer`), and runs `picoo-desktop --register-vcam --no-wait` after `InstallFiles` (system-lifetime MF registration via `WixQuietExec`). **No deferred regsvr32** — that pattern failed on clean Win11 with `Return=check`.
+`picoo-camera.wxs` installs to `Program Files\Picoo Camera`, writes COM CLSID registry keys, then runs **`regsvr32 /s` on the installed DLL** (`Return=ignore`, SYSTEM context) followed by `picoo-desktop --register-vcam --no-wait` for system-lifetime MF registration. Declarative registry alone can leave `IMFVirtualCamera::Start` failing with **0x80040154 (REGDB_E_CLASSNOTREG)** on some Win11 builds; regsvr32 ensures `InprocServer32` matches the installed path.
+
+At runtime, `picoo-desktop` also calls `regsvr32` automatically when COM is missing (requires Administrator if HKLM write is denied).
 
 Development bundle still uses `register-vcam.ps1` (regsvr32 + `--register-vcam --no-wait`).
 
