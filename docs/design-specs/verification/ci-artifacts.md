@@ -6,9 +6,9 @@
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33144102114](https://github.com/Haoxincode/picoo-camera/actions/runs/33144102114) |
+| Run ID | [33146017543](https://github.com/Haoxincode/picoo-camera/actions/runs/33146017543) |
 | 分支 | `cursor/android-win-v1-gates-dbe3` |
-| Commit | `79e234a` — VCam COM 兜底 + `verify_windows_bundle.ps1` 策略对齐 |
+| Commit | `533b89f` — UI P1（480p/对焦环/翻转动画）+ pairing 测试稳定 + rustfmt |
 | 结论 | 3/3 jobs success（`rust-and-docs` + `android` + `windows`） |
 
 后续 tip 绿 run 用法相同：在 Actions 页打开对应 run → 页面底部 **Artifacts** 区域下载。
