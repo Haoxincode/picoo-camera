@@ -5,5 +5,7 @@ enum class SenderTab {
     Devices,
     Qr,
     Pairing,
+    Wait,
     Streaming,
+    Settings,
 }

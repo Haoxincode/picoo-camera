@@ -49,7 +49,9 @@ import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.ui.screens.DevicesScreen
 import com.picoo.camera.ui.screens.PairingScreen
 import com.picoo.camera.ui.screens.QrScanScreen
+import com.picoo.camera.ui.screens.SettingsScreen
 import com.picoo.camera.ui.screens.StreamingScreen
+import com.picoo.camera.ui.screens.WaitScreen
 import com.picoo.camera.ui.theme.PicooCameraTheme
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicReference
@@ -160,6 +162,7 @@ class MainActivity : ComponentActivity() {
                     SenderHomeScreen(
                         cameraGranted = cameraGranted,
                         nearbyWifiGranted = nearbyWifiGranted,
+                        notificationsGranted = notificationsGranted,
                         onRequestCamera = { then -> requestCameraPermission(then) },
                         onRequestNearbyWifi = { ensureNearbyWifiPermission() },
                         onRequestNotifications = { ensureNotificationsPermission() },
@@ -195,6 +198,7 @@ private fun NativeLoadFailedScreen(
 private fun SenderHomeScreen(
     cameraGranted: Boolean,
     nearbyWifiGranted: Boolean,
+    notificationsGranted: Boolean,
     onRequestCamera: (then: (() -> Unit)?) -> Unit,
     onRequestNearbyWifi: () -> Unit,
     onRequestNotifications: () -> Unit,
@@ -230,6 +234,7 @@ private fun SenderHomeScreen(
     var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
     var exposureEv by remember { mutableIntStateOf(0) }
     var senderTab by remember { mutableStateOf(SenderTab.Devices) }
+    var phonePairingConfirmed by remember { mutableStateOf(false) }
     var viaQr by remember { mutableStateOf(false) }
     var qrSuccessName by remember { mutableStateOf<String?>(null) }
     var qrHostPort by remember { mutableStateOf<String?>(null) }
@@ -383,6 +388,7 @@ private fun SenderHomeScreen(
 
     fun resetToDevices() {
         senderTab = SenderTab.Devices
+        phonePairingConfirmed = false
         viaQr = false
         qrSuccessName = null
         qrHostPort = null
@@ -634,15 +640,23 @@ private fun SenderHomeScreen(
         }
     }
 
-    LaunchedEffect(senderStatus, pairingCode, qrSuccessName) {
+    LaunchedEffect(senderStatus, pairingCode, qrSuccessName, phonePairingConfirmed, senderTab) {
         when {
+            senderTab == SenderTab.Settings -> Unit
             senderStatus == PicooNative.STATUS_STREAMING ||
                 senderStatus == PicooNative.STATUS_NEGOTIATING ||
                 senderStatus == PicooNative.STATUS_RECONNECTING ||
                 senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE ||
-                senderStatus == PicooNative.STATUS_PERMISSION_REQUIRED ->
+                senderStatus == PicooNative.STATUS_PERMISSION_REQUIRED -> {
+                phonePairingConfirmed = false
                 senderTab = SenderTab.Streaming
+            }
+            phonePairingConfirmed &&
+                senderTab != SenderTab.Streaming &&
+                senderStatus != PicooNative.STATUS_DISCONNECTED ->
+                senderTab = SenderTab.Wait
             (pairingCode.isNotEmpty() || senderStatus == PicooNative.STATUS_PAIRING) &&
+                !phonePairingConfirmed &&
                 (qrSuccessName != null || senderTab != SenderTab.Qr) ->
                 senderTab = SenderTab.Pairing
         }
@@ -707,6 +721,20 @@ private fun SenderHomeScreen(
                     }
                 },
                 onRequestNearbyWifi = onRequestNearbyWifi,
+                onOpenSettings = { senderTab = SenderTab.Settings },
+            )
+            SenderTab.Settings -> SettingsScreen(
+                pairedDeviceCount = pairedDevices.size,
+                cameraGranted = cameraGranted,
+                nearbyWifiGranted = nearbyWifiGranted,
+                notificationsGranted = notificationsGranted,
+                onBack = { senderTab = SenderTab.Devices },
+                onCheckPermissions = {
+                    onRequestNearbyWifi()
+                    onRequestNotifications()
+                    onRequestCamera(null)
+                },
+                onOpenPairedDevices = { senderTab = SenderTab.Devices },
             )
             SenderTab.Qr -> QrScanScreen(
                 cameraGranted = cameraGranted,
@@ -725,6 +753,15 @@ private fun SenderHomeScreen(
                 },
                 onContinuePairing = { senderTab = SenderTab.Pairing },
                 onRequestCamera = { onRequestCamera(null) },
+                onManualConnect = { host, port ->
+                    hostText = host
+                    portText = port.toString()
+                    selectedReceiverId = "manual-$host"
+                    selectedReceiverName = host
+                    viaQr = true
+                    qrHostPort = "$host:$port"
+                    connectToReceiver(host, port, selectedReceiverId)
+                },
             )
             SenderTab.Pairing -> PairingScreen(
                 receiverName = pairingDisplayName,
@@ -740,7 +777,8 @@ private fun SenderHomeScreen(
                     if (rc == 0) {
                         errorText = null
                         reloadTrustedStore()
-                        senderTab = SenderTab.Streaming
+                        phonePairingConfirmed = true
+                        senderTab = SenderTab.Wait
                     } else {
                         errorText = "配对确认失败 ($rc)"
                     }
@@ -750,6 +788,16 @@ private fun SenderHomeScreen(
                     pairingCode = ""
                     connectedReceiverId = ""
                     connectedReceiverName = ""
+                    phonePairingConfirmed = false
+                    suppressAutoConnect = true
+                    resetToDevices()
+                },
+            )
+            SenderTab.Wait -> WaitScreen(
+                receiverName = pairingDisplayName,
+                onCancel = {
+                    PicooNative.disconnect(senderHandle)
+                    phonePairingConfirmed = false
                     suppressAutoConnect = true
                     resetToDevices()
                 },

@@ -122,10 +122,22 @@ fun PicooPill(
 }
 
 @Composable
-fun ReadinessBadge(label: String, paired: Boolean) {
-    val fg = if (paired) PicooColors.Accent2 else PicooColors.Ready
-    val bg = if (paired) Color(0x1FFFB347) else Color(0x1F3ECF8E)
-    val border = if (paired) Color(0x47FFB347) else Color(0x383ECF8E)
+fun ReadinessBadge(label: String, paired: Boolean, offline: Boolean = false) {
+    val fg = when {
+        offline -> PicooColors.Muted
+        paired -> PicooColors.Accent2
+        else -> PicooColors.Ready
+    }
+    val bg = when {
+        offline -> Color(0x1A656D7D)
+        paired -> Color(0x1FFFB347)
+        else -> Color(0x1F3ECF8E)
+    }
+    val border = when {
+        offline -> Color(0x38656D7D)
+        paired -> Color(0x47FFB347)
+        else -> Color(0x383ECF8E)
+    }
     Text(
         text = label,
         modifier = Modifier

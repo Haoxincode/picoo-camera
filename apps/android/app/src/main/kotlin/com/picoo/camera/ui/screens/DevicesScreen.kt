@@ -16,8 +16,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wifi
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,10 +43,11 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooPill
+import com.picoo.camera.ui.components.PicooPrimaryButton
 import com.picoo.camera.ui.components.ReadinessBadge
 import com.picoo.camera.ui.theme.PicooColors
 
-/** REQ-PICOO-UI-003 — 发现页：Ready/Paired 列表、空态 QR、权限提示。 */
+/** REQ-PICOO-UI-003 — 发现页：Material 顶栏、设备卡片、空态清单、扫码 CTA。 */
 @Composable
 fun DevicesScreen(
     discoveredList: List<PicooNative.DiscoveredReceiver>,
@@ -48,9 +61,13 @@ fun DevicesScreen(
     onCheckPermissions: () -> Unit,
     onRemovePaired: (PicooNative.TrustedDevice) -> Unit,
     onRequestNearbyWifi: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val empty = discoveredList.isEmpty() && discoveryComplete
+    val discoveredIds = discoveredList.map { it.receiverId }.toSet()
+    val offlinePaired = pairedDevices.filter { it.deviceId !in discoveredIds }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -60,37 +77,52 @@ fun DevicesScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, top = 48.dp, bottom = 12.dp),
+                .padding(start = 20.dp, end = 12.dp, top = 44.dp, bottom = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Picoo",
+                text = "Picoo Camera",
                 color = PicooColors.Text,
-                fontSize = 22.sp,
+                fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.5).sp,
+                letterSpacing = (-0.3).sp,
             )
-            PicooPill(text = "局域网")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                PicooPill(
+                    text = "Wi‑Fi · 局域网",
+                    modifier = Modifier.padding(end = 4.dp),
+                )
+                IconButton(onClick = onOpenSettings) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "设置",
+                        tint = PicooColors.Muted,
+                    )
+                }
+            }
         }
 
         Column(modifier = Modifier.padding(horizontal = 20.dp)) {
             Text(
-                text = "把手机变成\n电脑摄像头",
+                text = "把手机变成无线摄像头",
                 color = PicooColors.Text,
-                fontSize = 28.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 lineHeight = 32.sp,
                 letterSpacing = (-0.5).sp,
             )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "选择同一 Wi‑Fi 下的电脑。已配对设备可一键直连。",
+                text = "选择同一 Wi‑Fi 下的电脑，已配对设备点按直连。",
                 color = PicooColors.Muted,
                 fontSize = 15.sp,
                 lineHeight = 22.sp,
             )
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -99,7 +131,10 @@ fun DevicesScreen(
                 Box(
                     modifier = Modifier
                         .size(8.dp)
-                        .background(PicooColors.Accent, RoundedCornerShape(50)),
+                        .background(
+                            if (empty) PicooColors.Muted else PicooColors.Accent,
+                            RoundedCornerShape(50),
+                        ),
                 )
                 Text(
                     text = if (empty) {
@@ -124,60 +159,63 @@ fun DevicesScreen(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            if (!empty) {
-                discoveredList.forEach { receiver ->
-                    val locallyTrusted = pairedReceiverIds.contains(receiver.receiverId)
-                    val readiness = DiscoveredReceiverRow.readinessLabel(
-                        receiver.pairingState,
-                        locallyTrusted,
-                    )
-                    DeviceCard(
-                        name = receiver.displayName,
-                        meta = if (locallyTrusted) {
-                            "${DiscoveredReceiverRow.PLATFORM_WINDOWS} · 上次连接 ${TrustedDeviceList.formatLastConnected(
-                                pairedDevices.find { it.deviceId == receiver.receiverId }
-                                    ?.lastConnectedAtMs ?: 0L,
-                            )}"
-                        } else {
-                            "${DiscoveredReceiverRow.PLATFORM_WINDOWS} · 首次连接需配对"
-                        },
-                        badge = readiness,
-                        paired = locallyTrusted,
-                        onClick = { onSelectReceiver(receiver) },
-                    )
+            discoveredList.forEach { receiver ->
+                val locallyTrusted = pairedReceiverIds.contains(receiver.receiverId)
+                val badge = when {
+                    locallyTrusted -> "已配对"
+                    else -> "在线"
                 }
+                val meta = if (locallyTrusted) {
+                    "在线 · ${receiver.host} · 点按直连"
+                } else {
+                    "${DiscoveredReceiverRow.PLATFORM_WINDOWS} · 首次连接需配对短码"
+                }
+                DeviceCard(
+                    name = receiver.displayName,
+                    meta = meta,
+                    badge = badge,
+                    paired = locallyTrusted,
+                    offline = false,
+                    onClick = { onSelectReceiver(receiver) },
+                    onRemove = if (locallyTrusted) {
+                        {
+                            pairedDevices.find { it.deviceId == receiver.receiverId }
+                                ?.let(onRemovePaired)
+                        }
+                    } else {
+                        null
+                    },
+                )
+            }
+
+            offlinePaired.forEach { device ->
+                DeviceCard(
+                    name = device.deviceName,
+                    meta = "已配对 · 上次连接 ${TrustedDeviceList.formatLastConnected(device.lastConnectedAtMs)}",
+                    badge = "不在线",
+                    paired = true,
+                    offline = true,
+                    onClick = {},
+                    onRemove = { onRemovePaired(device) },
+                )
             }
 
             if (empty) {
                 EmptyDiscoveryHint()
             }
 
-            if (pairedDevices.isNotEmpty()) {
-                Text(
-                    text = "已配对",
-                    color = PicooColors.Muted,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(top = 18.dp, bottom = 10.dp),
-                )
-                pairedDevices.forEach { device ->
-                    DeviceCard(
-                        name = device.deviceName,
-                        meta = "点按可删除并要求重新配对",
-                        badge = "信任",
-                        paired = true,
-                        onClick = { onRemovePaired(device) },
-                    )
-                }
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
-            PicooGhostButton(
-                text = "扫描二维码连接",
-                onClick = onScanQr,
-                primary = empty,
-            )
+            if (empty) {
+                PicooPrimaryButton(
+                    text = "扫描电脑端二维码连接",
+                    onClick = onScanQr,
+                )
+            } else {
+                PicooGhostButton(
+                    text = "扫描电脑端二维码连接",
+                    onClick = onScanQr,
+                )
+            }
             Spacer(modifier = Modifier.height(10.dp))
             PicooGhostButton(
                 text = "权限未开？点此检查",
@@ -198,8 +236,11 @@ private fun DeviceCard(
     meta: String,
     badge: String,
     paired: Boolean,
+    offline: Boolean,
     onClick: () -> Unit,
+    onRemove: (() -> Unit)?,
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -210,20 +251,34 @@ private fun DeviceCard(
                     colors = listOf(Color(0x08FFFFFF), Color.Transparent),
                 ),
             )
-            .background(PicooColors.Panel2)
+            .background(if (offline) Color(0xFF181C24) else PicooColors.Panel2)
             .border(1.dp, PicooColors.Line, RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .clickable(enabled = !offline, onClick = onClick)
+            .padding(start = 16.dp, end = 4.dp, top = 14.dp, bottom = 14.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = name,
-                color = PicooColors.Text,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-            )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp),
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = name,
+                    color = if (offline) PicooColors.Muted else PicooColors.Text,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                ReadinessBadge(
+                    label = badge,
+                    paired = paired && !offline,
+                    offline = offline,
+                )
+            }
             Text(
                 text = meta,
                 color = PicooColors.Muted,
@@ -231,7 +286,34 @@ private fun DeviceCard(
                 modifier = Modifier.padding(top = 4.dp),
             )
         }
-        ReadinessBadge(label = badge, paired = paired)
+        if (onRemove != null) {
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(
+                        imageVector = Icons.Default.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = PicooColors.Muted,
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = "撤销信任并删除配对",
+                                color = PicooColors.DangerText,
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onRemove()
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -242,14 +324,9 @@ private fun EmptyDiscoveryHint() {
             .fillMaxWidth()
             .padding(bottom = 14.dp)
             .clip(RoundedCornerShape(18.dp))
-            .border(
-                1.dp,
-                Color(0x1FFFFFFF),
-                RoundedCornerShape(18.dp),
-            )
+            .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(18.dp))
             .background(Color(0x05FFFFFF))
-            .padding(horizontal = 12.dp, vertical = 28.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
+            .padding(horizontal = 16.dp, vertical = 24.dp),
     ) {
         Box(
             modifier = Modifier
@@ -258,14 +335,41 @@ private fun EmptyDiscoveryHint() {
                 .border(1.dp, Color(0x40FF6A3D), RoundedCornerShape(14.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(text = "📡", fontSize = 22.sp)
+            Icon(
+                imageVector = Icons.Default.Wifi,
+                contentDescription = null,
+                tint = PicooColors.Accent,
+                modifier = Modifier.size(24.dp),
+            )
         }
         Spacer(modifier = Modifier.height(12.dp))
         Text(
-            text = "未发现附近电脑\n可能是企业 Wi‑Fi 屏蔽了 mDNS",
+            text = "未发现附近电脑",
+            color = PicooColors.Text,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Bold,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "企业网络或路由器可能屏蔽了 mDNS 服务广播",
             color = PicooColors.Muted,
             fontSize = 14.sp,
             lineHeight = 20.sp,
         )
+        Spacer(modifier = Modifier.height(12.dp))
+        ChecklistItem("手机与电脑连接同一 Wi‑Fi？")
+        ChecklistItem("电脑端 Picoo Camera 已启动？")
+        ChecklistItem("改用扫码直连，绕过 mDNS 限制 ↓")
     }
+}
+
+@Composable
+private fun ChecklistItem(text: String) {
+    Text(
+        text = "· $text",
+        color = PicooColors.Muted,
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
+        modifier = Modifier.padding(vertical = 2.dp),
+    )
 }
