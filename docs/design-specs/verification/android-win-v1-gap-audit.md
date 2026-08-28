@@ -1,7 +1,8 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · tip `533b89f` · 全绿 CI [33146017543](https://github.com/Haoxincode/picoo-camera/actions/runs/33146017543)（UI P1 + pairing 测试稳定 + VCam COM 兜底）
+> 分支：`cursor/android-win-v1-gates-dbe3` · tip `fcb9900` · 全绿 CI [33147645233](https://github.com/Haoxincode/picoo-camera/actions/runs/33147645233)（PUC-007 指纹 + 占位三选一 + ABR 480）
 >
+> 后续修复见 PR #14 `cursor/vcam-repair-feedback-dbe3`（VCam 反馈、Live CameraCommand、Settings Modal、pairing TTL、公钥 Toast）。
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
 ## 图例
@@ -79,11 +80,11 @@
 
 | Job | 状态 | 产物 |
 | --- | --- | --- |
-| `rust-and-docs` | ✅ run [33146017543](https://github.com/Haoxincode/picoo-camera/actions/runs/33146017543) | 无 artifact |
+| `rust-and-docs` | ✅ run [33147645233](https://github.com/Haoxincode/picoo-camera/actions/runs/33147645233) | 无 artifact |
 | `android` | ✅ | `android-apk-debug`, `android-release` |
 | `windows` | ✅ | `windows-bundle`, `windows-msi` |
 
-下载步骤见 [ci-artifacts.md](ci-artifacts.md)。
+下载步骤见 [ci-artifacts.md](ci-artifacts.md)。真机请优先用该绿 run 的 `windows-msi` + `android-release`。
 
 ## Compose UI vs HTML 原型（REQ-PICOO-UI-0001）
 

@@ -6,12 +6,14 @@
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33146017543](https://github.com/Haoxincode/picoo-camera/actions/runs/33146017543) |
+| Run ID | [33147645233](https://github.com/Haoxincode/picoo-camera/actions/runs/33147645233) |
 | 分支 | `cursor/android-win-v1-gates-dbe3` |
-| Commit | `533b89f` — UI P1（480p/对焦环/翻转动画）+ pairing 测试稳定 + rustfmt |
+| Commit | `fcb9900` — paired fingerprint UI + 占位三选一 + ABR 480 阶梯（tip 含后续 UI P1） |
 | 结论 | 3/3 jobs success（`rust-and-docs` + `android` + `windows`） |
 
 后续 tip 绿 run 用法相同：在 Actions 页打开对应 run → 页面底部 **Artifacts** 区域下载。
+
+PR #14（`cursor/vcam-repair-feedback-dbe3`）合并前请改用该分支 tip 的绿 run 产物。
 
 ## 方式一：GitHub Web UI
 
