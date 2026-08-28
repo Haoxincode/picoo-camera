@@ -1090,7 +1090,7 @@ impl PicooDesktopApp {
                     .p_5()
                     .w(px(560.))
                     .max_h(px(640.))
-                    .overflow_y_scroll()
+                    .overflow_y_scrollbar()
                     .rounded_lg()
                     .border_1()
                     .border_color(rgba(0x29ffffff))
