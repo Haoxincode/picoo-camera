@@ -36,6 +36,7 @@ fun QrCodeScanner(
     modifier: Modifier = Modifier,
     onQrDetected: (String) -> Unit,
     onClose: () -> Unit,
+    showCloseButton: Boolean = true,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -99,7 +100,6 @@ fun QrCodeScanner(
                                 analysis,
                             )
                         } catch (t: Throwable) {
-                            // CameraX 1.4+ may throw when camera is busy/unavailable.
                             android.util.Log.w("QrCodeScanner", "bindToLifecycle failed", t)
                         }
                     },
@@ -107,13 +107,15 @@ fun QrCodeScanner(
                 )
             },
         )
-        Button(
-            onClick = onClose,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp),
-        ) {
-            Text("Close")
+        if (showCloseButton) {
+            Button(
+                onClick = onClose,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(16.dp),
+            ) {
+                Text("Close")
+            }
         }
     }
 }

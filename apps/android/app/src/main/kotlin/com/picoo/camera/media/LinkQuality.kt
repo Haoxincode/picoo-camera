@@ -23,4 +23,15 @@ object LinkQuality {
         val kbps = (receiveBitrate / 1000.0).toInt()
         return "Link: $quality · RTT ${rttMs.toInt()}ms · loss ${"%.1f".format(lossPct)}% · age ${frameAgeMs.toInt()}ms · rx ${kbps}kbps"
     }
+
+    /** Compact chip for Streaming top bar (REQ-PICOO-UI-003). */
+    fun formatChip(rttMs: Double, packetLoss: Double): String {
+        val zh = when (label(packetLoss, rttMs)) {
+            "Excellent" -> "优良"
+            "Good" -> "良好"
+            "Fair" -> "一般"
+            else -> "较差"
+        }
+        return "$zh · ${rttMs.toInt()}ms"
+    }
 }
