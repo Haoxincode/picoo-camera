@@ -5,14 +5,14 @@
 - **Status**: `proposed`
 - **Design Prototype**: [`picoo-camera-ui-prototype.html`](../prototypes/picoo-camera-ui-prototype.html)
 - **Supported Use Cases**:
-  - [BUC-001](../../use-cases/business/buc-001-phone-as-wireless-meeting-camera.md)
-  - [PUC-001](../../use-cases/product/puc-001-first-install-and-pairing.md)
-  - [PUC-002](../../use-cases/product/puc-002-discover-and-connect-paired-receiver.md)
-  - [PUC-003](../../use-cases/product/puc-003-qr-code-fallback-connection.md)
-  - [PUC-004](../../use-cases/product/puc-004-use-virtual-camera-in-meeting-apps.md)
-  - [PUC-005](../../use-cases/product/puc-005-adjust-camera-during-streaming.md)
-  - [PUC-006](../../use-cases/product/puc-006-auto-reconnect-after-network-interruption.md)
-  - [PUC-007](../../use-cases/product/puc-007-manage-paired-devices.md)
+  - [BUC-001](../use-cases/business/buc-001-phone-as-wireless-meeting-camera.md)
+  - [PUC-001](../use-cases/product/puc-001-first-install-and-pairing.md)
+  - [PUC-002](../use-cases/product/puc-002-discover-and-connect-paired-receiver.md)
+  - [PUC-003](../use-cases/product/puc-003-qr-code-fallback-connection.md)
+  - [PUC-004](../use-cases/product/puc-004-use-virtual-camera-in-meeting-apps.md)
+  - [PUC-005](../use-cases/product/puc-005-adjust-camera-during-streaming.md)
+  - [PUC-006](../use-cases/product/puc-006-auto-reconnect-after-network-interruption.md)
+  - [PUC-007](../use-cases/product/puc-007-manage-paired-devices.md)
 - **Architectural Boundary**: [ARCH-PICOO-UI-001 (0009-desktop-gpui-mobile-native-ui-boundary.md)](../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
 
 ---
