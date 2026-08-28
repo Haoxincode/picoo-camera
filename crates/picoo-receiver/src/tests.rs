@@ -1034,12 +1034,19 @@ fn stream_epoch_bump_requests_keyframe() {
         ..Default::default()
     };
     sender.send_stream_config(&cfg).expect("cfg1");
+    let mut got_first_idr = false;
     for _ in 0..50 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
+        if sender.take_keyframe_request() {
+            got_first_idr = true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
-    // Drain any initial keyframe request from enter_streaming.
-    let _ = sender.take_keyframe_request();
+    assert!(
+        got_first_idr,
+        "first StreamConfig must request IDR (SESSION-004 / MEDIA-003)"
+    );
 
     cfg.stream_epoch = 2;
     sender.send_stream_config(&cfg).expect("cfg2");

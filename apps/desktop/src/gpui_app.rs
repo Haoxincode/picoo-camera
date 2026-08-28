@@ -197,11 +197,12 @@ impl PicooDesktopApp {
         ) {
             Ok(result) => {
                 self.diagnostics_error = None;
-                self.diagnostics_message = result.path;
+                self.diagnostics_message =
+                    Some(format!("已导出至 {}（已脱敏，不含视频）", result.path));
             }
             Err(err) => {
                 self.diagnostics_message = None;
-                self.diagnostics_error = Some(err);
+                self.diagnostics_error = Some(format!("导出失败：{err}"));
             }
         }
         cx.notify();
@@ -743,7 +744,17 @@ impl PicooDesktopApp {
                             Button::new("clear-all-trusted")
                                 .label("清除全部配对")
                                 .on_click(cx.listener(|this, _, _, cx| {
-                                    let _ = this.runtime.clear_trusted_devices();
+                                    match this.runtime.clear_trusted_devices() {
+                                        Ok(n) => {
+                                            this.diagnostics_error = None;
+                                            this.diagnostics_message =
+                                                Some(format!("已清除 {n} 个配对设备"));
+                                        }
+                                        Err(err) => {
+                                            this.diagnostics_error =
+                                                Some(format!("清除配对失败：{err}"));
+                                        }
+                                    }
                                     cx.notify();
                                 })),
                         )
@@ -786,16 +797,13 @@ impl PicooDesktopApp {
                     .children(
                         self.diagnostics_message
                             .as_ref()
-                            .map(|path| {
-                                vec![format!("已导出至 {path}（已脱敏，不含视频）")
-                                    .into_any_element()]
-                            })
+                            .map(|msg| vec![msg.clone().into_any_element()])
                             .unwrap_or_default(),
                     )
                     .children(
                         self.diagnostics_error
                             .as_ref()
-                            .map(|err| vec![format!("导出失败：{err}").into_any_element()])
+                            .map(|err| vec![format!("错误：{err}").into_any_element()])
                             .unwrap_or_default(),
                     ),
             )
@@ -832,7 +840,21 @@ impl PicooDesktopApp {
                     .on_click({
                         let device_id = device.device_id.clone();
                         cx.listener(move |this, _, _, cx| {
-                            let _ = this.runtime.remove_trusted_device(&device_id);
+                            match this.runtime.remove_trusted_device(&device_id) {
+                                Ok(true) => {
+                                    this.diagnostics_error = None;
+                                    this.diagnostics_message =
+                                        Some(format!("已删除配对：{device_id}"));
+                                }
+                                Ok(false) => {
+                                    this.diagnostics_error =
+                                        Some(format!("未找到配对设备：{device_id}"));
+                                }
+                                Err(err) => {
+                                    this.diagnostics_error =
+                                        Some(format!("删除配对失败：{err}"));
+                                }
+                            }
                             cx.notify();
                         })
                     }),

@@ -49,6 +49,7 @@ GitHub Actions
 - `windows` job 应依赖 `rust-and-docs` 通过，避免在 Rust Core 已失败时浪费 Windows runner 时间。
 - Android 与 Windows job 可并行；macOS/iOS 在实现就绪前可 `if: false` 或单独 workflow 延迟启用。
 - 各 job 通过 `actions/upload-artifact` 上传产物（APK、MSI、DLL 等），供人工验证或后续 release workflow 消费。
+- Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
 
 ### 示例 Workflow 结构
 

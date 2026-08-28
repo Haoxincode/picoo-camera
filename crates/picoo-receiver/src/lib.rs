@@ -852,12 +852,16 @@ impl ReceiverSession {
             self.status = ReceiverStatus::Streaming;
         }
 
-        // PUC-005 / REQ-PICOO-MEDIA-003: epoch bump → drop old epoch state and request IDR.
-        if epoch_bumped && self.video_allowed() {
-            self.jitter.clear();
-            self.jitter_timeline = None;
-            self.reassembly = ReassemblyMap::new(8, 16);
-            let _ = self.decoder.flush();
+        // PUC-005 / REQ-PICOO-MEDIA-003 / SESSION-004: request IDR on first
+        // StreamConfig and on every stream_epoch bump so decoders recover quickly.
+        let needs_keyframe = self.video_allowed() && (previous_epoch.is_none() || epoch_bumped);
+        if needs_keyframe {
+            if epoch_bumped {
+                self.jitter.clear();
+                self.jitter_timeline = None;
+                self.reassembly = ReassemblyMap::new(8, 16);
+                let _ = self.decoder.flush();
+            }
             self.send_request_keyframe(session)?;
         }
         Ok(())

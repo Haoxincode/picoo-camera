@@ -5,6 +5,12 @@ on:
     branches: [main, 'cursor/**']
   pull_request:
 
+# Prefer tip commits: cancel superseded runs on the same ref (queue was blocking
+# Android/Windows artifact jobs behind dozens of cursor/** pushes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust-and-docs:
     runs-on: ubuntu-latest
