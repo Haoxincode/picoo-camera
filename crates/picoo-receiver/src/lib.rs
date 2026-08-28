@@ -915,6 +915,20 @@ impl ReceiverSession {
         self.send_control_message(session, &command)
     }
 
+    /// UI-triggered IDR request (REQ-PICOO-UI-003 live page).
+    pub fn request_keyframe(&mut self) -> Result<(), ReceiverError> {
+        let session = self
+            .transport
+            .active_session()
+            .ok_or(ReceiverError::NotListening)?;
+        if !self.video_allowed() {
+            return Err(ReceiverError::Protocol(
+                "RequestKeyframe requires paired streaming session".into(),
+            ));
+        }
+        self.send_request_keyframe(session)
+    }
+
     fn begin_streaming(&mut self, _session: SessionId) -> Result<(), ReceiverError> {
         self.status = ReceiverStatus::Streaming;
         Ok(())

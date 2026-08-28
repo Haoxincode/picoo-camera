@@ -15,7 +15,6 @@ use gpui_component::switch::*;
 use gpui_component::*;
 use gpui_component_assets::Assets;
 use image::{Frame, ImageBuffer, Rgba};
-use picoo_protocol::control::{camera_command, CameraCommand, Resolution};
 use picoo_receiver::ReceiverError;
 use picoo_session::ReceiverStatus;
 use smallvec::smallvec;
@@ -295,12 +294,26 @@ impl Render for PicooDesktopApp {
             .size_full()
             .bg(cx.theme().background)
             .child(self.render_header(cx))
-            .child(div().flex_1().child(match self.page {
-                DesktopPage::FirstLaunch => self.render_first_launch(cx).into_any_element(),
-                DesktopPage::Waiting => self.render_waiting(&snapshot, cx).into_any_element(),
-                DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
-                DesktopPage::Settings => self.render_settings(&snapshot, cx).into_any_element(),
-            }))
+            .child(
+                div()
+                    .flex_1()
+                    .relative()
+                    .child(match self.page {
+                        DesktopPage::FirstLaunch => self.render_first_launch(cx).into_any_element(),
+                        DesktopPage::Waiting => {
+                            self.render_waiting(&snapshot, cx).into_any_element()
+                        }
+                        DesktopPage::Live => self.render_live(&snapshot, cx).into_any_element(),
+                        DesktopPage::Settings => {
+                            self.render_settings(&snapshot, cx).into_any_element()
+                        }
+                    })
+                    .when(
+                        matches!(snapshot.status, ReceiverStatus::Pairing)
+                            && snapshot.pairing_short_code.is_some(),
+                        |this| this.child(self.render_pairing_modal(&snapshot, cx)),
+                    ),
+            )
     }
 }
 
@@ -348,19 +361,23 @@ impl PicooDesktopApp {
     fn render_first_launch(&self, cx: &Context<Self>) -> impl IntoElement {
         div()
             .v_flex()
+            .size_full()
+            .items_center()
+            .justify_center()
             .gap_4()
-            .p_6()
+            .p_8()
             .child(
-                GroupBox::new()
-                    .outline()
-                    .title("Picoo Camera")
-                    .child("Use your phone as a wireless camera")
-                    .child(format!(
-                        "Virtual Camera [ {} ]",
-                        vcam_label(self.vcam_status)
-                    ))
-                    .child(vcam_repair_hint(self.vcam_status)),
+                div()
+                    .text_2xl()
+                    .font_weight(FontWeight::BOLD)
+                    .child("Picoo Camera"),
             )
+            .child("把手机变成电脑无线摄像头")
+            .child(format!(
+                "虚拟摄像头状态：{}",
+                vcam_label_zh(self.vcam_status)
+            ))
+            .child(vcam_repair_hint(self.vcam_status))
             .child(
                 Button::new("refresh-vcam")
                     .label("重新检测虚拟摄像头")
@@ -371,7 +388,7 @@ impl PicooDesktopApp {
             )
             .child(
                 Button::new("install-vcam")
-                    .label("Install Virtual Camera")
+                    .label("安装 / 激活虚拟摄像头")
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.try_register_vcam();
                         cx.notify();
@@ -388,261 +405,299 @@ impl PicooDesktopApp {
     }
 
     fn render_waiting(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
-        let bind = snapshot
+        let endpoint = snapshot
             .bind_addr
             .map(|a| a.to_string())
             .unwrap_or_else(|| "—".into());
-        let status = Self::status_label(snapshot.status);
-        let pairing = snapshot
-            .pairing_short_code
-            .clone()
-            .unwrap_or_else(|| "—".into());
-        let vcam = vcam_label(snapshot.virtual_camera);
+        let vcam = vcam_label_zh(snapshot.virtual_camera);
 
         div()
             .v_flex()
-            .gap_4()
-            .p_6()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_5()
+            .p_8()
             .child(
-                GroupBox::new()
-                    .outline()
-                    .title("等待手机连接")
-                    .child("Open Picoo Camera on your phone and connect to this computer.")
-                    .child(format!("状态：{status}"))
-                    .child(format!("监听地址：{bind}"))
-                    .child(format!("已配对设备：{}", snapshot.trusted_device_count))
-                    .child(format!("Virtual Camera: {vcam}")),
+                div()
+                    .text_2xl()
+                    .font_weight(FontWeight::BOLD)
+                    .child("等待手机连接…"),
             )
             .child(
-                GroupBox::new().outline().title("配对码").child(
-                    div()
-                        .v_flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .text_2xl()
-                                .font_weight(FontWeight::BOLD)
-                                .child(pairing),
-                        )
-                        .child(
-                            Button::new("confirm-pairing")
-                                .primary()
-                                .label("确认配对")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.runtime.confirm_pairing();
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            Button::new("cancel-pairing")
-                                .label("取消")
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    // PUC-001 / PRD §17.2: Cancel aborts pending pairing.
-                                    this.runtime.disconnect();
-                                    cx.notify();
-                                })),
-                        ),
-                ),
+                div()
+                    .max_w_96()
+                    .text_center()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("在同一 Wi‑Fi 下打开手机端 Picoo Camera，将自动发现本电脑。也可通过手机直接扫描下方二维码建立直连。"),
             )
-            .children(if self.show_qr {
-                vec![GroupBox::new()
-                    .outline()
-                    .title("二维码连接 (PUC-003)")
-                    .child(
-                        Button::new("toggle-qr")
-                            .label("隐藏二维码")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.show_qr = false;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        div()
-                            .w_64()
-                            .h_64()
-                            .bg(cx.theme().background)
-                            .rounded_md()
-                            .overflow_hidden()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(if let Some(image) = &self.qr_image {
-                                img(ImageSource::Render(image.clone()))
-                                    .w_full()
-                                    .h_full()
-                                    .object_fit(ObjectFit::Contain)
-                                    .into_any_element()
-                            } else {
-                                div()
-                                    .font_family("monospace")
-                                    .text_xs()
-                                    .child(
-                                        snapshot
-                                            .qr_ascii
-                                            .clone()
-                                            .unwrap_or_else(|| "QR 不可用".into()),
-                                    )
-                                    .into_any_element()
-                            }),
-                    )
-                    .into_any_element()]
-            } else {
-                vec![Button::new("show-qr")
-                    .label("Show QR Code")
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.show_qr = true;
-                        cx.notify();
-                    }))
-                    .into_any_element()]
-            })
+            .child(
+                div()
+                    .px_3()
+                    .py_1p5()
+                    .rounded_full()
+                    .bg(cx.theme().muted)
+                    .text_sm()
+                    .child(format!("● 虚拟摄像头：{vcam}")),
+            )
+            .child(self.render_qr_card(snapshot, cx))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "QUIC 监听 {endpoint} · 已配对 {} 台",
+                        snapshot.trusted_device_count
+                    )),
+            )
     }
 
-    fn send_live_camera_command(&mut self, command: CameraCommand) {
-        if let Err(err) = self.runtime.send_camera_command(command) {
-            tracing::warn!("CameraCommand failed: {err}");
-        }
+    fn render_qr_card(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+        div()
+            .h_flex()
+            .gap_4()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().muted)
+            .child(
+                div()
+                    .w_32()
+                    .h_32()
+                    .rounded_md()
+                    .overflow_hidden()
+                    .bg(cx.theme().background)
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(if self.show_qr {
+                        if let Some(image) = &self.qr_image {
+                            img(ImageSource::Render(image.clone()))
+                                .w_full()
+                                .h_full()
+                                .object_fit(ObjectFit::Contain)
+                                .into_any_element()
+                        } else {
+                            div()
+                                .font_family("monospace")
+                                .text_xs()
+                                .child(
+                                    snapshot
+                                        .qr_ascii
+                                        .clone()
+                                        .unwrap_or_else(|| "QR 不可用".into()),
+                                )
+                                .into_any_element()
+                        }
+                    } else {
+                        Button::new("show-qr")
+                            .label("Show QR Code")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.show_qr = true;
+                                cx.notify();
+                            }))
+                            .into_any_element()
+                    }),
+            )
+            .child(
+                div()
+                    .v_flex()
+                    .gap_1()
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Show QR Code (扫码直连)"),
+                    )
+                    .child("企业网络 mDNS 受限时扫码直连 QUIC 端口")
+                    .child(
+                        div()
+                            .font_family("monospace")
+                            .text_sm()
+                            .child(endpoint_label(snapshot)),
+                    )
+                    .when(self.show_qr, |this| {
+                        this.child(Button::new("toggle-qr").label("隐藏二维码").on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.show_qr = false;
+                                cx.notify();
+                            }),
+                        ))
+                    }),
+            )
+    }
+
+    fn render_pairing_modal(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let pairing = snapshot
+            .pairing_short_code
+            .clone()
+            .unwrap_or_else(|| "······".into());
+        let sender_name = snapshot
+            .active_sender
+            .as_ref()
+            .map(|s| s.device_name.clone())
+            .unwrap_or_else(|| "手机".into());
+
+        div()
+            .absolute()
+            .inset_0()
+            .bg(rgba(0x08000000))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .v_flex()
+                    .gap_3()
+                    .p_6()
+                    .w_96()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().background)
+                    .shadow_lg()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(FontWeight::BOLD)
+                            .child("核对配对短码"),
+                    )
+                    .child(format!(
+                        "来自 {sender_name} 的连接请求。请确认手机上显示相同的 6 位数字："
+                    ))
+                    .child(
+                        div()
+                            .text_3xl()
+                            .font_weight(FontWeight::BOLD)
+                            .text_center()
+                            .py_3()
+                            .child(pairing),
+                    )
+                    .child("握手上下文派生短码 · 60s 内有效")
+                    .child(
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .justify_end()
+                            .child(Button::new("cancel-pairing").label("拒绝").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.runtime.disconnect();
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(
+                                Button::new("confirm-pairing")
+                                    .primary()
+                                    .label("数字一致，确认配对")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.runtime.confirm_pairing();
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
     }
 
     fn render_live(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
-        let status = Self::status_label(snapshot.status);
-        let streaming = matches!(snapshot.status, ReceiverStatus::Streaming);
-        let resolution = snapshot
+        let res_label = snapshot
             .stream_config
             .as_ref()
-            .map(|c| format!("{}×{}", c.width, c.height))
+            .map(|c| {
+                if c.height >= 1080 {
+                    "1080p30".into()
+                } else {
+                    format!("{}p{}", c.height, c.fps)
+                }
+            })
             .unwrap_or_else(|| "—".into());
         let fps = snapshot
             .stream_config
             .as_ref()
-            .map(|c| c.fps.to_string())
+            .map(|c| format!("{:.1} FPS", c.fps as f64))
             .unwrap_or_else(|| "—".into());
         let sender_name = snapshot
             .active_sender
             .as_ref()
             .map(|s| s.device_name.clone())
-            .unwrap_or_else(|| "—".into());
-        let remote_mirrored = snapshot
-            .stream_config
-            .as_ref()
-            .map(|c| c.mirrored)
-            .unwrap_or(false);
+            .unwrap_or_else(|| "等待 Sender".into());
+        let quality = crate::network_quality::network_quality_label(
+            snapshot.stream_metrics.packet_loss,
+            snapshot.stream_metrics.latency_ms,
+        );
+        let bitrate = snapshot.stream_metrics.bitrate_bps as f64 / 1_000_000.0;
+        let rtt = snapshot.stream_metrics.latency_ms;
+        let loss_pct = snapshot.stream_metrics.packet_loss * 100.0;
 
-        div().v_flex().gap_4().p_6().child(
-            GroupBox::new().outline().title("直播预览").child(
+        div()
+            .v_flex()
+            .size_full()
+            .child(
+                div()
+                    .flex_1()
+                    .relative()
+                    .bg(cx.theme().muted)
+                    .overflow_hidden()
+                    .child(self.video_surface.render_preview())
+                    .child(
+                        div()
+                            .absolute()
+                            .top_3()
+                            .left_3()
+                            .h_flex()
+                            .gap_2()
+                            .child(live_hud_pill(format!("● {sender_name}")))
+                            .child(live_hud_pill(format!(
+                                "Virtual Camera: {}",
+                                vcam_label(snapshot.virtual_camera)
+                            ))),
+                    ),
+            )
+            .child(
                 div()
                     .v_flex()
                     .gap_3()
+                    .p_4()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
                     .child(
                         div()
-                            .w_full()
-                            .h_64()
-                            .bg(cx.theme().muted)
-                            .rounded_md()
-                            .overflow_hidden()
-                            .child(self.video_surface.render_preview()),
+                            .grid()
+                            .grid_cols(3)
+                            .gap_2()
+                            .child(telemetry_cell("画质规格", res_label))
+                            .child(telemetry_cell("实时帧率", fps))
+                            .child(telemetry_cell("接收码率", format!("{bitrate:.1} Mbps")))
+                            .child(telemetry_cell("RTT 延迟", format!("{rtt:.0} ms")))
+                            .child(telemetry_cell("丢包 / 抖动", format!("{loss_pct:.1}% · —")))
+                            .child(telemetry_cell("网络质量", quality.into())),
                     )
-                    .child(format!("{sender_name} · {status}"))
-                    .child(format!("{resolution} · {fps} FPS"))
-                    .child(format!(
-                        "Network Quality: {} · 码率 {:.1} Mbps · 延迟 {:.0} ms · 丢包 {:.1}%",
-                        crate::network_quality::network_quality_label(
-                            snapshot.stream_metrics.packet_loss,
-                            snapshot.stream_metrics.latency_ms,
-                        ),
-                        snapshot.stream_metrics.bitrate_bps as f64 / 1_000_000.0,
-                        snapshot.stream_metrics.latency_ms,
-                        snapshot.stream_metrics.packet_loss * 100.0
-                    ))
-                    .child(format!(
-                        "接收 AU：{} / 包：{}",
-                        snapshot.ingress.access_units, snapshot.ingress.packets_received
-                    ))
-                    .child(format!(
-                        "Virtual Camera: {}",
-                        vcam_label(snapshot.virtual_camera)
-                    ))
-                    .when(streaming, |el| {
-                        el.child(
-                            div()
-                                .h_flex()
-                                .gap_2()
-                                .child(Button::new("cam-front").label("前置摄像头").on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.send_live_camera_command(CameraCommand {
-                                            command: camera_command::Command::SwitchFront as i32,
-                                            resolution: None,
-                                            mirrored: false,
-                                        });
-                                        cx.notify();
-                                    }),
-                                ))
-                                .child(Button::new("cam-back").label("后置摄像头").on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.send_live_camera_command(CameraCommand {
-                                            command: camera_command::Command::SwitchBack as i32,
-                                            resolution: None,
-                                            mirrored: false,
-                                        });
-                                        cx.notify();
-                                    }),
-                                )),
-                        )
-                        .child(
-                            div()
-                                .h_flex()
-                                .gap_2()
-                                .child(Button::new("res-720").label("720p").on_click(cx.listener(
-                                    |this, _, _, cx| {
-                                        this.send_live_camera_command(CameraCommand {
-                                            command: camera_command::Command::SetResolution as i32,
-                                            resolution: Some(Resolution {
-                                                width: 1280,
-                                                height: 720,
-                                            }),
-                                            mirrored: false,
-                                        });
-                                        cx.notify();
-                                    },
-                                )))
-                                .child(Button::new("res-1080").label("1080p").on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.send_live_camera_command(CameraCommand {
-                                            command: camera_command::Command::SetResolution as i32,
-                                            resolution: Some(Resolution {
-                                                width: 1920,
-                                                height: 1080,
-                                            }),
-                                            mirrored: false,
-                                        });
-                                        cx.notify();
-                                    }),
-                                )),
-                        )
-                        .child(
-                            Switch::new("remote-mirror")
-                                .checked(remote_mirrored)
-                                .label("远端镜像")
-                                .on_click(cx.listener(|this, checked, _, cx| {
-                                    this.send_live_camera_command(CameraCommand {
-                                        command: camera_command::Command::SetMirror as i32,
-                                        resolution: None,
-                                        mirrored: *checked,
-                                    });
-                                    cx.notify();
-                                })),
-                        )
-                    })
                     .child(
-                        Button::new("disconnect")
-                            .label("断开连接")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.runtime.disconnect();
-                                this.page = DesktopPage::Waiting;
-                                cx.notify();
-                            })),
+                        div()
+                            .h_flex()
+                            .gap_2()
+                            .justify_end()
+                            .child(Button::new("request-idr").label("请求关键帧").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    if let Err(err) = this.runtime.request_keyframe() {
+                                        tracing::warn!("RequestKeyframe failed: {err}");
+                                    }
+                                    cx.notify();
+                                }),
+                            ))
+                            .child(Button::new("disconnect").label("断开会话").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.runtime.disconnect();
+                                    this.page = DesktopPage::Waiting;
+                                    cx.notify();
+                                }),
+                            )),
                     ),
-            ),
-        )
+            )
     }
 
     fn render_settings(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
@@ -870,6 +925,46 @@ fn vcam_label(status: VirtualCameraStatus) -> &'static str {
         VirtualCameraStatus::NotInstalled => "Not Installed",
         VirtualCameraStatus::Active => "Active",
     }
+}
+
+fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
+    match status {
+        VirtualCameraStatus::Unknown => "检测中",
+        VirtualCameraStatus::Installed => "已安装",
+        VirtualCameraStatus::NotInstalled => "未安装",
+        VirtualCameraStatus::Active => "就绪 (Active)",
+    }
+}
+
+fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
+    snapshot
+        .bind_addr
+        .map(|a| a.to_string())
+        .unwrap_or_else(|| "—".into())
+}
+
+fn live_hud_pill(label: String) -> impl IntoElement {
+    div()
+        .px_2p5()
+        .py_1()
+        .rounded_full()
+        .bg(rgba(0x99000000))
+        .text_xs()
+        .text_color(rgb(0xd7dbe6))
+        .child(label)
+}
+
+fn telemetry_cell(label: &'static str, value: String) -> impl IntoElement {
+    div()
+        .v_flex()
+        .gap_0p5()
+        .child(div().text_xs().text_color(rgb(0x959dae)).child(label))
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(value),
+        )
 }
 
 fn default_diagnostics_path() -> PathBuf {

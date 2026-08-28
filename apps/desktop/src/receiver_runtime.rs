@@ -294,6 +294,11 @@ impl ReceiverRuntime {
         self.receiver.send_camera_command(command)
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+    pub fn request_keyframe(&mut self) -> Result<(), ReceiverError> {
+        self.receiver.request_keyframe()
+    }
+
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
         self.refresh_qr_if_expired();
         self.receiver.pump()
