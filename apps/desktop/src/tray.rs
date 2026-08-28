@@ -199,13 +199,16 @@ impl NotifyIconController {
         }
     }
 
-    /// Resolve HWND: explicit injection, else FindWindowW("Picoo Camera").
+    /// Resolve HWND: message-only tray host (preferred), explicit injection, else FindWindowW.
     #[cfg(all(windows, feature = "windows-vcam"))]
     fn resolve_hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
         use windows::core::w;
         use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
+        if let Some(host) = tray_message_hwnd() {
+            return Some(host);
+        }
         if let Some(raw) = self.hwnd {
             return Some(HWND(raw as *mut _));
         }
@@ -224,7 +227,7 @@ impl NotifyIconController {
             tracing::debug!(
                 target: "picoo_tray",
                 ?op,
-                "Shell_NotifyIconW deferred — no HWND (set_notify_icon_hwnd or FindWindowW)"
+                "Shell_NotifyIconW deferred — no HWND (tray host / set_notify_icon_hwnd / FindWindowW)"
             );
             return;
         };
@@ -236,8 +239,9 @@ impl NotifyIconController {
         let mut data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
-            uID: 1,
+            uID: TRAY_ICON_ID,
             uFlags: NIF_MESSAGE | NIF_TIP,
+            uCallbackMessage: TRAY_CALLBACK_MSG,
             ..Default::default()
         };
         data.szTip = tip_buf;
@@ -266,6 +270,159 @@ static NOTIFY_ICON: Mutex<NotifyIconController> = Mutex::new(NotifyIconControlle
 });
 
 static PENDING_MENU_ACTION: Mutex<Option<TrayMenuAction>> = Mutex::new(None);
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+const TRAY_ICON_ID: u32 = 1;
+#[cfg(all(windows, feature = "windows-vcam"))]
+const TRAY_CALLBACK_MSG: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 40;
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+static TRAY_HOST_HWND: Mutex<Option<isize>> = Mutex::new(None);
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn tray_message_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::core::w;
+    use windows::Win32::Foundation::{GetLastError, HWND};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CreateWindowExW, RegisterClassW, HWND_MESSAGE, WNDCLASSW,
+    };
+
+    if let Ok(guard) = TRAY_HOST_HWND.lock() {
+        if let Some(raw) = *guard {
+            return Some(HWND(raw as *mut _));
+        }
+    }
+
+    let class_name = w!("PicooTrayHost");
+    let wc = WNDCLASSW {
+        lpfnWndProc: Some(tray_wnd_proc),
+        lpszClassName: class_name,
+        ..Default::default()
+    };
+    let atom = unsafe { RegisterClassW(&wc) };
+    if atom == 0 {
+        let err = unsafe { GetLastError() };
+        // ERROR_CLASS_ALREADY_EXISTS = 1410
+        if err.0 != 1410 {
+            tracing::warn!(target: "picoo_tray", ?err, "RegisterClassW for tray host failed");
+            return None;
+        }
+    }
+
+    let hwnd = unsafe {
+        CreateWindowExW(
+            Default::default(),
+            class_name,
+            w!("Picoo Tray Host"),
+            Default::default(),
+            0,
+            0,
+            0,
+            0,
+            HWND_MESSAGE,
+            None,
+            None,
+            None,
+        )
+    };
+    let Ok(hwnd) = hwnd else {
+        tracing::warn!(target: "picoo_tray", "CreateWindowExW HWND_MESSAGE failed");
+        return None;
+    };
+    if hwnd.is_invalid() {
+        return None;
+    }
+    if let Ok(mut guard) = TRAY_HOST_HWND.lock() {
+        *guard = Some(hwnd.0 as isize);
+    }
+    Some(hwnd)
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+unsafe extern "system" fn tray_wnd_proc(
+    hwnd: windows::Win32::Foundation::HWND,
+    msg: u32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::Foundation::LRESULT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DefWindowProcW, WM_COMMAND, WM_CONTEXTMENU, WM_LBUTTONDBLCLK, WM_RBUTTONUP,
+    };
+
+    if msg == TRAY_CALLBACK_MSG {
+        let mouse = lparam.0 as u32;
+        if mouse == WM_RBUTTONUP || mouse == WM_CONTEXTMENU {
+            show_tray_context_menu(hwnd);
+            return LRESULT(0);
+        }
+        if mouse == WM_LBUTTONDBLCLK {
+            enqueue_menu_action(TrayMenuAction::Show);
+            return LRESULT(0);
+        }
+    }
+    if msg == WM_COMMAND {
+        match (wparam.0 as u32) & 0xffff {
+            1 => enqueue_menu_action(TrayMenuAction::Show),
+            2 => enqueue_menu_action(TrayMenuAction::Quit),
+            _ => {}
+        }
+        return LRESULT(0);
+    }
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn show_tray_context_menu(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::core::w;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, SetForegroundWindow,
+        TrackPopupMenu, MF_STRING, TPM_LEFTALIGN, TPM_RIGHTBUTTON,
+    };
+
+    let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
+        return;
+    };
+    unsafe {
+        let _ = AppendMenuW(menu, MF_STRING, 1, w!("Show Picoo Camera"));
+        let _ = AppendMenuW(menu, MF_STRING, 2, w!("Quit"));
+        let mut pt = POINT::default();
+        let _ = GetCursorPos(&mut pt);
+        let _ = SetForegroundWindow(hwnd);
+        let _ = TrackPopupMenu(
+            menu,
+            TPM_LEFTALIGN | TPM_RIGHTBUTTON,
+            pt.x,
+            pt.y,
+            Some(0),
+            hwnd,
+            None,
+        );
+        let _ = DestroyMenu(menu);
+    }
+}
+
+/// Drain Win32 tray host messages so context-menu actions reach the GPUI pump.
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn pump_win32_tray_messages() {
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
+        };
+        let Some(hwnd) = tray_message_hwnd() else {
+            return;
+        };
+        unsafe {
+            let mut msg = MSG::default();
+            while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+}
 
 /// Soft notify that the UI hid to tray; records Shell_NotifyIcon ADD/MODIFY intent.
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]

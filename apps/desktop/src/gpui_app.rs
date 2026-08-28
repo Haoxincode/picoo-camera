@@ -239,6 +239,7 @@ impl PicooDesktopApp {
                     }
                     let snapshot = this.runtime.snapshot();
                     // REQ-PICOO-UI-008: live tip while hidden to tray.
+                    crate::tray::pump_win32_tray_messages();
                     crate::tray::sync_tray_tip(snapshot.status);
                     if let Some(action) = crate::tray::take_pending_menu_action() {
                         let outcome = action.apply();
@@ -758,6 +759,10 @@ impl PicooDesktopApp {
                     .title("虚拟摄像头修复")
                     .child(format!("状态：{}", vcam_label(self.vcam_status)))
                     .child(vcam_repair_hint(self.vcam_status))
+                    .child(match &snapshot.shared_ring_error {
+                        Some(err) => format!("Shared Frame Ring：附着失败 — {err}"),
+                        None => "Shared Frame Ring：已附着（VCam DLL 可读帧）".into(),
+                    })
                     .child(
                         Button::new("repair-vcam")
                             .label("重新检测 / 修复引导")
@@ -931,8 +936,8 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                     crate::tray::note_tray_cleared();
                     outcome.allow_close
                 });
-                // HWND injection hook for Shell_NotifyIconW (Windows FindWindowW fallback).
-                crate::tray::set_notify_icon_hwnd(None);
+                // Tray uses a Win32 message-only host (FindWindowW fallback remains).
+                let _ = crate::tray::pump_win32_tray_messages();
                 cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
             },
         )

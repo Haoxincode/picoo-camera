@@ -76,6 +76,8 @@ pub struct ReceiverSnapshot {
     pub active_sender: Option<ActiveSenderSummary>,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub virtual_camera: crate::model::VirtualCameraStatus,
+    /// None when Shared Frame Ring attach succeeded (REQ-PICOO-FRAME-003 / PUC-004).
+    pub shared_ring_error: Option<String>,
 }
 
 pub struct ReceiverRuntime {
@@ -92,6 +94,7 @@ pub struct ReceiverRuntime {
     display_name: String,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
+    shared_ring_error: Option<String>,
 }
 
 impl ReceiverRuntime {
@@ -100,9 +103,16 @@ impl ReceiverRuntime {
             .with_identity(config.identity.clone())
             .with_trusted_store(&config.trusted_store_path)?;
 
-        if let Err(err) = receiver.attach_shared_ring(&config.shared_ring_name) {
-            tracing::warn!("Shared Frame Ring unavailable: {err}");
-        }
+        let shared_ring_error = match receiver.attach_shared_ring(&config.shared_ring_name) {
+            Ok(()) => None,
+            Err(err) => {
+                tracing::error!(
+                    ring = %config.shared_ring_name,
+                    "Shared Frame Ring unavailable — VCam will stay on placeholder: {err}"
+                );
+                Some(err.to_string())
+            }
+        };
 
         let bind = receiver.listen(Endpoint {
             host: config.bind_host,
@@ -168,6 +178,7 @@ impl ReceiverRuntime {
             qr_expires_at_ms,
             display_name: config.identity.display_name,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
+            shared_ring_error,
         })
     }
 
@@ -360,6 +371,7 @@ impl ReceiverRuntime {
             display_name: self.display_name.clone(),
             active_sender,
             virtual_camera: self.virtual_camera,
+            shared_ring_error: self.shared_ring_error.clone(),
         }
     }
 
