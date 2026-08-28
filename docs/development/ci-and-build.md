@@ -48,6 +48,7 @@ GitHub Actions
 
 - `android` / `windows` 与 `rust-and-docs` **并行**（分属不同 runner 池）：避免 tip 在 ubuntu 测试矩阵排队时饿死 Windows DLL/MSI 与 APK 产物。
 - 各 job 通过 `actions/upload-artifact` 上传产物（APK、MSI、DLL 等），供人工验证或后续 release workflow 消费。
+- **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
 
 ### 示例 Workflow 结构
@@ -148,7 +149,9 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 | Rust 单元/集成/协议测试 | `ubuntu-latest`（Cloud Agent 本地亦可） |
 | Android 安装与采集发送 | CI artifact + 真机（人工或后续设备 farm） |
 | Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建 + Windows 真机/VM 人工验证 |
-| 会议软件（Zoom/Teams 等）兼容性 | 不在 CI 内自动化；依赖人工 checklist |
+| 会议软件（Zoom/Teams 等）兼容性 | 不在 CI 内自动化；[会议软件验收清单](../design-specs/verification/vcam-meeting-apps.md) |
+| Android→Windows 真机 E2E | [真机 E2E 清单](../design-specs/verification/device-e2e-android-win11.md) |
+| V1 差距审计 | [android-win-v1-gap-audit.md](../design-specs/verification/android-win-v1-gap-audit.md) |
 
 ## 相关文档
 

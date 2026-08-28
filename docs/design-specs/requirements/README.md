@@ -8,6 +8,17 @@
 
 所有 REQ 初始状态为 `proposed`。实现并验证后更新为 `implemented` / `verified`。
 
+**V1 差距审计**（实现 vs 真机）：[verification/android-win-v1-gap-audit.md](../verification/android-win-v1-gap-audit.md)
+
+## 验证清单（Android→Windows）
+
+| 文档 | 关闭的 REQ / PUC |
+| --- | --- |
+| [ci-artifacts.md](../verification/ci-artifacts.md) | STACK-005 — CI 产物下载 |
+| [device-e2e-android-win11.md](../verification/device-e2e-android-win11.md) | BUC-001, PUC-001..003, 005..007, PRD §21 功能/性能抽样 |
+| [vcam-meeting-apps.md](../verification/vcam-meeting-apps.md) | **VCAM-005**, PUC-004 |
+| [session-005-soak-loopback.md](../verification/session-005-soak-loopback.md) | SESSION-005 loopback 中间证据（非真机关闭） |
+
 ## 文档索引
 
 | 区域 | 文件 | 说明 |
