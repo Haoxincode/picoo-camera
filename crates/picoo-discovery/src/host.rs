@@ -121,19 +121,6 @@ pub fn local_advertise_host() -> Option<String> {
     local_advertise_ipv4().map(|ip| ip.to_string())
 }
 
-fn local_ipv4_addrs() -> Vec<Ipv4Addr> {
-    let Ok(ifaces) = local_ip_address::list_afinet_netifas() else {
-        return Vec::new();
-    };
-    ifaces
-        .into_iter()
-        .filter_map(|(_name, addr)| match addr {
-            IpAddr::V4(v4) => Some(v4),
-            IpAddr::V6(_) => None,
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
