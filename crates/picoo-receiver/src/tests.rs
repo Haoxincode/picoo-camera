@@ -395,6 +395,35 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
     let got = got.expect("CameraCommand delivered to sender");
     assert_eq!(got.command, camera_command::Command::SwitchBack as i32);
 
+    // PUC-005 / ABR: SetResolution 480p (854×480) must round-trip like 720/1080.
+    receiver
+        .send_camera_command(CameraCommand {
+            command: camera_command::Command::SetResolution as i32,
+            resolution: Some(picoo_protocol::control::Resolution {
+                width: 854,
+                height: 480,
+            }),
+            mirrored: false,
+        })
+        .expect("camera cmd 480p");
+    let mut got_res = None;
+    for _ in 0..40 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if let Some(c) = sender.take_camera_command() {
+            got_res = Some(c);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let got_res = got_res.expect("SetResolution 480 delivered");
+    assert_eq!(
+        got_res.command,
+        camera_command::Command::SetResolution as i32
+    );
+    let res = got_res.resolution.expect("resolution payload");
+    assert_eq!((res.width, res.height), (854, 480));
+
     sender.send_stop_stream().expect("stop");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");

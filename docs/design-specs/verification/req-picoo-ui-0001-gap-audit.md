@@ -12,7 +12,7 @@
 
 | AC | 状态 | 说明 |
 | --- | --- | --- |
-| AC-M-DISC-01 | ⏳ | 顶栏 Wi‑Fi pill 读取实时 SSID（`WifiNetworkInfo`）；无权限时回退「局域网」 |
+| AC-M-DISC-01 | ⏳ | 顶栏 Wi‑Fi pill；`normalizeSsid`/`fallbackLabel` 可测；无权限时回退「局域网」/「Wi‑Fi」 |
 | AC-M-DISC-02 | ✅ | 发现中橙色脉冲；发现完成绿点常驻（无动画） |
 | AC-M-DISC-03 | ⏳ | 已配对 badge + `MoreHoriz` 分栏；菜单为 Dropdown 非 bottom sheet |
 | AC-M-DISC-04 | ✅ | 离线卡片置灰；点击 Toast 提示不在线 |
@@ -66,8 +66,8 @@
 | AC-D-PAIR-01/02 | ⏳ | Modal 结构 + **code-box** + 首次强调 ✅；无 blur backdrop |
 | AC-D-LIVE-01 | ⏳ | HUD pill 8px 圆角 ✅ |
 | AC-D-LIVE-02 | ⏳ | 遥测 **单行 flex** ✅；真实 jitter ✅；双语网络质量 ✅ |
-| AC-D-LIVE-03 | ⏳ | IDR + **danger 红断开钮** ✅ |
-| AC-D-SET-01 | ⏳ | 功能在 **全页 Settings** 非 Modal；**占位画面三选一**（Logo/黑/彩条）✅ |
+| AC-D-LIVE-03 | ⏳ | IDR + **danger 红断开钮** ✅；**远程 CameraCommand**（前/后/480/720/1080/远端镜像）✅ |
+| AC-D-SET-01 | ✅ | **Settings Modal** 覆盖层（非全页）；占位画面三选一（Logo/黑/彩条）✅ |
 | AC-D-SET-02 | ✅ | 诊断导出已实现 |
 
 ## Anti-Patterns（§5）
