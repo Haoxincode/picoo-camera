@@ -7,7 +7,7 @@ use windows::core::{GUID, PCWSTR};
 use windows::Win32::Media::MediaFoundation::{
     IMFVirtualCamera, MFCreateVirtualCamera, MFShutdown, MFStartup,
     MFVirtualCameraAccess_CurrentUser, MFVirtualCameraLifetime_Session,
-    MFVirtualCameraType_SoftwareCameraSource, MF_VERSION,
+    MFVirtualCameraLifetime_System, MFVirtualCameraType_SoftwareCameraSource, MF_VERSION,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 
@@ -23,31 +23,18 @@ pub struct VirtualCameraRegistration {
 impl VirtualCameraRegistration {
     /// Register and start the Picoo Camera virtual camera for the current user session.
     pub fn register_and_start() -> Result<Self, String> {
-        let _com = ComInit::new()?;
-        let _mf = MfInit::new()?;
+        create_virtual_camera(MFVirtualCameraLifetime_Session)
+    }
 
-        let friendly = wide(FRIENDLY_NAME);
-        let clsid = wide(&format!("{{{}}}", guid_string(PICOO_VCAM_CLSID)));
+    /// Register a system-lifetime virtual camera (survives process exit; used by MSI install).
+    pub fn register_system() -> Result<Self, String> {
+        create_virtual_camera(MFVirtualCameraLifetime_System)
+    }
 
-        let camera = unsafe {
-            MFCreateVirtualCamera(
-                MFVirtualCameraType_SoftwareCameraSource,
-                MFVirtualCameraLifetime_Session,
-                MFVirtualCameraAccess_CurrentUser,
-                PCWSTR(friendly.as_ptr()),
-                PCWSTR(clsid.as_ptr()),
-                None,
-            )
-        }
-        .map_err(|e| format!("MFCreateVirtualCamera failed: {e}"))?;
-
-        unsafe {
-            camera
-                .Start(None)
-                .map_err(|e| format!("IMFVirtualCamera::Start failed: {e}"))?;
-        }
-
-        Ok(Self { camera })
+    /// Remove a system-lifetime virtual camera registration (used by MSI uninstall).
+    pub fn remove_system() -> Result<(), String> {
+        let registration = create_virtual_camera(MFVirtualCameraLifetime_System)?;
+        registration.remove()
     }
 
     /// Remove the virtual camera registration from the system.
@@ -58,6 +45,36 @@ impl VirtualCameraRegistration {
                 .map_err(|e| format!("IMFVirtualCamera::Remove failed: {e}"))
         }
     }
+}
+
+fn create_virtual_camera(
+    lifetime: windows::Win32::Media::MediaFoundation::MFVirtualCameraLifetime,
+) -> Result<VirtualCameraRegistration, String> {
+    let _com = ComInit::new()?;
+    let _mf = MfInit::new()?;
+
+    let friendly = wide(FRIENDLY_NAME);
+    let clsid = wide(&format!("{{{}}}", guid_string(PICOO_VCAM_CLSID)));
+
+    let camera = unsafe {
+        MFCreateVirtualCamera(
+            MFVirtualCameraType_SoftwareCameraSource,
+            lifetime,
+            MFVirtualCameraAccess_CurrentUser,
+            PCWSTR(friendly.as_ptr()),
+            PCWSTR(clsid.as_ptr()),
+            None,
+        )
+    }
+    .map_err(|e| format!("MFCreateVirtualCamera failed: {e}"))?;
+
+    unsafe {
+        camera
+            .Start(None)
+            .map_err(|e| format!("IMFVirtualCamera::Start failed: {e}"))?;
+    }
+
+    Ok(VirtualCameraRegistration { camera })
 }
 
 struct ComInit;

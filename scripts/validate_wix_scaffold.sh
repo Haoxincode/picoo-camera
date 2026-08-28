@@ -64,6 +64,12 @@ if grep -qF 'RegisterVcamDll' "$WXS" || grep -qF 'regsvr32.exe' "$WXS"; then
 else
   echo "ok: picoo-camera.wxs avoids deferred regsvr32"
 fi
+need "$WXS" 'RegisterVcamOnInstall'
+need "$WXS" '--register-vcam --no-wait'
+need "$WXS" 'WixQuietExec'
+need "$WXS" 'xmlns:util='
+need "$WXS" 'UnregisterVcamOnRemove'
+need "$WXS" '--unregister-vcam'
 # LAN QUIC firewall exception scaffolding (PRD §19.3)
 need "$WXS" 'FirewallException'
 need "$WXS" 'xmlns:fw='
@@ -87,6 +93,7 @@ need "$REG_PS1" "$CLSID"
 need "$REG_PS1" 'regsvr32 /s'
 need "$REG_PS1" 'regsvr32 /u /s'
 need "$REG_PS1" '--register-vcam'
+need "$REG_PS1" '--no-wait'
 need "$REG_PS1" '--unregister-vcam'
 
 # Bundle smoke script must resolve repo root as parent of scripts/ (not grandparent).

@@ -69,9 +69,9 @@ if (-not (Test-Path $Desktop)) {
     Write-Error "Missing picoo-desktop.exe (needed for MFCreateVirtualCamera). Build desktop or pass -AllowComOnly."
 }
 
-Write-Host "Starting MF virtual camera via picoo-desktop --register-vcam"
+Write-Host "Starting MF virtual camera via picoo-desktop --register-vcam --no-wait"
 Write-Host "Note: on Windows 11, Frame Server must be able to read the DLL path (prefer Program Files install)."
-& $Desktop --register-vcam
+& $Desktop --register-vcam --no-wait
 if ($LASTEXITCODE -ne 0) {
     Write-Error "picoo-desktop --register-vcam failed with exit code $LASTEXITCODE"
 }

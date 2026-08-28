@@ -90,7 +90,8 @@ fn main() {
 
     #[cfg(all(windows, feature = "windows-vcam"))]
     if args.iter().any(|arg| arg == "--register-vcam") {
-        run_register_vcam();
+        let no_wait = args.iter().any(|arg| arg == "--no-wait");
+        run_register_vcam(no_wait);
         return;
     }
 
@@ -123,13 +124,25 @@ fn main() {
     println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
     #[cfg(all(windows, feature = "windows-vcam"))]
-    println!("Run with --register-vcam / --unregister-vcam on Windows 11 for MF virtual camera.");
+    println!("Run with --register-vcam [--no-wait] / --unregister-vcam on Windows 11 for MF virtual camera.");
 }
 
 #[cfg(all(windows, feature = "windows-vcam"))]
-fn run_register_vcam() {
-    match vcam_register::VirtualCameraRegistration::register_and_start() {
+fn run_register_vcam(no_wait: bool) {
+    let result = if no_wait {
+        vcam_register::VirtualCameraRegistration::register_system()
+    } else {
+        vcam_register::VirtualCameraRegistration::register_and_start()
+    };
+
+    match result {
         Ok(registration) => {
+            if no_wait {
+                println!("Picoo Camera virtual camera registered (system lifetime).");
+                // Drop releases COM/MF init; system-lifetime registration persists.
+                drop(registration);
+                return;
+            }
             println!("Picoo Camera virtual camera registered and started.");
             println!("Press Enter to remove the virtual camera and exit.");
             let mut line = String::new();
@@ -150,16 +163,10 @@ fn run_register_vcam() {
 
 #[cfg(all(windows, feature = "windows-vcam"))]
 fn run_unregister_vcam() {
-    match vcam_register::VirtualCameraRegistration::register_and_start() {
-        Ok(registration) => match registration.remove() {
-            Ok(()) => println!("Virtual camera removed."),
-            Err(err) => {
-                eprintln!("Failed to remove virtual camera: {err}");
-                std::process::exit(1);
-            }
-        },
+    match vcam_register::VirtualCameraRegistration::remove_system() {
+        Ok(()) => println!("Virtual camera removed."),
         Err(err) => {
-            eprintln!("Could not attach to virtual camera for removal: {err}");
+            eprintln!("Failed to remove virtual camera: {err}");
             std::process::exit(1);
         }
     }

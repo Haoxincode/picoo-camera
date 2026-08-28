@@ -105,7 +105,7 @@
 
 ## Windows MSI / VCam 安装
 
-[`2b22237`](https://github.com/Haoxincode/picoo-camera/commit/2b22237) 曾修正 deferred `regsvr32` 路径，但干净 Win11 上 `Return=check` 仍会因 `DllRegisterServer`/DLL 加载失败中止安装。**当前方案**：WiX 在 `VcamDll` 组件内声明式写入 COM CLSID 注册表（等效 `DllRegisterServer`），移除 deferred `regsvr32`；MF 仍由首次启动 `picoo-desktop` 注册（REQ-PICOO-VCAM-004）。仍须 Win11 真机验证 MSI 安装/卸载与 COM 枚举。
+[`2b22237`](https://github.com/Haoxincode/picoo-camera/commit/2b22237) 曾修正 deferred `regsvr32` 路径，但干净 Win11 上 `Return=check` 仍会因 `DllRegisterServer`/DLL 加载失败中止安装。**当前方案**：WiX 在 `VcamDll` 组件内声明式写入 COM CLSID 注册表（等效 `DllRegisterServer`），移除 deferred `regsvr32`；MF 由 MSI 安装后 `picoo-desktop --register-vcam --no-wait`（`WixQuietExec`）自动注册（REQ-PICOO-VCAM-004）。仍须 Win11 真机验证 MSI 安装/卸载与 COM 枚举。
 
 ## 本会话建议的关闭顺序（真机）
 

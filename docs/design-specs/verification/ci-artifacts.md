@@ -85,7 +85,7 @@ adb install -r app-release.apk
 
 | 平台 | 文件 | 安装 |
 | --- | --- | --- |
-| Windows 11 | `PicooCamera.msi` | **管理员**双击安装（perMachine；WiX 写入 COM CLSID + 防火墙）。首次启动 `picoo-desktop` 完成 MF 注册。失败时见 [vcam-meeting-apps.md](vcam-meeting-apps.md) §0；或解压 bundle 后 **管理员**运行 `.\register-vcam.ps1` |
+| Windows 11 | `PicooCamera.msi` | **管理员**双击安装（perMachine；WiX 写入 COM CLSID + 防火墙 + 安装时自动 MF 注册）。失败时见 [vcam-meeting-apps.md](vcam-meeting-apps.md) §0；或解压 bundle 后 **管理员**运行 `.\register-vcam.ps1` |
 | Android | `app-release.apk` | adb 或文件管理器安装 |
 
 安装完成后按 [device-e2e-android-win11.md](device-e2e-android-win11.md) 走通配对与 Streaming。
