@@ -48,6 +48,24 @@ if grep -qE 'RegistryValue[^>]*Name=""' "$WXS"; then
 else
   echo "ok: picoo-camera.wxs default RegistryValue names omitted"
 fi
+# WIX0104: XML comments cannot contain '--' (WiX rejects invalid comment bodies).
+if python3 - "$WXS" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+for match in re.finditer(r"<!--(.*?)-->", text, re.DOTALL):
+    body = match.group(1)
+    if "--" in body:
+        snippet = body.strip().replace("\n", " ")[:120]
+        print(f"picoo-camera.wxs: XML comment contains '--' (WIX0104): {snippet}")
+        sys.exit(1)
+sys.exit(0)
+PY
+then
+  echo "ok: picoo-camera.wxs XML comments avoid '--' (WIX0104)"
+else
+  fail=1
+fi
 # Post-build MSI check lives in verify_windows_bundle.ps1 (windows-latest only; no msiexec).
 need "$WXS" 'FirewallQuic'
 need "$WXS" 'KeyPath="yes"'
