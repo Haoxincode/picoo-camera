@@ -25,6 +25,25 @@ if (-not (Test-Path $Msi)) {
 }
 Write-Host "ok: PicooCamera.msi ($((Get-Item $Msi).Length) bytes)"
 
+# Post-build MSI smoke (REQ-PICOO-VCAM-004): no deferred regsvr32 custom actions.
+# Limitation: CI cannot run msiexec /i (perMachine admin + Win11 GUI); install acceptance
+# remains manual — see docs/design-specs/verification/vcam-meeting-apps.md.
+$msiBytes = [System.IO.File]::ReadAllBytes($Msi)
+$msiAscii = [System.Text.Encoding]::ASCII.GetString($msiBytes)
+$msiUnicode = [System.Text.Encoding]::Unicode.GetString($msiBytes)
+$forbidden = @('regsvr32.exe', 'RegisterVcamDll')
+foreach ($needle in $forbidden) {
+    if ($msiAscii.Contains($needle) -or $msiUnicode.Contains($needle)) {
+        Write-Error "MSI embeds forbidden pattern '$needle' (use declarative COM registry in wxs)"
+    }
+    Write-Host "ok: MSI lacks '$needle'"
+}
+$clsid = 'A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F'
+if (-not ($msiAscii.Contains($clsid) -or $msiUnicode.Contains($clsid))) {
+    Write-Error "MSI missing CLSID registry scaffold ($clsid)"
+}
+Write-Host "ok: MSI embeds CLSID $clsid"
+
 # UTF-16LE "Picoo Camera" must appear in the VCam DLL (FRIENDLY_NAME).
 $needle = [System.Text.Encoding]::Unicode.GetBytes("Picoo Camera")
 $bytes = [System.IO.File]::ReadAllBytes($Dll)

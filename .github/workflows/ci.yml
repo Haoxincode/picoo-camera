@@ -91,6 +91,7 @@ jobs:
         run: cargo run -p xtask -- package windows
       - name: Verify Windows bundle smoke (VCAM-001)
         shell: pwsh
+        # Bundle + MSI string smoke; does NOT msiexec-install (Win11 manual only).
         run: ./scripts/verify_windows_bundle.ps1
       - uses: actions/upload-artifact@v7
         with:

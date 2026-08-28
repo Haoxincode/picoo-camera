@@ -48,6 +48,7 @@ if grep -qE 'RegistryValue[^>]*Name=""' "$WXS"; then
 else
   echo "ok: picoo-camera.wxs default RegistryValue names omitted"
 fi
+# Post-build MSI check lives in verify_windows_bundle.ps1 (windows-latest only; no msiexec).
 need "$WXS" 'FirewallQuic'
 need "$WXS" 'KeyPath="yes"'
 need "$WXS" 'MajorUpgrade'

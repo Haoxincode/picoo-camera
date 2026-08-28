@@ -65,7 +65,7 @@ windows-bundle/
     └── PicooCamera.msi            # 与 windows-msi artifact 相同
 ```
 
-CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在且 DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001）。
+CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 不含 `regsvr32.exe`/`RegisterVcamDll` 且含 CLSID（REQ-VCAM-004）。**不**在 CI 上执行 `msiexec /i`（perMachine 需 Win11 管理员真机验收）。
 
 ### `android-release` 解压后布局
 
