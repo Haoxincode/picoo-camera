@@ -1,6 +1,6 @@
 # Android Sender + Windows Receiver V1 差距审计
 
-> 分支：`cursor/android-win-v1-gates-dbe3` · tip `37fdf5b` · 全绿 CI [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632)（`690cdbf`）；含 WIX0104 scaffold guard
+> 分支：`cursor/android-win-v1-gates-dbe3` · tip `97f79a0` · 待 CI 验证（上一全绿 [33141502632](https://github.com/Haoxincode/picoo-camera/actions/runs/33141502632) @ `690cdbf`）
 >
 > 范围：**Android→Windows** 组合下的 BUC-001 + 全部 7 个 PUC + PRD §21 验收。iOS/macOS 四端组合不在本 V1 关闭范围。
 
@@ -91,7 +91,7 @@
 
 ## Windows MSI / VCam 安装
 
-[`2b22237`](https://github.com/Haoxincode/picoo-camera/commit/2b22237) 曾修正 deferred `regsvr32` 路径，但干净 Win11 上 `Return=check` 仍会因 `DllRegisterServer`/DLL 加载失败中止安装。**当前方案**：WiX 在 `VcamDll` 组件内声明式写入 COM CLSID 注册表（等效 `DllRegisterServer`），移除 deferred `regsvr32`；MF 由 MSI 安装后 `picoo-desktop --register-vcam --no-wait`（`WixQuietExec`）自动注册（REQ-PICOO-VCAM-004）。仍须 Win11 真机验证 MSI 安装/卸载与 COM 枚举。
+[`83ca647`](https://github.com/Haoxincode/picoo-camera/commit/83ca647) 修复真机 `0x80040154`（COM 未注册）：桌面启动前 `ensure_com_server_registered()`（缺失则 `regsvr32 /s`）；MSI 在 `InstallFiles` 后以 `RegisterVcamComDll`（`regsvr32.exe` + `Return=ignore`）兜底 COM，再 `RegisterVcamOnInstall`（`--register-vcam --no-wait`）注册 MF。WiX 仍保留声明式 CLSID 注册表。仍须 Win11 **管理员** 真机验证：新 MSI 安装/卸载、系统相机枚举 `Picoo Camera`、会议软件选用（VCAM-005）。
 
 ## 本会话建议的关闭顺序（真机）
 
