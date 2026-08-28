@@ -6,9 +6,9 @@
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33131999904](https://github.com/Haoxincode/picoo-camera/actions/runs/33131999904) |
+| Run ID | [33137894478](https://github.com/Haoxincode/picoo-camera/actions/runs/33137894478) |
 | 分支 | `cursor/android-win-v1-gates-dbe3` |
-| Commit | `3ae2569` — `fix(vcam): embed UTF-16 Picoo Camera friendly name in DLL image` |
+| Commit | `58bfff6` — MSI declarative COM + post-build MSI smoke |
 | 结论 | 6/6 jobs success（`rust-and-docs` + `android` + `windows` × push/PR） |
 
 后续 tip 绿 run 用法相同：在 Actions 页打开对应 run → 页面底部 **Artifacts** 区域下载。
