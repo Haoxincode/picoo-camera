@@ -1,9 +1,9 @@
 //! Minimize-to-tray close policy — REQ-PICOO-UI-008 / PRD §16.
 //!
-//! GPUI wires [`CloseOutcome`] via `Window::on_window_should_close`. Win32
-//! `Shell_NotifyIcon` needs an HWND from the platform window; until GPUI
-//! exposes one, [`NotifyIconController`] records ADD/MODIFY/DELETE intent so
-//! the product path is unit-tested on Linux and ready for HWND injection.
+//! GPUI wires [`CloseOutcome`] via `Window::on_window_should_close`. On Windows,
+//! a message-only tray host HWND backs `Shell_NotifyIconW` + Show/Quit menu
+//! (with FindWindowW("Picoo Camera") as fallback). Linux CI still records
+//! ADD/MODIFY/DELETE intent without calling Shell APIs.
 
 #![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 
