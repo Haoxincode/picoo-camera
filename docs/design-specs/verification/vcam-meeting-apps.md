@@ -14,10 +14,10 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `PicooCamera.msi` | 推荐：安装文件 + COM 注册（WiX 注册表）+ 防火墙规则；**MF 虚拟相机**需首次启动 desktop |
+| `PicooCamera.msi` | 推荐：安装文件 + COM 注册（WiX 注册表）+ 防火墙规则 + **安装结束时自动 MF 注册**（`--register-vcam --no-wait`） |
 | 或 `windows-bundle` 解压 | 开发态：`register-vcam.ps1`（**管理员** PowerShell） |
 
-**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 由 WiX 写入注册表（等效 `DllRegisterServer`），**不再**在安装末尾执行 `regsvr32`（旧版 `Return=check` 自定义动作在干净 Win11 上常因 DLL 加载/`DllRegisterServer` 失败而中止安装）。
+**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 由 WiX 写入注册表（等效 `DllRegisterServer`），**不再**在安装末尾执行 `regsvr32`（旧版 `Return=check` 自定义动作在干净 Win11 上常因 DLL 加载/`DllRegisterServer` 失败而中止安装）。MF 虚拟相机在 `InstallFiles` 之后由 MSI 自动调用 `picoo-desktop --register-vcam --no-wait` 完成（system lifetime，无需用户手动操作）。
 
 ```powershell
 # 开发态示例（在解压后的 bundle 目录）
@@ -25,9 +25,9 @@ Set-ExecutionPolicy -Scope Process Bypass
 .\register-vcam.ps1
 # 卸载：.\register-vcam.ps1 -Unregister
 
-# COM 已写入但 MF 未注册时的补救（管理员 PowerShell，路径按实际安装目录）
+# 若 MSI 自动 MF 注册失败时的补救（管理员 PowerShell，路径按实际安装目录）
 cd "C:\Program Files\Picoo Camera"
-.\picoo-desktop.exe --register-vcam
+.\picoo-desktop.exe --register-vcam --no-wait
 # 开发态或需重写 COM 键时仍可用 regsvr32：
 # regsvr32 /s PicooVirtualCameraSource.dll
 ```
@@ -138,7 +138,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 
 | 现象 | 处理 |
 | --- | --- |
-| MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log`；若文件已复制成功，启动 `picoo-desktop` 完成 MF 注册；开发态可用 `register-vcam.ps1`（见 §0） |
+| MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log` 搜索 `RegisterVcamOnInstall` / `WixQuietExec`；若文件已复制成功，手动运行 `picoo-desktop --register-vcam --no-wait`；开发态可用 `register-vcam.ps1`（见 §0） |
 | 列表有 Picoo Camera 但黑屏 | 确认 desktop Streaming；运行 `picoo-vcam-ring-reader.exe` |
 | 只有 Integrated Camera | 重启应用；检查 MSI 安装；系统相机是否可见 Picoo |
 | Zoom 报摄像头被占用 | 关闭 Windows 相机 App 与其他占用 VCam 的程序 |

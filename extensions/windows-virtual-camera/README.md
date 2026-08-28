@@ -35,7 +35,10 @@ Built on `windows-latest` for MF DLL — see [ci-and-build.md](../../docs/develo
 cargo xtask build windows
 cargo xtask package windows
 powershell -ExecutionPolicy Bypass -File target/release/bundle/register-vcam.ps1
+# Dev interactive (session lifetime, waits for Enter):
 picoo-desktop --register-vcam
+# MSI / headless (system lifetime):
+picoo-desktop --register-vcam --no-wait
 ```
 
 COM CLSID: `{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}` — friendly name **Picoo Camera**.

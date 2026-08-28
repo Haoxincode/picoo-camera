@@ -17,7 +17,9 @@ dotnet tool install --global wix
 powershell -ExecutionPolicy Bypass -File installers/windows/build-msi.ps1
 ```
 
-`picoo-camera.wxs` installs to `Program Files\Picoo Camera` and writes COM CLSID registry keys (equivalent to `DllRegisterServer`) so Frame Server can load the DLL. **No deferred regsvr32** — that pattern failed on clean Win11 with `Return=check`. MF virtual camera registration is done on first launch via `picoo-desktop --register-vcam` (or automatically when GPUI starts).
+`picoo-camera.wxs` installs to `Program Files\Picoo Camera`, writes COM CLSID registry keys (equivalent to `DllRegisterServer`), and runs `picoo-desktop --register-vcam --no-wait` after `InstallFiles` (system-lifetime MF registration via `WixQuietExec`). **No deferred regsvr32** — that pattern failed on clean Win11 with `Return=check`.
+
+Development bundle still uses `register-vcam.ps1` (regsvr32 + `--register-vcam --no-wait`).
 
 If MSI install fails for other reasons, capture a verbose log:
 
