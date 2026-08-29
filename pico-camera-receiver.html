@@ -2258,87 +2258,27 @@ body {
               </div>
 
               <!-- ================= STATE B: STREAMING / LIVE CAMERA VIEW ================= -->
-              <div id="connect-streaming-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 flex-1 flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-300 hidden">
-                
-                <!-- Live Header Row -->
-                <div class="flex items-center justify-between pb-3 shrink-0 select-none">
-                  <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full bg-primary/15 text-primary border border-primary/30 flex items-center justify-center shrink-0">
-                      <svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line></svg>
-                    </div>
-                    <div>
-                      <div class="flex items-center gap-2">
-                        <span class="text-base font-bold text-card-foreground">iPhone 16 Pro</span>
-                        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-[11px] font-semibold">
-                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot"></span>
-                          <span>实时视频流</span>
-                        </span>
-                      </div>
-                      <p class="text-xs text-muted-foreground mt-0.5 font-mono">
-                        1080p60 · H.265 HW · 12ms · QUIC 4433
-                      </p>
-                    </div>
-                  </div>
-
-                  <!-- Quick Video Actions (Pure Icon Toolbar) -->
-                  <div class="flex items-center gap-1.5">
-                    <!-- Mirror Icon Button -->
-                    <button class="w-8.5 h-8.5 rounded-[var(--radius)] bg-secondary hover:bg-secondary/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center transition-all cursor-pointer group" onclick="toggleStreamMirror()" title="水平镜像翻转 (Mirror)">
-                      <svg class="w-4 h-4 text-foreground/80 group-hover:text-primary transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 3v18M16 7l4 5-4 5V7zM8 7L4 12l4 5V7z" stroke-linecap="round" stroke-linejoin="round"></path>
-                      </svg>
-                    </button>
-                    
-                    <!-- Repair/Refresh Video Feed Icon Button (User-Friendly IDR) -->
-                    <button class="w-8.5 h-8.5 rounded-[var(--radius)] bg-secondary hover:bg-secondary/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center transition-all cursor-pointer group" onclick="requestIdrFrame()" title="修复画面 (消除卡顿与花屏)">
-                      <svg class="w-4 h-4 text-foreground/80 group-hover:text-primary transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" stroke-linecap="round" stroke-linejoin="round"></path>
-                      </svg>
-                    </button>
-
-                    <!-- Snapshot Icon Button -->
-                    <button class="w-8.5 h-8.5 rounded-[var(--radius)] bg-secondary hover:bg-secondary/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center transition-all cursor-pointer group" onclick="captureSnapshot()" title="拍照截图 (Snapshot)">
-                      <svg class="w-4 h-4 text-foreground/80 group-hover:text-primary transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="3"></circle>
-                        <path d="M3 9a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 10.07 4h3.86a2 2 0 0 1 1.664.89l.812 1.22A2 2 0 0 0 18.07 7H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"></path>
-                      </svg>
-                    </button>
-
-                    <!-- Disconnect Icon Button (Destructive) -->
-                    <button class="w-8.5 h-8.5 rounded-[var(--radius)] bg-destructive/15 hover:bg-destructive/25 text-destructive border border-destructive/30 hover:border-destructive/60 flex items-center justify-center transition-all cursor-pointer ml-1 group" onclick="toggleConnectState()" title="断开视频流连接 (Disconnect)">
-                      <svg class="w-4 h-4 text-destructive group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10" stroke-linecap="round" stroke-linejoin="round"></path>
-                      </svg>
-                    </button>
-                  </div>
-                </div>
+              <div id="connect-streaming-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-4 flex-1 flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-300 hidden">
 
                 <!-- Main Viewfinder Video Screen Canvas -->
-                <div class="relative flex-1 w-full rounded-[var(--radius)] overflow-hidden bg-black flex items-center justify-center border border-border shadow-inner group min-h-[360px]">
+                <div class="relative flex-1 w-full rounded-[var(--radius)] overflow-hidden bg-black flex items-center justify-center border border-border shadow-inner group min-h-[420px]">
                   
                   <!-- Dynamic Canvas Video Stream -->
                   <canvas id="live-stream-canvas" class="w-full h-full object-cover block cursor-crosshair" onclick="triggerCanvasFocus(event)" width="859" height="745"></canvas>
 
-                  <!-- Top Live Overlay Badge with Direct Click Resolution Switcher -->
-                  <div class="absolute top-3 left-3 flex items-center gap-2 z-10 select-none">
-                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-extrabold tracking-wider shadow-sm pointer-events-none">
+                  <!-- Top Left Live Overlay Badge -->
+                  <div class="absolute top-3 left-3 flex items-center gap-2 z-10 select-none pointer-events-none">
+                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-extrabold tracking-wider shadow-sm">
                       <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                      <span>LIVE STREAM</span>
+                      <span>LIVE</span>
                     </span>
-                    
-                    <!-- Direct Interactive Resolution Switcher Button -->
-                    <button class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-black/75 hover:bg-black/90 backdrop-blur-md text-white text-[11px] font-mono border border-white/20 hover:border-primary/70 shadow-xs cursor-pointer transition-all group" onclick="cycleStreamResolution()" title="点击切换分辨率与帧率格式">
-                      <span id="stream-res-badge">4K UHD · 60 FPS</span>
-                      <svg class="w-3 h-3 text-white/60 group-hover:text-primary transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
-                    </button>
                   </div>
 
-                  <!-- Top Right Live Latency & Bitrate Badge -->
-                  <div class="absolute top-3 right-3 flex items-center gap-2 pointer-events-none z-10">
-                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/65 backdrop-blur-md text-emerald-400 text-[11px] font-mono border border-white/10 shadow-xs">
-                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                      <span id="canvas-stats-text">12 ms · 24.8 Mbps</span>
-                    </span>
+                  <!-- Top Right Fullscreen Button -->
+                  <div class="absolute top-3 right-3 flex items-center gap-2 z-10 select-none">
+                    <button class="p-1.5 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md text-white/90 hover:text-white transition-colors cursor-pointer border border-white/10" onclick="toggleFullScreen()" title="全屏取景">
+                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 0-2-2h-4M3 15v4a2 2 0 0 0 2 2h4M21 15v4a2 2 0 0 1-2 2h-4"></path></svg>
+                    </button>
                   </div>
 
                   <!-- Center Camera Viewfinder Reticle & Facial Recognition HUD -->
@@ -2381,9 +2321,7 @@ body {
                     </div>
 
                     <div class="flex items-center gap-2">
-                      <button class="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white transition-colors cursor-pointer" onclick="toggleFullScreen()" title="全屏预览">
-                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9V5a2 2 0 0 1 2-2h4M21 9V5a2 2 0 0 0-2-2h-4M3 15v4a2 2 0 0 0 2 2h4M21 15v4a2 2 0 0 1-2 2h-4"></path></svg>
-                      </button>
+                      <span class="text-[11px] text-white/60 font-mono">1080p 60FPS</span>
                     </div>
                   </div>
 
@@ -2395,7 +2333,7 @@ body {
                     <span class="w-2 h-2 rounded-full bg-emerald-500 pulse-dot"></span>
                     <span>虚拟摄像头正在输出到系统 · 会议软件可直接选择「Pico Camera」</span>
                   </div>
-                  <button class="text-primary hover:underline text-xs flex items-center gap-1 font-medium cursor-pointer" onclick="switchPage(&#39;page-vcam&#39;)">
+                  <button class="text-primary hover:underline text-xs flex items-center gap-1 font-medium cursor-pointer" onclick="switchPage('page-vcam')">
                     <span>虚拟摄像头配置</span>
                     <span>→</span>
                   </button>
@@ -3084,27 +3022,66 @@ body {
                 </div>
 
                 <!-- Streaming Device Parameters & Controls Card (Shown only during active stream) -->
-                <div id="streaming-controls-card" class="bg-secondary/40 border border-border rounded-[var(--radius)] p-4 flex flex-col gap-3 transition-all duration-300 hidden">
-                  <div class="flex items-center justify-between text-xs pb-2 border-b border-border">
-                    <span class="text-muted-foreground">视频解码</span>
-                    <span class="font-mono text-foreground font-medium">H.265 硬件加速</span>
-                  </div>
-                  <div class="flex items-center justify-between text-xs pb-2 border-b border-border">
-                    <span class="text-muted-foreground">实时码率 / 帧率</span>
-                    <span class="font-mono text-primary font-semibold">8.4 Mbps · 60 FPS</span>
-                  </div>
-                  <div class="flex items-center justify-between text-xs pb-2 border-b border-border">
-                    <span class="text-muted-foreground">手机电量</span>
-                    <div class="flex items-center gap-1.5 font-mono text-emerald-500 font-medium">
-                      <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line><line x1="6" y1="11" x2="10" y2="11"></line></svg>
-                      <span>88% · 充电中</span>
+                <div id="streaming-controls-card" class="bg-secondary/40 border border-border rounded-[var(--radius)] p-4 flex flex-col gap-3.5 transition-all duration-300 hidden">
+                  <!-- Video Parameter Specs -->
+                  <div class="flex flex-col gap-2 text-xs">
+                    <div class="flex items-center justify-between pb-2 border-b border-border">
+                      <span class="text-muted-foreground">视频规格</span>
+                      <button class="inline-flex items-center gap-1 font-mono text-primary font-semibold hover:underline cursor-pointer" onclick="cycleStreamResolution()" title="点击切换分辨率">
+                        <span id="stream-res-badge">1080p · 60 FPS</span>
+                        <svg class="w-3 h-3 text-primary/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                      </button>
+                    </div>
+                    <div class="flex items-center justify-between pb-2 border-b border-border">
+                      <span class="text-muted-foreground">解码 & 码率</span>
+                      <span class="font-mono text-foreground font-medium">H.265 HW · 8.4 Mbps</span>
+                    </div>
+                    <div class="flex items-center justify-between pb-2 border-b border-border">
+                      <span class="text-muted-foreground">手机电量</span>
+                      <div class="flex items-center gap-1.5 font-mono text-emerald-500 font-medium">
+                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line><line x1="6" y1="11" x2="10" y2="11"></line></svg>
+                        <span>88% · 充电中</span>
+                      </div>
                     </div>
                   </div>
-                  <div class="flex items-center justify-between text-xs pt-0.5">
-                    <span class="text-muted-foreground">音频通道</span>
-                    <div class="flex items-center gap-1.5 text-xs text-foreground font-medium">
-                      <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-                      <span>手机麦克风立体声</span>
+
+                  <!-- Camera Quick Controls Grid (镜像, 镜头切换, 画面修复, 拍照截图) -->
+                  <div>
+                    <div class="text-[11px] font-medium text-muted-foreground mb-2">镜头与画面控制</div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <!-- 1. 镜像翻转 -->
+                      <button class="px-2.5 py-2 rounded-[var(--radius)] bg-card hover:bg-card/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center gap-2 text-xs font-medium transition-all cursor-pointer group shadow-xs select-none" onclick="toggleStreamMirror()" title="水平镜像翻转">
+                        <svg class="w-3.5 h-3.5 text-primary group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M12 3v18M16 7l4 5-4 5V7zM8 7L4 12l4 5V7z" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                        <span>镜像翻转</span>
+                      </button>
+
+                      <!-- 2. 镜头切换 -->
+                      <button class="px-2.5 py-2 rounded-[var(--radius)] bg-card hover:bg-card/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center gap-2 text-xs font-medium transition-all cursor-pointer group shadow-xs select-none" onclick="toggleCameraLens()" title="切换前置 / 后置广角 / 超广角镜头">
+                        <svg class="w-3.5 h-3.5 text-primary group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+                          <circle cx="12" cy="13" r="4"></circle>
+                        </svg>
+                        <span id="current-lens-label">后置主摄</span>
+                      </button>
+
+                      <!-- 3. 画面修复 / IDR -->
+                      <button class="px-2.5 py-2 rounded-[var(--radius)] bg-card hover:bg-card/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center gap-2 text-xs font-medium transition-all cursor-pointer group shadow-xs select-none" onclick="requestIdrFrame()" title="请求关键帧以消除卡顿或花屏">
+                        <svg class="w-3.5 h-3.5 text-primary group-hover:rotate-180 transition-transform duration-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" stroke-linecap="round" stroke-linejoin="round"></path>
+                        </svg>
+                        <span>画面修复</span>
+                      </button>
+
+                      <!-- 4. 拍照截图 -->
+                      <button class="px-2.5 py-2 rounded-[var(--radius)] bg-card hover:bg-card/80 text-foreground border border-border hover:border-primary/50 flex items-center justify-center gap-2 text-xs font-medium transition-all cursor-pointer group shadow-xs select-none" onclick="captureSnapshot()" title="截取当前帧画面保存为高清图片">
+                        <svg class="w-3.5 h-3.5 text-primary group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                          <circle cx="12" cy="12" r="3"></circle>
+                          <path d="M3 9a2 2 0 0 1 2-2h.93a2 2 0 0 0 1.664-.89l.812-1.22A2 2 0 0 1 10.07 4h3.86a2 2 0 0 1 1.664.89l.812 1.22A2 2 0 0 0 18.07 7H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9Z"></path>
+                        </svg>
+                        <span>拍照截图</span>
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -5898,6 +5875,17 @@ body {
       showToast(canvasMirrorX ? "水平镜像: 已开启" : "水平镜像: 已关闭");
     }
 
+    // Toggle Camera Lens (Wide / Ultra-Wide / Front)
+    const cameraLenses = ["后置主摄", "超广角 0.5x", "长焦 3x", "前置原深感"];
+    let currentLensIdx = 0;
+    function toggleCameraLens() {
+      currentLensIdx = (currentLensIdx + 1) % cameraLenses.length;
+      const lens = cameraLenses[currentLensIdx];
+      const label = document.getElementById("current-lens-label");
+      if (label) label.textContent = lens;
+      showToast("已切换手机镜头: " + lens);
+    }
+
     // Request IDR Keyframe (User-Friendly: Refresh / Repair Video Feed)
     function requestIdrFrame() {
       showToast("已请求修复画面 · 消除视频卡顿与花屏");
@@ -5908,7 +5896,7 @@ body {
       showToast("📸 画面快照已保存至相册 (Pico_Snapshot_1080p.png)");
     }
 
-    // Cycle Stream Resolution (directly clicked on the top resolution badge)
+    // Cycle Stream Resolution (directly clicked on the right panel resolution row)
     function cycleStreamResolution() {
       currentResIdx = (currentResIdx + 1) % canvasResolutions.length;
       const res = canvasResolutions[currentResIdx];
