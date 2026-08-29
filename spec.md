@@ -1,7 +1,7 @@
-# Pico Camera Receiver Desktop UI 设计规范 v2.0
+# Picoo Camera Receiver Desktop UI 设计规范 v2.0
 
 > **状态**：`Implemented & Aligned`  
-> **对应原型**：[`pico-camera-receiver.html`](./pico-camera-receiver.html)  
+> **对应原型**：[`picoo-camera-receiver.html`](./picoo-camera-receiver.html)
 > **关联架构**：[ARCH-PICOO-UI-001](docs/design-specs/architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)  
 > **关联需求**：[REQ-PICOO-UI-0001](docs/design-specs/requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
 
@@ -9,7 +9,7 @@
 
 ## 1. 产品定位与核心设计原则
 
-Pico Camera Receiver 是电脑端接收程序，用于接收手机 Pico Camera App 的局域网视频流，并将其提供为系统虚拟摄像头。
+Picoo Camera Receiver 是电脑端接收程序，用于接收手机 Picoo Camera App 的局域网视频流，并将其提供为系统虚拟摄像头。
 
 桌面端的核心用户路径只有一条：
 
@@ -37,7 +37,7 @@ Pico Camera Receiver 是电脑端接收程序，用于接收手机 Pico Camera A
 
 ```text
 ┌─────────────────────────┐
-│ ◉ Pico Camera           │
+│ ◉ Picoo Camera          │
 ├─────────────────────────┤
 │ ▣ 连接                  │ ← 默认首页（主机标识/连接码/开始使用/设备管理/网络）
 │ ◉ 虚拟摄像头            │ ← 虚拟驱动状态检测、注册与一键修复
@@ -110,7 +110,7 @@ Pico Camera Receiver 是电脑端接收程序，用于接收手机 Pico Camera A
    - **开始使用 3 步指引**：
      1. 📱 `打开手机 App`：确保手机与电脑处于同一局域网 Wi-Fi；
      2. 🔗 `选择此电脑`：点击自动发现的本电脑；发现失败时输入桌面端展示的 IP 地址；
-     3. 📹 `连接并开始推流`：输入 6 位连接码完成授权，在会议软件中选择 Pico Camera 虚拟摄像头。
+     3. 📹 `连接并开始推流`：输入 6 位连接码完成授权，在会议软件中选择 Picoo Camera 虚拟摄像头。
    - **真机硬件互联拓扑图**：
      - 左侧手机（`iPhone 16 Pro`） ➔ 中间动态呼吸无线波纹（`Wi-Fi 5GHz · 低延迟`） ➔ 右侧电脑（`Studio PC`）。
    - **3 项轻量系统状态**：

@@ -21,7 +21,7 @@ Picoo Camera 是一套局域网无线摄像头系统。用户在 Android 或 iPh
 
 ### 前端 UI 交互原型
 
-- [Pico Camera Receiver 桌面端 UI 交互原型](pico-camera-receiver.html) — 展示桌面端 Receiver（GPUI）的连接、预览、虚拟摄像头与设置流程。
+- [Picoo Camera Receiver 桌面端 UI 交互原型](picoo-camera-receiver.html) — 展示桌面端 Receiver（GPUI）的连接、预览、虚拟摄像头与设置流程。
 
 ## 平台支持
 
