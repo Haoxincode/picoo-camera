@@ -2036,9 +2036,16 @@ body {
       animation: pulseGlow 2s ease-in-out infinite;
     }
 
-    /* Window Container Style */
-    .window-shell {
-      box-shadow: 0 25px 70px -15px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--border);
+    /* Streaming Dynamic Wide Viewfinder Mode: Compact Right Sidebar */
+    #connect-right-col.streaming-compact-mode > div {
+      padding: 0.875rem !important;
+      gap: 0.625rem !important;
+    }
+    #connect-right-col.streaming-compact-mode h3 {
+      font-size: 0.8125rem !important;
+    }
+    #connect-right-col.streaming-compact-mode .text-xs {
+      font-size: 0.6875rem !important;
     }
   </style>
 </head>
@@ -2147,11 +2154,11 @@ body {
         <section id="page-connect" class="page-view max-w-[1160px] mx-auto transition-opacity duration-200">
           <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:items-stretch">
 
-            <!-- Left Card: Host & Connection Code OR Live Camera View (58% width -> 7 cols) -->
-            <div class="lg:col-span-7 flex flex-col h-full">
+            <!-- Left Card: Host & Connection Code OR Live Camera View -->
+            <div id="connect-left-col" class="lg:col-span-7 flex flex-col h-full transition-all duration-300">
 
               <!-- ================= STATE A: IDLE / PAIRING VIEW ================= -->
-              <div id="connect-idle-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-6 flex-1 flex flex-col justify-between shadow-lg transition-all duration-300 hidden">
+              <div id="connect-idle-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-6 flex-1 flex flex-col justify-between shadow-lg transition-all duration-300">
                 
                 <!-- Top: Host Identification Header -->
                 <div class="flex items-center gap-4">
@@ -2258,7 +2265,7 @@ body {
               </div>
 
               <!-- ================= STATE B: STREAMING / LIVE CAMERA VIEW ================= -->
-              <div id="connect-streaming-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 flex-1 flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-300">
+              <div id="connect-streaming-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 flex-1 flex flex-col justify-between shadow-lg relative overflow-hidden transition-all duration-300 hidden">
                 
                 <!-- Live Header Row -->
                 <div class="flex items-center justify-between pb-3 shrink-0 select-none">
@@ -2406,10 +2413,10 @@ body {
             </div>
 
             <!-- Right Cards Column (42% width -> 5 cols) -->
-            <div class="lg:col-span-5 flex flex-col justify-between gap-3 h-full">
+            <div id="connect-right-col" class="lg:col-span-5 flex flex-col justify-between gap-4 h-full transition-all duration-300">
 
               <!-- Box 1: 设备与连接 (Device State Machine) with Reicon Icons -->
-              <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-4 shadow-lg flex flex-col gap-3">
+              <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 shadow-lg flex flex-col gap-4 transition-all duration-300">
                 <div class="flex items-center gap-2">
                   <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.9436 1.25H12.0564C13.8942 1.24998 15.3498 1.24997 16.489 1.40314C17.6614 1.56076 18.6104 1.89288 19.3588 2.64124C20.1071 3.38961 20.4392 4.33856 20.5969 5.51098C20.75 6.65019 20.75 8.10583 20.75 9.94359V14.0564C20.75 15.8942 20.75 17.3498 20.5969 18.489C20.4392 19.6614 20.1071 20.6104 19.3588 21.3588C18.6104 22.1071 17.6614 22.4392 16.489 22.5969C15.3498 22.75 13.8942 22.75 12.0564 22.75H11.9436C10.1058 22.75 8.65019 22.75 7.51098 22.5969C6.33856 22.4392 5.38961 22.1071 4.64124 21.3588C3.89288 20.6104 3.56076 19.6614 3.40314 18.489C3.24997 17.3498 3.24998 15.8942 3.25 14.0564V9.94358C3.24998 8.10582 3.24997 6.65019 3.40314 5.51098C3.56076 4.33856 3.89288 3.38961 4.64124 2.64124C5.38961 1.89288 6.33856 1.56076 7.51098 1.40314C8.65019 1.24997 10.1058 1.24998 11.9436 1.25ZM6.81398 3.07317C6.32495 3.21933 5.97972 3.42409 5.7019 3.7019C5.27869 4.12511 5.02502 4.70476 4.88976 5.71085C4.75159 6.73851 4.75 8.09318 4.75 10V14C4.75 15.9068 4.75159 17.2615 4.88976 18.2892C5.02502 19.2952 5.27869 19.8749 5.7019 20.2981C6.12511 20.7213 6.70476 20.975 7.71085 21.1102C8.73851 21.2484 10.0932 21.25 12 21.25C13.9068 21.25 15.2615 21.2484 16.2892 21.1102C17.2952 20.975 17.8749 20.7213 18.2981 20.2981C18.7213 19.8749 18.975 19.2952 19.1102 18.2892C19.2484 17.2615 19.25 15.9068 19.25 14V10C19.25 8.09318 19.2484 6.73851 19.1102 5.71085C18.975 4.70476 18.7213 4.12511 18.2981 3.7019C18.0203 3.42409 17.6751 3.21933 17.186 3.07317C16.5243 4.06685 16.0616 4.75765 15.3737 5.18514C15.2365 5.27042 15.0938 5.34674 14.9468 5.41363C14.2046 5.75112 13.367 5.75069 12.1604 5.75006C12.1077 5.75003 12.0542 5.75 12 5.75C11.9458 5.75 11.8923 5.75003 11.8396 5.75006C10.633 5.75069 9.79542 5.75112 9.05325 5.41363C8.90616 5.34674 8.76355 5.27042 8.62631 5.18514C7.93836 4.75765 7.47571 4.06686 6.81398 3.07317ZM8.45129 2.81609C8.89537 3.45963 9.1279 3.73081 9.418 3.91108C9.50035 3.96225 9.58592 4.00805 9.67417 4.04818C10.0831 4.23412 10.5676 4.25 12 4.25C13.4324 4.25 13.9169 4.23412 14.3258 4.04818C14.4141 4.00804 14.4997 3.96225 14.582 3.91108C14.8721 3.73081 15.1046 3.45963 15.5487 2.81609C14.6285 2.75096 13.4807 2.75 12 2.75C10.5193 2.75 9.37152 2.75096 8.45129 2.81609ZM8.25 19C8.25 18.5858 8.58579 18.25 9 18.25H15C15.4142 18.25 15.75 18.5858 15.75 19C15.75 19.4142 15.4142 19.75 15 19.75H9C8.58579 19.75 8.25 19.4142 8.25 19Z" fill="currentColor"></path></svg>
                   <h3 class="text-sm font-semibold text-card-foreground">设备与连接</h3>
@@ -2729,9 +2736,9 @@ body {
                       <div class="text-sm font-semibold text-foreground" id="connected-device-name">iPhone 16 Pro</div>
                       <div class="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5" id="connected-device-status">
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                        <span id="conn-status-text">实时推流中 · 低延迟</span>
+                        <span id="conn-status-text">已发现 · 等待连接</span>
                       </div>
-                      <div id="streaming-meta" class="text-[11px] font-mono text-primary mt-0.5 flex items-center gap-1">
+                      <div id="streaming-meta" class="text-[11px] font-mono text-primary mt-0.5 flex items-center gap-1 hidden">
                         <svg class="w-3 h-3 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7.33008 14.49L9.71008 11.4C10.0501 10.96 10.6801 10.88 11.1201 11.22L12.9501 12.66C13.3901 13 14.0201 12.92 14.3601 12.49L16.6701 9.51001" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                         <span>1080p · 30 FPS · 12 ms</span>
                       </div>
@@ -2740,13 +2747,13 @@ body {
 
                   <!-- Action Area: Connect Icon Button OR Active Badge (Eliminating duplicate disconnect buttons) -->
                   <div class="flex items-center gap-2 shrink-0">
-                    <button id="btn-toggle-connect" class="w-8.5 h-8.5 rounded-[var(--radius)] bg-primary text-primary-foreground hover:opacity-90 flex items-center justify-center shadow-xs transition-all shrink-0 cursor-pointer group hidden" onclick="toggleConnectState()" title="连接设备">
+                    <button id="btn-toggle-connect" class="w-8.5 h-8.5 rounded-[var(--radius)] bg-primary text-primary-foreground hover:opacity-90 flex items-center justify-center shadow-xs transition-all shrink-0 cursor-pointer group" onclick="toggleConnectState()" title="连接设备 (开始推流)">
                       <svg class="w-4 h-4 text-primary-foreground group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
                         <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
                       </svg>
                     </button>
-                    <span id="device-connected-badge" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-500 text-xs font-semibold select-none border border-emerald-500/30">
+                    <span id="device-connected-badge" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-500/15 text-emerald-500 text-xs font-semibold select-none border border-emerald-500/30 hidden">
                       <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 pulse-dot"></span>
                       <span>已连接</span>
                     </span>
@@ -3089,13 +3096,13 @@ body {
               </div>
 
               <!-- Box 2: 开始使用 (3-Step Quick Guide) with Reicon Icons -->
-              <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-4 shadow-lg flex flex-col gap-2.5">
+              <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 shadow-lg flex flex-col gap-3.5 transition-all duration-300">
                 <div class="flex items-center gap-2">
                   <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M17.4056 1.25004C17.4519 1.25007 17.4989 1.25009 17.5465 1.25009L18.167 1.25009C19.0386 1.25006 19.7673 1.25004 20.3462 1.32763C20.9578 1.40962 21.5134 1.59037 21.9605 2.03612C22.4079 2.48218 22.5896 3.03701 22.672 3.64789C22.7499 4.22551 22.7498 4.95241 22.7498 5.82101V6.44002C22.7498 6.4877 22.7498 6.53475 22.7499 6.58119C22.7504 7.63124 22.7508 8.36819 22.4707 9.04242C22.1906 9.71642 21.668 10.2369 20.9229 10.9791C20.89 11.0119 20.8566 11.0451 20.8228 11.0788L18.153 13.7406L18.2461 13.8843C18.6397 14.4923 18.9586 14.9848 19.1889 15.4095C19.4273 15.8494 19.5968 16.262 19.6646 16.7185C19.7737 17.4523 19.6751 18.2066 19.3858 18.8996C19.2785 19.1566 19.0929 19.4259 18.9026 19.6714C18.7031 19.9286 18.4593 20.2088 18.1974 20.4941C17.6762 21.0621 17.0504 21.686 16.495 22.2397L16.404 22.3305C15.684 23.0483 14.4361 22.8156 14.0522 21.8525C13.8245 21.2814 13.7324 21.0538 13.6171 20.8435C13.5102 20.6486 13.3875 20.4627 13.2503 20.2876C13.1042 20.1012 12.9335 19.9287 12.5102 19.5066L12.0054 19.064C11.9983 19.0578 11.9914 19.0515 11.9846 19.0451C11.8911 19.0572 11.7962 19.0634 11.6997 19.0634C11.0682 19.0634 10.5472 18.7998 10.0561 18.4262C9.59158 18.0729 9.0762 17.559 8.46002 16.9446L7.0134 15.5024C6.39726 14.8881 5.88183 14.3743 5.52735 13.911C5.15269 13.4215 4.88741 12.901 4.88741 12.2693C4.88741 12.1547 4.8962 12.0425 4.91329 11.9325L4.08287 11.1046C4.03445 11.0563 4.01506 11.037 3.99593 11.0185C3.62227 10.6559 3.18262 10.3675 2.70047 10.1689C2.67577 10.1587 2.6503 10.1486 2.58667 10.1234L2.20802 9.97334C1.19447 9.57173 0.92164 8.26365 1.69543 7.4922L1.70249 7.48516C2.25792 6.93141 2.88366 6.30756 3.4533 5.78791C3.73952 5.5268 4.02052 5.28373 4.27845 5.08494C4.52476 4.89509 4.79455 4.71029 5.05179 4.60356C5.74601 4.31552 6.50143 4.21738 7.2361 4.32595C7.693 4.39347 8.10622 4.56205 8.54733 4.79974C8.9732 5.02923 9.46709 5.34711 10.077 5.73965L10.2247 5.8347L12.8969 3.17043C12.9306 3.13686 12.9638 3.10371 12.9966 3.071C13.7414 2.32769 14.2632 1.80689 14.9386 1.52798C15.6138 1.24915 16.3517 1.24952 17.4056 1.25004ZM9.13735 6.91875C8.57734 6.55864 8.17425 6.30262 7.83578 6.12024C7.4767 5.92675 7.23621 5.84226 7.01681 5.80984C6.55867 5.74213 6.07732 5.80205 5.62665 5.98904C5.55933 6.01697 5.41759 6.10078 5.19416 6.27299C4.98234 6.43625 4.73539 6.6487 4.46422 6.89608C3.92148 7.39119 3.31755 7.9931 2.75448 8.55446C2.7513 8.55763 2.75029 8.55938 2.7502 8.55953C2.7501 8.5597 2.7502 8.55952 2.7502 8.55953C2.7501 8.55988 2.74939 8.56283 2.75033 8.56737C2.75127 8.57191 2.75297 8.5744 2.75343 8.57497C2.75371 8.57517 2.75614 8.57707 2.76059 8.57883L3.14432 8.73088C3.20135 8.75348 3.23668 8.76748 3.27188 8.78198C3.92982 9.05306 4.53008 9.44669 5.04048 9.94193C5.06779 9.96843 5.09469 9.99525 5.1381 10.0385L5.61586 10.5149C5.68125 10.4336 5.74953 10.353 5.82004 10.2725C6.14181 9.90528 6.55522 9.49312 7.03378 9.016L9.13735 6.91875ZM13.4544 18.3396L13.5352 18.4104L13.5868 18.4619C13.9774 18.8513 14.2195 19.0926 14.4309 19.3624C14.6184 19.6016 14.7861 19.8557 14.9322 20.1222C15.0919 20.4133 15.2156 20.7203 15.4087 21.2047L15.4289 21.1845C15.992 20.6231 16.5957 20.021 17.0923 19.4799C17.3404 19.2096 17.5535 18.9634 17.7172 18.7522C17.8899 18.5294 17.9738 18.3884 18.0016 18.3218C18.1888 17.8733 18.2487 17.3946 18.1809 16.9391C18.1486 16.7214 18.0641 16.4822 17.8702 16.1244C17.6869 15.7863 17.4295 15.3835 17.067 14.8233L14.9584 16.9256C14.4685 17.414 14.0465 17.8348 13.6707 18.1594C13.5989 18.2214 13.5269 18.2816 13.4544 18.3396ZM17.5465 2.75009C16.2947 2.75009 15.8771 2.7633 15.5112 2.9144C15.1455 3.06541 14.8413 3.35009 13.956 4.23268L8.10915 10.062C7.61071 10.5589 7.23286 10.9362 6.9482 11.2611C6.6622 11.5874 6.5162 11.8109 6.44522 11.9874C6.40383 12.0903 6.38741 12.1792 6.38741 12.2693C6.38741 12.4398 6.44582 12.643 6.71857 12.9994C7.00448 13.3731 7.44672 13.8162 8.10915 14.4767L8.26629 14.6333L9.79679 13.1074C10.0901 12.815 10.565 12.8157 10.8574 13.109C11.1499 13.4024 11.1492 13.8772 10.8559 14.1697L9.32855 15.6924L9.4825 15.8459C10.1449 16.5063 10.5894 16.9473 10.9643 17.2324C11.3217 17.5043 11.5267 17.5634 11.6997 17.5634C11.7845 17.5634 11.867 17.5491 11.9594 17.5151C12.1348 17.4505 12.3584 17.3107 12.6902 17.0241C13.0208 16.7387 13.4055 16.3557 13.9168 15.8459L19.7637 10.0166C20.6492 9.13374 20.9343 8.83068 21.0854 8.46692C21.2365 8.10341 21.2498 7.68861 21.2498 6.44002V5.87287C21.2498 4.93878 21.2482 4.31389 21.1854 3.84835C21.1256 3.40463 21.0229 3.21946 20.9014 3.09837C20.7797 2.97697 20.593 2.87414 20.1469 2.81434C19.6794 2.75167 19.0521 2.75009 18.1154 2.75009H17.5465ZM16.6635 7.32353C16.1978 6.85916 15.4417 6.85916 14.9759 7.32353C14.5114 7.78666 14.5114 8.53661 14.9759 8.99974C15.4417 9.46412 16.1978 9.46412 16.6635 8.99974C17.1281 8.53661 17.1281 7.78666 16.6635 7.32353ZM13.9168 6.26128C14.968 5.21324 16.6714 5.21324 17.7226 6.26128C18.7751 7.31056 18.7751 9.01271 17.7226 10.062C16.6714 11.11 14.968 11.11 13.9168 10.062C12.8644 9.01271 12.8644 7.31056 13.9168 6.26128Z" fill="currentColor"></path></svg>
                   <h3 class="text-sm font-semibold text-card-foreground">开始使用</h3>
                 </div>
 
-                <div class="flex flex-col gap-2.5 text-xs text-muted-foreground">
+                <div class="flex flex-col gap-3 text-xs text-muted-foreground">
                   <div class="flex items-center gap-3">
                     <span class="w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center font-bold text-[11px] shrink-0">1</span>
                     <div class="flex items-center gap-2 text-foreground font-medium">
@@ -3121,13 +3128,13 @@ body {
               </div>
 
               <!-- Box 3: 网络状态 (Network Status Metrics) with Reicon Icons -->
-              <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-4 shadow-lg flex flex-col gap-2.5">
+              <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 shadow-lg flex flex-col gap-3.5 transition-all duration-300">
                 <div class="flex items-center gap-2">
                   <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7.33008 14.49L9.71008 11.4C10.0501 10.96 10.6801 10.88 11.1201 11.22L12.9501 12.66C13.3901 13 14.0201 12.92 14.3601 12.49L16.6701 9.51001" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
                   <h3 class="text-sm font-semibold text-card-foreground">网络状态</h3>
                 </div>
 
-                <div class="flex flex-col gap-2 text-xs">
+                <div class="flex flex-col gap-2.5 text-xs">
                   <!-- Net item 1 -->
                   <div class="flex items-center justify-between text-muted-foreground">
                     <div class="flex items-center gap-2.5">
@@ -5687,7 +5694,7 @@ body {
     let canvasResolutions = ["4K UHD · 60 FPS", "1080p · 60 FPS", "720p · 60 FPS"];
     let currentResIdx = 0;
 
-    // Toggle Connect / Disconnect Simulation (Switches Left Card View)
+    // Toggle Connect / Disconnect Simulation (Switches Left Card View & Dynamic Viewport)
     function toggleConnectState() {
       const btn = document.getElementById("btn-toggle-connect");
       const badge = document.getElementById("device-connected-badge");
@@ -5695,11 +5702,29 @@ body {
       const meta = document.getElementById("streaming-meta");
       const idleView = document.getElementById("connect-idle-view");
       const streamingView = document.getElementById("connect-streaming-view");
+      const pageConnect = document.getElementById("page-connect");
+      const leftCol = document.getElementById("connect-left-col");
+      const rightCol = document.getElementById("connect-right-col");
 
       if (!state.isConnected) {
         // Switch to connected state
         state.isConnected = true;
         
+        // Dynamically Expand Left Preview (Wide Viewfinder Mode) & Contract Right Sidebar
+        if (pageConnect) {
+          pageConnect.classList.remove("max-w-[1160px]");
+          pageConnect.classList.add("max-w-[1380px]");
+        }
+        if (leftCol) {
+          leftCol.classList.remove("lg:col-span-7");
+          leftCol.classList.add("lg:col-span-8");
+        }
+        if (rightCol) {
+          rightCol.classList.remove("lg:col-span-5");
+          rightCol.classList.add("lg:col-span-4");
+          rightCol.classList.add("streaming-compact-mode");
+        }
+
         // On right device item: hide connect icon button and show active connected badge
         if (btn) btn.classList.add("hidden");
         if (badge) badge.classList.remove("hidden");
@@ -5711,12 +5736,28 @@ body {
         if (idleView) idleView.classList.add("hidden");
         if (streamingView) streamingView.classList.remove("hidden");
         
-        // Start Live Canvas Stream Rendering
+        // Start Live Canvas Stream Rendering and Trigger Resize
         startCanvasStream();
-        showToast("已连接到 iPhone 16 Pro · 实时视频流已建立");
+        setTimeout(() => { window.dispatchEvent(new Event("resize")); }, 60);
+        showToast("已连接到 iPhone 16 Pro · 宽幅视频预览已开启");
       } else {
         // Switch to disconnected state
         state.isConnected = false;
+
+        // Smoothly Restore Standard Balanced Layout for Pairing / Connection Code
+        if (pageConnect) {
+          pageConnect.classList.remove("max-w-[1380px]");
+          pageConnect.classList.add("max-w-[1160px]");
+        }
+        if (leftCol) {
+          leftCol.classList.remove("lg:col-span-8");
+          leftCol.classList.add("lg:col-span-7");
+        }
+        if (rightCol) {
+          rightCol.classList.remove("lg:col-span-4");
+          rightCol.classList.remove("streaming-compact-mode");
+          rightCol.classList.add("lg:col-span-5");
+        }
 
         // On right device item: show connect icon button and hide active badge
         if (btn) btn.classList.remove("hidden");
@@ -5731,7 +5772,7 @@ body {
         
         // Stop Canvas Rendering
         stopCanvasStream();
-        showToast("已断开视频流连接");
+        showToast("已断开视频流连接 · 恢复待机配对界面");
       }
     }
 
