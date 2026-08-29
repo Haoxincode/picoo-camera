@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#171717">
+  <title>Picoo Camera Sender · 手机无线摄像头</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: oklch(0.145 0 0);
+      --foreground: oklch(0.985 0 0);
+      --card: oklch(0.205 0 0);
+      --card-foreground: oklch(0.985 0 0);
+      --popover: oklch(0.205 0 0);
+      --popover-foreground: oklch(0.985 0 0);
+      --primary: oklch(0.424 0.199 265.638);
+      --primary-foreground: oklch(0.97 0.014 254.604);
+      --secondary: oklch(0.274 0.006 286.033);
+      --secondary-foreground: oklch(0.985 0 0);
+      --muted: oklch(0.269 0 0);
+      --muted-foreground: oklch(0.708 0 0);
+      --destructive: oklch(0.704 0.191 22.216);
+      --border: oklch(1 0 0 / 10%);
+      --input: oklch(1 0 0 / 15%);
+      --ring: oklch(0.556 0 0);
+      --sidebar: oklch(0.205 0 0);
+      --sidebar-foreground: oklch(0.985 0 0);
+      --sidebar-accent: oklch(0.269 0 0);
+      --ready: #3ecf8e;
+      --warn: #f0c14a;
+      --danger: #ff5c6c;
+      --radius: .45rem;
+      --safe-top: max(14px, env(safe-area-inset-top));
+      --safe-bottom: max(18px, env(safe-area-inset-bottom));
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: #0b0b0c; }
+    body {
+      color: var(--foreground);
+      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+    }
+    button, input { color: inherit; font: inherit; }
+    button { border: 0; cursor: pointer; }
+    button:focus-visible, input:focus-visible { outline: 2px solid color-mix(in oklch, var(--primary) 85%, white); outline-offset: 2px; }
+    .mono { font-family: "JetBrains Mono", monospace; }
+    .icon { width: 20px; height: 20px; display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .icon.fill { fill: currentColor; stroke: none; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+    .app-shell {
+      position: relative;
+      width: 100%;
+      min-height: 100dvh;
+      background: var(--background);
+      overflow: hidden;
+    }
+    .screen {
+      display: none;
+      position: absolute;
+      inset: 0;
+      min-height: 100dvh;
+      background: var(--background);
+      overflow: hidden auto;
+      animation: screen-in .23s cubic-bezier(.16,1,.3,1);
+    }
+    .screen.active { display: flex; flex-direction: column; }
+    @keyframes screen-in { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+
+    .status-bar {
+      height: calc(28px + var(--safe-top));
+      padding: var(--safe-top) 22px 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .01em;
+      flex: none;
+    }
+    .status-icons { display: flex; align-items: center; gap: 6px; }
+    .signal { display: flex; align-items: end; gap: 1.5px; height: 9px; }
+    .signal i { width: 2px; display: block; border-radius: 2px; background: currentColor; }
+    .signal i:nth-child(1) { height: 3px; } .signal i:nth-child(2) { height: 5px; }
+    .signal i:nth-child(3) { height: 7px; } .signal i:nth-child(4) { height: 9px; }
+    .battery { width: 19px; height: 9px; border: 1px solid currentColor; border-radius: 2.5px; padding: 1px; position: relative; }
+    .battery::before { content: ""; display: block; width: 75%; height: 100%; border-radius: 1px; background: currentColor; }
+    .battery::after { content: ""; position: absolute; right: -3px; top: 2px; width: 1.5px; height: 4px; background: currentColor; border-radius: 0 1px 1px 0; }
+
+    .topbar { height: 64px; padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; flex: none; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-mark { width: 31px; height: 31px; border-radius: 9px; display: grid; place-items: center; color: var(--primary-foreground); background: var(--primary); box-shadow: 0 8px 20px color-mix(in oklch, var(--primary) 28%, transparent); }
+    .brand-mark .icon { width: 17px; height: 17px; }
+    .brand-name { font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
+    .brand-role { color: var(--muted-foreground); font-size: 10px; margin-top: 1px; }
+    .top-actions { display: flex; align-items: center; gap: 8px; }
+    .wifi-pill, .hud-pill { border: 1px solid var(--border); background: color-mix(in oklch, var(--secondary) 84%, transparent); color: var(--muted-foreground); border-radius: 999px; padding: 7px 10px; font-size: 10px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+    .icon-btn { width: 34px; height: 34px; border-radius: var(--radius); display: grid; place-items: center; color: var(--muted-foreground); background: transparent; transition: .16s ease; }
+    .icon-btn:hover, .icon-btn:active { color: var(--foreground); background: var(--secondary); }
+    .icon-btn .icon { width: 18px; height: 18px; }
+
+    .content { padding: 14px 20px calc(112px + var(--safe-bottom)); }
+    .eyebrow { color: color-mix(in oklch, var(--primary) 72%, white); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 8px 0 7px; max-width: 330px; font-size: clamp(27px, 7.3vw, 34px); line-height: 1.08; letter-spacing: -.045em; }
+    .lead { margin: 0; max-width: 350px; color: var(--muted-foreground); font-size: 13px; line-height: 1.6; }
+    .section-row { margin: 28px 0 10px; display: flex; align-items: center; justify-content: space-between; }
+    .section-title { font-size: 12px; font-weight: 650; }
+    .discovering { display: flex; align-items: center; gap: 7px; color: var(--muted-foreground); font-size: 10px; }
+    .pulse { position: relative; width: 7px; height: 7px; border-radius: 50%; background: var(--ready); }
+    .pulse::after { content: ""; position: absolute; inset: -4px; border: 1px solid var(--ready); border-radius: inherit; animation: pulse 1.8s ease-out infinite; }
+    @keyframes pulse { 0% { transform: scale(.5); opacity: .9; } 80%,100% { transform: scale(1.45); opacity: 0; } }
+
+    .device-list { display: grid; gap: 9px; }
+    .device-card { width: 100%; display: grid; grid-template-columns: 43px 1fr auto; gap: 12px; align-items: center; text-align: left; min-height: 76px; padding: 13px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 5px); background: var(--card); box-shadow: 0 6px 18px rgba(0,0,0,.12); transition: transform .16s ease, border-color .16s ease, background .16s ease; }
+    .device-card:hover, .device-card:active { transform: translateY(-1px); border-color: color-mix(in oklch, var(--primary) 48%, var(--border)); background: color-mix(in oklch, var(--card) 90%, var(--primary)); }
+    .device-card.offline { opacity: .54; }
+    .device-icon { width: 43px; height: 43px; border-radius: 11px; display: grid; place-items: center; color: var(--primary); background: var(--secondary); border: 1px solid var(--border); }
+    .device-icon .icon { width: 21px; height: 21px; }
+    .device-main { min-width: 0; }
+    .device-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 650; }
+    .device-meta { display: block; margin-top: 5px; color: var(--muted-foreground); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px; border-radius: 999px; border: 1px solid color-mix(in oklch, var(--primary) 30%, transparent); background: color-mix(in oklch, var(--primary) 13%, transparent); color: color-mix(in oklch, var(--primary) 52%, white); font-size: 8px; font-weight: 700; }
+    .badge.ready { color: var(--ready); border-color: color-mix(in srgb, var(--ready) 25%, transparent); background: color-mix(in srgb, var(--ready) 10%, transparent); }
+    .chevron { color: var(--muted-foreground); }
+    .chevron .icon { width: 15px; height: 15px; }
+
+    .tip-card { margin-top: 13px; padding: 14px; border: 1px dashed var(--border); border-radius: calc(var(--radius) + 4px); display: flex; gap: 10px; color: var(--muted-foreground); background: color-mix(in oklch, var(--secondary) 38%, transparent); font-size: 10.5px; line-height: 1.55; }
+    .tip-card .icon { color: var(--primary); width: 17px; height: 17px; flex: none; margin-top: 1px; }
+    .home-dock { position: absolute; z-index: 5; left: 0; right: 0; bottom: 0; padding: 14px 20px var(--safe-bottom); background: linear-gradient(to top, var(--background) 72%, transparent); }
+    .primary-btn, .secondary-btn, .danger-btn { width: 100%; min-height: 46px; border-radius: var(--radius); padding: 0 16px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 12px; font-weight: 650; transition: transform .14s ease, filter .14s ease, background .14s ease; }
+    .primary-btn { color: var(--primary-foreground); background: var(--primary); box-shadow: 0 8px 22px color-mix(in oklch, var(--primary) 24%, transparent); }
+    .primary-btn:hover { filter: brightness(1.1); } .primary-btn:active, .secondary-btn:active { transform: scale(.985); }
+    .primary-btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+    .secondary-btn { color: var(--foreground); background: var(--secondary); border: 1px solid var(--border); }
+    .danger-btn { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 25%, transparent); }
+
+    .center-screen { padding: 0 24px calc(26px + var(--safe-bottom)); justify-content: center; align-items: center; text-align: center; }
+    .back-row { position: absolute; top: calc(34px + var(--safe-top)); left: 16px; z-index: 3; }
+    .pair-visual { width: 76px; height: 76px; border-radius: 23px; display: grid; place-items: center; color: var(--primary); background: var(--secondary); border: 1px solid var(--border); box-shadow: 0 16px 42px rgba(0,0,0,.28); }
+    .pair-visual .icon { width: 32px; height: 32px; }
+    .pair-title { margin: 23px 0 8px; font-size: 23px; letter-spacing: -.035em; }
+    .pair-sub { max-width: 310px; margin: 0 auto; color: var(--muted-foreground); font-size: 12px; line-height: 1.65; }
+    .code-input { width: min(100%, 310px); height: 66px; margin: 26px 0 9px; border: 1px solid var(--input); border-radius: calc(var(--radius) + 5px); color: var(--foreground); background: var(--card); text-align: center; font: 700 24px/1 "JetBrains Mono", monospace; letter-spacing: .25em; padding-left: .25em; box-shadow: inset 0 1px rgba(255,255,255,.03); }
+    .code-input::placeholder { color: color-mix(in oklch, var(--muted-foreground) 35%, transparent); }
+    .ttl { color: var(--muted-foreground); font: 10px/1.5 "JetBrains Mono", monospace; }
+    .pair-actions { width: min(100%, 310px); display: grid; gap: 9px; margin-top: 24px; }
+    .secure-note { margin-top: 18px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted-foreground); font-size: 9.5px; }
+    .secure-note .icon { width: 14px; height: 14px; color: var(--ready); }
+
+    .spinner { width: 57px; height: 57px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--primary); animation: spin .9s linear infinite; box-shadow: 0 0 26px color-mix(in oklch, var(--primary) 18%, transparent); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .wait-device { margin: 21px 0 4px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); background: var(--card); font-size: 10px; }
+    .prototype-note { width: min(100%, 310px); margin-top: 34px; padding: 13px; border: 1px dashed var(--border); border-radius: calc(var(--radius) + 3px); color: var(--muted-foreground); background: color-mix(in oklch, var(--secondary) 42%, transparent); font-size: 9.5px; line-height: 1.55; }
+    .prototype-note .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-top: 10px; }
+    .mini-btn { min-height: 34px; border-radius: var(--radius); background: var(--secondary); color: var(--foreground); border: 1px solid var(--border); font-size: 10px; font-weight: 600; }
+    .mini-btn.reject { color: var(--danger); }
+
+    #screen-live { background: #030405; color: white; overflow: hidden; }
+    .viewfinder { position: absolute; inset: 0; overflow: hidden; background: #050708; }
+    .camera-scene { position: absolute; inset: -3%; transform: scale(1.04); transition: filter .18s ease, transform .32s cubic-bezier(.16,1,.3,1); background:
+      radial-gradient(circle at 66% 28%, rgba(205,216,231,.22) 0 4%, transparent 15%),
+      linear-gradient(112deg, transparent 0 42%, rgba(137,163,191,.12) 42.5% 44%, transparent 44.5%),
+      linear-gradient(180deg, #17212a 0 45%, #20282b 45% 53%, #111517 53% 100%); }
+    .camera-scene::before { content: ""; position: absolute; width: 62%; height: 48%; left: 20%; top: 25%; border-radius: 50% 50% 35% 35%; background: radial-gradient(circle at 55% 32%, #48515b 0 6%, transparent 7%), linear-gradient(145deg, #26323d, #11171d); box-shadow: 0 30px 70px #000, inset 0 1px rgba(255,255,255,.14); filter: blur(.2px); }
+    .camera-scene::after { content: ""; position: absolute; width: 18%; aspect-ratio: 1; left: 44%; top: 35%; border: 8px solid #080b0e; border-radius: 50%; background: radial-gradient(circle, #365477 0 13%, #080b12 34%, #19242e 55%, #050607 60%); box-shadow: 0 0 0 2px #59616a, 0 5px 18px #000; }
+    .camera-scene.switching { filter: blur(18px) brightness(.6)!important; transform: scale(1.12); }
+    .camera-scene.mirrored { transform: scaleX(-1.04) scaleY(1.04); }
+    .safe-frame { position: absolute; left: 7%; right: 7%; top: 25%; aspect-ratio: 16 / 9; border: 1px dashed rgba(255,255,255,.36); border-radius: 2px; pointer-events: none; transition: opacity .2s; }
+    .safe-frame::after { content: "16:9 电脑端裁切"; position: absolute; top: -19px; left: 0; color: rgba(255,255,255,.58); font: 8px "JetBrains Mono", monospace; letter-spacing: .06em; }
+    .focus-ring { position: absolute; width: 58px; height: 58px; border: 1.5px solid var(--warn); border-radius: 5px; opacity: 0; pointer-events: none; transform: translate(-50%,-50%) scale(1.35); }
+    .focus-ring.active { animation: focus .85s cubic-bezier(.16,1,.3,1); }
+    @keyframes focus { 0% { opacity: 0; transform: translate(-50%,-50%) scale(1.45); } 20%,65% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-50%) scale(.95); } }
+    .live-ui { position: absolute; inset: 0; z-index: 2; transition: opacity .22s ease; pointer-events: none; }
+    .live-ui > * { pointer-events: auto; }
+    #screen-live.immersive .live-ui { opacity: 0; pointer-events: none; }
+    #screen-live.immersive .live-ui > * { pointer-events: none; }
+    #screen-live.immersive .safe-frame { opacity: 0; }
+    .live-top { position: absolute; left: 14px; right: 14px; top: calc(var(--safe-top) + 12px); display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+    .live-top .hud-pill { align-self: flex-start; color: rgba(255,255,255,.86); background: rgba(12,14,18,.58); border-color: rgba(255,255,255,.13); backdrop-filter: blur(16px); padding: 8px 10px; }
+    .hud-pill .ready-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ready); box-shadow: 0 0 8px var(--ready); }
+    .live-metrics { width: 100%; display: flex; align-items: center; gap: 5px; }
+    .metric-pill { flex: 1 1 0; min-width: 0; height: 32px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; color: rgba(255,255,255,.66); background: rgba(12,14,18,.58); border: 1px solid rgba(255,255,255,.13); border-radius: 999px; backdrop-filter: blur(16px); font: 7.5px "JetBrains Mono", monospace; text-align: center; white-space: nowrap; }
+    .metric-pill strong { color: white; font-size: 9px; font-weight: 650; }
+    .metric-pill.good, .metric-pill.good strong { color: var(--ready); }
+    .tool-btn { justify-self: center; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: rgba(255,255,255,.72); background: rgba(12,14,18,.58); border: 1px solid rgba(255,255,255,.13); backdrop-filter: blur(16px); transition: .16s ease; }
+    .tool-btn.active { color: white; background: color-mix(in oklch, var(--primary) 72%, transparent); }
+    .tool-btn .icon { width: 16px; height: 16px; }
+    .res-pill { color: white; }
+    .res-pill.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 36%, transparent); }
+    .live-bottom { position: absolute; left: 14px; right: 14px; bottom: var(--safe-bottom); }
+    .ev-panel { display: none; width: max-content; margin: 0 auto 17px; padding: 4px; align-items: center; gap: 3px; border: 1px solid rgba(255,255,255,.12); border-radius: 999px; background: rgba(12,14,18,.62); backdrop-filter: blur(18px); }
+    .ev-panel.open { display: flex; animation: pop .18s cubic-bezier(.16,1,.3,1); }
+    @keyframes pop { from { opacity: 0; transform: translateY(5px) scale(.96); } }
+    .ev-panel button { width: 34px; height: 30px; border-radius: 999px; display: grid; place-items: center; color: white; background: rgba(255,255,255,.08); }
+    .ev-value { min-width: 90px; text-align: center; font: 500 9.5px "JetBrains Mono", monospace; }
+    .control-bar { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: center; }
+    .shutter-wrap { display: grid; justify-items: center; gap: 5px; }
+    .shutter { width: 64px; height: 64px; border-radius: 50%; border: 3.5px solid rgba(255,255,255,.85); background: rgba(255,255,255,.06); display: grid; place-items: center; transition: .16s ease; }
+    .shutter::before { content: ""; width: 22px; height: 22px; border-radius: 5px; background: #ff4757; }
+    .shutter.armed { border-color: #ff4757; animation: armed 1s ease-in-out infinite; }
+    @keyframes armed { 50% { box-shadow: 0 0 0 8px rgba(255,71,87,.12); } }
+    .shutter-label { color: rgba(255,255,255,.68); font-size: 8px; }
+    .flip-btn { justify-self: center; width: 46px; height: 46px; border-radius: 50%; display: grid; place-items: center; color: white; background: rgba(12,14,18,.58); border: 1px solid rgba(255,255,255,.13); backdrop-filter: blur(16px); }
+    .flip-btn .icon { width: 21px; height: 21px; transition: transform .45s cubic-bezier(.16,1,.3,1); }
+    .flip-btn.spin .icon { transform: rotate(180deg); }
+    .thermal { display: none; margin: 0 auto 12px; width: max-content; max-width: 100%; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--warn) 32%, transparent); border-radius: var(--radius); color: var(--warn); background: rgba(12,14,18,.7); font-size: 9px; backdrop-filter: blur(16px); }
+    .thermal.show { display: flex; align-items: center; gap: 6px; }
+
+    .reconnect { display: none; position: absolute; inset: 0; z-index: 8; background: rgba(3,4,5,.68); backdrop-filter: blur(18px); align-items: center; justify-content: center; padding: 24px; text-align: center; }
+    .reconnect.show { display: flex; }
+    .reconnect-card { width: min(100%, 310px); padding: 26px 20px 20px; border: 1px solid rgba(255,255,255,.12); border-radius: calc(var(--radius) + 7px); background: rgba(24,26,31,.88); box-shadow: 0 24px 70px rgba(0,0,0,.55); }
+    .reconnect .spinner { width: 44px; height: 44px; margin: auto; }
+    .reconnect h2 { margin: 18px 0 7px; font-size: 17px; }
+    .reconnect p { margin: 0 0 18px; color: var(--muted-foreground); font: 9.5px/1.7 "JetBrains Mono", monospace; }
+
+    .settings-screen .topbar { border-bottom: 1px solid var(--border); background: var(--sidebar); }
+    .settings-title { font-size: 14px; font-weight: 650; }
+    .settings-content { padding: 20px 18px calc(34px + var(--safe-bottom)); }
+    .settings-group { margin-bottom: 22px; }
+    .group-label { margin: 0 0 8px 3px; color: var(--muted-foreground); font-size: 9px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+    .settings-card { overflow: hidden; border: 1px solid var(--border); border-radius: calc(var(--radius) + 5px); background: var(--card); }
+    .setting-row { width: 100%; min-height: 65px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 14px; text-align: left; background: transparent; border-bottom: 1px solid var(--border); }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-copy { min-width: 0; }
+    .setting-name { display: block; font-size: 12px; font-weight: 600; }
+    .setting-desc { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 9.5px; line-height: 1.4; }
+    .switch { width: 38px; height: 22px; padding: 2px; border-radius: 999px; background: var(--muted); border: 1px solid var(--border); flex: none; transition: .18s ease; }
+    .switch::after { content: ""; display: block; width: 16px; height: 16px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgba(0,0,0,.4); transition: transform .18s ease; }
+    .switch.on { background: var(--primary); } .switch.on::after { transform: translateX(16px); }
+    .setting-value { color: var(--muted-foreground); font: 9.5px "JetBrains Mono", monospace; white-space: nowrap; }
+    .permission-list { padding: 4px 14px; }
+    .permission { min-height: 39px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); font-size: 10.5px; }
+    .permission:last-child { border-bottom: 0; }
+    .permission span:last-child { color: var(--ready); font-size: 9px; }
+
+    .backdrop { display: none; position: absolute; inset: 0; z-index: 19; background: rgba(0,0,0,.56); backdrop-filter: blur(3px); }
+    .backdrop.open { display: block; animation: fade .18s ease; }
+    @keyframes fade { from { opacity: 0; } }
+    .sheet { position: absolute; z-index: 20; left: 0; right: 0; bottom: 0; padding: 8px 18px calc(18px + var(--safe-bottom)); border-top: 1px solid var(--border); border-radius: 18px 18px 0 0; background: var(--popover); box-shadow: 0 -18px 55px rgba(0,0,0,.5); transform: translateY(105%); transition: transform .28s cubic-bezier(.16,1,.3,1); }
+    .sheet.open { transform: translateY(0); }
+    .grabber { width: 35px; height: 4px; margin: 0 auto 18px; border-radius: 999px; background: var(--muted); }
+    .sheet h2 { margin: 0; font-size: 17px; letter-spacing: -.025em; }
+    .sheet-intro { margin: 7px 0 18px; color: var(--muted-foreground); font-size: 10.5px; line-height: 1.5; }
+    .field-label { display: block; margin: 0 0 7px; color: var(--muted-foreground); font-size: 9.5px; font-weight: 600; }
+    .text-field { width: 100%; height: 48px; border: 1px solid var(--input); border-radius: var(--radius); padding: 0 13px; color: var(--foreground); background: var(--background); font: 500 13px "JetBrains Mono", monospace; }
+    .sheet .primary-btn { margin-top: 12px; }
+    .sheet-meta { margin-top: 12px; display: flex; align-items: center; gap: 6px; color: var(--muted-foreground); font-size: 9px; }
+    .sheet-meta .icon { width: 13px; height: 13px; color: var(--ready); }
+    .device-detail { margin: 18px 0; padding: 13px; display: flex; gap: 11px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--background); }
+    .device-detail .device-icon { width: 39px; height: 39px; }
+    .detail-name { font-size: 11px; font-weight: 600; }
+    .fingerprint { margin-top: 5px; color: var(--muted-foreground); font: 8.5px "JetBrains Mono", monospace; }
+
+    .toast { position: absolute; z-index: 40; left: 50%; bottom: calc(26px + var(--safe-bottom)); max-width: calc(100% - 38px); padding: 10px 14px; border: 1px solid var(--border); border-radius: calc(var(--radius) + 2px); color: var(--popover-foreground); background: var(--popover); box-shadow: 0 14px 34px rgba(0,0,0,.48); font-size: 10.5px; font-weight: 550; opacity: 0; transform: translate(-50%, 12px) scale(.96); pointer-events: none; transition: .2s cubic-bezier(.16,1,.3,1); white-space: nowrap; }
+    .toast.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+
+    @media (min-width: 600px) {
+      body { display: grid; place-items: center; min-height: 100vh; padding: 24px; background: radial-gradient(circle at 50% 20%, #24262d, #090a0c 66%); }
+      .app-shell { width: 410px; min-height: min(844px, calc(100vh - 48px)); height: min(844px, calc(100vh - 48px)); border: 1px solid var(--border); border-radius: 28px; box-shadow: 0 28px 80px rgba(0,0,0,.65), inset 0 1px rgba(255,255,255,.04); }
+      .screen { min-height: 100%; }
+      .status-bar { --safe-top: 12px; }
+      .home-dock, .live-bottom { --safe-bottom: 18px; }
+      .settings-content { --safe-bottom: 18px; }
+      .sheet { --safe-bottom: 10px; }
+    }
+    @media (max-height: 710px) {
+      .content { padding-top: 3px; }
+      .section-row { margin-top: 17px; }
+      .device-card { min-height: 68px; padding: 10px 12px; }
+      .tip-card { display: none; }
+      .pair-visual { width: 64px; height: 64px; }
+      .pair-title { margin-top: 16px; }
+      .code-input { margin-top: 18px; }
+      .prototype-note { margin-top: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="sr-only" aria-hidden="true">
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M9.78 21h4.44c3.12 0 4.68 0 5.8-.74C21.5 19.3 22 17.67 22 13.36s-.5-5.93-1.98-6.9c-.72-.47-1.62-.64-3-.7A1.4 1.4 0 0 1 15.67 4.64 2.08 2.08 0 0 0 13.63 3h-3.26a2.08 2.08 0 0 0-2.04 1.64A1.4 1.4 0 0 1 6.98 5.76c-1.38.06-2.28.23-3 .7C2.5 7.44 2 9.05 2 13.37s.5 5.93 1.98 6.9C5.1 21 6.66 21 9.78 21Z"/><circle cx="12" cy="13.36" r="3.34"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.55 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.18 15a1.7 1.7 0 0 0-1.5-1H2v-4h.68a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8.55 4a1.7 1.7 0 0 0 1-1.5V2h4v.5a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19 8.55a1.7 1.7 0 0 0 1.5 1H22v4h-.5A1.7 1.7 0 0 0 19.4 15Z"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></symbol>
+    <symbol id="i-radio" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M8.46 8.46a5 5 0 0 0 0 7.07M15.54 8.46a5 5 0 0 1 0 7.07M5.64 5.64a9 9 0 0 0 0 12.72M18.36 5.64a9 9 0 0 1 0 12.72"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 8-8M15 8l2 2M17 6l2 2"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+    <symbol id="i-mirror" viewBox="0 0 24 24"><path d="m3 7 5 5-5 5V7ZM21 7l-5 5 5 5V7ZM12 2v2M12 8v2M12 14v2M12 20v2"/></symbol>
+    <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-rotate" viewBox="0 0 24 24"><path d="M11 19H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h5M13 5h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-5"/><circle cx="12" cy="12" r="3"/><path d="m18 22-3-3 3-3M6 2l3 3-3 3"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
+    <symbol id="i-flame" viewBox="0 0 24 24"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5s3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5Z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+  </svg>
+
+  <main class="app-shell" id="app">
+    <section class="screen active" id="screen-home" aria-label="附近电脑">
+      <div class="status-bar"><span id="clock">9:41</span><span class="status-icons"><span class="signal"><i></i><i></i><i></i><i></i></span><svg class="icon" style="width:13px;height:13px"><use href="#i-radio"/></svg><span class="battery"></span></span></div>
+      <header class="topbar">
+        <div class="brand"><div class="brand-mark"><svg class="icon fill"><use href="#i-camera"/></svg></div><div><div class="brand-name">Picoo Camera</div><div class="brand-role">Sender · Mobile</div></div></div>
+        <div class="top-actions"><span class="wifi-pill"><span class="pulse" style="width:5px;height:5px"></span>Office-5G</span><button class="icon-btn" type="button" data-action="settings" aria-label="设置"><svg class="icon"><use href="#i-settings"/></svg></button></div>
+      </header>
+      <div class="content">
+        <div class="eyebrow">Local camera sender</div>
+        <h1>把手机变成<br>电脑的高清摄像头</h1>
+        <p class="lead">选择同一 Wi-Fi 下的电脑。视频只在局域网内加密传输，不经过云端。</p>
+        <div class="section-row"><span class="section-title">附近的电脑</span><span class="discovering"><i class="pulse"></i>正在监听局域网</span></div>
+        <div class="device-list">
+          <button class="device-card" type="button" data-action="quick-connect">
+            <span class="device-icon"><svg class="icon"><use href="#i-monitor"/></svg></span><span class="device-main"><span class="device-name">办公桌 Surface <span class="badge">已配对</span></span><span class="device-meta">Windows · 192.168.1.102 · 点按直连</span></span><span class="chevron"><svg class="icon"><use href="#i-chevron"/></svg></span>
+          </button>
+          <button class="device-card" type="button" data-action="new-connect">
+            <span class="device-icon"><svg class="icon"><use href="#i-monitor"/></svg></span><span class="device-main"><span class="device-name">Studio PC <span class="badge ready">在线</span></span><span class="device-meta">Windows · 首次连接需输入连接码</span></span><span class="chevron"><svg class="icon"><use href="#i-chevron"/></svg></span>
+          </button>
+          <button class="device-card offline" type="button" data-action="offline">
+            <span class="device-icon"><svg class="icon"><use href="#i-monitor"/></svg></span><span class="device-main"><span class="device-name">家里台式机</span><span class="device-meta">已配对 · 上次连接 3 天前</span></span><span class="chevron"><svg class="icon"><use href="#i-chevron"/></svg></span>
+          </button>
+        </div>
+        <div class="tip-card"><svg class="icon"><use href="#i-radio"/></svg><span>没有看到电脑？确认桌面端已打开且位于同一 Wi-Fi，也可使用桌面端显示的局域网 IP:端口直连。</span></div>
+      </div>
+      <div class="home-dock"><button class="secondary-btn" type="button" data-action="open-manual"><svg class="icon"><use href="#i-key"/></svg>输入 IP 地址直连</button></div>
+    </section>
+
+    <section class="screen center-screen" id="screen-code" aria-label="输入连接码">
+      <button class="icon-btn back-row" type="button" data-action="home" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button>
+      <div class="pair-visual"><svg class="icon"><use href="#i-key"/></svg></div>
+      <h2 class="pair-title">输入电脑端连接码</h2>
+      <p class="pair-sub">在 Studio PC 的 Picoo Camera 窗口中找到六位连接码。它只会通过已加密的连接提交。</p>
+      <label class="sr-only" for="pair-code">六位连接码</label><input class="code-input" id="pair-code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="000 000" value="482 917">
+      <div class="ttl" id="ttl">有效时间 00:60</div>
+      <div class="pair-actions"><button class="primary-btn" id="submit-code" type="button" data-action="submit-code">提交连接码</button><button class="secondary-btn" type="button" data-action="home">取消</button></div>
+      <div class="secure-note"><svg class="icon"><use href="#i-shield"/></svg>PCP/1 · QUIC/TLS 加密直连</div>
+    </section>
+
+    <section class="screen center-screen" id="screen-wait" aria-label="等待电脑确认">
+      <button class="icon-btn back-row" type="button" data-action="home" aria-label="取消"><svg class="icon"><use href="#i-close"/></svg></button>
+      <div class="spinner"></div><div class="wait-device">Studio PC · 192.168.1.108</div>
+      <h2 class="pair-title">等待电脑端确认</h2><p class="pair-sub">连接码已通过加密通道发送。请在电脑端确认来自此手机的连接请求。</p>
+      <div class="prototype-note">独立 HTML 原型无法收到真实桌面事件，可在这里演练两种结果。<div class="actions"><button class="mini-btn" type="button" data-action="desktop-accept">电脑确认</button><button class="mini-btn reject" type="button" data-action="desktop-reject">电脑拒绝</button></div></div>
+    </section>
+
+    <section class="screen" id="screen-live" aria-label="实时推流">
+      <div class="viewfinder" id="viewfinder"><div class="camera-scene" id="camera-scene"></div><div class="safe-frame"></div><div class="focus-ring" id="focus-ring"></div></div>
+      <div class="live-ui">
+        <div class="live-top"><div class="hud-pill"><span class="ready-dot"></span>Studio PC</div><div class="live-metrics"><button class="metric-pill" type="button" data-action="network-test" title="模拟网络中断"><strong>18</strong> ms</button><button class="metric-pill res-pill" id="res-pill" type="button" data-action="resolution"><strong>1080P</strong></button><button class="metric-pill" type="button" data-action="thermal-test" title="模拟温度保护"><strong>5.2</strong> Mbps</button><span class="metric-pill"><strong>30</strong> FPS</span><span class="metric-pill good"><strong>0%</strong> 丢包</span></div></div>
+        <div class="live-bottom"><div class="thermal" id="thermal"><svg class="icon" style="width:14px;height:14px"><use href="#i-flame"/></svg>设备偏热保护 · 已降至 720P</div><div class="ev-panel" id="ev-panel"><button type="button" data-action="ev-minus">−</button><span class="ev-value" id="ev-value">自动测光</span><button type="button" data-action="ev-plus">＋</button><button type="button" data-action="ev-reset" aria-label="重置"><svg class="icon" style="width:14px;height:14px"><use href="#i-refresh"/></svg></button></div><div class="control-bar"><button class="tool-btn" type="button" data-action="exposure" aria-label="曝光补偿"><svg class="icon"><use href="#i-sun"/></svg></button><button class="tool-btn" type="button" data-action="mirror" aria-label="镜像预览"><svg class="icon"><use href="#i-mirror"/></svg></button><div class="shutter-wrap"><button class="shutter" id="shutter" type="button" data-action="disconnect" aria-label="断开连接"></button><span class="shutter-label" id="shutter-label">断开连接</span></div><button class="tool-btn" id="lock-btn" type="button" data-action="lock" aria-label="锁定控制"><svg class="icon"><use href="#i-unlock"/></svg></button><button class="flip-btn" id="flip-btn" type="button" data-action="flip" aria-label="翻转镜头"><svg class="icon"><use href="#i-rotate"/></svg></button></div></div>
+      </div>
+      <div class="reconnect" id="reconnect"><div class="reconnect-card"><div class="spinner"></div><h2>网络中断，正在重连</h2><p id="retry-copy">QUIC 会话重试中 · 第 1 次 (500ms)<br>恢复后自动请求 IDR 关键帧</p><button class="secondary-btn" type="button" data-action="stop-reconnect">停止重连并退出</button></div></div>
+    </section>
+
+    <section class="screen settings-screen" id="screen-settings" aria-label="设置">
+      <div class="status-bar"><span>9:41</span><span class="status-icons"><span class="signal"><i></i><i></i><i></i><i></i></span><span class="battery"></span></span></div>
+      <header class="topbar"><button class="icon-btn" type="button" data-action="home" aria-label="返回"><svg class="icon"><use href="#i-back"/></svg></button><span class="settings-title">设置</span><span style="width:34px"></span></header>
+      <div class="settings-content">
+        <div class="settings-group"><p class="group-label">连接</p><div class="settings-card"><button class="setting-row" type="button" data-action="toggle-auto"><span class="setting-copy"><span class="setting-name">打开 App 自动直连</span><span class="setting-desc">上次使用的电脑在线时自动建立连接</span></span><span class="switch on" id="auto-switch"></span></button><button class="setting-row" type="button" data-action="cycle-default"><span class="setting-copy"><span class="setting-name">默认初始画质</span><span class="setting-desc">新连接建立时使用的分辨率</span></span><span class="setting-value" id="default-res">1080p30</span></button></div></div>
+        <div class="settings-group"><p class="group-label">已配对电脑</p><div class="settings-card"><button class="setting-row" type="button" data-action="device-detail"><span class="setting-copy"><span class="setting-name">办公桌 Surface</span><span class="setting-desc">Windows · 最近连接 12 分钟前</span></span><span class="setting-value">e4f8:2a01…</span></button></div></div>
+        <div class="settings-group"><p class="group-label">权限与状态</p><div class="settings-card permission-list"><div class="permission"><span>相机访问</span><span>使用时请求</span></div><div class="permission"><span>局域网发现</span><span>已允许</span></div><div class="permission"><span>前台传输服务</span><span>已就绪</span></div></div></div>
+        <div class="settings-group"><p class="group-label">关于</p><div class="settings-card"><div class="setting-row"><span class="setting-copy"><span class="setting-name">Picoo Camera Sender</span><span class="setting-desc">PCP/1 · Rust Core</span></span><span class="setting-value">v1.0.0</span></div></div></div>
+      </div>
+    </section>
+
+    <div class="backdrop" id="backdrop" data-action="close-sheet"></div>
+    <aside class="sheet" id="sheet-manual" aria-label="手动连接"><div class="grabber"></div><h2>通过 IP 地址直连</h2><p class="sheet-intro">当自动发现不可用时，输入电脑端显示的局域网地址。连接到目标后仍需输入六位连接码。</p><label class="field-label" for="ip-field">电脑端 IP:端口</label><input class="text-field" id="ip-field" value="192.168.1.108:4433" inputmode="url" spellcheck="false"><button class="primary-btn" type="button" data-action="manual-connect">建立加密连接</button><div class="sheet-meta"><svg class="icon"><use href="#i-shield"/></svg>不会通过此地址建立或绕过设备信任</div></aside>
+    <aside class="sheet" id="sheet-device" aria-label="设备详情"><div class="grabber"></div><h2>已配对电脑</h2><p class="sheet-intro">固定公钥验证通过后，这台电脑可直接连接，无需再次输入短码。</p><div class="device-detail"><span class="device-icon"><svg class="icon"><use href="#i-monitor"/></svg></span><div><div class="detail-name">办公桌 Surface</div><div class="fingerprint">SHA-256 · e4f8:2a01:99c2:7d14</div></div></div><button class="danger-btn" type="button" data-action="revoke">撤销信任并删除配对</button></aside>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <script>
+    const app = {
+      screen: "home", ttl: 60, ttlTimer: null, toastTimer: null, armedTimer: null,
+      resolutions: ["1080P", "720P", "480P"], resIndex: 0,
+      exposure: 0, locked: false, mirrored: false, thermal: false, retryTimer: null
+    };
+    const $ = (selector) => document.querySelector(selector);
+    const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+    function setScreen(name) {
+      app.screen = name;
+      $$(".screen").forEach(el => el.classList.toggle("active", el.id === `screen-${name}`));
+      closeSheet();
+      if (name !== "code") clearInterval(app.ttlTimer);
+    }
+    function toast(message) {
+      const el = $("#toast"); el.textContent = message; el.classList.add("show");
+      clearTimeout(app.toastTimer); app.toastTimer = setTimeout(() => el.classList.remove("show"), 2400);
+    }
+    function openSheet(id) { $("#backdrop").classList.add("open"); $(id).classList.add("open"); }
+    function closeSheet() { $("#backdrop").classList.remove("open"); $$(".sheet").forEach(el => el.classList.remove("open")); }
+    function beginCode() {
+      setScreen("code"); app.ttl = 60; $("#pair-code").disabled = false; $("#submit-code").disabled = false; updateTtl();
+      clearInterval(app.ttlTimer); app.ttlTimer = setInterval(() => { app.ttl -= 1; updateTtl(); if (app.ttl <= 0) { clearInterval(app.ttlTimer); $("#pair-code").disabled = true; $("#submit-code").disabled = true; $("#ttl").textContent = "连接码已过期，请在电脑端刷新"; $("#ttl").style.color = "var(--danger)"; } }, 1000);
+    }
+    function updateTtl() { $("#ttl").style.color = ""; $("#ttl").textContent = `有效时间 00:${String(app.ttl).padStart(2,"0")}`; }
+    function startStreaming() { setScreen("live"); toast("已连接 Studio PC · 正在推流"); }
+    function stopStreaming() { clearTimeout(app.armedTimer); $("#shutter").classList.remove("armed"); setScreen("home"); toast("已安全断开连接"); }
+    function cycleResolution() {
+      if (app.thermal) { toast("设备偏热保护中，1080P 暂不可选"); return; }
+      app.resIndex = (app.resIndex + 1) % app.resolutions.length; $("#res-pill strong").textContent = app.resolutions[app.resIndex]; toast(`画质已切换为 ${app.resolutions[app.resIndex]} · 30 FPS`);
+    }
+    function updateExposure() {
+      const labels = {"-2":"压暗 -2", "-1":"压暗 -1", "0":"自动测光", "1":"提亮 +1", "2":"提亮 +2"};
+      $("#ev-value").textContent = labels[app.exposure]; $("#camera-scene").style.filter = app.exposure ? `brightness(${1 + app.exposure * .12})` : "";
+      $("[data-action='exposure']").classList.toggle("active", app.exposure !== 0 || $("#ev-panel").classList.contains("open"));
+    }
+    function simulateReconnect() {
+      $("#reconnect").classList.add("show"); const delays = ["500ms", "1s", "2s", "5s"]; let i = 0;
+      clearInterval(app.retryTimer); app.retryTimer = setInterval(() => { i += 1; if (i >= delays.length) { clearInterval(app.retryTimer); $("#reconnect").classList.remove("show"); toast("连接已恢复 · 已请求 IDR 关键帧"); return; } $("#retry-copy").innerHTML = `QUIC 会话重试中 · 第 ${i+1} 次 (${delays[i]})<br>恢复后自动请求 IDR 关键帧`; }, 900);
+    }
+
+    $("#pair-code").addEventListener("input", (event) => {
+      const digits = event.target.value.replace(/\D/g, "").slice(0, 6); event.target.value = digits.length > 3 ? `${digits.slice(0,3)} ${digits.slice(3)}` : digits;
+    });
+    $("#viewfinder").addEventListener("click", (event) => {
+      if (app.locked) { toast("控制已锁定"); return; }
+      const rect = event.currentTarget.getBoundingClientRect(), ring = $("#focus-ring"); ring.style.left = `${event.clientX - rect.left}px`; ring.style.top = `${event.clientY - rect.top}px`; ring.classList.remove("active"); void ring.offsetWidth; ring.classList.add("active");
+    });
+    $("#viewfinder").addEventListener("dblclick", () => $("#screen-live").classList.toggle("immersive"));
+
+    document.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-action]"); if (!target) return; const action = target.dataset.action;
+      if (action === "settings") setScreen("settings");
+      else if (action === "home") setScreen("home");
+      else if (action === "quick-connect") startStreaming();
+      else if (action === "new-connect") beginCode();
+      else if (action === "offline") toast("这台电脑当前不在线，请确认桌面端已启动");
+      else if (action === "open-manual") openSheet("#sheet-manual");
+      else if (action === "close-sheet") closeSheet();
+      else if (action === "manual-connect") { closeSheet(); beginCode(); toast("已连接到 192.168.1.108:4433"); }
+      else if (action === "submit-code") { const digits = $("#pair-code").value.replace(/\D/g, ""); if (digits.length !== 6) toast("请输入完整的六位连接码"); else setScreen("wait"); }
+      else if (action === "desktop-accept") startStreaming();
+      else if (action === "desktop-reject") { beginCode(); toast("电脑端拒绝了连接"); }
+      else if (action === "resolution") cycleResolution();
+      else if (action === "exposure") { $("#ev-panel").classList.toggle("open"); updateExposure(); }
+      else if (action === "ev-minus") { app.exposure = Math.max(-2, app.exposure - 1); updateExposure(); }
+      else if (action === "ev-plus") { app.exposure = Math.min(2, app.exposure + 1); updateExposure(); }
+      else if (action === "ev-reset") { app.exposure = 0; updateExposure(); }
+      else if (action === "mirror") { app.mirrored = !app.mirrored; $("#camera-scene").classList.toggle("mirrored", app.mirrored); target.classList.toggle("active", app.mirrored); toast(app.mirrored ? "本机预览镜像已开启" : "本机预览镜像已关闭"); }
+      else if (action === "lock") { app.locked = !app.locked; target.classList.toggle("active", app.locked); target.querySelector("use").setAttribute("href", app.locked ? "#i-lock" : "#i-unlock"); toast(app.locked ? "相机控制已锁定" : "相机控制已解锁"); }
+      else if (action === "flip") { if (app.locked) return toast("控制已锁定"); target.classList.add("spin"); $("#camera-scene").classList.add("switching"); setTimeout(() => { target.classList.remove("spin"); $("#camera-scene").classList.remove("switching"); toast("镜头已切换 · stream_epoch +1"); }, 520); }
+      else if (action === "disconnect") { if (!target.classList.contains("armed")) { target.classList.add("armed"); $("#shutter-label").textContent = "再次点击确认"; toast("再次点击确认断开"); clearTimeout(app.armedTimer); app.armedTimer = setTimeout(() => { target.classList.remove("armed"); $("#shutter-label").textContent = "断开连接"; }, 3000); } else stopStreaming(); }
+      else if (action === "network-test") simulateReconnect();
+      else if (action === "stop-reconnect") { clearInterval(app.retryTimer); $("#reconnect").classList.remove("show"); stopStreaming(); }
+      else if (action === "thermal-test") { app.thermal = !app.thermal; $("#thermal").classList.toggle("show", app.thermal); $("#res-pill").classList.toggle("warn", app.thermal); if (app.thermal) { app.resIndex = 1; $("#res-pill strong").textContent = "720P"; toast("设备偏热，已自动降至 720P"); } else toast("设备温度已恢复正常"); }
+      else if (action === "toggle-auto") $("#auto-switch").classList.toggle("on");
+      else if (action === "cycle-default") { const el = $("#default-res"), values = ["1080p30", "720p30", "480p30"]; el.textContent = values[(values.indexOf(el.textContent) + 1) % values.length]; }
+      else if (action === "device-detail") openSheet("#sheet-device");
+      else if (action === "revoke") { closeSheet(); toast("已撤销信任，下次连接需重新配对"); }
+    });
+    const now = new Date(); $("#clock").textContent = `${now.getHours()}:${String(now.getMinutes()).padStart(2,"0")}`;
+  </script>
+</body>
+</html>

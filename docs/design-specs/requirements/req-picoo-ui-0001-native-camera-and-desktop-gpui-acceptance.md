@@ -3,7 +3,9 @@
 - **Requirement ID**: `REQ-PICOO-UI-0001`
 - **Area**: `PICOO-UI`
 - **Status**: `implemented`
-- **Design Prototype**: [`picoo-camera-receiver.html`](../../../picoo-camera-receiver.html)
+- **Design Prototypes**:
+  - Desktop Receiver: [`picoo-camera-receiver.html`](../../../picoo-camera-receiver.html)
+  - Mobile Sender: [`picoo-camera-sender.html`](../../../picoo-camera-sender.html)
 - **Supported Use Cases**:
   - [BUC-001](../use-cases/business/buc-001-phone-as-wireless-meeting-camera.md)
   - [PUC-001](../use-cases/product/puc-001-first-install-and-pairing.md)
