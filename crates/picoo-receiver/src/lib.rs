@@ -156,6 +156,8 @@ pub struct ReceiverSession {
     placeholder_mode: picoo_frame_hub::PlaceholderMode,
     shared_ring: Option<SharedFrameRingProducer>,
     current_stream_config: Option<StreamConfig>,
+    /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
+    waiting_for_stream_config_epoch: Option<u32>,
     receiver_capabilities_sent: Option<()>,
     decoder: Box<dyn AccessUnitDecoder>,
     /// After peer disconnect, keep last frame this long before placeholder (REQ-PICOO-FRAME-005).
@@ -198,6 +200,7 @@ impl ReceiverSession {
             placeholder_mode: PlaceholderMode::Logo,
             shared_ring: None,
             current_stream_config: None,
+            waiting_for_stream_config_epoch: None,
             receiver_capabilities_sent: None,
             decoder: create_platform_decoder(),
             last_frame_hold: Duration::from_millis(500),
@@ -521,6 +524,23 @@ impl ReceiverSession {
                         self.ingress.packets_dropped_unpaired += 1;
                         continue;
                     }
+                    let packet_epoch = packet.stream_epoch;
+                    let configured_epoch = self
+                        .current_stream_config
+                        .as_ref()
+                        .map(|config| config.stream_epoch);
+                    if configured_epoch.is_some() && configured_epoch != Some(packet_epoch) {
+                        // Stale datagrams from an old epoch are expected after
+                        // reconfiguration. A future/unknown epoch waits for its
+                        // reliable StreamConfig and requests one fresh IDR.
+                        if configured_epoch.is_some_and(|epoch| packet_epoch > epoch)
+                            && self.waiting_for_stream_config_epoch != Some(packet_epoch)
+                        {
+                            self.waiting_for_stream_config_epoch = Some(packet_epoch);
+                            self.send_request_keyframe(session)?;
+                        }
+                        continue;
+                    }
                     self.stats_reporter.record_packet(packet.payload.len());
                     if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
                         if self.jitter_timeline.is_none() {
@@ -587,6 +607,7 @@ impl ReceiverSession {
         self.jitter_timeline = None;
         self.last_stats = None;
         self.current_stream_config = None;
+        self.waiting_for_stream_config_epoch = None;
         self.receiver_capabilities_sent = None;
 
         if had_live_frame && !self.last_frame_hold.is_zero() {
@@ -809,6 +830,7 @@ impl ReceiverSession {
         self.active_sender = None;
         self.pending_pairing = None;
         self.current_stream_config = None;
+        self.waiting_for_stream_config_epoch = None;
         self.receiver_capabilities_sent = None;
         self.reassembly = ReassemblyMap::new(8, 16);
         self.jitter.clear();
@@ -850,6 +872,7 @@ impl ReceiverSession {
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
         self.current_stream_config = Some(config);
+        self.waiting_for_stream_config_epoch = None;
 
         // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.
         if self.video_allowed()

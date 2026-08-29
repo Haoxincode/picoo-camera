@@ -64,6 +64,10 @@ impl SenderPipeline {
         std::mem::take(&mut self.pending)
     }
 
+    pub fn clear_pending_packets(&mut self) {
+        self.pending.clear();
+    }
+
     /// Fragment one H.264 access unit into MTU-sized VideoPackets.
     pub fn ingest_access_unit(
         &mut self,

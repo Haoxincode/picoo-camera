@@ -1269,16 +1269,16 @@ mod tests {
     }
 
     #[test]
-    fn sender_ingest_via_ffi() {
+    fn sender_rejects_offline_ingest_via_ffi() {
         let handle = picoo_sender_create();
         assert!(!handle.is_null());
         let data = b"test-nalu";
         let mut out = 0u32;
         assert_eq!(
             picoo_sender_ingest_access_unit(handle, data.as_ptr(), data.len(), 1, 42, 1, &mut out),
-            0
+            -2
         );
-        assert_eq!(out, 1);
+        assert_eq!(out, 0);
         let mut stats = [0.0f64; 6];
         assert_eq!(
             picoo_sender_last_receiver_stats(handle, stats.as_mut_ptr(), stats.len()),

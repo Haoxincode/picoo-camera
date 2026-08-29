@@ -19,6 +19,9 @@
 		A1000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* Assets.xcassets */; };
 		A1000000000000000000000C /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* AVFoundation.framework */; };
 		A1000000000000000000000D /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* Network.framework */; };
+		A1000000000000000000000E /* VideoEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* VideoEncoder.swift */; };
+		A1000000000000000000000F /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* VideoToolbox.framework */; };
+		A10000000000000000000010 /* SenderMediaPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* SenderMediaPipeline.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -48,6 +51,9 @@
 		A2000000000000000000000E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000000000000000000000F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		A20000000000000000000010 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
+		A20000000000000000000011 /* VideoEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoEncoder.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
+		A20000000000000000000013 /* SenderMediaPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderMediaPipeline.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -60,6 +66,7 @@
 				A10000000000000000000007 /* SystemConfiguration.framework in Frameworks */,
 				A1000000000000000000000C /* AVFoundation.framework in Frameworks */,
 				A1000000000000000000000D /* Network.framework in Frameworks */,
+				A1000000000000000000000F /* VideoToolbox.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -91,6 +98,8 @@
 				A2000000000000000000000B /* SenderModels.swift */,
 				A2000000000000000000000C /* SenderAppModel.swift */,
 				A2000000000000000000000D /* CameraCapture.swift */,
+				A20000000000000000000011 /* VideoEncoder.swift */,
+				A20000000000000000000013 /* SenderMediaPipeline.swift */,
 				A2000000000000000000000E /* Assets.xcassets */,
 				A2000000000000000000000A /* Info.plist */,
 			);
@@ -113,6 +122,7 @@
 				A20000000000000000000009 /* SystemConfiguration.framework */,
 				A2000000000000000000000F /* AVFoundation.framework */,
 				A20000000000000000000010 /* Network.framework */,
+				A20000000000000000000012 /* VideoToolbox.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -207,6 +217,8 @@
 				A10000000000000000000008 /* SenderModels.swift in Sources */,
 				A10000000000000000000009 /* SenderAppModel.swift in Sources */,
 				A1000000000000000000000A /* CameraCapture.swift in Sources */,
+				A1000000000000000000000E /* VideoEncoder.swift in Sources */,
+				A10000000000000000000010 /* SenderMediaPipeline.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

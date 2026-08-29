@@ -1,6 +1,6 @@
 # Picoo Camera iOS Sender
 
-状态：SwiftUI 设备流程、Rust C ABI 状态桥、mDNS/手动直连和 AVFoundation 权限/预览边界为 `implemented`；VideoToolbox H.264、远端控制消费、真机媒体链路与视觉验收仍为 `planned`。
+状态：SwiftUI 设备流程、Rust C ABI 状态桥、mDNS/手动直连、AVFoundation 采集和 VideoToolbox H.264 媒体链路为 `implemented`；iPhone 真机 720p30 / 1080p30、弱网 ABR、方向与视觉验收仍待升级为 `verified`。
 
 ## 边界
 
@@ -16,6 +16,8 @@ iOS Sender 使用 SwiftUI 承载设备列表、手动连接、配对和传输页
 Rust Core 继续负责协议、QUIC、发现、配对、会话、分包、重连和码率控制。
 
 当前 UI 以 `SenderAppModel` 的单向状态流驱动，使用 Swift Observation（`@Observable`）观察 Rust C ABI 状态快照。设备页启动时不会请求 Camera 权限；只有会话进入传输页才请求权限并启动 `AVCaptureSession`。相机配置、切换和 `startRunning()` / `stopRunning()` 由独立 actor 串行化，`AVCaptureVideoPreviewLayer` 固定在 `MainActor` 创建和展示。
+
+媒体路径固定为 `AVCaptureVideoDataOutput (420v) → VTPixelTransferSession（仅尺寸不同时）→ VTCompressionSession → AVCC Access Unit → PicooCore C ABI`。采集锁定 30 FPS；480p 使用系统 Pixel Transfer 将 720p 采集帧缩放为 854×480。编码器要求系统硬件 H.264，启用实时模式、禁用帧重排、每 2 秒产生 IDR，并使用 Main 4.0（不可用时回退 Baseline 4.0）。Swift 只把编码后的 AU、SPS/PPS、时间戳和 `stream_epoch` 交给 Rust；`CVPixelBuffer` 永不跨 FFI。编码 AU 使用有界 GOP-aware 队列，积压或 epoch/连接切换时丢弃依赖帧直至新 IDR；Rust 同时拒绝离线 AU 并在断连时清空待发分片，避免 H.264 数据无界增长或跨连接发送旧画面。Rust 的 480p/720p/1080p ABR、关键帧请求和远端 CameraCommand 会回送到原生编码/相机 actor；设备旋转由 `AVCaptureDevice.RotationCoordinator` 写入 `StreamConfig.rotation`，前置摄像头的本机预览镜像与远端镜像保持独立。
 
 ## 构建基线
 
@@ -59,7 +61,7 @@ cargo xtask test ios
 - Xcode 26.6，Swift 6 语言模式，当前工具链编译器为 Apple Swift 6.3.3；
 - Swift 6 strict concurrency、默认 `MainActor` 与 approachable concurrency；
 - SwiftUI + Observation、Swift Concurrency actor、Swift Testing；
-- AVFoundation / Network / UIKit / Security / SystemConfiguration 与本地 `PicooCore.xcframework`；
+- AVFoundation / VideoToolbox / Network / UIKit / Security / SystemConfiguration 与本地 `PicooCore.xcframework`；
 - Reicon SVG 仅以本地 Asset Catalog 资源引入，不依赖图标库。
 
 工程不使用 CocoaPods、Carthage、第三方 Swift Package 或项目生成器。当前 `.app` 是无签名的 Simulator 验证产物，不包含 Provisioning Profile 或 App Store 配置。

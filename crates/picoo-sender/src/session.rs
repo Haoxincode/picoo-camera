@@ -447,6 +447,7 @@ impl<T: PicooTransport> SenderSession<T> {
                     self.session = None;
                     self.pairing = None;
                     self.stream_config_sent = false;
+                    self.pipeline.clear_pending_packets();
                     self.schedule_reconnect();
                 }
                 TransportEvent::VideoPacket(_, _) => {}
@@ -619,6 +620,7 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, SenderError> {
         // Explicit connect re-enables automatic recovery after a user disconnect.
+        self.pipeline.clear_pending_packets();
         self.auto_reconnect = true;
         self.reconnect_after = None;
         self.last_endpoint = Some(endpoint.clone());
@@ -645,6 +647,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.session = None;
         self.pairing = None;
         self.stream_config_sent = false;
+        self.pipeline.clear_pending_packets();
         self.status = SenderStatus::Disconnected;
     }
 
@@ -676,6 +679,9 @@ impl<T: PicooTransport> SenderSession<T> {
         pts_us: u64,
         stream_epoch: u32,
     ) -> Result<usize, SenderError> {
+        if self.session.is_none() {
+            return Err(SenderError::NotConnected);
+        }
         self.pipeline
             .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch)
     }
@@ -857,6 +863,29 @@ mod tests {
         let sent = session.flush_pending().expect("flush");
         assert_eq!(sent, 1);
         assert_eq!(session.stats().sent_datagrams, 1);
+    }
+
+    #[test]
+    fn disconnected_media_is_rejected_and_pending_packets_are_cleared() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        assert!(matches!(
+            session.ingest_access_unit(b"offline", true, 1, 1),
+            Err(SenderError::NotConnected)
+        ));
+        assert_eq!(session.pending_packets(), 0);
+
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 1,
+            })
+            .expect("connect");
+        session
+            .ingest_access_unit(b"queued", true, 2, 1)
+            .expect("ingest while connected");
+        assert_eq!(session.pending_packets(), 1);
+        session.disconnect();
+        assert_eq!(session.pending_packets(), 0);
     }
 
     #[test]

@@ -1345,6 +1345,30 @@ fn stream_epoch_bump_requests_keyframe() {
     }
     assert!(got_idr, "epoch bump must request IDR");
     assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
+
+    // QUIC control streams and datagrams have no cross-channel ordering. A
+    // datagram from the next epoch must wait for its reliable StreamConfig,
+    // instead of entering reassembly under stale decoder parameters.
+    let access_units_before = receiver.stats().access_units;
+    sender
+        .ingest_and_flush(b"future-epoch", true, 1, 3)
+        .expect("future epoch AU");
+    let mut requested_future_idr = false;
+    for _ in 0..80 {
+        receiver.pump().expect("rx future epoch");
+        sender.pump().expect("tx future epoch");
+        if sender.take_keyframe_request() {
+            requested_future_idr = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        requested_future_idr,
+        "future epoch must request a fresh IDR"
+    );
+    assert_eq!(receiver.stats().access_units, access_units_before);
+    assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 }
 
 #[test]
@@ -3806,7 +3830,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
-    sender.set_stream_config(StreamConfigParams {
+    let stream_config = StreamConfigParams {
         width: width as u32,
         height: height as u32,
         fps: 30,
@@ -3816,7 +3840,8 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         rotation: 0,
         sps,
         pps,
-    });
+    };
+    sender.set_stream_config(stream_config.clone());
     for _ in 0..50 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -3872,6 +3897,18 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     );
 
     // Fresh IDR recovers FrameHub (stay on epoch 2 after the bump above).
+    sender.set_stream_config(StreamConfigParams {
+        stream_epoch: 2,
+        ..stream_config
+    });
+    for _ in 0..50 {
+        receiver.pump().expect("rx config");
+        sender.pump().expect("tx config");
+        if sender.stream_config_sent() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
     sender.transport_mut().disarm();
     sender
         .ingest_and_flush(&recovery_au, true, 100, 2)

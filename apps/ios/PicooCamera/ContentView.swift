@@ -402,11 +402,18 @@ private struct LiveCameraView: View {
 
                 Spacer()
 
-                Text("1080P · 30")
-                    .font(.caption.weight(.bold).monospaced())
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 8)
-                    .background(.black.opacity(0.62), in: Capsule())
+                Button {
+                    Task { await model.toggleResolution() }
+                } label: {
+                    Text(model.resolutionLabel)
+                        .font(.caption.weight(.bold).monospaced())
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.62), in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(model.camera.state != .running)
+                .accessibilityLabel("切换视频分辨率")
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 14)
@@ -422,6 +429,8 @@ private struct LiveCameraView: View {
             CameraOverlay(title: "正在请求相机权限", detail: "只有开始推流时才会访问摄像头。")
         case .starting:
             CameraOverlay(title: "正在启动摄像头", detail: "准备本机低延迟预览。")
+        case .stopping:
+            CameraOverlay(title: "正在停止摄像头", detail: "释放本机采集资源。")
         case .denied:
             VStack(spacing: 14) {
                 CameraOverlay(title: "需要相机权限", detail: "请在系统设置中允许 Picoo Camera 使用摄像头。")
@@ -448,7 +457,7 @@ private struct LiveCameraView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("预览就绪")
                         .font(.caption.weight(.bold))
-                    Text("H.264 编码将在下一批接入")
+                    Text("H.264 · \(model.activeBitrateBps / 1_000_000) Mbps")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.58))
                 }
@@ -593,6 +602,7 @@ private struct SettingsSheet: View {
         switch model.camera.state {
         case .denied: "未授权"
         case .running: "使用中"
+        case .stopping: "正在停止"
         default: "按需请求"
         }
     }

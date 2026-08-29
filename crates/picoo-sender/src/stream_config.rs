@@ -34,10 +34,11 @@ impl Default for StreamConfigParams {
 
 impl StreamConfigParams {
     pub fn to_proto(&self) -> StreamConfig {
+        let (profile, level) = self.h264_profile_level();
         StreamConfig {
             codec: "h264".into(),
-            profile: "baseline".into(),
-            level: "3.1".into(),
+            profile,
+            level,
             width: self.width,
             height: self.height,
             fps: self.fps,
@@ -61,6 +62,41 @@ impl StreamConfigParams {
             }
         }
     }
+
+    /// SPS is the codec source of truth. Platform encoders may fall back from
+    /// Main to Baseline at runtime, so a hard-coded profile can disagree with
+    /// the Access Units even when the FFI configuration is otherwise valid.
+    fn h264_profile_level(&self) -> (String, String) {
+        let sps = self.sps_payload();
+        let Some(profile_idc) = sps.get(1).copied() else {
+            return ("baseline".into(), "3.1".into());
+        };
+        let profile = match profile_idc {
+            66 => "baseline",
+            77 => "main",
+            88 => "extended",
+            100 => "high",
+            110 => "high-10",
+            122 => "high-4:2:2",
+            244 => "high-4:4:4",
+            _ => "unknown",
+        };
+        let level = sps
+            .get(3)
+            .map(|level_idc| format!("{}.{}", level_idc / 10, level_idc % 10))
+            .unwrap_or_else(|| "3.1".into());
+        (profile.into(), level)
+    }
+
+    fn sps_payload(&self) -> &[u8] {
+        if self.sps.starts_with(&[0, 0, 0, 1]) {
+            &self.sps[4..]
+        } else if self.sps.starts_with(&[0, 0, 1]) {
+            &self.sps[3..]
+        } else {
+            &self.sps
+        }
+    }
 }
 
 #[cfg(test)]
@@ -82,5 +118,27 @@ mod tests {
         assert_eq!(StreamConfigParams::normalize_rotation(91), 90);
         assert_eq!(StreamConfigParams::normalize_rotation(200), 180);
         assert_eq!(StreamConfigParams::normalize_rotation(450), 90);
+    }
+
+    #[test]
+    fn stream_config_derives_main_level_4_from_sps() {
+        let cfg = StreamConfigParams {
+            sps: vec![0x67, 77, 0, 40, 0xaa],
+            ..Default::default()
+        };
+        let proto = cfg.to_proto();
+        assert_eq!(proto.profile, "main");
+        assert_eq!(proto.level, "4.0");
+    }
+
+    #[test]
+    fn stream_config_derives_annex_b_baseline_from_sps() {
+        let cfg = StreamConfigParams {
+            sps: vec![0, 0, 0, 1, 0x67, 66, 0, 31],
+            ..Default::default()
+        };
+        let proto = cfg.to_proto();
+        assert_eq!(proto.profile, "baseline");
+        assert_eq!(proto.level, "3.1");
     }
 }

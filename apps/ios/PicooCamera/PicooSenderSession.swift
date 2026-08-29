@@ -1,7 +1,7 @@
 import Foundation
 import PicooCore
 
-enum PicooSenderSessionError: Error, Equatable {
+nonisolated enum PicooSenderSessionError: Error, Equatable {
     case senderCreationFailed
     case identityCreationFailed
     case discoveryCreationFailed
@@ -14,7 +14,30 @@ enum PicooSenderSessionError: Error, Equatable {
 /// Raw pointers never escape this type. Platform camera code hands encoded
 /// H.264 access units to this session in REQ-PICOO-MEDIA-011; capture buffers do
 /// not cross the FFI boundary.
-final class PicooSenderSession {
+nonisolated struct SenderStreamConfiguration: Equatable, Sendable {
+    let width: UInt32
+    let height: UInt32
+    let framesPerSecond: UInt32
+    let bitrateBps: UInt32
+    let streamEpoch: UInt32
+    let mirrored: Bool
+    let rotation: UInt32
+    let sequenceParameterSet: Data
+    let pictureParameterSet: Data
+}
+
+nonisolated enum SenderCameraCommand: Equatable, Sendable {
+    case switchFront
+    case switchBack
+    case setResolution(width: UInt32, height: UInt32)
+    case setMirror(Bool)
+}
+
+/// Rust's `SenderInner` serializes every operation with one `Mutex`. The Swift
+/// wrapper therefore supports the MainActor control plane and the media actor
+/// calling the same handle concurrently. Both retain this object for its full
+/// use, so `deinit` cannot race an in-flight FFI call.
+nonisolated final class PicooSenderSession: @unchecked Sendable {
     private let sender: UnsafeMutableRawPointer
     private let identity: PicooSenderIdentity
     private let trustedStorePath: String
@@ -51,7 +74,7 @@ final class PicooSenderSession {
         sender = senderHandle
     }
 
-    isolated deinit {
+    deinit {
         picoo_sender_destroy(sender)
     }
 
@@ -119,6 +142,124 @@ final class PicooSenderSession {
         try check(picoo_sender_disconnect(sender), operation: "sender_disconnect")
     }
 
+    func setStreamConfiguration(_ configuration: SenderStreamConfiguration) throws {
+        let code = configuration.sequenceParameterSet.withUnsafeBytes { sequenceBytes in
+            configuration.pictureParameterSet.withUnsafeBytes { pictureBytes in
+                picoo_sender_set_stream_config(
+                    sender,
+                    configuration.width,
+                    configuration.height,
+                    configuration.framesPerSecond,
+                    configuration.bitrateBps,
+                    configuration.streamEpoch,
+                    configuration.mirrored ? 1 : 0,
+                    configuration.rotation,
+                    sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
+                    UInt(sequenceBytes.count),
+                    pictureBytes.bindMemory(to: UInt8.self).baseAddress,
+                    UInt(pictureBytes.count)
+                )
+            }
+        }
+        try check(code, operation: "sender_set_stream_config")
+    }
+
+    func send(_ accessUnit: EncodedAccessUnit) throws {
+        var packetCount: UInt32 = 0
+        let ingestCode = accessUnit.data.withUnsafeBytes { bytes in
+            picoo_sender_ingest_access_unit(
+                sender,
+                bytes.bindMemory(to: UInt8.self).baseAddress,
+                UInt(bytes.count),
+                accessUnit.isKeyframe ? 1 : 0,
+                accessUnit.presentationTimeUs,
+                accessUnit.streamEpoch,
+                &packetCount
+            )
+        }
+        try check(ingestCode, operation: "sender_ingest_access_unit")
+        guard packetCount > 0 else { return }
+
+        var sentCount: UInt32 = 0
+        try check(
+            picoo_sender_flush(sender, &sentCount),
+            operation: "sender_flush"
+        )
+        try pump()
+    }
+
+    var currentBitrateBps: UInt32 {
+        picoo_sender_current_bitrate_bps(sender)
+    }
+
+    var receiverMaxHeight: UInt32 {
+        picoo_sender_receiver_max_height(sender)
+    }
+
+    func takeKeyframeRequest() throws -> Bool {
+        try takeFlag(
+            picoo_sender_take_keyframe_request(sender),
+            operation: "sender_take_keyframe_request"
+        )
+    }
+
+    func takeResolutionDownshift() throws -> Bool {
+        try takeFlag(
+            picoo_sender_take_resolution_downshift(sender),
+            operation: "sender_take_resolution_downshift"
+        )
+    }
+
+    func takeResolutionUpshift() throws -> Bool {
+        try takeFlag(
+            picoo_sender_take_resolution_upshift(sender),
+            operation: "sender_take_resolution_upshift"
+        )
+    }
+
+    func takeCameraCommand() throws -> SenderCameraCommand? {
+        var width: UInt32 = 0
+        var height: UInt32 = 0
+        var mirrored: Int32 = 0
+        let command = picoo_sender_take_camera_command(
+            sender,
+            &width,
+            &height,
+            &mirrored
+        )
+        switch command {
+        case 0:
+            return nil
+        case 1:
+            return .switchFront
+        case 2:
+            return .switchBack
+        case 3:
+            return .setResolution(width: width, height: height)
+        case 4:
+            return .setMirror(mirrored != 0)
+        default:
+            throw PicooSenderSessionError.operationFailed(
+                name: "sender_take_camera_command",
+                code: command
+            )
+        }
+    }
+
+    func setPreferredHeight(_ height: UInt32) throws {
+        try check(
+            picoo_sender_set_preferred_height(sender, height),
+            operation: "sender_set_preferred_height"
+        )
+    }
+
+    func syncEncodeHeight(_ height: UInt32) throws {
+        try check(
+            picoo_sender_sync_encode_height(sender, height),
+            operation: "sender_sync_encode_height"
+        )
+    }
+
     func markCameraPermissionRequired() throws {
         try check(
             picoo_sender_mark_permission_required(sender),
@@ -151,6 +292,13 @@ final class PicooSenderSession {
         guard code >= 0 else {
             throw PicooSenderSessionError.operationFailed(name: operation, code: code)
         }
+    }
+
+    private func takeFlag(_ code: Int32, operation: String) throws -> Bool {
+        guard code >= 0 else {
+            throw PicooSenderSessionError.operationFailed(name: operation, code: code)
+        }
+        return code == 1
     }
 
     private static func storageDirectory() throws -> URL {
@@ -217,7 +365,7 @@ final class PicooDiscoveryBrowser {
     }
 }
 
-private final class PicooSenderIdentity {
+nonisolated private final class PicooSenderIdentity {
     private let identity: UnsafeMutableRawPointer
 
     init(path: String, defaultDeviceName: String) throws {
@@ -232,7 +380,7 @@ private final class PicooSenderIdentity {
         identity = handle
     }
 
-    isolated deinit {
+    deinit {
         picoo_identity_destroy(identity)
     }
 
@@ -258,7 +406,7 @@ private final class PicooSenderIdentity {
     }
 }
 
-private func readCString(
+nonisolated private func readCString(
     maxLength: Int,
     _ body: (UnsafeMutablePointer<CChar>?, UInt) -> Int32
 ) -> String {
@@ -270,7 +418,7 @@ private func readCString(
     return String(decoding: buffer.prefix(Int(length)).map(UInt8.init(bitPattern:)), as: UTF8.self)
 }
 
-private func stringFromFixedBytes<Value>(_ value: inout Value) -> String {
+nonisolated private func stringFromFixedBytes<Value>(_ value: inout Value) -> String {
     withUnsafeBytes(of: &value) { rawBuffer in
         let bytes = rawBuffer.prefix { $0 != 0 }
         return String(decoding: bytes, as: UTF8.self)
