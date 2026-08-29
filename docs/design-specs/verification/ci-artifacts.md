@@ -6,12 +6,12 @@
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33261802306](https://github.com/Haoxincode/picoo-camera/actions/runs/33261802306) |
+| Run ID | [33276518983](https://github.com/Haoxincode/picoo-camera/actions/runs/33276518983) |
 | 分支 | `main` |
-| Commit | `31bb451` — Apple ARM64 build baseline |
+| Commit | `21b32d2` — iOS App/Simulator CI validation |
 | 结论 | 5/5 jobs success（`rust-and-docs` + `android` + `windows` + `macos` + `ios`） |
 
-当前工作区新增的 `ios-app-unsigned` 与 Simulator XCTest 尚未提交，因此不属于上述 run；首次绿测后再把它作为 `REQ-PICOO-STACK-003` 升级为 `verified` 的证据。
+该 run 已远端验证 `ios-app-unsigned`、XCFramework、Swift/C ABI Simulator XCTest 和 macOS GPUI ARM64 Receiver，因此作为 `REQ-PICOO-STACK-003 / REQ-PICOO-STACK-007` 的 `verified` 证据。
 
 ## 方式一：GitHub Web UI
 
@@ -26,14 +26,14 @@
 
 ```bash
 # 列出某 run 的 artifact 名称
-gh api repos/Haoxincode/picoo-camera/actions/runs/33261802306/artifacts \
+gh api repos/Haoxincode/picoo-camera/actions/runs/33276518983/artifacts \
   --jq '.artifacts[] | "\(.name)\t\(.size_in_bytes) bytes"'
 
 # 下载全部 artifact 到当前目录
-gh run download 33261802306 -R Haoxincode/picoo-camera
+gh run download 33276518983 -R Haoxincode/picoo-camera
 
 # 只下载 Windows MSI
-gh run download 33261802306 -R Haoxincode/picoo-camera -n windows-msi
+gh run download 33276518983 -R Haoxincode/picoo-camera -n windows-msi
 ```
 
 替换上方 run ID 时，可用以下命令查询最新绿 run：
@@ -54,7 +54,7 @@ gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
 | `windows-bundle` | ~18 MB | 见下表 | 开发态 / 免安装验证 |
 | `macos-receiver-unsigned` | ~9 MB | `picoo-desktop` | macOS 15+ ARM64 GPUI 编译基线；不是可发布 `.app` |
 | `ios-rust-core-xcframework` | ~30 MB | `PicooCore.xcframework.zip` | iOS 18+ ARM64 device/simulator Rust C ABI；解压后保留 `.xcframework` 外层目录 |
-| `ios-app-unsigned` | 以 CI 为准 | `PicooCamera.app.zip` | iOS 18+ ARM64 Simulator SwiftUI/C ABI 编译基线；解压后保留 `.app` 与执行权限，不可安装到真机 |
+| `ios-app-unsigned` | ~2.5 MB | `PicooCamera.app.zip` | iOS 18+ ARM64 Simulator SwiftUI/C ABI 编译基线；解压后保留 `.app` 与执行权限，不可安装到真机 |
 
 Apple artifact 只证明原生链接、SwiftUI App 壳和边界打包成功。设备/配对 UI、VideoToolbox、Camera Extension、签名、公证和真机媒体链路必须继续由对应 Requirement 验收。
 

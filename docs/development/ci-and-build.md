@@ -12,7 +12,7 @@ Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依
 | Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
 | Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
 | macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译基线 |
-| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；远端已验证 Rust XCFramework，SwiftUI 壳与 C ABI 测试 workflow 已配置、待首次绿测 |
+| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；远端已验证 Rust XCFramework、SwiftUI 壳与 Simulator C ABI 测试基线 |
 
 **结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建与 CI 维护；**各平台最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要试图在 Linux 上交叉编译 GPUI 桌面程序、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。
 
@@ -99,7 +99,7 @@ jobs:
           path: target/release/bundle/
 ```
 
-已记录的远端绿测证明共享 GPUI Receiver 与 Rust XCFramework 的 Apple 原生编译、链接边界。SwiftUI App 壳和 Simulator C ABI 生命周期测试已经写入 workflow，但只有在对应 run 成功并记录到验证文档后，才能视为远端验收证据。它们均不代表设备/配对 UI、AVFoundation、VideoToolbox、Camera Extension、签名、公证或真机媒体链路已经完成；这些能力必须由对应 Requirement 和单独证据升级为 `verified`。
+已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App 壳和 Simulator C ABI 生命周期测试的 Apple 原生编译、链接边界。它们均不代表设备/配对 UI、AVFoundation、VideoToolbox、Camera Extension、签名、公证或真机媒体链路已经完成；这些能力必须由对应 Requirement 和单独证据升级为 `verified`。
 
 ### Apple 无签名构建基线
 
