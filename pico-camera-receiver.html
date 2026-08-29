@@ -2816,53 +2816,7 @@ body {
 
               </div>
 
-              <!-- Box 2: 系统状态 (Virtual Camera, Auto Discovery, Direct Mode, moved from Left Card) -->
-              <div id="connect-box-system-status" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 shadow-lg flex flex-col gap-3.5 transition-all duration-300">
-                <div class="flex items-center gap-2">
-                  <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M11.9436 1.25H12.0564C13.8942 1.24998 15.3498 1.24997 16.489 1.40314C17.6614 1.56076 18.6104 1.89288 19.3588 2.64124C20.1071 3.38961 20.4392 4.33856 20.5969 5.51098C20.75 6.65019 20.75 8.10583 20.75 9.94359V14.0564C20.75 15.8942 20.75 17.3498 20.5969 18.489C20.4392 19.6614 20.1071 20.6104 19.3588 21.3588C18.6104 22.1071 17.6614 22.4392 16.489 22.5969C15.3498 22.75 13.8942 22.75 12.0564 22.75H11.9436C10.1058 22.75 8.65019 22.75 7.51098 22.5969C6.33856 22.4392 5.38961 22.1071 4.64124 21.3588C3.89288 20.6104 3.56076 19.6614 3.40314 18.489C3.24997 17.3498 3.24998 15.8942 3.25 14.0564V9.94358C3.24998 8.10582 3.24997 6.65019 3.40314 5.51098C3.56076 4.33856 3.89288 3.38961 4.64124 2.64124C5.38961 1.89288 6.33856 1.56076 7.51098 1.40314C8.65019 1.24997 10.1058 1.24998 11.9436 1.25Z" fill="currentColor"/></svg>
-                  <h3 class="text-sm font-semibold text-card-foreground">系统状态</h3>
-                </div>
-
-                <div class="flex flex-col gap-2.5">
-                  <!-- Row 1: Virtual Camera -->
-                  <div class="flex items-center justify-between py-2 px-3 rounded-[var(--radius)] bg-secondary/50 border border-border">
-                    <div class="flex items-center gap-2.5">
-                      <span class="w-2 h-2 rounded-full bg-primary"></span>
-                      <span class="text-xs font-medium text-foreground">虚拟摄像头</span>
-                    </div>
-                    <div class="flex items-center gap-1.5 text-xs text-emerald-500 font-medium">
-                      <span>就绪</span>
-                      <svg class="w-3.5 h-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    </div>
-                  </div>
-
-                  <!-- Row 2: Auto Discovery -->
-                  <div class="flex items-center justify-between py-2 px-3 rounded-[var(--radius)] bg-secondary/50 border border-border">
-                    <div class="flex items-center gap-2.5">
-                      <span class="w-2 h-2 rounded-full bg-primary"></span>
-                      <span class="text-xs font-medium text-foreground">自动发现</span>
-                    </div>
-                    <div class="flex items-center gap-1.5 text-xs text-emerald-500 font-medium">
-                      <span>已开启</span>
-                      <svg class="w-3.5 h-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    </div>
-                  </div>
-
-                  <!-- Row 3: Connection Mode -->
-                  <div class="flex items-center justify-between py-2 px-3 rounded-[var(--radius)] bg-secondary/50 border border-border">
-                    <div class="flex items-center gap-2.5">
-                      <span class="w-2 h-2 rounded-full bg-primary"></span>
-                      <span class="text-xs font-medium text-foreground">连接方式</span>
-                    </div>
-                    <div class="flex items-center gap-1.5 text-xs text-emerald-500 font-medium">
-                      <span>局域网直连</span>
-                      <svg class="w-3.5 h-3.5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Box 3: 网络状态 (Network Status Metrics) with Reicon Icons -->
+              <!-- Box 2: 网络状态 (Network Status Metrics) with Reicon Icons -->
               <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 shadow-lg flex flex-col gap-3.5 transition-all duration-300">
                 <div class="flex items-center gap-2">
                   <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7.33008 14.49L9.71008 11.4C10.0501 10.96 10.6801 10.88 11.1201 11.22L12.9501 12.66C13.3901 13 14.0201 12.92 14.3601 12.49L16.6701 9.51001" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
@@ -5381,7 +5335,6 @@ body {
       const streamingView = document.getElementById("connect-streaming-view");
       const topoCard = document.getElementById("connection-topo-card");
       const streamingControls = document.getElementById("streaming-controls-card");
-      const boxSystemStatus = document.getElementById("connect-box-system-status");
 
       if (!state.isConnected) {
         // Switch to connected state
@@ -5399,10 +5352,9 @@ body {
 
         if (statusText) statusText.textContent = "实时推流中";
         
-        // In Right Column: Hide pairing illustration and beginner guide; Show streaming parameters
+        // In Right Column: Hide pairing illustration; Show streaming parameters
         if (topoCard) topoCard.classList.add("hidden");
         if (streamingControls) streamingControls.classList.remove("hidden");
-        if (boxSystemStatus) boxSystemStatus.classList.add("hidden");
 
         // Show Live Camera Preview & Hide Connection Code Card
         if (idleView) idleView.classList.add("hidden");
@@ -5428,10 +5380,9 @@ body {
 
         if (statusText) statusText.textContent = "已发现 · 等待连接";
         
-        // In Right Column: Restore pairing illustration and beginner guide; Hide streaming parameters
+        // In Right Column: Restore pairing illustration; Hide streaming parameters
         if (topoCard) topoCard.classList.remove("hidden");
         if (streamingControls) streamingControls.classList.add("hidden");
-        if (boxSystemStatus) boxSystemStatus.classList.remove("hidden");
 
         // Show Connection Code Card & Hide Live Camera Preview
         if (idleView) idleView.classList.remove("hidden");
