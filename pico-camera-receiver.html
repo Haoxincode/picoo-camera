@@ -2266,14 +2266,6 @@ body {
                   <!-- Dynamic Canvas Video Stream -->
                   <canvas id="live-stream-canvas" class="w-full h-full object-cover block cursor-crosshair" onclick="triggerCanvasFocus(event)" width="859" height="745"></canvas>
 
-                  <!-- Top Left Live Overlay Badge -->
-                  <div class="absolute top-3 left-3 flex items-center gap-2 z-10 select-none pointer-events-none">
-                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-destructive text-destructive-foreground text-[10px] font-extrabold tracking-wider shadow-sm">
-                      <span class="w-1.5 h-1.5 rounded-full bg-white animate-ping"></span>
-                      <span>LIVE</span>
-                    </span>
-                  </div>
-
                   <!-- Top Right Fullscreen Button -->
                   <div class="absolute top-3 right-3 flex items-center gap-2 z-10 select-none">
                     <button class="p-1.5 rounded-full bg-black/60 hover:bg-black/80 backdrop-blur-md text-white/90 hover:text-white transition-colors cursor-pointer border border-white/10" onclick="toggleFullScreen()" title="全屏取景">
@@ -2304,24 +2296,6 @@ body {
                       <div class="text-[9px] font-mono text-primary/80 text-center">
                         EXPOSURE 0.0 EV · ISO 120
                       </div>
-                    </div>
-                  </div>
-
-                  <!-- Bottom Toolbar Floating inside Viewfinder -->
-                  <div class="absolute bottom-3 left-3 right-3 flex items-center justify-between p-2 rounded-[var(--radius)] bg-black/75 backdrop-blur-md border border-white/10 text-white z-10 select-none">
-                    <div class="flex items-center gap-3 text-xs font-mono text-white/80">
-                      <span class="text-emerald-400 font-bold flex items-center gap-1.5">
-                        <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                        <span>VCAM OUTPUT: ON</span>
-                      </span>
-                      <span class="text-white/40">|</span>
-                      <span>BUFFER: 8ms</span>
-                      <span class="text-white/40">|</span>
-                      <span>JITTER: 0.2ms</span>
-                    </div>
-
-                    <div class="flex items-center gap-2">
-                      <span class="text-[11px] text-white/60 font-mono">1080p 60FPS</span>
                     </div>
                   </div>
 
@@ -2668,10 +2642,6 @@ body {
                       <div class="flex items-center gap-1.5 text-xs text-muted-foreground mt-0.5" id="connected-device-status">
                         <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                         <span id="conn-status-text">已发现 · 等待连接</span>
-                      </div>
-                      <div id="streaming-meta" class="text-[11px] font-mono text-primary mt-0.5 flex items-center gap-1 hidden">
-                        <svg class="w-3 h-3 text-primary" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M9 22H15C20 22 22 20 22 15V9C22 4 20 2 15 2H9C4 2 2 4 2 9V15C2 20 4 22 9 22Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M7.33008 14.49L9.71008 11.4C10.0501 10.96 10.6801 10.88 11.1201 11.22L12.9501 12.66C13.3901 13 14.0201 12.92 14.3601 12.49L16.6701 9.51001" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-                        <span>1080p · 30 FPS · 12 ms</span>
                       </div>
                     </div>
                   </div>
@@ -3035,6 +3005,10 @@ body {
                     <div class="flex items-center justify-between pb-2 border-b border-border">
                       <span class="text-muted-foreground">解码 & 码率</span>
                       <span class="font-mono text-foreground font-medium">H.265 HW · 8.4 Mbps</span>
+                    </div>
+                    <div class="flex items-center justify-between pb-2 border-b border-border">
+                      <span class="text-muted-foreground">传输缓冲 / 抖动</span>
+                      <span class="font-mono text-foreground font-medium">8ms · Jitter 0.2ms</span>
                     </div>
                     <div class="flex items-center justify-between pb-2 border-b border-border">
                       <span class="text-muted-foreground">手机电量</span>
@@ -5688,12 +5662,12 @@ body {
     let currentResIdx = 0;
 
     // Toggle Connect / Disconnect Simulation (Switches Left Card View & Right Panel State)
+    // Toggle Connect / Disconnect Simulation (Switches Left Card View & Right Panel State)
     function toggleConnectState() {
       const btnAction = document.getElementById("btn-device-action");
       const btnActionText = document.getElementById("btn-device-action-text");
       const btnActionIcon = document.getElementById("btn-device-action-icon");
       const statusText = document.getElementById("conn-status-text");
-      const meta = document.getElementById("streaming-meta");
       const idleView = document.getElementById("connect-idle-view");
       const streamingView = document.getElementById("connect-streaming-view");
       const topoCard = document.getElementById("connection-topo-card");
@@ -5714,8 +5688,7 @@ body {
           btnActionIcon.innerHTML = '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>';
         }
 
-        if (statusText) statusText.textContent = "实时推流中 · 低延迟";
-        if (meta) meta.classList.remove("hidden");
+        if (statusText) statusText.textContent = "实时推流中";
         
         // In Right Column: Hide pairing illustration and beginner guide; Show streaming parameters
         if (topoCard) topoCard.classList.add("hidden");
@@ -5745,7 +5718,6 @@ body {
         }
 
         if (statusText) statusText.textContent = "已发现 · 等待连接";
-        if (meta) meta.classList.add("hidden");
         
         // In Right Column: Restore pairing illustration and beginner guide; Hide streaming parameters
         if (topoCard) topoCard.classList.remove("hidden");
@@ -5831,28 +5803,6 @@ body {
         ctx.moveTo(0, h * 0.333); ctx.lineTo(w, h * 0.333);
         ctx.moveTo(0, h * 0.666); ctx.lineTo(w, h * 0.666);
         ctx.stroke();
-
-        // 4. Audio Level Meter Bars
-        const barCount = 14;
-        const barWidth = 4 * (w / 800);
-        const barGap = 3 * (w / 800);
-        const startX = 24 * (w / 800);
-        const startY = h - 60 * (h / 600);
-        for (let b = 0; b < barCount; b++) {
-          const noise = Math.sin(frameCount * 0.2 + b * 0.8) * 0.5 + 0.5;
-          const barHeight = (6 + noise * 20) * (h / 600);
-          ctx.fillStyle = b > 11 ? "#ef4444" : b > 8 ? "#f59e0b" : "#10b981";
-          ctx.fillRect(startX + b * (barWidth + barGap), startY - barHeight, barWidth, barHeight);
-        }
-
-        // 5. Live Timecode text
-        ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-        ctx.font = `600 ${Math.max(11, Math.round(w * 0.017))}px monospace`;
-        ctx.textAlign = "center";
-        const sec = String(Math.floor((frameCount / 60) % 60)).padStart(2, "0");
-        const min = String(Math.floor((frameCount / 3600) % 60)).padStart(2, "0");
-        const ms = String(Math.floor((frameCount % 60) * 1.66)).padStart(2, "0");
-        ctx.fillText(`REC 00:${min}:${sec}:${ms}`, w * 0.5, 34 * (h / 600));
 
         ctx.restore();
         canvasAnimationId = requestAnimationFrame(render);
