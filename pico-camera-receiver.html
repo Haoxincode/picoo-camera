@@ -5710,7 +5710,7 @@ body {
     let canvasResolutions = ["4K UHD · 60 FPS", "1080p · 60 FPS", "720p · 60 FPS"];
     let currentResIdx = 0;
 
-    // Toggle Connect / Disconnect Simulation (Switches Left Card View & Dynamic Viewport)
+    // Toggle Connect / Disconnect Simulation (Switches Left Card View & Right Panel State)
     function toggleConnectState() {
       const btnAction = document.getElementById("btn-device-action");
       const btnActionText = document.getElementById("btn-device-action-text");
@@ -5719,9 +5719,6 @@ body {
       const meta = document.getElementById("streaming-meta");
       const idleView = document.getElementById("connect-idle-view");
       const streamingView = document.getElementById("connect-streaming-view");
-      const pageConnect = document.getElementById("page-connect");
-      const leftCol = document.getElementById("connect-left-col");
-      const rightCol = document.getElementById("connect-right-col");
       const topoCard = document.getElementById("connection-topo-card");
       const streamingControls = document.getElementById("streaming-controls-card");
       const boxGuide = document.getElementById("connect-box-guide");
@@ -5729,20 +5726,6 @@ body {
       if (!state.isConnected) {
         // Switch to connected state
         state.isConnected = true;
-        
-        // Dynamically Expand Left Preview (Wide Viewfinder Mode) & Contract Right Sidebar
-        if (pageConnect) {
-          pageConnect.classList.remove("max-w-[1160px]");
-          pageConnect.classList.add("max-w-[1380px]");
-        }
-        if (leftCol) {
-          leftCol.classList.remove("lg:col-span-7");
-          leftCol.classList.add("lg:col-span-8");
-        }
-        if (rightCol) {
-          rightCol.classList.remove("lg:col-span-5");
-          rightCol.classList.add("lg:col-span-4");
-        }
 
         // Update Device Action Button to Disconnect Mode (Red text button)
         if (btnAction) {
@@ -5773,20 +5756,6 @@ body {
       } else {
         // Switch to disconnected state
         state.isConnected = false;
-
-        // Smoothly Restore Standard Balanced Layout for Pairing / Connection Code
-        if (pageConnect) {
-          pageConnect.classList.remove("max-w-[1380px]");
-          pageConnect.classList.add("max-w-[1160px]");
-        }
-        if (leftCol) {
-          leftCol.classList.remove("lg:col-span-8");
-          leftCol.classList.add("lg:col-span-7");
-        }
-        if (rightCol) {
-          rightCol.classList.remove("lg:col-span-4");
-          rightCol.classList.add("lg:col-span-5");
-        }
 
         // Update Device Action Button to Connect Mode (Primary button)
         if (btnAction) {
