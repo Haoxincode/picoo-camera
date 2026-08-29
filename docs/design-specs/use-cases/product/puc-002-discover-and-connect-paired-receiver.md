@@ -25,7 +25,7 @@
 
 ## 边界
 
-- 本 Use Case 假设 mDNS 在局域网内可用；不可用时的兜底见 [PUC-003](puc-003-qr-code-fallback-connection.md)。
+- 本 Use Case 假设 mDNS 在局域网内可用；不可用时的手动 IP 直连见 [PUC-008](puc-008-connect-with-code-or-ip.md)。
 - 一台手机同时连接多台电脑、多手机同时输入一台电脑不在当前范围。
 - Sender 应用必须保持前台；后台或锁屏持续传输不在当前范围。
 - 本 Use Case 不描述会议软件内的选用行为，见 [PUC-004](puc-004-use-virtual-camera-in-meeting-apps.md)。

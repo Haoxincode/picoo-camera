@@ -1,11 +1,11 @@
 # ARCH-PICOO-DISCOVERY-001: 设备发现、配对与安全边界
 
 Status: planned
-Source: product PRD V1.0 / PUC-001 / PUC-002 / PUC-003 / PUC-007
+Source: product PRD V1.0 / PUC-001 / PUC-002 / PUC-007 / PUC-008
 
 ## 背景
 
-用户不应理解 IP、端口或公钥，但系统仍需在局域网内安全地发现 Receiver、建立 QUIC 连接并维护可信设备关系。企业网络可能屏蔽 mDNS，因此发现机制必须有兜底，且广播内容不得泄露敏感信息。
+用户通常不应理解 IP、端口或公钥，但系统仍需在局域网内安全地发现 Receiver、建立 QUIC 连接并维护可信设备关系。企业网络可能屏蔽 mDNS，因此系统提供手动 IP 直连作为显式兜底，且广播内容不得泄露敏感信息。
 
 ## 架构决策
 
@@ -34,22 +34,20 @@ Sender 浏览该服务：
 - iOS：Bonjour
 - Desktop：Rust mDNS/DNS-SD Adapter
 
-### 二维码兜底
+### 连接码授权与手动 IP 直连
 
-桌面端在等待连接页显示二维码，内容包含：
+Receiver 在等待连接页显示：
 
-- 局域网地址
-- QUIC 端口
-- Receiver ID
-- 协议版本
-- 公钥指纹
-- 短期连接随机数
+- 短期六位连接码；
+- 当前局域网 `IP:端口`。
 
-Sender 扫码后绕过 mDNS 直接连接。短期随机数过期后旧二维码不能无限期复用。
+连接码只负责首次配对授权，不负责发现或解析 Receiver Endpoint。mDNS 正常时，Sender 从服务发现结果获得 Endpoint；mDNS 不可用时，用户必须输入 `IP:端口`，Sender 才能绕过服务发现直接连接。
+
+Sender 建立 QUIC/TLS 连接后，通过可靠控制 Stream 提交用户输入的连接码。Receiver 必须限制失败尝试频率；连接码成功使用、主动刷新或到期后立即失效。桌面端仍需向用户显示连接请求，未确认前不得建立信任关系。
 
 ### 配对与公钥固定
 
-首次连接时，双方显示由握手上下文派生的 **六位短认证码**。用户确认后保存：
+首次连接时，Sender 提交 Receiver 显示的 **短期六位连接码**，桌面端用户确认连接请求后保存：
 
 - `device_id`
 - `device_name`
@@ -93,18 +91,22 @@ Sender 扫码后绕过 mDNS 直接连接。短期随机数过期后旧二维码�
 
 不采用。第一版本地-only。
 
+### 二维码生成与扫码连接
+
+不采用。连接所需信息已由 mDNS、手动 `IP:端口` 与六位连接码覆盖；二维码会额外引入生成、解析、扫码 UI 与移动端扫码 SDK，增加包体积和权限路径。
+
 ## 约束
 
 - Apple 平台必须提供 Local Network 用途说明，并声明 Bonjour 服务类型。
-- Android 必须处理摄像头、网络与局域网发现相关权限；权限在操作时请求。
+- Android 必须处理摄像头、网络与局域网发现相关权限；权限在操作时请求。不得为连接流程引入扫码 SDK 或提前请求相机权限。
 - 删除配对后必须重新确认，不能 silent trust。
 
 ## 相关 Use Case
 
 - [PUC-001](../use-cases/product/puc-001-first-install-and-pairing.md)
 - [PUC-002](../use-cases/product/puc-002-discover-and-connect-paired-receiver.md)
-- [PUC-003](../use-cases/product/puc-003-qr-code-fallback-connection.md)
 - [PUC-007](../use-cases/product/puc-007-manage-paired-devices.md)
+- [PUC-008](../use-cases/product/puc-008-connect-with-code-or-ip.md)
 
 ## 相关 Architecture
 

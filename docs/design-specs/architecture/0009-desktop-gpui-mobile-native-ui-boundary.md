@@ -1,7 +1,7 @@
 # ARCH-PICOO-UI-001: 桌面 GPUI 与手机原生 UI 边界
 
 Status: planned
-Source: product PRD V1.0 / PUC-001 / PUC-005
+Source: product PRD V1.0 / PUC-001 / PUC-005 / PUC-008
 
 ## 背景
 
@@ -58,14 +58,14 @@ struct DesktopAppState {
 桌面端主要页面：
 
 - **首次启动页**：虚拟摄像头安装状态与引导。
-- **等待连接页**：等待 Sender、Show QR Code、虚拟摄像头 Ready 状态。
+- **等待连接页**：等待 Sender、六位连接码、局域网 `IP:端口`、虚拟摄像头 Ready 状态。
 - **直播页**：VideoSurface 预览、设备名、分辨率/帧率/码率/延迟、网络质量、断开。
 - **设置页**：显示名称、自动接受已配对设备、开机启动、托盘、占位画面、日志级别、已配对设备、虚拟摄像头修复、诊断导出。
 
 手机端主要页面：
 
-- **设备列表页**：Available Computers、Scan QR Code。
-- **配对页**：六位短码确认。
+- **设备列表页**：Available Computers、连接码输入、手动 IP 直连。
+- **配对页**：提交六位连接码并等待桌面端确认。
 - **传输页**：本机预览、连接质量、摄像头/分辨率/镜像控制、断开。
 
 ### UI 不承担的逻辑
@@ -75,6 +75,8 @@ struct DesktopAppState {
 - 视频重组与抖动缓冲；
 - 配对密码学；
 - Shared Frame Ring 写入协议。
+
+UI 同样不承担二维码生成、二维码解析或扫码相机预览；连接页不得引入扫码 SDK。
 
 这些由 Rust Core 或平台媒体层负责，UI 只发送命令并渲染状态快照。
 
@@ -102,6 +104,7 @@ struct DesktopAppState {
 
 - [PUC-001](../use-cases/product/puc-001-first-install-and-pairing.md)
 - [PUC-005](../use-cases/product/puc-005-adjust-camera-during-streaming.md)
+- [PUC-008](../use-cases/product/puc-008-connect-with-code-or-ip.md)
 
 ## 相关 Architecture
 

@@ -46,7 +46,7 @@
 
 ### 场景四：企业访客 Wi-Fi 或 mDNS 受限网络
 
-用户无法通过自动发现找到电脑，但仍希望通过扫码在同一局域网内建立可信连接。
+用户无法通过自动发现找到电脑，但仍希望通过输入桌面端显示的局域网 `IP:端口` 和六位连接码建立可信连接。
 
 ## 完成标准
 
@@ -64,7 +64,7 @@
 - 720p30 与 1080p30 视频规格。
 - 前后摄像头切换、镜像与曝光补偿。
 - 虚拟摄像头注册与会议软件兼容。
-- 自动发现、二维码兜底、配对与重连。
+- 自动发现、手动 IP 直连、连接码配对与重连。
 
 ### 不在本 Business Use Case 范围内
 
@@ -79,11 +79,11 @@
 
 - [PUC-001](../product/puc-001-first-install-and-pairing.md)：首次安装、激活虚拟摄像头并完成设备配对
 - [PUC-002](../product/puc-002-discover-and-connect-paired-receiver.md)：自动发现并连接已配对电脑
-- [PUC-003](../product/puc-003-qr-code-fallback-connection.md)：通过二维码连接电脑
 - [PUC-004](../product/puc-004-use-virtual-camera-in-meeting-apps.md)：在会议软件中使用虚拟摄像头
 - [PUC-005](../product/puc-005-adjust-camera-during-streaming.md)：会议中调整摄像头、分辨率与镜像
 - [PUC-006](../product/puc-006-auto-reconnect-after-network-interruption.md)：网络中断后自动恢复传输
 - [PUC-007](../product/puc-007-manage-paired-devices.md)：管理已配对设备与撤销信任
+- [PUC-008](../product/puc-008-connect-with-code-or-ip.md)：通过连接码授权或 IP 地址直连电脑
 
 ## 相关 Architecture
 

@@ -5,14 +5,14 @@
 - **Status**: `implemented`
 - **Design Prototype**: [`pico-camera-receiver.html`](../../../pico-camera-receiver.html)
 - **Supported Use Cases**:
-  - [BUC-001](../../use-cases/business/buc-001-phone-as-wireless-meeting-camera.md)
-  - [PUC-001](../../use-cases/product/puc-001-first-install-and-pairing.md)
-  - [PUC-002](../../use-cases/product/puc-002-discover-and-connect-paired-receiver.md)
-  - [PUC-003](../../use-cases/product/puc-003-qr-code-fallback-connection.md)
-  - [PUC-004](../../use-cases/product/puc-004-use-virtual-camera-in-meeting-apps.md)
-  - [PUC-005](../../use-cases/product/puc-005-adjust-camera-during-streaming.md)
-  - [PUC-006](../../use-cases/product/puc-006-auto-reconnect-after-network-interruption.md)
-  - [PUC-007](../../use-cases/product/puc-007-manage-paired-devices.md)
+  - [BUC-001](../use-cases/business/buc-001-phone-as-wireless-meeting-camera.md)
+  - [PUC-001](../use-cases/product/puc-001-first-install-and-pairing.md)
+  - [PUC-002](../use-cases/product/puc-002-discover-and-connect-paired-receiver.md)
+  - [PUC-004](../use-cases/product/puc-004-use-virtual-camera-in-meeting-apps.md)
+  - [PUC-005](../use-cases/product/puc-005-adjust-camera-during-streaming.md)
+  - [PUC-006](../use-cases/product/puc-006-auto-reconnect-after-network-interruption.md)
+  - [PUC-007](../use-cases/product/puc-007-manage-paired-devices.md)
+  - [PUC-008](../use-cases/product/puc-008-connect-with-code-or-ip.md)
 - **Architectural Boundary**: [ARCH-PICOO-UI-001 (0009-desktop-gpui-mobile-native-ui-boundary.md)](../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
 
 ---
@@ -38,7 +38,7 @@
 - `Surface-Overlay`（弹窗/浮层）：`#242b3b`，阴影 `box-shadow: 0 16px 40px rgba(0,0,0,0.6)`。
 - `Brand-Accent`（品牌强调色）：活力橙渐变 `linear-gradient(135deg, #ff6a3d 0%, #ff8c42 100%)`。
 - `Status-Ready`（活跃/在线/良好）：翠绿 `#3ecf8e`，胶囊背景 `rgba(62, 207, 142, 0.12)`。
-- `Status-Warn`（警告/过热/扫码）：暖黄 `#f0c14a`，胶囊背景 `rgba(240, 193, 74, 0.14)`。
+- `Status-Warn`（警告/过热）：暖黄 `#f0c14a`，胶囊背景 `rgba(240, 193, 74, 0.14)`。
 - `Status-Danger`（断开/拒绝/错误）：柔红 `#ff5c6c` / `#ff4757`，胶囊背景 `rgba(255, 92, 108, 0.14)`。
 
 ### 2.2 字体与排版
@@ -59,7 +59,6 @@
 | **防误触锁定** | `reicon::lock` / `unlock` | `Reicon.Lock` | `Image("reicon_lock")` | N/A |
 | **恢复自动测光** | `reicon::rotate-ccw` | `Reicon.RotateCcw` | `Image("reicon_rotate_ccw")` | N/A |
 | **停止推流快门** | `reicon::square` (圆角) | `Reicon.Square` | `Image("reicon_square")` | `svg().path("reicon/square.svg")` |
-| **二维码扫码** | `reicon::qr-code` | `Reicon.QrCode` | `Image("reicon_qr_code")` | `svg().path("reicon/qr_code.svg")` |
 | **画面修复/刷新** | `reicon::refresh-cw` | N/A | N/A | `svg().path("reicon/refresh_cw.svg")` |
 | **断开连接** | `reicon::phone-off` | `Reicon.PhoneOff` | `Image("reicon_phone_off")` | `svg().path("reicon/phone_off.svg")` |
 | **局域网广播** | `reicon::radio` | `Reicon.Radio` | `Image("reicon_radio")` | `svg().path("reicon/radio.svg")` |
@@ -77,16 +76,17 @@
 - [ ] **AC-M-DISC-01**：顶栏左侧展示产品名，右侧胶囊实时显示当前 Wi-Fi 名称（如 `Wi‑Fi · Office‑5G`），最右侧为 `Settings` 矢量图标按钮。
 - [ ] **AC-M-DISC-02**：顶部常驻呼吸脉冲点指示发现中（橙色波纹）或监听中（绿色常驻）。
 - [ ] **AC-M-DISC-03**：已配对设备（Paired）卡片带有 `已配对` 橙黄徽标，右侧独立收纳 `More Horizontal` 按钮呼出管理菜单，主体点按直接发起直连。
-- [ ] **AC-M-DISC-05**：局域网广播未发现设备时展示空状态排查卡片，底部提供「输入连接码或 IP 直连」按钮，呼出轻量级输入抽屉。
+- [ ] **AC-M-DISC-05**：局域网广播未发现设备时展示空状态排查卡片，底部提供「输入 IP 直连」按钮；到达 Receiver 后再进入连接码授权页。
 
-### 3.2 手动直连与数字连接码抽屉（Screen 2 - Manual Connect Sheet）
-- [ ] **AC-M-MANUAL-01**：点击主页底部按钮升起原生半屏抽屉，支持输入电脑端待机界面展示的 6 位数字连接码或局域网 IP:端口（如 `482917` 或 `192.168.1.108:4433`）。
-- [ ] **AC-M-MANUAL-02**：点击「立即直连电脑」直接向对端发起 QUIC 会话握手，免去相机权限请求打扰。
-- [ ] **AC-M-MANUAL-03**：首屏 0 权限要求，相机权限延迟至正式进入推流（Screen 5）时按需申请。
+### 3.2 连接码授权与手动 IP 直连抽屉（Screen 2 - Manual Connect Sheet）
+- [ ] **AC-M-MANUAL-01**：点击主页底部按钮升起原生半屏抽屉；已通过 mDNS 确定 Receiver 时输入桌面端展示的 6 位连接码，发现失败时先输入局域网 IP:端口（如 `192.168.1.108:4433`），连接建立后再输入连接码。
+- [ ] **AC-M-MANUAL-02**：输入 IP:端口后，Sender 直接向目标 Endpoint 发起 QUIC/TLS 握手；六位连接码仅在加密控制 Stream 内提交，不得被解释为地址查询码。
+- [ ] **AC-M-MANUAL-03**：首屏 0 相机权限要求，相机权限延迟至正式进入推流（Screen 5）时按需申请。
+- [ ] **AC-M-MANUAL-04**：连接流程不提供二维码生成或扫码入口，不引入 ZXing、ML Kit Barcode Scanning 或其他扫码 SDK。
 
 ### 3.3 配对确认与等待态（Screen 3 & Screen 4）
-- [ ] **AC-M-PAIR-01**：大字号等宽字体展示 6 位短码（`482 917`，`letter-spacing: 0.25em`），配合 60s 倒计时。
-- [ ] **AC-M-PAIR-02**：60s 超时后短码变灰不可用，文案红字提示 `短码已过期`，主按钮自动变为 `重新生成短码`。
+- [ ] **AC-M-PAIR-01**：Sender 使用大字号等宽输入框接收桌面端展示的 6 位连接码（`482 917`，`letter-spacing: 0.25em`），并显示剩余有效时间。
+- [ ] **AC-M-PAIR-02**：连接码到期后输入结果不可提交，文案红字提示 `连接码已过期，请在电脑端刷新`。
 - [ ] **AC-M-PAIR-03**：等待电脑确认过程中，若对端点击拒绝，即时切换为红色 `X` 图标并提示 `电脑端拒绝了连接`。
 
 ### 3.4 实时推流原生相机控制台（Screen 5 - 核心重点）
@@ -143,7 +143,7 @@
   - 搭配绿色状态徽标 `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 接收端已就绪`；
   - 居中呈现大号等宽 6 位局域网无线连接码（`482 917`，支持点击重新生成）与局域网 IP 直连胶囊（`192.168.1.108:4433`，带一键复制）。
 - [ ] **AC-D-ONBOARDING-03（开始使用与硬件拓扑）**：
-  - 左卡片底部包含清晰的开始使用 3 步指南（1. 打开手机 App → 2. 自动发现/输入连接码 → 3. 开始推流与视频通话）；
+  - 左卡片底部包含清晰的开始使用 3 步指南（1. 打开手机 App → 2. 选择自动发现的电脑或输入 IP → 3. 输入连接码并开始推流）；
   - 包含真机硬件互联拓扑图（手机 ➔ 无线波纹 ➔ 电脑）与 3 项轻量系统状态（虚拟摄像头、自动发现、连接方式）。
 
 ### 4.3 右侧卡片：设备连接状态机与极简网络状态
@@ -193,6 +193,9 @@
 4. ❌ **断开误触与假死**：
    - 严禁将断开连接做成无确认的一触即断；
    - 严禁在弱网断开时界面假死冻结，必须明确展示重连退避遮罩。
+5. ❌ **扫码能力回流**：
+   - 严禁添加二维码生成、二维码扫描、条码解析或扫码相机预览；
+   - 严禁引入 ZXing、ML Kit Barcode Scanning 或其他仅服务于扫码的依赖。
 
 ---
 
@@ -200,9 +203,9 @@
 
 | 验收项分类 | 对应验证方式 | 关联 Use Case | 原型验证入口 |
 | :--- | :--- | :--- | :--- |
-| **配对短码与核对** | 单元测试 + 双端联动模拟 | PUC-001 | 剧本① (首次配对) |
+| **连接码授权与桌面确认** | 单元测试 + 双端联动模拟 | PUC-001 | 剧本① (首次配对) |
 | **已配对快速直连** | 单元测试 + 状态快照检查 | PUC-002 | 剧本② (已配对直连) |
-| **二维码扫码兜底** | 协议解析测试 + 扫码 UI 交互 | PUC-003 | 剧本③ (二维码扫码) |
+| **连接码授权与 IP 直连** | 协议状态测试 + 输入 UI 交互 + 失败限流检查 | PUC-008 | 剧本③ (手动连接) |
 | **虚拟摄像头就绪** | 跨进程共享内存测试 + 驱动状态检查 | PUC-004 | 剧本④ (虚拟摄像头) |
 | **画质/镜头/调光交互** | UI 自动化测试 + 手势微动效检查 | PUC-005 | 剧本⑤ ~ ⑧ (相机操作) |
 | **弱网中断退避重连** | 模拟丢包/网络切断断言 | PUC-006 | 剧本⑨ (网络中断重连) |

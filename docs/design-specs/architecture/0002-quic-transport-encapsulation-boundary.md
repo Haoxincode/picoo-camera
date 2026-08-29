@@ -32,7 +32,7 @@ trait PicooTransport {
 
 ```text
 Receiver: QUIC Server + mDNS Advertiser
-Sender:   QUIC Client + mDNS Browser（或 QR 直连）
+Sender:   QUIC Client + mDNS Browser（或手动 IP Endpoint）
 ```
 
 每个会话只建立一条 QUIC Connection：
@@ -73,8 +73,8 @@ QUIC ALPN：`picoocam/1`
 ## 相关 Use Case
 
 - [PUC-002](../use-cases/product/puc-002-discover-and-connect-paired-receiver.md)
-- [PUC-003](../use-cases/product/puc-003-qr-code-fallback-connection.md)
 - [PUC-006](../use-cases/product/puc-006-auto-reconnect-after-network-interruption.md)
+- [PUC-008](../use-cases/product/puc-008-connect-with-code-or-ip.md)
 
 ## 相关 Architecture
 

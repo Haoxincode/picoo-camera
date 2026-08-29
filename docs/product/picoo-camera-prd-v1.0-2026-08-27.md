@@ -6,6 +6,8 @@
 
 文档日期： 2026 年 8 月 27 日
 
+最近更新： 2026 年 8 月 29 日
+
 文档状态： 立项与第一版开发基线
 
 ## 1. 项目概述
@@ -113,7 +115,8 @@ UI 不承担视频处理和协议逻辑，只负责：
 | 摄像头 | 前摄、后摄 |
 | 音频 | 使用电脑麦克风 |
 | 发现方式 | mDNS/DNS-SD 自动发现 |
-| 发现失败兜底 | 二维码连接 |
+| 发现失败兜底 | 手动输入局域网 IP:端口 |
+| 首次配对授权 | Receiver 六位短期连接码 |
 | 传输协议 | QUIC |
 | 视频数据 | QUIC Datagram |
 | 控制数据 | QUIC Reliable Stream |
@@ -143,6 +146,7 @@ UI 不承担视频处理和协议逻辑，只负责：
 - WebAssembly 版本；
 - Linux 虚拟摄像头；
 - 手机锁屏后继续传输；
+- 二维码生成、扫码连接及仅服务于扫码的 SDK；
 - 账号、组织、订阅和云同步。
 
 ## 4. 平台支持基线
@@ -185,9 +189,9 @@ macOS 的 Core Media I/O Camera Extension 从 macOS 12.3 开始提供，以系�
     ↓
 选择电脑
     ↓
-手机与电脑显示相同的六位配对码
+手机输入电脑端显示的六位连接码
     ↓
-用户确认
+电脑端用户确认连接请求
     ↓
 保存可信设备关系
     ↓
@@ -260,28 +264,25 @@ mDNS 记录只允许包含：
 
 不得在广播记录中包含用户身份、视频状态或敏感密钥。
 
-**FR-DISC-003 二维码兜底**
+**FR-DISC-003 手动 IP 直连兜底**
 
 企业网络、访客网络或开启客户端隔离的路由器可能阻止 mDNS。
 
-桌面端必须能够显示连接二维码，二维码包含：
+桌面端等待连接页必须显示当前可用的局域网连接地址，格式为：
 
-- 局域网地址
-- QUIC 端口
-- Receiver ID
-- 协议版本
-- 公钥指纹
-- 短期连接随机数
+```text
+IP:QUIC_PORT
+```
 
-手机扫码后可以绕过 mDNS 直接建立连接。
+手机端允许用户手动输入该地址，绕过 mDNS 直接向 Receiver 建立 QUIC/TLS 连接。手动地址只负责定位 Endpoint，不建立信任；未配对设备仍必须完成 FR-PAIR-001。
 
 ### 7.2 配对
 
 **FR-PAIR-001 首次确认**
 
-首次连接时，手机和电脑同时显示由握手上下文派生的六位短认证码。
+Receiver 在等待连接页显示短期六位连接码。Sender 通过 mDNS 或手动 `IP:端口` 确定 Receiver Endpoint 并建立 QUIC/TLS 连接后，在加密的可靠控制 Stream 内提交用户输入的连接码。
 
-用户确认两端数字一致后，系统保存对方公钥。
+Receiver 必须限制失败尝试频率；连接码成功使用、主动刷新或到期后立即失效。桌面端用户确认连接请求后，系统保存对方公钥。
 
 **FR-PAIR-002 密钥固定**
 
@@ -1167,7 +1168,8 @@ Picoo Camera
 Waiting for phone...
 Open Picoo Camera on your phone and connect to this computer.
 
-[ Show QR Code ]
+Connection Code: 482 917
+Direct Address: 192.168.1.108:4433
 
 Virtual Camera: Ready
 ```
@@ -1244,21 +1246,21 @@ Available Computers
 │ macOS · Paired              │
 └─────────────────────────────┘
 
-[ Scan QR Code ]
+[ Enter IP Address ]
 ```
 
 ### 17.2 配对页
 
 ```text
-Confirm Pairing
+Enter Connection Code
 
 Work PC
 
-428 731
+[ _ _ _   _ _ _ ]
 
-Make sure the same number appears on your computer.
+Enter the 6-digit code shown on your computer.
 
-[ Confirm ]   [ Cancel ]
+[ Connect ]   [ Cancel ]
 ```
 
 ### 17.3 传输页
@@ -1544,7 +1546,8 @@ macOS：
 
 - 四种平台组合都可连接；
 - 自动发现可用；
-- 二维码兜底可用；
+- 手动 `IP:端口` 直连兜底可用；
+- 六位连接码具备有效期、失败限流和使用后失效能力；
 - 配对与撤销配对可用；
 - 前后摄像头切换可用；
 - 720p30 和 1080p30 可用；
@@ -1588,7 +1591,7 @@ macOS：
 
 **阶段 2：扩展四端**
 
-增加：iOS Sender、macOS Receiver、1080p30、二维码连接、完整配对、自适应码率。
+增加：iOS Sender、macOS Receiver、1080p30、手动 IP 直连、完整配对、自适应码率。
 
 **阶段 3：稳定性与发布**
 
@@ -1606,7 +1609,7 @@ macOS：
 | BoringSSL 构建复杂 | 四端 CI 不稳定 | 固定工具链，CI 生成预构建静态库 |
 | GPUI 版本快速变化 | 类型冲突、构建失败 | 锁定精确 commit，提交 Cargo.lock |
 | 小米等 OEM Camera2 差异 | 黑屏、规格不支持 | 能力探测、安全默认值、设备测试矩阵 |
-| mDNS 被路由器屏蔽 | 手机发现不到电脑 | 提供二维码直连 |
+| mDNS 被路由器屏蔽 | 手机发现不到电脑 | 桌面端展示局域网 `IP:端口`，手机端支持手动直连 |
 | Windows Media Source 安装复杂 | 虚拟摄像头不可见 | 独立安装与修复工具，参考官方组件结构 |
 | macOS 扩展授权复杂 | 用户无法完成安装 | 首次启动向导和状态检查 |
 | Wi-Fi 丢包 | 马赛克、卡顿 | Datagram、丢旧帧、请求 IDR、自适应码率 |

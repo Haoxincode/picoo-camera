@@ -6,7 +6,7 @@
 
 后续 Agent Markdown、Design Specs、代码实现和测试都应该以这里的规则作为共同上下文。
 
-立项原文完整保留于 [docs/product/picoo-camera-prd-v1.0-2026-08-27.md](../product/picoo-camera-prd-v1.0-2026-08-27.md)。Use Case 与 Architecture 是对原文的分解与长期契约整理，不替代原文中的功能需求编号（`FR-*`）、非功能需求、测试设计与验收标准；后续 Requirement 分解应以原文为依据。
+产品基线维护于 [docs/product/picoo-camera-prd-v1.0-2026-08-27.md](../product/picoo-camera-prd-v1.0-2026-08-27.md)。已确认的产品决策应同步更新产品基线；Use Case 与 Architecture 负责将其分解为长期契约，但不替代其中的功能需求编号（`FR-*`）、非功能需求、测试设计与验收标准；后续 Requirement 分解应以当前产品基线为依据。
 
 ## 文档分层
 
@@ -62,7 +62,7 @@ Picoo Camera 推荐起步命名：
 - `PICOO-STACK`：Rust workspace、monorepo、FFI 与 xtask 边界。
 - `PICOO-TRANSPORT`：QUIC 传输、连接表、事件循环与封装边界。
 - `PICOO-PROTOCOL`：PCP/1 控制消息、视频包头与版本协商。
-- `PICOO-DISCOVERY`：mDNS/DNS-SD、二维码兜底与设备模型。
+- `PICOO-DISCOVERY`：mDNS/DNS-SD、手动 IP 直连与设备模型。
 - `PICOO-PAIRING`：首次确认、公钥固定与可信设备关系。
 - `PICOO-SESSION`：会话状态、重连、抖动缓冲与码率控制。
 - `PICOO-MEDIA`：采集、编码、解码与方向处理。
@@ -107,7 +107,7 @@ User request / product requirement
 | `FrameHub` | 桌面端解码帧的统一出口，采用固定容量三槽环形缓冲，同时服务 GPUI 预览与虚拟摄像头 Producer。 | 一条视频流只解码一次；消费者变慢时丢弃旧帧。 |
 | `Shared Frame Ring` | 主应用与虚拟摄像头扩展/组件之间的跨进程 NV12 帧共享区。Windows 使用 Named Shared Memory；macOS 使用 App Group mmap。 | 第一版不依赖 IOSurface 或跨进程 GPU 纹理共享。 |
 | `Virtual Camera` | 向操作系统注册的标准摄像头设备，统一名称为 `Picoo Camera`。 | Windows 使用 MF Virtual Camera；macOS 使用 CMIO Camera Extension。 |
-| `Pairing` | 首次连接时由握手上下文派生六位短码，用户确认后固定双方公钥的可信设备关系。 | 未配对设备不得接收视频或驱动虚拟摄像头输出。 |
+| `Pairing` | 首次连接时，Receiver 显示短期六位连接码；Sender 在已建立的加密连接内提交该码，用户确认后固定双方公钥并建立可信设备关系。 | 连接码只用于短期授权，不负责解析网络地址；未配对设备不得接收视频或驱动虚拟摄像头输出。 |
 | `stream_epoch` | 标识一次连续视频流世代的递增计数，用于摄像头切换、分辨率变化、编码器重建和连接恢复后的帧重组隔离。 | Receiver 不得将不同 epoch 的片段组成同一帧。 |
 | `VideoPacket` | 固定二进制结构的 H.264 视频片段包头，承载 `stream_epoch`、`frame_id`、分片索引和载荷。 | 不使用 Protobuf 承载每个视频片段。 |
 
