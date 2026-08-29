@@ -99,7 +99,7 @@ jobs:
           path: target/release/bundle/
 ```
 
-已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App 壳和 Simulator C ABI 生命周期测试的 Apple 原生编译、链接边界。它们均不代表设备/配对 UI、AVFoundation、VideoToolbox、Camera Extension、签名、公证或真机媒体链路已经完成；这些能力必须由对应 Requirement 和单独证据升级为 `verified`。
+已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App 壳和 Simulator C ABI 生命周期测试的 Apple 原生编译、链接边界。该历史结果不覆盖后续新增的设备/配对 UI、AVFoundation、Swift Testing 与 Reicon Asset Catalog，也不代表 VideoToolbox、Camera Extension、签名、公证或真机媒体链路完成；这些能力必须由对应 Requirement 和单独证据升级为 `verified`。
 
 ### Apple 无签名构建基线
 
@@ -109,7 +109,7 @@ Apple 基线保持三个独立 artifact：
 - `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
 - `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 
-`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，将最终 Apple 产品稳定输出到仓库 `target/apple/`，再由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke、由 `xcodebuild -create-xcframework` 组合 device/simulator 产物并编译 SwiftUI App。上传前使用 macOS `ditto` 生成保留 bundle 外层目录、权限和符号链接的 zip。`xtask test ios` 按数值版本选择 runner 上最新的可用 iPhone Simulator，执行 Swift 创建/查询/销毁 Rust Sender handle 的 XCTest。构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake、第三方 Swift Package 或额外项目生成器。
+`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，将最终 Apple 产品稳定输出到仓库 `target/apple/`，再由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke、由 `xcodebuild -create-xcframework` 组合 device/simulator 产物并编译 SwiftUI App。上传前使用 macOS `ditto` 生成保留 bundle 外层目录、权限和符号链接的 zip。`xtask test ios` 按数值版本选择 runner 上最新的可用 iPhone Simulator，执行 Swift Testing 覆盖 Rust Sender handle 生命周期、手动 Endpoint 校验与 UI 状态映射。iOS 工程使用 Swift 6 语言模式、strict concurrency、默认 `MainActor` 与 Swift Observation；构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake、第三方 Swift Package 或额外项目生成器。
 
 ## 为何 Windows 不在 Linux 上交叉编译
 

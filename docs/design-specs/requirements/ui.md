@@ -11,5 +11,5 @@
 | REQ-PICOO-UI-007 | implemented | PRD §16 | 开机启动偏好写入 OS | `startup.rs` HKCU Run（Windows）+ MemoryStore 测试 |
 | REQ-PICOO-UI-008 | implemented | PRD §16 | Windows 关闭窗口时可最小化到系统托盘；macOS 不伪装 Windows 托盘，关闭后保留在 Dock/后台 | Windows `NotifyIconController` + tip 随 `ReceiverStatus`；`TrayMenuAction::apply` Show/Quit；message-only HWND 或 `FindWindowW`；macOS 构建不包含 Notify Icon 状态 |
 | REQ-PICOO-UI-009 | implemented | PUC-005 | 桌面直播页远程摄像头控制（前后摄 / 480p·720p·1080p / 远端镜像）经 ReceiverSession → CameraCommand；Sender FFI/JNI 消费 | GPUI Live 前置/后置/480p/720p/1080p/远端镜像 → `send_camera_command`；`picoo_sender_take_camera_command` + Android poll |
-| REQ-PICOO-UI-010 | planned | ARCH-PICOO-UI-001 | iOS Sender 使用 SwiftUI 复现设备列表、手动连接、配对与传输页面，不复制 Rust 业务状态机 | SwiftUI 只持有平台权限、AVFoundation 生命周期与 Rust C ABI 状态快照；交互按 `REQ-PICOO-UI-0001` 验收 |
+| REQ-PICOO-UI-010 | implemented | ARCH-PICOO-UI-001 | iOS Sender 使用 SwiftUI 复现设备列表、手动连接、配对与传输页面，不复制 Rust 业务状态机 | `SenderAppModel` 以 Observation 单向驱动设备/手动连接/配对/等待/传输页；状态来自 Rust C ABI，Camera 权限只在进入传输页时请求；Reicon 使用本地 SVG Asset Catalog；完整视觉与真机交互仍按 `REQ-PICOO-UI-0001` 验收 |
 | REQ-PICOO-UI-011 | planned | ARCH-PICOO-UI-001 | macOS Receiver 复用 `apps/desktop` 的 GPUI 页面与主题，仅隔离启动项、窗口后台行为、虚拟摄像头状态等平台适配 | `xtask build macos` 编译同一 GPUI View；macOS 不构建 Win32 Notify Icon；不新增 macOS 专属 WebView/SwiftUI 桌面 UI；平台适配具备独立测试 |

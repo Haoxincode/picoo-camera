@@ -24,6 +24,8 @@
 	<array>
 		<string>_picoocam._udp</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Picoo Camera 仅在开始传输后使用相机，将画面发送到您确认连接的电脑。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Picoo Camera 需要在局域网中发现并连接您的电脑。</string>
 	<key>UILaunchScreen</key>
