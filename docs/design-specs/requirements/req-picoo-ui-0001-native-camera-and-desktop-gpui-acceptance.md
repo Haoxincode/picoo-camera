@@ -46,22 +46,28 @@
 - 正文/标签：清晰易读无衬线（`Figtree` / `SF Pro Text` / `Roboto`）。
 - **遥测数据与短码**：**必须强制使用等宽字体（`JetBrains Mono` / `SF Mono`）**，包含码率（`5.2 Mbps`）、延迟（`18 ms`）、丢包率（`0.0%`）、帧率（`30.0 FPS`）、6 位短码（`482 917`，`letter-spacing: 0.25em`）与 IP:Port。
 
-### 2.3 矢量图标矩阵（统一映射，严禁使用 Emoji）
+### 2.3 矢量图标体系（统一基于 Reicon 24×24 像素网格，严禁使用 Emoji）
 
-| 语义角色 | 规范矢量图标（Lucide 24×24 基准） | 移动端原生映射 (SF Symbols / Compose Icons) | 桌面 GPUI 映射 |
-| :--- | :--- | :--- | :--- |
-| **设置** | `Settings` | `gearshape` / `Icons.Default.Settings` | `lucide::settings` |
-| **前后摄翻转** | `Switch Camera` | `camera.rotate` / `Icons.Default.FlipCameraAndroid` | N/A |
-| **画面亮度** | `Sun` | `sun.max` / `Icons.Default.WbSunny` | N/A |
-| **水平镜像** | `Flip Horizontal` | `arrow.left.and.right.righttriangle.left.righttriangle.right` | `lucide::flip_horizontal` |
-| **防误触锁定** | `Lock` / `Unlock` | `lock` / `lock.open` | N/A |
-| **恢复自动测光** | `Rotate CCW` | `arrow.counterclockwise` | N/A |
-| **停止录像/断开** | `Square` (圆角) | `stop.fill` | `lucide::square` |
-| **二维码扫码** | `QR Code` | `qrcode.viewfinder` | `lucide::qr_code` |
-| **服务发现/雷达** | `Antenna` / `Radio` | `antenna.radiowaves.left.and.right` | `lucide::radio` |
-| **过热降档** | `Flame` | `flame.fill` | `lucide::flame` |
-| **更多操作** | `More Horizontal` | `ellipsis` | `lucide::more_horizontal` |
-| **导航返回** | `Chevron Left` | `chevron.left` | `lucide::chevron_left` |
+全平台（移动端 Compose/SwiftUI、桌面端 GPUI、Web 原型）统一采用 **[Reicon](https://github.com/dqev/reicon)**（24×24 标准网格，2px 纯净描边与标准几何曲率）作为核心图标库：
+
+| 语义角色 | Reicon 标准图标 | Android (Compose ImageVector) | iOS (SwiftUI Vector / SF Symbols) | 桌面 GPUI (Rust SVG Path) |
+| :--- | :--- | :--- | :--- | :--- |
+| **系统设置** | `reicon::settings` | `Reicon.Settings` | `Image("reicon_settings")` | `svg().path("reicon/settings.svg")` |
+| **前后摄翻转** | `reicon::camera-rotate` | `Reicon.CameraRotate` | `Image("reicon_camera_rotate")` | N/A |
+| **曝光补偿** | `reicon::sun` | `Reicon.Sun` | `Image("reicon_sun")` | N/A |
+| **水平镜像** | `reicon::flip-horizontal` | `Reicon.FlipHorizontal` | `Image("reicon_flip_horizontal")` | N/A |
+| **防误触锁定** | `reicon::lock` / `unlock` | `Reicon.Lock` | `Image("reicon_lock")` | N/A |
+| **恢复自动测光** | `reicon::rotate-ccw` | `Reicon.RotateCcw` | `Image("reicon_rotate_ccw")` | N/A |
+| **停止推流快门** | `reicon::square` (圆角) | `Reicon.Square` | `Image("reicon_square")` | `svg().path("reicon/square.svg")` |
+| **二维码扫码** | `reicon::qr-code` | `Reicon.QrCode` | `Image("reicon_qr_code")` | `svg().path("reicon/qr_code.svg")` |
+| **画面修复/刷新** | `reicon::refresh-cw` | N/A | N/A | `svg().path("reicon/refresh_cw.svg")` |
+| **断开连接** | `reicon::phone-off` | `Reicon.PhoneOff` | `Image("reicon_phone_off")` | `svg().path("reicon/phone_off.svg")` |
+| **局域网广播** | `reicon::radio` | `Reicon.Radio` | `Image("reicon_radio")` | `svg().path("reicon/radio.svg")` |
+| **加密直连** | `reicon::shield-check` | `Reicon.ShieldCheck` | `Image("reicon_shield_check")` | `svg().path("reicon/shield_check.svg")` |
+| **服务发现/雷达** | `reicon::radio` | `Reicon.Radio` | `Image("reicon_radio")` | `svg().path("reicon/radio.svg")` |
+| **过热降档** | `reicon::flame` | `Reicon.Flame` | `Image("reicon_flame")` | `svg().path("reicon/flame.svg")` |
+| **更多操作** | `reicon::more-horizontal` | `Reicon.MoreHorizontal` | `Image("reicon_more_horizontal")` | `svg().path("reicon/more_horizontal.svg")` |
+| **导航返回** | `reicon::chevron-left` | `Reicon.ChevronLeft` | `Image("reicon_chevron_left")` | `svg().path("reicon/chevron_left.svg")` |
 
 ---
 
@@ -71,13 +77,12 @@
 - [ ] **AC-M-DISC-01**：顶栏左侧展示产品名，右侧胶囊实时显示当前 Wi-Fi 名称（如 `Wi‑Fi · Office‑5G`），最右侧为 `Settings` 矢量图标按钮。
 - [ ] **AC-M-DISC-02**：顶部常驻呼吸脉冲点指示发现中（橙色波纹）或监听中（绿色常驻）。
 - [ ] **AC-M-DISC-03**：已配对设备（Paired）卡片带有 `已配对` 橙黄徽标，右侧独立收纳 `More Horizontal` 按钮呼出管理菜单，主体点按直接发起直连。
-- [ ] **AC-M-DISC-04**：未配对新电脑卡片显示 `在线 · 首次连接需配对短码`；离线电脑置灰显示 `上次连接 X 天前`，点击给出友好 Toast。
-- [ ] **AC-M-DISC-05**：mDNS 屏蔽无设备时展示空状态排查卡片，并将底部的「扫描电脑端二维码连接」按钮提升为主视觉大按钮，且带有 `QR Code` 矢量图标。
+- [ ] **AC-M-DISC-05**：局域网广播未发现设备时展示空状态排查卡片，底部提供「输入连接码或 IP 直连」按钮，呼出轻量级输入抽屉。
 
-### 3.2 扫码直连与权限兜底（Screen 2）
-- [ ] **AC-M-SCAN-01**：顶栏左侧为 `Chevron Left` 矢量返回图标（**严禁文本 `← 返回`**），右侧为 `扫码直连` 警告色 Badge。
-- [ ] **AC-M-SCAN-02**：取景扫描框覆盖动态激光扫描线（2.2s 循环），扫码成功后**直接建立连接，无需用户二次确认**。
-- [ ] **AC-M-SCAN-03**：相机权限被拒时展示禁止面板，**必须提供手动输入框**支持输入电脑端显示的 `IP:Port` 直连。
+### 3.2 手动直连与数字连接码抽屉（Screen 2 - Manual Connect Sheet）
+- [ ] **AC-M-MANUAL-01**：点击主页底部按钮升起原生半屏抽屉，支持输入电脑端待机界面展示的 6 位数字连接码或局域网 IP:端口（如 `482917` 或 `192.168.1.108:4433`）。
+- [ ] **AC-M-MANUAL-02**：点击「立即直连电脑」直接向对端发起 QUIC 会话握手，免去相机权限请求打扰。
+- [ ] **AC-M-MANUAL-03**：首屏 0 权限要求，相机权限延迟至正式进入推流（Screen 5）时按需申请。
 
 ### 3.3 配对确认与等待态（Screen 3 & Screen 4）
 - [ ] **AC-M-PAIR-01**：大字号等宽字体展示 6 位短码（`482 917`，`letter-spacing: 0.25em`），配合 60s 倒计时。
@@ -125,11 +130,23 @@
 ### 4.1 技术选型与组件基线
 - [ ] **AC-D-TECH-01**：Windows 与 macOS 共用同一套 Rust GPUI 代码，**严禁引入 Electron、Tauri、WebView 或内嵌浏览器运行环境**。
 - [ ] **AC-D-TECH-02**：视频监视器核心自定义组件必须封装为 **`VideoSurface`**，绑定 FrameHub 解码环形缓冲，保持 16:9 画幅与断流占位画面平滑切换。
+- [ ] **AC-D-TECH-03（gpui-component 与 Tailwind CSS 4.0 对齐）**：
+  - 桌面 UI 组件库必须基于 `gpui-component` 体系；
+  - 样式遵循 **Tailwind CSS 4.0** 的原子化类名与 `@theme` 变量体系（如 `bg-zinc-950`, `bg-zinc-900/80`, `border-zinc-800`, `rounded-xl`, `font-mono` 等），确保前端原型类名可 1:1 无损映射为 Rust GPUI DSL。
 
-### 4.2 待机与等待连接主页（Idle View）
-- [ ] **AC-D-IDLE-01**：顶部展示 Pico Camera 品牌 Logo、标题 `等待手机连接…` 与局域网广播状态。
-- [ ] **AC-D-IDLE-02**：展示虚拟摄像头状态胶囊（就绪为绿色 `Virtual Camera: Ready`，未就绪为黄色/红色警示且支持一键修复）。
-- [ ] **AC-D-IDLE-03**：独立卡片展示 `Show QR Code` 二维码矩阵，标注局域网直连 Endpoint（如 `192.168.1.108:4433`）与动态 Nonce。
+### 4.2 待机与等待连接主页（Desktop Idle View - 极简双端硬件拓扑）
+- [ ] **AC-D-IDLE-01（极简双端硬件拓扑视觉）**：
+  - 彻底去除喧闹冗余的橙色扩散波纹动效；
+  - 采用 Zed/Linear 现代工业科技美学的双端硬件拓扑卡片（左侧 `Studio PC 本机 Receiver`，右侧 `手机端 待连接`），中间连接通道以极简虚线与翠绿微呼吸点指示 `等待握手 (4433)`；
+  - 视觉冷静、克制、专业，杜绝塑料感与说明书式段落堆砌。
+- [ ] **AC-D-IDLE-02（纯数字连接码与直连控制台）**：
+  - 彻底去除二维码方块与扫码依赖，居中呈现大号等宽 6 位局域网无线连接码（`482 917`）；
+  - 提供可一键复制的局域网直连 IP:Port 胶囊（如 `192.168.1.108:4433`）。
+- [ ] **AC-D-IDLE-03（语义化状态胶囊行）**：
+  - 底部通过 3 个轻量 Reicon 语义药丸呈现关键系统状态：
+    1. 📹 `虚拟摄像头：就绪 / 需修复`（支持点击直达设置修复）；
+    2. 📡 `局域网自动发现广播`（mDNS 服务状态）；
+    3. 🛡️ `安全直连`（端到端加密状态）。
 
 ### 4.3 配对确认对话框（Pairing Modal）
 - [ ] **AC-D-PAIR-01**：手机首次发起连接时弹出 GPUI 原生对话框，背景带微模糊。
@@ -144,29 +161,32 @@
   4. RTT 延迟（绿色 `18 ms`）；
   5. 丢包/抖动（`0.0% · 1.2ms`）；
   6. 网络健康等级（`极佳 (Good)` / `一般 (Fair)` / `较差 (Poor)`）。
-- [ ] **AC-D-LIVE-03**：底部右侧提供 `请求关键帧 (IDR)` 与 `断开会话`（红色危险按钮）快捷操作。
+- [ ] **AC-D-LIVE-03（控制操作 Icon 化）**：
+  - 底部右侧提供两个纯 Icon 快捷按钮并配有清晰语义的 Tooltip 浮动提示：
+    1. 🔄 **`修复画面`**（`RefreshCw` 矢量图标，Tooltip: `出现花屏或卡顿时，点击向手机请求立即刷新画面 (IDR 关键帧)`）；
+    2. 📵 **`断开连接`**（`PhoneOff` 红色危险态矢量图标，Tooltip: `断开连接：结束当前推流并释放虚拟摄像头通道`）。
 
-### 4.5 桌面设置中心（Desktop Settings View - 完整分栏视窗）
-- [ ] **AC-D-SET-01（独立主视图与分栏架构）**：
-  - 设置中心必须作为独立的桌面主视窗视图（`View C: Settings View`），非单薄小弹窗；
-  - 必须采用 Zed / GPUI 经典分栏：左侧 200px 紧凑侧边栏导航 + 右侧平滑滚动的卡片区；
-  - 侧边栏包含 6 个标准分类 Tab：`常规偏好`、`虚拟摄像头`、`已信任设备`、`网络与发现`、`诊断与隐私`、`关于应用`。
-- [ ] **AC-D-SET-02（常规偏好）**：
-  - 支持配置电脑显示名称（局域网广播名）；
-  - 提供 `自动接受已配对设备`、`关闭窗口时最小化到系统托盘`、`开机自动启动并在后台监听` 开关。
-- [ ] **AC-D-SET-03（虚拟摄像头管理）**：
-  - 展示 Windows MF / macOS CMIO 驱动框架就绪状态胶囊；
-  - 提供 `重新注册 / 修复驱动` 操作；
-  - 提供未推流时默认输出占位图选择器（Logo / 纯黑 / SMPTE 彩条）。
-- [ ] **AC-D-SET-04（已信任设备管理 PUC-007）**：
-  - 列表展示已通过 6 位短码配对的手机（型号、公钥指纹、上次连接时间、IP）；
-  - 支持单项与批量撤销信任并删除配对。
-- [ ] **AC-D-SET-05（网络与发现）**：
-  - 提供 mDNS 广播服务开关（`_picocam._udp.local`）；
-  - 提供 QUIC 监听端口（默认 4433）与动态 Nonce 刷新周期（默认 300s）显示。
-- [ ] **AC-D-SET-06（诊断与隐私）**：
-  - 明确标示 Local-Only 局域网无云端隐私安全承诺；
-  - 提供脱敏诊断日志一键导出功能（`.json` 格式，默认脱敏 IP、设备名与公钥指纹）。
+### 4.5 桌面端零设置架构与原地微气泡交互（Zero-Settings Contextual Popovers）
+- [ ] **AC-D-SET-01（无独立大设置视窗原则）**：
+  - 桌面端 receiver 彻底取消独立二级大设置中心页面，不保留左下角悬浮设置按钮；
+  - 遵循约定优于配置（Convention over Configuration），系统默认值自动自洽；
+  - 仅有的必要偏好、驱动修复、设备撤销与日志导出全部通过**首页原地微气泡（Contextual Popovers）按需交互**。
+- [ ] **AC-D-SET-02（已信任手机设备管理 - 原地气泡）**：
+  - 主卡片顶部设备名旁常驻 `📱 已信任: Xiaomi 14 Ultra ▾` 胶囊；
+  - 点击原地弹出浮动气泡，展示手机型号、Ed25519 签名公钥指纹与 `[ ✕ 撤销信任 ]` 按钮；
+  - 撤销信任后立即更新状态为 `暂无信任手机`，下次连接必须重新核对 6 位短码。
+- [ ] **AC-D-SET-03（虚拟摄像头驱动状态与一键修复 - 原地气泡）**：
+  - 主卡片底部胶囊常驻 `📹 虚拟驱动：就绪 ●`（绿色就绪态）或 `📹 虚拟驱动：需修复 ⚠️`（黄色告警态）；
+  - 点击原地弹出浮动气泡，展示系统扩展注册详情与一键按钮 `[ 🔄 检测并重新注册驱动 ]`。
+- [ ] **AC-D-SET-04（系统运行偏好 - 原地气泡）**：
+  - 右侧辅助卡片顶部标题旁提供极简 `[ 偏好 ▾ ]` 胶囊；
+  - 点击原地弹出浮动气泡，提供 `开机后台自启` 与 `GPU 硬件解码加速` 开关。
+- [ ] **AC-D-SET-05（网络与诊断日志 - 原地气泡）**：
+  - 右侧网络面板（`网络` / `发现服务` / `延迟`）支持点击交互；
+  - 点击原地弹出浮动气泡，展示 QUIC UDP 监听端口（4433），并提供 `[ 📋 导出网络诊断日志 ]` 按钮。
+- [ ] **AC-D-SET-06（100% Reicon 矢量图标标准化）**：
+  - 全局所有功能图标严格采用 `https://github.com/dqev/reicon` (`dqev/reicon`) 官方矢量标准，统一 `stroke-width="2"`、`stroke-linecap="round"` 与 `stroke-linejoin="round"`；
+  - 严禁在功能交互中使用系统 emoji。
 
 ---
 
