@@ -2148,23 +2148,28 @@ body {
               <div id="connect-idle-view" class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-6 flex-1 flex flex-col justify-between shadow-lg transition-all duration-300">
                 
                 <!-- Top: Host Identification Header -->
-                <div class="flex items-center gap-4">
-                  <!-- Circular Host Laptop / Monitor Icon -->
-                  <div class="w-12 h-12 rounded-full bg-secondary text-primary border border-border flex items-center justify-center shrink-0 shadow-xs">
-                    <svg class="w-6 h-6 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                      <rect x="2" y="3" width="20" height="14" rx="2"></rect>
-                      <line x1="8" y1="21" x2="16" y2="21"></line>
-                      <line x1="12" y1="17" x2="12" y2="21"></line>
-                    </svg>
-                  </div>
-                  <div>
-                    <h2 class="text-xl font-bold text-card-foreground flex items-center gap-2">
-                      <span id="display-pc-name">Studio PC</span> <span class="font-bold">（本机）</span>
-                    </h2>
-                    <p class="text-xs text-muted-foreground mt-0.5 font-normal flex items-center gap-2">
-                      <span>Pico Camera 接收端</span>
-                      <span class="inline-flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary text-primary border border-border">IDLE</span>
-                    </p>
+                <div class="flex items-center justify-between pb-3 border-b border-border">
+                  <div class="flex items-center gap-3.5">
+                    <!-- Circular Host Laptop / Monitor Icon -->
+                    <div class="w-11 h-11 rounded-xl bg-secondary text-primary border border-border flex items-center justify-center shrink-0 shadow-xs">
+                      <svg class="w-5 h-5 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="3" width="20" height="14" rx="2"></rect>
+                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                      </svg>
+                    </div>
+                    <div>
+                      <h2 class="text-base font-bold text-card-foreground flex items-center gap-2">
+                        <span id="display-pc-name">Studio PC</span>
+                        <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 flex items-center gap-1">
+                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                          接收端已就绪
+                        </span>
+                      </h2>
+                      <p class="text-xs text-muted-foreground mt-0.5 font-normal">
+                        局域网无线视频接收与虚拟摄像头输出
+                      </p>
+                    </div>
                   </div>
                 </div>
 
