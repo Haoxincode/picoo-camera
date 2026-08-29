@@ -45,6 +45,8 @@ enum PackagePlatform {
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum TestSuite {
+    /// Swift/C ABI integration on an installed ARM64 iPhone Simulator runtime.
+    Ios,
     Protocol,
     /// Linux-hostable product gates (WiX scaffold, VCam format, TXT sync, soak smoke).
     Linux,
@@ -160,8 +162,10 @@ fn build_ios(sh: &Shell) -> Result<()> {
         .run()?;
     }
 
-    let target_dir = cargo_target_dir(sh)?;
-    let apple_dir = target_dir.join("apple");
+    let cargo_target_dir = cargo_target_dir(sh)?;
+    // Keep final Apple products at a repository-stable path so Xcode and CI do
+    // not need to reproduce Cargo's potentially host-specific target setting.
+    let apple_dir = std::env::current_dir()?.join("target/apple");
     let include_dir = apple_dir.join("include");
     let simulator_dir = apple_dir.join("ios-simulator");
     let xcframework = apple_dir.join("PicooCore.xcframework");
@@ -178,8 +182,8 @@ fn build_ios(sh: &Shell) -> Result<()> {
         "module PicooCore {\n  header \"picoo_camera.h\"\n  export *\n}\n",
     )?;
 
-    let device_lib = static_library(&target_dir, DEVICE_TARGET);
-    let arm64_sim_lib = static_library(&target_dir, ARM64_SIM_TARGET);
+    let device_lib = static_library(&cargo_target_dir, DEVICE_TARGET);
+    let arm64_sim_lib = static_library(&cargo_target_dir, ARM64_SIM_TARGET);
     let simulator_lib = simulator_dir.join("libpicoo_ffi.a");
     for library in [&device_lib, &arm64_sim_lib] {
         if !library.is_file() {
@@ -207,7 +211,31 @@ fn build_ios(sh: &Shell) -> Result<()> {
     .run()?;
     validate_ios_xcframework(sh, &xcframework)?;
 
+    let ios_app_dir = apple_dir.join("ios-app");
+    let ios_obj_dir = apple_dir.join("ios-obj");
+    let ios_products_dir = apple_dir.join("ios-products");
+    let project = Path::new("apps/ios/PicooCamera.xcodeproj");
+    if !project.is_dir() {
+        bail!("iOS Xcode project is missing {}", project.display());
+    }
+    cmd!(
+        sh,
+        "xcodebuild -project {project} -target PicooCamera -configuration Debug -sdk iphonesimulator -arch arm64 CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR={ios_app_dir} OBJROOT={ios_obj_dir} SYMROOT={ios_products_dir} PICOO_CORE_XCFRAMEWORK_PATH={xcframework} build"
+    )
+    .run()?;
+
+    let xcframework_archive = apple_dir.join("PicooCore.xcframework.zip");
+    let app_archive = apple_dir.join("PicooCamera.app.zip");
+    archive_apple_bundle(sh, &xcframework, &xcframework_archive)?;
+    archive_apple_bundle(sh, &ios_app_dir.join("PicooCamera.app"), &app_archive)?;
+
     eprintln!("ios core: {}", xcframework.display());
+    eprintln!("ios app (unsigned): {}", ios_app_dir.display());
+    eprintln!(
+        "ios artifacts: {}, {}",
+        xcframework_archive.display(),
+        app_archive.display()
+    );
     Ok(())
 }
 
@@ -280,9 +308,25 @@ fn static_library(target_dir: &Path, target: &str) -> PathBuf {
         .join("libpicoo_ffi.a")
 }
 
+fn archive_apple_bundle(sh: &Shell, source: &Path, archive: &Path) -> Result<()> {
+    if !source.is_dir() {
+        bail!("Apple bundle is missing {}", source.display());
+    }
+    if archive.exists() {
+        std::fs::remove_file(archive)?;
+    }
+    cmd!(
+        sh,
+        "ditto -c -k --sequesterRsrc --keepParent {source} {archive}"
+    )
+    .run()?;
+    Ok(())
+}
+
 fn test_suite(suite: TestSuite) -> Result<()> {
     let sh = Shell::new()?;
     match suite {
+        TestSuite::Ios => test_ios(&sh)?,
         TestSuite::Protocol => {
             cmd!(
                 sh,
@@ -383,4 +427,88 @@ fn test_suite(suite: TestSuite) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn test_ios(sh: &Shell) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        bail!("iOS tests must run on a macOS host with an iPhone Simulator runtime");
+    }
+
+    let apple_dir = std::env::current_dir()?.join("target/apple");
+    let xcframework = apple_dir.join("PicooCore.xcframework");
+    if !xcframework.is_dir() {
+        bail!(
+            "iOS XCFramework is missing {}; run `cargo xtask build ios` first",
+            xcframework.display()
+        );
+    }
+
+    let simulator_json = cmd!(sh, "xcrun simctl list devices available --json").read()?;
+    let simulator_data: serde_json::Value = serde_json::from_str(&simulator_json)?;
+    let mut simulators = simulator_data
+        .get("devices")
+        .and_then(|value| value.as_object())
+        .into_iter()
+        .flat_map(|runtimes| runtimes.iter())
+        .flat_map(|(runtime, devices)| {
+            devices
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|device| {
+                    device.get("isAvailable").and_then(|value| value.as_bool()) == Some(true)
+                        && device
+                            .get("name")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|name| name.starts_with("iPhone"))
+                })
+                .filter_map(|device| {
+                    Some((
+                        ios_runtime_version(runtime),
+                        runtime.to_owned(),
+                        device.get("name")?.as_str()?.to_owned(),
+                        device.get("udid")?.as_str()?.to_owned(),
+                    ))
+                })
+        })
+        .collect::<Vec<_>>();
+    simulators.sort();
+    let Some((_version, runtime, name, udid)) = simulators.pop() else {
+        bail!("no available iPhone Simulator runtime is installed");
+    };
+
+    let project = Path::new("apps/ios/PicooCamera.xcodeproj");
+    let derived_data = apple_dir.join("ios-derived-data");
+    let destination = format!("platform=iOS Simulator,id={udid}");
+    eprintln!("ios tests: {name} ({runtime}, {udid})");
+    cmd!(
+        sh,
+        "xcodebuild -project {project} -scheme PicooCamera -configuration Debug -destination {destination} -derivedDataPath {derived_data} CODE_SIGNING_ALLOWED=NO PICOO_CORE_XCFRAMEWORK_PATH={xcframework} test"
+    )
+    .run()?;
+    Ok(())
+}
+
+fn ios_runtime_version(identifier: &str) -> Vec<u32> {
+    identifier
+        .rsplit('.')
+        .next()
+        .and_then(|suffix| suffix.strip_prefix("iOS-"))
+        .into_iter()
+        .flat_map(|version| version.split('-'))
+        .filter_map(|component| component.parse().ok())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ios_runtime_version;
+
+    #[test]
+    fn ios_runtime_versions_sort_numerically() {
+        assert!(
+            ios_runtime_version("com.apple.CoreSimulator.SimRuntime.iOS-26-10")
+                > ios_runtime_version("com.apple.CoreSimulator.SimRuntime.iOS-26-9")
+        );
+    }
 }
