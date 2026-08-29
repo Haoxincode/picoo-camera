@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+  pull_request:
+
+# Prefer tip commits: cancel superseded runs on the same ref (queue was blocking
+# Android/Windows artifact jobs behind dozens of cursor/** pushes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-and-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup component add rustfmt clippy
+      - run: bash .cursor/install.sh
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: bash scripts/check-docs.sh
+      - run: cargo run -p xtask -- test linux
+      - run: cargo run -p xtask -- test protocol
+
+  android:
+    runs-on: ubuntu-latest
+    # Parallel with rust-and-docs: tip APK feedback should not wait behind the
+    # full workspace test matrix when ubuntu runners are contested.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
+      - name: Verify shared Reicon assets
+        run: bash scripts/check_reicon_assets.sh
+      - name: Point Gradle at installed SDK
+        run: |
+          test -n "${ANDROID_HOME}"
+          test -d "${ANDROID_HOME}/ndk/28.0.12674087"
+          echo "sdk.dir=${ANDROID_HOME}" > apps/android/local.properties
+          echo "Using ANDROID_HOME=${ANDROID_HOME}"
+          ls "${ANDROID_HOME}/licenses"
+      - run: cargo run -p xtask -- build android
+      - name: Android unit tests
+        run: ./apps/android/gradlew -p apps/android testDebugUnitTest
+      - run: cargo run -p xtask -- package android
+      - name: Verify arm64 .so 16KB page alignment
+        run: bash scripts/check_android_so_16k.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-apk-debug
+          path: apps/android/app/build/outputs/apk/debug/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-release
+          path: |
+            apps/android/app/build/outputs/apk/release/
+            apps/android/app/build/outputs/bundle/release/
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    # Parallel with rust-and-docs: windows-latest is a separate pool; waiting on
+    # ubuntu workspace tests was delaying PicooVirtualCameraSource.dll / MSI.
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install WiX v5
+        shell: pwsh
+        run: |
+          # Pin WiX 5.x: avoids WiX 7 OSMF EULA (WIX7015) on clean CI agents.
+          dotnet tool install --global wix --version 5.0.2 --verbosity quiet
+          $tools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          $env:Path = "$tools;$env:Path"
+          wix --version
+          wix extension add WixToolset.Firewall.wixext/5.0.2
+          wix extension add WixToolset.Util.wixext/5.0.2
+      - name: Check Rust Media Foundation source
+        run: |
+          cargo clippy -p picoo-windows-vcam-source --all-targets -- -D warnings
+          cargo test -p picoo-windows-vcam-source
+      - run: cargo run -p xtask -- build windows
+      - name: Package Windows + MSI
+        env:
+          PICOO_REQUIRE_MSI: "1"
+        run: cargo run -p xtask -- package windows
+      - name: Verify Windows bundle smoke (VCAM-001)
+        shell: pwsh
+        # Bundle + MSI string smoke; does NOT msiexec-install (Win11 manual only).
+        run: ./scripts/verify_windows_bundle.ps1
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-bundle
+          path: |
+            target/release/bundle/
+            target/release/bundle/msi/*.msi
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-msi
+          path: target/release/bundle/msi/PicooCamera.msi
+          if-no-files-found: error
