@@ -12,7 +12,7 @@ Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依
 | Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
 | Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
 | macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译基线 |
-| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；当前 CI 已覆盖 Rust XCFramework |
+| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；远端已验证 Rust XCFramework，SwiftUI 壳与 C ABI 测试 workflow 已配置、待首次绿测 |
 
 **结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建与 CI 维护；**各平台最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要试图在 Linux 上交叉编译 GPUI 桌面程序、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。
 
@@ -29,7 +29,7 @@ Cloud Agent（Linux）
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
 ├── windows-latest  → GPUI 桌面、MF 解码、Virtual Camera DLL、安装包
-└── macos-26 ARM64 → GPUI 桌面、iOS Rust XCFramework；后续承载 Camera Extension、iOS App 与公证
+└── macos-26 ARM64 → GPUI 桌面、iOS Rust XCFramework；已配置 SwiftUI App 壳与 C ABI 单测，后续承载媒体链路、Camera Extension 与公证
 ```
 
 ## GitHub Actions Runner 矩阵
@@ -42,7 +42,7 @@ GitHub Actions
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
 | `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver 无签名编译基线；Camera Extension 接入后扩展为 app bundle | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask build macos`；`package macos` 待扩展实现后启用 |
-| `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework；SwiftUI App 接入后扩展为 app build | `cargo xtask build ios` |
+| `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 
 ### 依赖关系
 
@@ -99,16 +99,17 @@ jobs:
           path: target/release/bundle/
 ```
 
-`macos` 与 `ios` job 当前只证明共享 GPUI Receiver 和 Rust C ABI 的 Apple 原生链接边界。它们不代表 Camera Extension、SwiftUI App、签名、公证或真机媒体链路已经完成；这些能力必须由对应 Requirement 和单独的验收证据关闭。
+已记录的远端绿测证明共享 GPUI Receiver 与 Rust XCFramework 的 Apple 原生编译、链接边界。SwiftUI App 壳和 Simulator C ABI 生命周期测试已经写入 workflow，但只有在对应 run 成功并记录到验证文档后，才能视为远端验收证据。它们均不代表设备/配对 UI、AVFoundation、VideoToolbox、Camera Extension、签名、公证或真机媒体链路已经完成；这些能力必须由对应 Requirement 和单独证据升级为 `verified`。
 
 ### Apple 无签名构建基线
 
-Apple 基线保持两个独立 artifact：
+Apple 基线保持三个独立 artifact：
 
 - `macos-receiver-unsigned`：当前 host 架构的 `picoo-desktop` GPUI 可执行文件，不是可发布 `.app`。
-- `ios-rust-core-xcframework`：`PicooCore.xcframework`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
+- `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
+- `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 
-`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke，再由 `xcodebuild -create-xcframework` 组合 device/simulator 产物；构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake 或额外项目生成器。
+`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，将最终 Apple 产品稳定输出到仓库 `target/apple/`，再由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke、由 `xcodebuild -create-xcframework` 组合 device/simulator 产物并编译 SwiftUI App。上传前使用 macOS `ditto` 生成保留 bundle 外层目录、权限和符号链接的 zip。`xtask test ios` 按数值版本选择 runner 上最新的可用 iPhone Simulator，执行 Swift 创建/查询/销毁 Rust Sender handle 的 XCTest。构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake、第三方 Swift Package 或额外项目生成器。
 
 ## 为何 Windows 不在 Linux 上交叉编译
 

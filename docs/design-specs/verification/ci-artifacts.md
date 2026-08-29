@@ -2,16 +2,16 @@
 
 > 映射 **REQ-PICOO-STACK-005 / REQ-PICOO-STACK-007**。Workflow：`.github/workflows/ci.yml`
 
-## 最近绿 run（Android/Windows 基线）
+## 最近绿 run（四平台构建基线）
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33257074152](https://github.com/Haoxincode/picoo-camera/actions/runs/33257074152) |
+| Run ID | [33261802306](https://github.com/Haoxincode/picoo-camera/actions/runs/33261802306) |
 | 分支 | `main` |
-| Commit | `b38be35` — Android / Windows release artifact CI |
-| 结论 | 3/3 jobs success（`rust-and-docs` + `android` + `windows`） |
+| Commit | `31bb451` — Apple ARM64 build baseline |
+| 结论 | 5/5 jobs success（`rust-and-docs` + `android` + `windows` + `macos` + `ios`） |
 
-Apple job 的首次远端绿 run 尚未写入本节；在其完成前，`macos-receiver-unsigned` 与 `ios-rust-core-xcframework` 只具备本机 macOS 构建证据。
+当前工作区新增的 `ios-app-unsigned` 与 Simulator XCTest 尚未提交，因此不属于上述 run；首次绿测后再把它作为 `REQ-PICOO-STACK-003` 升级为 `verified` 的证据。
 
 ## 方式一：GitHub Web UI
 
@@ -26,17 +26,17 @@ Apple job 的首次远端绿 run 尚未写入本节；在其完成前，`macos-r
 
 ```bash
 # 列出某 run 的 artifact 名称
-gh api repos/Haoxincode/picoo-camera/actions/runs/33257074152/artifacts \
+gh api repos/Haoxincode/picoo-camera/actions/runs/33261802306/artifacts \
   --jq '.artifacts[] | "\(.name)\t\(.size_in_bytes) bytes"'
 
 # 下载全部 artifact 到当前目录
-gh run download 33257074152 -R Haoxincode/picoo-camera
+gh run download 33261802306 -R Haoxincode/picoo-camera
 
 # 只下载 Windows MSI
-gh run download 33257074152 -R Haoxincode/picoo-camera -n windows-msi
+gh run download 33261802306 -R Haoxincode/picoo-camera -n windows-msi
 ```
 
-替换 `33257074152` 为最新绿 run ID：
+替换上方 run ID 时，可用以下命令查询最新绿 run：
 
 ```bash
 gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
@@ -47,15 +47,16 @@ gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
 
 | Artifact 名 | 约大小 | zip 内路径 | 用途 |
 | --- | --- | --- | --- |
-| `android-apk-debug` | ~15 MB | `app-debug.apk` | 快速迭代调试 |
-| `android-release` | ~27 MB | `app-release.apk` | **真机 V1 验证首选** |
+| `android-apk-debug` | ~10 MB | `app-debug.apk` | 快速迭代调试 |
+| `android-release` | ~18 MB | `app-release.apk` | **真机 V1 验证首选** |
 | | | `app-release.aab` | Play 分发形态（ sideload 用 APK 即可） |
 | `windows-msi` | ~8 MB | `PicooCamera.msi` | **Win11 安装首选** |
 | `windows-bundle` | ~18 MB | 见下表 | 开发态 / 免安装验证 |
-| `macos-receiver-unsigned` | 以 CI 为准 | `picoo-desktop` | macOS 15+ ARM64 GPUI 编译基线；不是可发布 `.app` |
-| `ios-rust-core-xcframework` | 以 CI 为准 | `PicooCore.xcframework/` | iOS 18+ ARM64 device/simulator Rust C ABI；不是 iOS App |
+| `macos-receiver-unsigned` | ~9 MB | `picoo-desktop` | macOS 15+ ARM64 GPUI 编译基线；不是可发布 `.app` |
+| `ios-rust-core-xcframework` | ~30 MB | `PicooCore.xcframework.zip` | iOS 18+ ARM64 device/simulator Rust C ABI；解压后保留 `.xcframework` 外层目录 |
+| `ios-app-unsigned` | 以 CI 为准 | `PicooCamera.app.zip` | iOS 18+ ARM64 Simulator SwiftUI/C ABI 编译基线；解压后保留 `.app` 与执行权限，不可安装到真机 |
 
-Apple artifact 只证明原生链接与边界打包成功。VideoToolbox、SwiftUI、Camera Extension、签名、公证和真机媒体链路必须继续由对应 Requirement 验收。
+Apple artifact 只证明原生链接、SwiftUI App 壳和边界打包成功。设备/配对 UI、VideoToolbox、Camera Extension、签名、公证和真机媒体链路必须继续由对应 Requirement 验收。
 
 ### `windows-bundle` 解压后布局
 

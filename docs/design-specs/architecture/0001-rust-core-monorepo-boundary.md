@@ -1,6 +1,6 @@
 # ARCH-PICOO-STACK-001: Rust Core 与 Monorepo 边界
 
-Status: planned
+Status: implemented
 Source: product PRD V1.0 / architecture baseline
 
 ## 背景
@@ -73,7 +73,7 @@ Android 与 iOS 通过稳定平台边界调用 Rust Core：
 
 ```text
 Android: Kotlin → Rust JNI exports → Rust Core
-iOS:     Swift → Bridging Header → C ABI → Rust
+iOS:     Swift → PicooCore XCFramework Clang module → C ABI → Rust Core
 ```
 
 FFI 边界只允许：
@@ -125,4 +125,4 @@ FFI 边界只允许：
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICOO-STACK-*`
+- [REQ-PICOO-STACK-001..007](../requirements/stack.md)

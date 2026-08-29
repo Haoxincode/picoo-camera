@@ -844,14 +844,14 @@ C ABI 调用 Rust Core。
 
 ```text
 Android: Kotlin → Rust JNI exports → Rust Core
-iOS:     Swift → Rust extern "C" → cbindgen → picoo_camera.h
+iOS:     Swift → PicooCore XCFramework Clang module → C ABI → Rust Core
 ```
 
 平台封装：
 
 ```text
 Android: Kotlin → JNI → C ABI → Rust
-iOS:     Swift → Bridging Header → C ABI → Rust
+iOS:     Swift → PicooCore XCFramework Clang module → C ABI → Rust
 ```
 
 媒体数据使用专门的 Buffer API，不通过 JSON、Dart、WebView 或通用对象序列化层。
