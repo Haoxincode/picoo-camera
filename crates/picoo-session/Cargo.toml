@@ -1,0 +1,13 @@
+[package]
+name = "picoo-session"
+description = "Session state machine and reconnection policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json = "1.0"

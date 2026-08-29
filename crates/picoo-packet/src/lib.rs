@@ -1,0 +1,271 @@
+//! Video fragment reassembly — REQ-PICOO-PROTOCOL-004.
+
+mod h264;
+
+use std::collections::HashMap;
+
+use bytes::{Bytes, BytesMut};
+pub use h264::{
+    access_unit_to_annex_b, annex_b_parameter_sets, annex_b_to_length_prefixed, extract_sps_pps,
+    is_length_prefixed_access_unit, length_prefixed_to_annex_b, split_annex_b_nals,
+};
+use picoo_protocol::{VideoPacket, VideoPacketFlags};
+use thiserror::Error;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct FrameKey {
+    stream_epoch: u32,
+    frame_id: u64,
+}
+
+#[derive(Debug)]
+struct PartialFrame {
+    fragments: HashMap<u16, Bytes>,
+    fragment_count: u16,
+    #[allow(dead_code)]
+    flags: picoo_protocol::VideoPacketFlags,
+    #[allow(dead_code)]
+    pts_us: u64,
+}
+
+impl Default for PartialFrame {
+    fn default() -> Self {
+        Self {
+            fragments: HashMap::new(),
+            fragment_count: 0,
+            flags: picoo_protocol::VideoPacketFlags::empty(),
+            pts_us: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssembledAccessUnit {
+    pub data: Bytes,
+    pub pts_us: u64,
+    pub keyframe: bool,
+    pub stream_epoch: u32,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum ReassemblyError {
+    #[error("fragment_count exceeds limit")]
+    TooManyFragments,
+    #[error("duplicate fragment index")]
+    DuplicateFragment,
+    #[error("epoch mismatch")]
+    EpochMismatch,
+}
+
+pub struct ReassemblyMap {
+    max_frames: usize,
+    max_fragments: u16,
+    current_epoch: u32,
+    frames: HashMap<FrameKey, PartialFrame>,
+    drops: u64,
+    /// Set when a partial KEYFRAME is discarded (REQ-PICOO-SESSION-003).
+    keyframe_loss_pending: bool,
+}
+
+impl ReassemblyMap {
+    pub fn new(max_frames: usize, max_fragments: u16) -> Self {
+        Self {
+            max_frames,
+            max_fragments,
+            current_epoch: 0,
+            frames: HashMap::new(),
+            drops: 0,
+            keyframe_loss_pending: false,
+        }
+    }
+
+    pub fn drop_count(&self) -> u64 {
+        self.drops
+    }
+
+    /// True if a keyframe was dropped since the last take (REQ-PICOO-SESSION-003).
+    pub fn take_keyframe_loss(&mut self) -> bool {
+        let pending = self.keyframe_loss_pending;
+        self.keyframe_loss_pending = false;
+        pending
+    }
+
+    pub fn ingest(
+        &mut self,
+        packet: VideoPacket,
+    ) -> Result<Option<AssembledAccessUnit>, ReassemblyError> {
+        if packet.fragment_count > self.max_fragments {
+            return Err(ReassemblyError::TooManyFragments);
+        }
+
+        if packet.stream_epoch < self.current_epoch {
+            return Ok(None);
+        }
+
+        if packet.stream_epoch > self.current_epoch {
+            self.mark_keyframe_loss_in_pending();
+            self.drops += self.frames.len() as u64;
+            self.current_epoch = packet.stream_epoch;
+            self.frames.clear();
+        }
+
+        if self.frames.len() >= self.max_frames
+            && !self.frames.contains_key(&FrameKey {
+                stream_epoch: packet.stream_epoch,
+                frame_id: packet.frame_id,
+            })
+        {
+            self.drop_oldest();
+        }
+
+        let key = FrameKey {
+            stream_epoch: packet.stream_epoch,
+            frame_id: packet.frame_id,
+        };
+        let packet_flags = packet.flags;
+        let packet_pts = packet.pts_us;
+        let packet_epoch = packet.stream_epoch;
+
+        let entry = self.frames.entry(key).or_insert_with(|| PartialFrame {
+            fragment_count: packet.fragment_count,
+            flags: packet_flags,
+            pts_us: packet_pts,
+            ..Default::default()
+        });
+
+        if entry.fragment_count != packet.fragment_count {
+            if Self::is_keyframe(entry.flags) {
+                self.keyframe_loss_pending = true;
+            }
+            self.frames.remove(&key);
+            self.drops += 1;
+            return Ok(None);
+        }
+
+        if entry.fragments.contains_key(&packet.fragment_index) {
+            return Err(ReassemblyError::DuplicateFragment);
+        }
+
+        entry
+            .fragments
+            .insert(packet.fragment_index, packet.payload);
+
+        if entry.fragments.len() as u16 != entry.fragment_count {
+            return Ok(None);
+        }
+
+        let mut assembled =
+            BytesMut::with_capacity(entry.fragments.values().map(|p| p.len()).sum());
+        for index in 0..entry.fragment_count {
+            if let Some(chunk) = entry.fragments.get(&index) {
+                assembled.extend_from_slice(chunk);
+            } else {
+                if Self::is_keyframe(entry.flags) {
+                    self.keyframe_loss_pending = true;
+                }
+                self.frames.remove(&key);
+                self.drops += 1;
+                return Ok(None);
+            }
+        }
+
+        let flags = entry.flags;
+        let pts_us = entry.pts_us;
+        self.frames.remove(&key);
+        Ok(Some(AssembledAccessUnit {
+            data: assembled.freeze(),
+            pts_us,
+            keyframe: Self::is_keyframe(flags),
+            stream_epoch: packet_epoch,
+        }))
+    }
+
+    pub fn is_keyframe(flags: VideoPacketFlags) -> bool {
+        flags.contains(VideoPacketFlags::KEYFRAME)
+    }
+
+    fn mark_keyframe_loss_in_pending(&mut self) {
+        if self
+            .frames
+            .values()
+            .any(|frame| Self::is_keyframe(frame.flags))
+        {
+            self.keyframe_loss_pending = true;
+        }
+    }
+
+    fn drop_oldest(&mut self) {
+        if let Some(key) = self.frames.keys().next().copied() {
+            if let Some(frame) = self.frames.remove(&key) {
+                if Self::is_keyframe(frame.flags) {
+                    self.keyframe_loss_pending = true;
+                }
+            }
+            self.drops += 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use picoo_protocol::VideoPacket;
+
+    fn fragment(
+        epoch: u32,
+        frame_id: u64,
+        index: u16,
+        count: u16,
+        payload: &'static [u8],
+    ) -> VideoPacket {
+        VideoPacket {
+            version: VideoPacket::VERSION,
+            flags: VideoPacketFlags::empty(),
+            stream_epoch: epoch,
+            frame_id,
+            pts_us: 0,
+            fragment_index: index,
+            fragment_count: count,
+            payload: Bytes::copy_from_slice(payload),
+        }
+    }
+
+    #[test]
+    fn reassembles_fragments_same_epoch() {
+        let mut map = ReassemblyMap::new(8, 16);
+        assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
+        let assembled = map.ingest(fragment(1, 10, 1, 2, b"cd")).unwrap();
+        assert_eq!(
+            assembled.as_ref().map(|a| a.data.as_ref()),
+            Some(&b"abcd"[..])
+        );
+    }
+
+    #[test]
+    fn isolates_stream_epochs() {
+        let mut map = ReassemblyMap::new(8, 16);
+        assert!(map.ingest(fragment(1, 10, 0, 2, b"ab")).unwrap().is_none());
+        assert!(map.ingest(fragment(2, 10, 0, 1, b"xy")).unwrap().is_some());
+    }
+
+    #[test]
+    fn dropping_incomplete_keyframe_sets_loss_flag() {
+        let mut map = ReassemblyMap::new(1, 16);
+        let key = VideoPacket {
+            version: VideoPacket::VERSION,
+            flags: VideoPacketFlags::KEYFRAME,
+            stream_epoch: 1,
+            frame_id: 1,
+            pts_us: 0,
+            fragment_index: 0,
+            fragment_count: 2,
+            payload: Bytes::copy_from_slice(b"k0"),
+        };
+        assert!(map.ingest(key).unwrap().is_none());
+        // Force drop of the incomplete keyframe by admitting another frame.
+        let other = fragment(1, 2, 0, 1, b"z");
+        assert!(map.ingest(other).unwrap().is_some());
+        assert!(map.take_keyframe_loss());
+        assert!(!map.take_keyframe_loss());
+    }
+}

@@ -1,0 +1,68 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/picoo-protocol",
+  "crates/picoo-packet",
+  "crates/picoo-pairing",
+  "crates/picoo-discovery",
+  "crates/picoo-session",
+  "crates/picoo-transport",
+  "crates/picoo-jitter",
+  "crates/picoo-rate-control",
+  "crates/picoo-metrics",
+  "crates/picoo-media-decode",
+  "crates/picoo-diagnostics",
+  "crates/picoo-frame-hub",
+  "crates/picoo-sender",
+  "crates/picoo-receiver",
+  "crates/picoo-ffi",
+  "crates/picoo-testkit",
+  "xtask",
+  "apps/desktop",
+  "extensions/windows-virtual-camera/mf-source",
+  "extensions/windows-virtual-camera/ring-reader",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Haoxincode/picoo-camera"
+
+[workspace.dependencies]
+anyhow = "1.0"
+bitflags = "2.6"
+bytes = "1.9"
+prost = "0.13"
+prost-types = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tracing = "0.1"
+
+# GPUI stack — lock to gpui-component compatible revision (ARCH-PICOO-UI-001)
+gpui = { git = "https://github.com/zed-industries/zed" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+gpui-component = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+
+picoo-protocol = { path = "crates/picoo-protocol" }
+picoo-packet = { path = "crates/picoo-packet" }
+picoo-pairing = { path = "crates/picoo-pairing" }
+picoo-discovery = { path = "crates/picoo-discovery" }
+picoo-session = { path = "crates/picoo-session" }
+picoo-transport = { path = "crates/picoo-transport" }
+picoo-jitter = { path = "crates/picoo-jitter" }
+picoo-rate-control = { path = "crates/picoo-rate-control" }
+picoo-metrics = { path = "crates/picoo-metrics" }
+picoo-media-decode = { path = "crates/picoo-media-decode" }
+picoo-diagnostics = { path = "crates/picoo-diagnostics" }
+picoo-frame-hub = { path = "crates/picoo-frame-hub" }
+picoo-sender = { path = "crates/picoo-sender" }
+picoo-receiver = { path = "crates/picoo-receiver" }
+picoo-ffi = { path = "crates/picoo-ffi" }
+picoo-testkit = { path = "crates/picoo-testkit" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

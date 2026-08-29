@@ -1,0 +1,16 @@
+[package]
+name = "picoo-vcam-ring-reader"
+description = "Shared Frame Ring consumer test tool for VCam path — REQ-PICOO-VCAM-003"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "picoo-vcam-ring-reader"
+path = "src/main.rs"
+
+[dependencies]
+picoo-frame-hub.workspace = true
+picoo-receiver.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

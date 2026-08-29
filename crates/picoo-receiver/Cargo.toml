@@ -1,0 +1,31 @@
+[package]
+name = "picoo-receiver"
+description = "Windows/macOS receiver pipeline: QUIC → decode → FrameHub"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+picoo-frame-hub.workspace = true
+picoo-jitter.workspace = true
+picoo-media-decode.workspace = true
+picoo-metrics.workspace = true
+picoo-packet.workspace = true
+picoo-pairing.workspace = true
+picoo-protocol.workspace = true
+picoo-session.workspace = true
+picoo-sender.workspace = true
+picoo-transport.workspace = true
+prost.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+picoo-discovery.workspace = true
+picoo-protocol.workspace = true
+picoo-sender.workspace = true
+picoo-testkit.workspace = true
+tempfile = "3.14"
+
+[target.'cfg(not(windows))'.dev-dependencies]
+openh264 = { version = "0.9", default-features = true }

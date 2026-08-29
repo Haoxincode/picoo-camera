@@ -1,0 +1,13 @@
+[package]
+name = "picoo-diagnostics"
+description = "Diagnostic export with log redaction — REQ-PICOO-PRIVACY-003, PUC-007"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+picoo-pairing.workspace = true
+picoo-protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

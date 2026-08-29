@@ -1,0 +1,24 @@
+[package]
+name = "picoo-sender"
+description = "Sender-side H.264 packetization for Picoo Camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+picoo-metrics.workspace = true
+picoo-pairing.workspace = true
+picoo-protocol.workspace = true
+picoo-packet.workspace = true
+picoo-rate-control.workspace = true
+picoo-session.workspace = true
+picoo-transport.workspace = true
+prost.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+picoo-packet.workspace = true
+picoo-testkit.workspace = true
+picoo-transport.workspace = true
+tempfile = "3.14"

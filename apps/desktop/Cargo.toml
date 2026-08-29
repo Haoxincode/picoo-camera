@@ -1,0 +1,51 @@
+[package]
+name = "picoo-desktop"
+description = "Windows/macOS GPUI Receiver desktop application"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "picoo-desktop"
+path = "src/main.rs"
+
+[features]
+default = []
+gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets", "dep:image", "dep:smallvec"]
+windows-vcam = ["dep:windows"]
+
+[dependencies]
+picoo-discovery.workspace = true
+picoo-diagnostics.workspace = true
+picoo-frame-hub.workspace = true
+picoo-pairing.workspace = true
+picoo-protocol.workspace = true
+picoo-metrics.workspace = true
+picoo-receiver.workspace = true
+picoo-session.workspace = true
+picoo-transport.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+gpui = { workspace = true, optional = true }
+gpui_platform = { workspace = true, optional = true }
+gpui-component = { workspace = true, optional = true }
+gpui-component-assets = { workspace = true, optional = true }
+image = { version = "0.25", optional = true }
+smallvec = { version = "1", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Media_MediaFoundation",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]

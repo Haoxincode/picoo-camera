@@ -1,0 +1,29 @@
+[package]
+name = "picoo-ffi"
+description = "Stable C ABI for Android and iOS — cbindgen output"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+picoo-discovery.workspace = true
+picoo-diagnostics.workspace = true
+picoo-pairing.workspace = true
+picoo-packet.workspace = true
+picoo-protocol.workspace = true
+picoo-session.workspace = true
+picoo-sender.workspace = true
+picoo-transport.workspace = true
+
+[build-dependencies]
+cbindgen = "0.27"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[dev-dependencies]
+jni = "0.21"
+tempfile = "3.14"

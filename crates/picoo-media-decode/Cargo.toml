@@ -1,0 +1,31 @@
+[package]
+name = "picoo-media-decode"
+description = "H.264 access-unit decoder abstraction — ARCH-PICOO-MEDIA-001"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+windows-mf = ["dep:windows"]
+
+[dependencies]
+bytes.workspace = true
+picoo-frame-hub.workspace = true
+picoo-packet.workspace = true
+picoo-protocol.workspace = true
+thiserror.workspace = true
+tracing = "0.1"
+
+[target.'cfg(not(windows))'.dependencies]
+openh264 = { version = "0.9", default-features = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
+
+[dev-dependencies]
+openh264 = { version = "0.9", default-features = true }
