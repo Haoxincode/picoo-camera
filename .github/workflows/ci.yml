@@ -111,3 +111,37 @@ jobs:
           name: windows-msi
           path: target/release/bundle/msi/PicooCamera.msi
           if-no-files-found: error
+
+  macos:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Select Xcode 26.6
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Clippy macOS GPUI Receiver
+        run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
+      - name: Build macOS GPUI Receiver
+        run: cargo run -p xtask -- build macos
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-receiver-unsigned
+          path: target/release/picoo-desktop
+          if-no-files-found: error
+
+  ios:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Select Xcode 26.6
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Build iOS Rust Core XCFramework
+        run: cargo run -p xtask -- build ios
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-rust-core-xcframework
+          path: target/apple/PicooCore.xcframework/
+          if-no-files-found: error

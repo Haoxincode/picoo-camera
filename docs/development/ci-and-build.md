@@ -11,8 +11,8 @@ Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依
 | Rust Core（共享） | Cargo、Quinn/Rustls；vendored `protoc` | ✅ 开发与测试 |
 | Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
 | Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
-| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境 |
-| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode |
+| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译基线 |
+| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；当前 CI 已覆盖 Rust XCFramework |
 
 **结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建与 CI 维护；**各平台最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要试图在 Linux 上交叉编译 GPUI 桌面程序、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。
 
@@ -29,24 +29,24 @@ Cloud Agent（Linux）
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
 ├── windows-latest  → GPUI 桌面、MF 解码、Virtual Camera DLL、安装包
-└── macos-latest    → GPUI 桌面、Camera Extension、iOS App、公证（后续阶段）
+└── macos-26 ARM64 → GPUI 桌面、iOS Rust XCFramework；后续承载 Camera Extension、iOS App 与公证
 ```
 
 ## GitHub Actions Runner 矩阵
 
-与 PRD §19.2、`cargo xtask` 命令及当前实现优先级（**Android + Windows 先行**）对齐：
+与 PRD §19.2、`cargo xtask` 命令及当前四端实现边界对齐：
 
-| Job | Runner | 职责 | xtask 命令（实现后启用） |
+| Job | Runner | 职责 | xtask 命令 |
 | --- | --- | --- | --- |
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
-| `macos` | `macos-latest` | 桌面 app、Camera Extension（后续） | `cargo xtask build macos`、`cargo xtask package macos` |
-| `ios` | `macos-latest` | iOS Sender（后续） | `cargo xtask build ios` |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver 无签名编译基线；Camera Extension 接入后扩展为 app bundle | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask build macos`；`package macos` 待扩展实现后启用 |
+| `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework；SwiftUI App 接入后扩展为 app build | `cargo xtask build ios` |
 
 ### 依赖关系
 
-- `android` / `windows` 与 `rust-and-docs` **并行**（分属不同 runner 池）：避免 tip 在 ubuntu 测试矩阵排队时饿死 Windows DLL/MSI 与 APK 产物。
+- `android` / `windows` / `macos` / `ios` 与 `rust-and-docs` **并行**：平台产物不等待通用测试矩阵；同一 ref 的新 push 仍由 concurrency 取消旧 run。
 - 各 job 通过 `actions/upload-artifact` 上传产物（APK、MSI、DLL 等），供人工验证或后续 release workflow 消费。
 - **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
@@ -99,7 +99,16 @@ jobs:
           path: target/release/bundle/
 ```
 
-macOS 与 iOS job 在对应 `apps/`、`extensions/` 代码就绪后按同样模式加入 `macos-latest` runner。
+`macos` 与 `ios` job 当前只证明共享 GPUI Receiver 和 Rust C ABI 的 Apple 原生链接边界。它们不代表 Camera Extension、SwiftUI App、签名、公证或真机媒体链路已经完成；这些能力必须由对应 Requirement 和单独的验收证据关闭。
+
+### Apple 无签名构建基线
+
+Apple 基线保持两个独立 artifact：
+
+- `macos-receiver-unsigned`：当前 host 架构的 `picoo-desktop` GPUI 可执行文件，不是可发布 `.app`。
+- `ios-rust-core-xcframework`：`PicooCore.xcframework`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
+
+`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke，再由 `xcodebuild -create-xcframework` 组合 device/simulator 产物；构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake 或额外项目生成器。
 
 ## 为何 Windows 不在 Linux 上交叉编译
 

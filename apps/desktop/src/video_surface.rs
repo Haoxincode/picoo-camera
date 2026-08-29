@@ -9,18 +9,10 @@ use image::{Frame, ImageBuffer, Rgba};
 use picoo_frame_hub::FrameSlot;
 use smallvec::smallvec;
 
+#[derive(Default)]
 pub struct VideoSurface {
     render_image: Option<Arc<RenderImage>>,
     last_sequence: u64,
-}
-
-impl Default for VideoSurface {
-    fn default() -> Self {
-        Self {
-            render_image: None,
-            last_sequence: 0,
-        }
-    }
 }
 
 impl VideoSurface {

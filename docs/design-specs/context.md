@@ -42,7 +42,7 @@ Architecture 和 Use Case 一样是长期评审入口。它描述模块边界、
 
 维护分解后的稳定 Requirement ID。Requirements 是代码映射层；后续代码注释、测试和配置应优先映射到这里的 `REQ-*` ID。
 
-当前第一版以 Use Case 和 Architecture 为主；Requirement 分解见 [requirements/README.md](requirements/README.md)（Android + Windows 范围）。
+当前第一版以 Use Case 和 Architecture 为主；Requirement 分解见 [requirements/README.md](requirements/README.md)。Android + Windows 已进入功能实现与验证，iOS + macOS 已进入平台构建基线与原生边界实现。
 
 ## ID 管理规则
 

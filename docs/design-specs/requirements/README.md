@@ -4,7 +4,7 @@
 
 Requirements 是代码实现、单元测试和验收测试的直接映射层。
 
-当前实现审查聚焦 **Android Sender + Windows Receiver（Android→Windows）**；完整产品范围仍以 Design Specs 中定义的四端组合为准。
+当前实现审查包含两类证据：**Android Sender + Windows Receiver** 的功能实现与产物验证，以及 **iOS Sender + macOS Receiver** 的平台构建基线。Apple 原生媒体、SwiftUI、Camera Extension、签名与真机验收仍按对应 Requirement 独立推进。
 
 ## ID 状态
 
@@ -29,10 +29,10 @@ Requirements 是代码实现、单元测试和验收测试的直接映射层。
 | `PICOO-SESSION` | [session.md](session.md) | 会话状态、重连、抖动缓冲、码率 |
 | `PICOO-DISCOVERY` | [discovery.md](discovery.md) | mDNS、手动 IP 直连、配对短码核对 |
 | `PICOO-PAIRING` | [pairing.md](pairing.md) | 配对、公钥固定、撤销 |
-| `PICOO-MEDIA` | [media.md](media.md) | Android 采集编码、Windows 解码 |
+| `PICOO-MEDIA` | [media.md](media.md) | Android/iOS 采集编码、Windows/macOS 解码 |
 | `PICOO-FRAME` | [frame.md](frame.md) | FrameHub、Shared Frame Ring |
-| `PICOO-VCAM` | [vcam.md](vcam.md) | Windows 虚拟摄像头 |
-| `PICOO-UI` | [ui.md](ui.md) | Compose / GPUI 页面与状态 |
+| `PICOO-VCAM` | [vcam.md](vcam.md) | Windows MF 与 macOS Camera Extension |
+| `PICOO-UI` | [ui.md](ui.md) | Compose / SwiftUI / GPUI 页面与状态 |
 | `PICOO-UI` | [req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md](req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md) | **全端 UI 1:1 验收规范**（REQ-PICOO-UI-0001，`proposed`） |
 | `PICOO-PRIVACY` | [privacy.md](privacy.md) | 日志脱敏、本地-only |
 

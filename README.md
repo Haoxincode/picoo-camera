@@ -30,6 +30,8 @@ cargo test --workspace          # Rust Core 测试
 cargo xtask test protocol       # 协议测试套件
 cargo xtask build android       # Android（Gradle 就绪后）
 cargo xtask build windows       # Windows 桌面（windows-latest）
+cargo xtask build macos         # macOS GPUI Receiver（macOS host）
+cargo xtask build ios           # iOS device/simulator XCFramework（macOS + Xcode）
 ```
 
 ### 前端 UI 交互原型
@@ -41,6 +43,6 @@ cargo xtask build windows       # Windows 桌面（windows-latest）
 | 平台 | 最低版本 | 角色 |
 | --- | --- | --- |
 | Android | Android 10 ARM64 | Sender |
-| iOS | iOS 15 ARM64 | Sender |
+| iOS | iOS 18 ARM64 | Sender |
 | Windows | Windows 11 Build 22000 x86_64 | Receiver |
-| macOS | macOS 12.3 Apple Silicon / Intel | Receiver |
+| macOS | macOS 15 ARM64 (Apple Silicon) | Receiver |

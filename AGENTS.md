@@ -69,11 +69,11 @@ Cloud Agent 运行在 Linux 环境，**不能**在本机构建 Windows 桌面程
 | 平台 | Runner | 说明 |
 | --- | --- | --- |
 | Windows Receiver（GPUI + MF + VCam + 安装包） | `windows-latest` | 禁止在 Linux 上交叉编译整条 Receiver 链路 |
-| macOS Receiver / Camera Extension | `macos-latest` | 后续阶段启用 |
-| iOS Sender | `macos-latest` + Xcode | 后续阶段启用 |
+| macOS Receiver / Camera Extension | `macos-26` ARM64 + Xcode 26.6 | GPUI 编译基线已启用；Camera Extension 接入后扩展构建与签名 |
+| iOS Sender | `macos-26` ARM64 + Xcode 26.6 | Rust XCFramework 基线已启用；SwiftUI App 接入后扩展构建与签名 |
 | Android Sender | `ubuntu-latest` | Cloud 与 CI 均可构建 |
 
-当前实现优先级为 **Android + Windows**。macOS/iOS job 在代码就绪前可暂不启用，但 workflow 设计应预留扩展位置。
+Android + Windows 已进入功能实现与产物验证；iOS + macOS 已进入平台构建基线与原生边界实现。Apple job 必须明确区分“Core/桌面可编译”和“App、Camera Extension、签名、真机链路已验证”，不得用前者替代后者的验收证据。
 
 ### CI 变更原则
 

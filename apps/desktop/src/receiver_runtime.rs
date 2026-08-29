@@ -248,12 +248,6 @@ impl ReceiverRuntime {
     }
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
-    pub fn set_use_default_placeholder(&mut self, enabled: bool) {
-        self.receiver.set_use_default_placeholder(enabled);
-        let _ = self.receiver.publish_waiting_placeholder();
-    }
-
-    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn set_placeholder_mode(&mut self, mode: picoo_frame_hub::PlaceholderMode) {
         self.receiver.set_placeholder_mode(mode);
         let _ = self.receiver.publish_waiting_placeholder();

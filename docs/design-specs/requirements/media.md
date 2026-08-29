@@ -1,4 +1,4 @@
-# REQ-PICOO-MEDIA：媒体管线（Android + Windows）
+# REQ-PICOO-MEDIA：跨平台媒体管线
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
@@ -12,3 +12,5 @@
 | REQ-PICOO-MEDIA-008 | implemented | PUC-005 | 手机端曝光补偿可调 | `Camera2MediaEncoder.setExposureCompensation` + Streaming EV±（真机验证仍待） |
 | REQ-PICOO-MEDIA-009 | implemented | PUC-005 | StreamConfig.rotation 驱动 FrameHub/VCam 朝向 | `nv12_rotate_clockwise` 在 publish 前直立像素；metadata 清零；dims 随 90/270 交换 |
 | REQ-PICOO-MEDIA-010 | implemented | PUC-006 | 持续拥塞 1080→720→480；健康后可回升；过热强制 ≤720p | rate-control + Android；`abr_downshift`（含 480）/`abr_upshift` FrameHub；`thermal_hold`；`sync_encode_height` + JNI |
+| REQ-PICOO-MEDIA-011 | planned | ARCH-PICOO-MEDIA-001 | iOS 使用 AVFoundation 采集并由 VideoToolbox 低延迟硬件编码 H.264；原始帧不跨 Rust FFI | iPhone 真机 720p30 / 1080p30；无 B 帧；编码后的 Access Unit 进入 `PicooCore` C ABI；切换摄像头/分辨率递增 `stream_epoch` |
+| REQ-PICOO-MEDIA-012 | planned | ARCH-PICOO-MEDIA-001 | macOS Receiver 使用 VideoToolbox 单次解码至 NV12 FrameHub | Android/iOS H.264 输入；GPUI 预览与 Camera Extension 共享同一解码结果；macOS 产品构建不以 OpenH264 作为正式解码路径 |

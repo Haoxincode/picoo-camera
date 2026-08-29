@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use xshell::{cmd, Shell};
 
 #[derive(Parser)]
@@ -17,11 +17,11 @@ struct Cli {
 enum Command {
     Build {
         #[arg(value_enum)]
-        platform: Platform,
+        platform: BuildPlatform,
     },
     Package {
         #[arg(value_enum)]
-        platform: Platform,
+        platform: PackagePlatform,
     },
     Test {
         #[arg(value_enum)]
@@ -30,7 +30,15 @@ enum Command {
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
-enum Platform {
+enum BuildPlatform {
+    Android,
+    Ios,
+    Macos,
+    Windows,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum PackagePlatform {
     Android,
     Windows,
 }
@@ -51,10 +59,10 @@ fn main() -> Result<()> {
     }
 }
 
-fn build(platform: Platform) -> Result<()> {
+fn build(platform: BuildPlatform) -> Result<()> {
     let sh = Shell::new()?;
     match platform {
-        Platform::Android => {
+        BuildPlatform::Android => {
             cmd!(sh, "cargo test --workspace").run()?;
             if Path::new("apps/android/gradlew").exists() {
                 if let Ok(sdk) = std::env::var("ANDROID_HOME") {
@@ -65,7 +73,19 @@ fn build(platform: Platform) -> Result<()> {
                 eprintln!("android: gradle project not yet configured — workspace tests passed");
             }
         }
-        Platform::Windows => {
+        BuildPlatform::Ios => build_ios(&sh)?,
+        BuildPlatform::Macos => {
+            if !cfg!(target_os = "macos") {
+                bail!("macOS Receiver must be built on a macOS host");
+            }
+            let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
+            cmd!(
+                sh,
+                "cargo build -p picoo-desktop --release --features gpui-ui"
+            )
+            .run()?;
+        }
+        BuildPlatform::Windows => {
             cmd!(
                 sh,
                 "cargo build -p picoo-desktop -p picoo-vcam-ring-reader -p picoo-windows-vcam-source --release --features gpui-ui,windows-vcam"
@@ -81,10 +101,10 @@ fn build(platform: Platform) -> Result<()> {
     Ok(())
 }
 
-fn package(platform: Platform) -> Result<()> {
+fn package(platform: PackagePlatform) -> Result<()> {
     match platform {
-        Platform::Windows => {
-            build(Platform::Windows)?;
+        PackagePlatform::Windows => {
+            build(BuildPlatform::Windows)?;
             let sh = Shell::new()?;
             let stage_script = Path::new("installers/windows/stage.ps1");
             if stage_script.exists() {
@@ -98,7 +118,7 @@ fn package(platform: Platform) -> Result<()> {
             }
             Ok(())
         }
-        Platform::Android => {
+        PackagePlatform::Android => {
             let sh = Shell::new()?;
             if !Path::new("apps/android/gradlew").exists() {
                 bail!("android gradle project missing");
@@ -121,6 +141,143 @@ fn package(platform: Platform) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn build_ios(sh: &Shell) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        bail!("iOS Core must be built on a macOS host with Xcode");
+    }
+
+    const DEVICE_TARGET: &str = "aarch64-apple-ios";
+    const ARM64_SIM_TARGET: &str = "aarch64-apple-ios-sim";
+    let _deployment_target = sh.push_env("IPHONEOS_DEPLOYMENT_TARGET", "18.0");
+
+    for target in [DEVICE_TARGET, ARM64_SIM_TARGET] {
+        cmd!(
+            sh,
+            "cargo rustc -p picoo-ffi --release --target {target} --lib -- --crate-type staticlib"
+        )
+        .run()?;
+    }
+
+    let target_dir = cargo_target_dir(sh)?;
+    let apple_dir = target_dir.join("apple");
+    let include_dir = apple_dir.join("include");
+    let simulator_dir = apple_dir.join("ios-simulator");
+    let xcframework = apple_dir.join("PicooCore.xcframework");
+    std::fs::create_dir_all(&include_dir)?;
+    std::fs::create_dir_all(&simulator_dir)?;
+
+    let header = Path::new("crates/picoo-ffi/picoo_camera.h");
+    if !header.is_file() {
+        bail!("cbindgen did not produce {}", header.display());
+    }
+    std::fs::copy(header, include_dir.join("picoo_camera.h"))?;
+    std::fs::write(
+        include_dir.join("module.modulemap"),
+        "module PicooCore {\n  header \"picoo_camera.h\"\n  export *\n}\n",
+    )?;
+
+    let device_lib = static_library(&target_dir, DEVICE_TARGET);
+    let arm64_sim_lib = static_library(&target_dir, ARM64_SIM_TARGET);
+    let simulator_lib = simulator_dir.join("libpicoo_ffi.a");
+    for library in [&device_lib, &arm64_sim_lib] {
+        if !library.is_file() {
+            bail!("missing iOS static library: {}", library.display());
+        }
+    }
+
+    std::fs::copy(&arm64_sim_lib, &simulator_lib)?;
+
+    let smoke_source = Path::new("scripts/apple_ffi_smoke.c");
+    let smoke_binary = simulator_dir.join("picoo-ffi-smoke");
+    cmd!(
+        sh,
+        "xcrun --sdk iphonesimulator clang -target arm64-apple-ios18.0-simulator {smoke_source} -I {include_dir} {simulator_lib} -framework Security -framework SystemConfiguration -o {smoke_binary}"
+    )
+    .run()?;
+
+    if xcframework.exists() {
+        std::fs::remove_dir_all(&xcframework)?;
+    }
+    cmd!(
+        sh,
+        "xcodebuild -create-xcframework -library {device_lib} -headers {include_dir} -library {simulator_lib} -headers {include_dir} -output {xcframework}"
+    )
+    .run()?;
+    validate_ios_xcframework(sh, &xcframework)?;
+
+    eprintln!("ios core: {}", xcframework.display());
+    Ok(())
+}
+
+fn validate_ios_xcframework(sh: &Shell, xcframework: &Path) -> Result<()> {
+    let info_plist = xcframework.join("Info.plist");
+    if !info_plist.is_file() {
+        bail!("XCFramework is missing {}", info_plist.display());
+    }
+
+    let plist_json = cmd!(sh, "plutil -convert json -o - {info_plist}").read()?;
+    let plist: serde_json::Value = serde_json::from_str(&plist_json)?;
+    let Some(libraries) = plist
+        .get("AvailableLibraries")
+        .and_then(|value| value.as_array())
+    else {
+        bail!("XCFramework Info.plist has no AvailableLibraries");
+    };
+
+    let mut has_device_arm64 = false;
+    let mut has_arm64_simulator = false;
+    for library in libraries {
+        if library
+            .get("SupportedPlatform")
+            .and_then(|value| value.as_str())
+            != Some("ios")
+        {
+            continue;
+        }
+        let architectures = library
+            .get("SupportedArchitectures")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str())
+            .collect::<Vec<_>>();
+        match library
+            .get("SupportedPlatformVariant")
+            .and_then(|value| value.as_str())
+        {
+            Some("simulator") => {
+                has_arm64_simulator = architectures == ["arm64"];
+            }
+            None => has_device_arm64 = architectures.contains(&"arm64"),
+            _ => {}
+        }
+    }
+
+    if !has_device_arm64 || !has_arm64_simulator {
+        bail!("XCFramework must contain ARM64-only iOS device and simulator slices");
+    }
+    Ok(())
+}
+
+fn cargo_target_dir(sh: &Shell) -> Result<PathBuf> {
+    let metadata = cmd!(sh, "cargo metadata --format-version 1 --no-deps").read()?;
+    let metadata: serde_json::Value = serde_json::from_str(&metadata)?;
+    let Some(target_dir) = metadata
+        .get("target_directory")
+        .and_then(|value| value.as_str())
+    else {
+        bail!("cargo metadata did not return target_directory");
+    };
+    Ok(PathBuf::from(target_dir))
+}
+
+fn static_library(target_dir: &Path, target: &str) -> PathBuf {
+    target_dir
+        .join(target)
+        .join("release")
+        .join("libpicoo_ffi.a")
 }
 
 fn test_suite(suite: TestSuite) -> Result<()> {

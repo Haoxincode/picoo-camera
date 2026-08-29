@@ -80,7 +80,7 @@ impl PicooDesktopApp {
         Self {
             runtime,
             prefs: prefs.clone(),
-            tray_policy: crate::tray::TrayPolicy::from_pref(prefs.minimize_to_tray),
+            tray_policy: crate::tray::TrayPolicy::for_current_platform(prefs.minimize_to_tray),
             page,
             section: DesktopSection::Connect,
             pump_started: false,
@@ -112,7 +112,7 @@ impl PicooDesktopApp {
 
     fn apply_log_level(&self) {
         let filter = self.prefs.log_level.env_filter();
-        let _ = std::env::set_var("RUST_LOG", filter);
+        std::env::set_var("RUST_LOG", filter);
         if let Err(err) = crate::logging::reload_filter(filter) {
             tracing::warn!("log level reload failed: {err}");
         }
@@ -234,24 +234,27 @@ impl PicooDesktopApp {
                         this.video_surface.update_from_slot(slot);
                     }
                     let snapshot = this.runtime.snapshot();
-                    // REQ-PICOO-UI-008: live tip while hidden to tray.
-                    crate::tray::pump_win32_tray_messages();
-                    crate::tray::sync_tray_tip(snapshot.status);
-                    if let Some(action) = crate::tray::take_pending_menu_action() {
-                        let outcome = action.apply();
-                        if outcome.quit {
-                            crate::tray::note_tray_cleared();
-                            cx.quit();
-                        } else if outcome.restore_window {
-                            // Defer activate out of this entity update to avoid
-                            // nested App/Entity RefCell borrows during pump.
-                            cx.spawn(async move |_, cx| {
-                                cx.background_executor()
-                                    .timer(Duration::from_millis(0))
-                                    .await;
-                                let _ = cx.update(|cx| cx.activate(true));
-                            })
-                            .detach();
+                    // REQ-PICOO-UI-008: Windows tray message/tip pump.
+                    #[cfg(all(windows, feature = "windows-vcam"))]
+                    {
+                        crate::tray::pump_win32_tray_messages();
+                        crate::tray::sync_tray_tip(snapshot.status);
+                        if let Some(action) = crate::tray::take_pending_menu_action() {
+                            let outcome = action.apply();
+                            if outcome.quit {
+                                crate::tray::note_tray_cleared();
+                                cx.quit();
+                            } else if outcome.restore_window {
+                                // Defer activate out of this entity update to avoid
+                                // nested App/Entity RefCell borrows during pump.
+                                cx.spawn(async move |_, cx| {
+                                    cx.background_executor()
+                                        .timer(Duration::from_millis(0))
+                                        .await;
+                                    let _ = cx.update(|cx| cx.activate(true));
+                                })
+                                .detach();
+                            }
                         }
                     }
                     if matches!(snapshot.status, ReceiverStatus::Streaming) {
@@ -574,32 +577,22 @@ impl PicooDesktopApp {
                         cx.notify();
                     })),
             )
-            .children(
-                self.diagnostics_message
-                    .as_ref()
-                    .map(|msg| {
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().success)
-                            .child(msg.clone())
-                            .into_any_element()
-                    })
-                    .into_iter(),
-            )
-            .children(
-                self.diagnostics_error
-                    .as_ref()
-                    .map(|err| {
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().danger)
-                            .max_w_96()
-                            .text_center()
-                            .child(err.clone())
-                            .into_any_element()
-                    })
-                    .into_iter(),
-            )
+            .children(self.diagnostics_message.as_ref().map(|msg| {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().success)
+                    .child(msg.clone())
+                    .into_any_element()
+            }))
+            .children(self.diagnostics_error.as_ref().map(|err| {
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().danger)
+                    .max_w_96()
+                    .text_center()
+                    .child(err.clone())
+                    .into_any_element()
+            }))
             .child(
                 Button::new("continue-first-launch")
                     .primary()
@@ -1825,17 +1818,20 @@ impl PicooDesktopApp {
                                 cx.notify();
                             })),
                     )
-                    .child(
-                        Switch::new("minimize-to-tray")
-                            .checked(self.prefs.minimize_to_tray)
-                            .label("最小化到托盘")
-                            .on_click(cx.listener(|this, checked, _, cx| {
-                                this.prefs.minimize_to_tray = *checked;
-                                this.tray_policy = crate::tray::TrayPolicy::from_pref(*checked);
-                                let _ = this.persist_prefs();
-                                cx.notify();
-                            })),
-                    ),
+                    .when(cfg!(target_os = "windows"), |group| {
+                        group.child(
+                            Switch::new("minimize-to-tray")
+                                .checked(self.prefs.minimize_to_tray)
+                                .label("最小化到托盘")
+                                .on_click(cx.listener(|this, checked, _, cx| {
+                                    this.prefs.minimize_to_tray = *checked;
+                                    this.tray_policy =
+                                        crate::tray::TrayPolicy::for_current_platform(*checked);
+                                    let _ = this.persist_prefs();
+                                    cx.notify();
+                                })),
+                        )
+                    }),
             )
             .child(GroupBox::new().outline().title("未推流占位画面").children(
                 crate::prefs::PlaceholderModePref::ALL.iter().map(|mode| {
@@ -1916,30 +1912,20 @@ impl PicooDesktopApp {
                                 cx.notify();
                             })),
                     )
-                    .children(
-                        self.diagnostics_message
-                            .as_ref()
-                            .map(|msg| {
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().success)
-                                    .child(msg.clone())
-                                    .into_any_element()
-                            })
-                            .into_iter(),
-                    )
-                    .children(
-                        self.diagnostics_error
-                            .as_ref()
-                            .map(|err| {
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().danger)
-                                    .child(err.clone())
-                                    .into_any_element()
-                            })
-                            .into_iter(),
-                    ),
+                    .children(self.diagnostics_message.as_ref().map(|msg| {
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().success)
+                            .child(msg.clone())
+                            .into_any_element()
+                    }))
+                    .children(self.diagnostics_error.as_ref().map(|err| {
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().danger)
+                            .child(err.clone())
+                            .into_any_element()
+                    })),
             )
             .child(
                 GroupBox::new()
@@ -2315,7 +2301,7 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let prefs = load_prefs();
     // Ensure subscriber exists even if main skipped prefs-aware init paths.
     crate::logging::init_logging(prefs.log_level.env_filter());
-    let _ = std::env::set_var("RUST_LOG", prefs.log_level.env_filter());
+    std::env::set_var("RUST_LOG", prefs.log_level.env_filter());
     let _ = crate::logging::reload_filter(prefs.log_level.env_filter());
     // REQ-PICOO-UI-007: apply persisted startup preference at launch.
     if let Err(err) = crate::startup::sync_launch_at_startup(prefs.launch_at_startup) {
@@ -2380,25 +2366,30 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 view.update(cx, |this, cx| {
                     this.ensure_pump_loop(cx);
                 });
-                // REQ-PICOO-UI-008: close → tray hide (or quit) from Settings preference.
+                // REQ-PICOO-UI-008: Windows closes to tray when enabled; macOS
+                // keeps the app in Dock/background without a fake tray icon.
                 let tray_view = view.clone();
                 window.on_window_should_close(cx, move |window, cx| {
                     let outcome = tray_view.read(cx).close_outcome();
-                    if outcome.hide_to_tray {
-                        let status = tray_view.read(cx).runtime.snapshot().status;
-                        let tip = crate::tray::tip_for_status(status);
-                        crate::tray::note_hidden_to_tray_with_tip(&tip);
+                    if outcome.hide_to_background {
+                        #[cfg(all(windows, feature = "windows-vcam"))]
+                        {
+                            let status = tray_view.read(cx).runtime.snapshot().status;
+                            let tip = crate::tray::tip_for_status(status);
+                            crate::tray::note_hidden_to_tray_with_tip(&tip);
+                        }
                         // App-level hide keeps the process; minimize covers hosts
-                        // where hide() is a no-op until Shell_NotifyIcon lands.
+                        // where hide() is a no-op.
                         cx.hide();
                         window.minimize_window();
                         return false;
                     }
+                    #[cfg(all(windows, feature = "windows-vcam"))]
                     crate::tray::note_tray_cleared();
                     outcome.allow_close
                 });
-                // Tray uses a Win32 message-only host (FindWindowW fallback remains).
-                let _ = crate::tray::pump_win32_tray_messages();
+                #[cfg(all(windows, feature = "windows-vcam"))]
+                crate::tray::pump_win32_tray_messages();
                 cx.new(|cx| Root::new(view, window, cx).bg(cx.theme().background))
             },
         )

@@ -1,4 +1,4 @@
-# REQ-PICOO-UI：Android Compose + Windows GPUI
+# REQ-PICOO-UI：手机原生 UI + 桌面 GPUI
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
@@ -9,5 +9,7 @@
 | REQ-PICOO-UI-005 | implemented | PUC-005 | Sender 前台、防锁屏、深色低亮度、过热/低电量提示；API33+ 通知权限 | FGS + `POST_NOTIFICATIONS` + `FLAG_KEEP_SCREEN_ON` + Streaming `screenBrightness` 调暗 + `PowerHints`；`ManifestPermissionsTest`（真机验证仍待） |
 | REQ-PICOO-UI-006 | implemented | PUC-001 / PUC-008 | 权限在操作时请求，非启动一次性弹出；连接流程不请求相机权限 | 开始视频采集时请求 CAMERA；Nearby/Notifications 按需；`ManifestPermissionsTest` |
 | REQ-PICOO-UI-007 | implemented | PRD §16 | 开机启动偏好写入 OS | `startup.rs` HKCU Run（Windows）+ MemoryStore 测试 |
-| REQ-PICOO-UI-008 | implemented | PRD §16 | 关闭窗口时托盘策略 | `NotifyIconController` + tip 随 `ReceiverStatus`；`TrayMenuAction::apply` Show/Quit；HWND 注入或 `FindWindowW`；GPUI close + pump |
+| REQ-PICOO-UI-008 | implemented | PRD §16 | Windows 关闭窗口时可最小化到系统托盘；macOS 不伪装 Windows 托盘，关闭后保留在 Dock/后台 | Windows `NotifyIconController` + tip 随 `ReceiverStatus`；`TrayMenuAction::apply` Show/Quit；message-only HWND 或 `FindWindowW`；macOS 构建不包含 Notify Icon 状态 |
 | REQ-PICOO-UI-009 | implemented | PUC-005 | 桌面直播页远程摄像头控制（前后摄 / 480p·720p·1080p / 远端镜像）经 ReceiverSession → CameraCommand；Sender FFI/JNI 消费 | GPUI Live 前置/后置/480p/720p/1080p/远端镜像 → `send_camera_command`；`picoo_sender_take_camera_command` + Android poll |
+| REQ-PICOO-UI-010 | planned | ARCH-PICOO-UI-001 | iOS Sender 使用 SwiftUI 复现设备列表、手动连接、配对与传输页面，不复制 Rust 业务状态机 | SwiftUI 只持有平台权限、AVFoundation 生命周期与 Rust C ABI 状态快照；交互按 `REQ-PICOO-UI-0001` 验收 |
+| REQ-PICOO-UI-011 | planned | ARCH-PICOO-UI-001 | macOS Receiver 复用 `apps/desktop` 的 GPUI 页面与主题，仅隔离启动项、窗口后台行为、虚拟摄像头状态等平台适配 | `xtask build macos` 编译同一 GPUI View；macOS 不构建 Win32 Notify Icon；不新增 macOS 专属 WebView/SwiftUI 桌面 UI；平台适配具备独立测试 |

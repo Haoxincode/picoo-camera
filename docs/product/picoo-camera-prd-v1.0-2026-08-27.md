@@ -154,13 +154,13 @@ UI 不承担视频处理和协议逻辑，只负责：
 | 平台 | 最低版本 | 架构 | 角色 |
 | --- | --- | --- | --- |
 | Android | Android 10 | ARM64 | Sender |
-| iOS | iOS 15 | ARM64 | Sender |
+| iOS | iOS 18 | ARM64 | Sender |
 | Windows | Windows 11 Build 22000 | x86_64 | Receiver |
-| macOS | macOS 12.3 | Apple Silicon、Intel | Receiver |
+| macOS | macOS 15 | ARM64（Apple Silicon） | Receiver |
 
 Windows 的 Media Foundation 虚拟摄像头 API 最低要求 Windows Build 22000，可以将用户态软件组件注册为系统可发现的摄像头。
 
-macOS 的 Core Media I/O Camera Extension 从 macOS 12.3 开始提供，以系统扩展方式向其他应用发布虚拟摄像头。
+macOS 使用从 12.3 开始提供的 Core Media I/O Camera Extension，以系统扩展方式向其他应用发布虚拟摄像头；产品最低版本统一收敛到 macOS 15，且不提供 Intel 产物。
 
 ## 5. 用户角色
 
@@ -1205,7 +1205,7 @@ Virtual Camera: Ready
 - 桌面显示名称；
 - 自动接受已配对设备；
 - 开机启动；
-- 最小化到托盘；
+- 最小化到系统托盘（仅 Windows；macOS 关闭窗口后保留在 Dock/后台）；
 - 默认占位画面；
 - 日志级别；
 - 已配对设备管理；

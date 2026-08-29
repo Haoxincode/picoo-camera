@@ -11,15 +11,6 @@ use crate::receiver_runtime::default_trusted_store_path;
 
 pub struct DiagnosticsExportResult {
     pub path: Option<String>,
-    pub json: String,
-}
-
-pub fn export_diagnostics_to_file(
-    out_path: &str,
-    status: ReceiverStatus,
-    ingress: IngressStats,
-) -> Result<DiagnosticsExportResult, String> {
-    export_diagnostics_to_file_with_hosts(out_path, status, ingress, &[])
 }
 
 pub fn export_diagnostics_to_file_with_hosts(
@@ -32,7 +23,6 @@ pub fn export_diagnostics_to_file_with_hosts(
     std::fs::write(out_path, &json).map_err(|err| format!("write {out_path}: {err}"))?;
     Ok(DiagnosticsExportResult {
         path: Some(out_path.to_string()),
-        json,
     })
 }
 
@@ -123,28 +113,24 @@ mod tests {
         )
         .expect("export");
 
-        assert!(
-            result.json.contains("\"includes_video\": false")
-                || result.json.contains("\"includes_video\":false"),
-            "includes_video must be false: {}",
-            result.json
-        );
-        assert!(
-            !result.json.contains("Pixel 9 Pro"),
-            "device name must be redacted: {}",
-            result.json
-        );
-        assert!(
-            !result.json.contains("192.168.1.42"),
-            "LAN IP must be redacted: {}",
-            result.json
-        );
-        assert!(
-            result.json.contains("192.168.xxx.xxx"),
-            "expected redacted host form: {}",
-            result.json
-        );
         let on_disk = std::fs::read_to_string(&out_path).expect("read out");
-        assert_eq!(on_disk, result.json);
+        assert_eq!(result.path.as_deref(), out_path.to_str());
+        assert!(
+            on_disk.contains("\"includes_video\": false")
+                || on_disk.contains("\"includes_video\":false"),
+            "includes_video must be false: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("Pixel 9 Pro"),
+            "device name must be redacted: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("192.168.1.42"),
+            "LAN IP must be redacted: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("192.168.xxx.xxx"),
+            "expected redacted host form: {on_disk}"
+        );
     }
 }

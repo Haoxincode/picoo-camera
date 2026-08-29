@@ -39,7 +39,7 @@ Media Source 作为独立组件安装并注册，由 Windows Frame Server 加载
 
 ### macOS
 
-使用 Core Media I/O Camera Extension（最低 macOS 12.3）：
+使用 Core Media I/O Camera Extension（API 最低 macOS 12.3；产品基线 macOS 15 ARM64）：
 
 ```text
 Picoo Camera Desktop.app

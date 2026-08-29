@@ -7,8 +7,10 @@
 
 #![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 use std::sync::Mutex;
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 use picoo_session::ReceiverStatus;
 
 /// How the main window should react to a close request.
@@ -26,7 +28,7 @@ pub struct CloseOutcome {
     /// When true, allow the platform window to close (and typically exit).
     pub allow_close: bool,
     /// When true, hide/minimize the app instead of destroying the window.
-    pub hide_to_tray: bool,
+    pub hide_to_background: bool,
 }
 
 /// Tray / window policy derived from user preferences.
@@ -38,6 +40,12 @@ pub struct TrayPolicy {
 impl TrayPolicy {
     pub fn from_pref(minimize_to_tray: bool) -> Self {
         Self { minimize_to_tray }
+    }
+
+    /// macOS keeps the Receiver available through Dock/background lifecycle;
+    /// Windows follows the explicit tray preference.
+    pub fn for_current_platform(minimize_to_tray: bool) -> Self {
+        Self::from_pref(minimize_to_tray || cfg!(target_os = "macos"))
     }
 
     pub fn on_close_requested(self) -> CloseAction {
@@ -53,17 +61,18 @@ impl TrayPolicy {
         match self.on_close_requested() {
             CloseAction::HideToTray => CloseOutcome {
                 allow_close: false,
-                hide_to_tray: true,
+                hide_to_background: true,
             },
             CloseAction::Quit => CloseOutcome {
                 allow_close: true,
-                hide_to_tray: false,
+                hide_to_background: false,
             },
         }
     }
 }
 
 /// Tray menu actions (for Win32 notify-icon context menu).
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayMenuAction {
     Show,
@@ -71,13 +80,16 @@ pub enum TrayMenuAction {
 }
 
 /// Side-effects for a tray menu selection (applied by GPUI / Win32 pump).
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrayMenuOutcome {
     pub restore_window: bool,
     pub quit: bool,
 }
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 impl TrayMenuAction {
+    #[cfg(test)]
     pub fn label(self) -> &'static str {
         match self {
             Self::Show => "Show Picoo Camera",
@@ -100,6 +112,7 @@ impl TrayMenuAction {
 }
 
 /// Shell_NotifyIcon operation recorded for tests / deferred HWND apply.
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotifyIconOp {
     Add,
@@ -109,18 +122,19 @@ pub enum NotifyIconOp {
 
 /// Cross-platform notify-icon intent (REQ-PICOO-UI-008).
 ///
-/// On Windows, once [`NotifyIconController::set_hwnd`] is set, [`show`] /
-/// [`hide`] call `Shell_NotifyIcon`. Without HWND, ops are still recorded so
-/// close→tray policy can be verified on Linux CI.
+/// On Windows, [`show`] / [`hide`] call `Shell_NotifyIcon`. Tests record the
+/// operations without calling platform APIs.
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 #[derive(Debug, Default)]
 pub struct NotifyIconController {
     visible: bool,
     tip: String,
-    hwnd: Option<isize>,
     ops: Vec<NotifyIconOp>,
 }
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 impl NotifyIconController {
+    #[cfg(test)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -129,18 +143,9 @@ impl NotifyIconController {
         self.visible
     }
 
+    #[cfg(test)]
     pub fn tip(&self) -> &str {
         &self.tip
-    }
-
-    #[allow(dead_code)] // Used when GPUI injects HWND for Shell_NotifyIconW.
-    pub fn hwnd(&self) -> Option<isize> {
-        self.hwnd
-    }
-
-    /// Inject platform window handle when GPUI exposes HWND (Windows only path).
-    pub fn set_hwnd(&mut self, hwnd: Option<isize>) {
-        self.hwnd = hwnd;
     }
 
     pub fn show(&mut self, tip: &str) {
@@ -176,6 +181,7 @@ impl NotifyIconController {
         self.apply_win32(NotifyIconOp::Delete);
     }
 
+    #[cfg(test)]
     pub fn take_ops(&mut self) -> Vec<NotifyIconOp> {
         std::mem::take(&mut self.ops)
     }
@@ -187,19 +193,11 @@ impl NotifyIconController {
         }
         #[cfg(not(all(windows, feature = "windows-vcam")))]
         {
-            if self.hwnd.is_some() {
-                tracing::debug!(
-                    target: "picoo_tray",
-                    ?op,
-                    hwnd = ?self.hwnd,
-                    tip = %self.tip,
-                    "notify-icon op recorded (Shell_NotifyIconW unavailable on this build)"
-                );
-            }
+            let _ = op;
         }
     }
 
-    /// Resolve HWND: message-only tray host (preferred), explicit injection, else FindWindowW.
+    /// Resolve HWND: message-only tray host (preferred), else FindWindowW.
     #[cfg(all(windows, feature = "windows-vcam"))]
     fn resolve_hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
         use windows::core::w;
@@ -208,9 +206,6 @@ impl NotifyIconController {
 
         if let Some(host) = tray_message_hwnd() {
             return Some(host);
-        }
-        if let Some(raw) = self.hwnd {
-            return Some(HWND(raw as *mut _));
         }
         unsafe { FindWindowW(None, w!("Picoo Camera")).ok() }.filter(|h| !h.is_invalid())
     }
@@ -227,7 +222,7 @@ impl NotifyIconController {
             tracing::debug!(
                 target: "picoo_tray",
                 ?op,
-                "Shell_NotifyIconW deferred — no HWND (tray host / set_notify_icon_hwnd / FindWindowW)"
+                "Shell_NotifyIconW deferred — no HWND (tray host / FindWindowW)"
             );
             return;
         };
@@ -258,17 +253,19 @@ impl NotifyIconController {
 }
 
 /// Hover tip text derived from receiver session status (REQ-PICOO-UI-008).
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn tip_for_status(status: ReceiverStatus) -> String {
     format!("Picoo Camera — {}", status.as_label())
 }
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 static NOTIFY_ICON: Mutex<NotifyIconController> = Mutex::new(NotifyIconController {
     visible: false,
     tip: String::new(),
-    hwnd: None,
     ops: Vec::new(),
 });
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 static PENDING_MENU_ACTION: Mutex<Option<TrayMenuAction>> = Mutex::new(None);
 
 #[cfg(all(windows, feature = "windows-vcam"))]
@@ -404,34 +401,25 @@ fn show_tray_context_menu(hwnd: windows::Win32::Foundation::HWND) {
 }
 
 /// Drain Win32 tray host messages so context-menu actions reach the GPUI pump.
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+#[cfg(all(windows, feature = "windows-vcam"))]
 pub fn pump_win32_tray_messages() {
-    #[cfg(all(windows, feature = "windows-vcam"))]
-    {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
-        };
-        let Some(hwnd) = tray_message_hwnd() else {
-            return;
-        };
-        unsafe {
-            let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
+    };
+    let Some(hwnd) = tray_message_hwnd() else {
+        return;
+    };
+    unsafe {
+        let mut msg = MSG::default();
+        while PeekMessageW(&mut msg, Some(hwnd), 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
         }
     }
 }
 
-/// Soft notify that the UI hid to tray; records Shell_NotifyIcon ADD/MODIFY intent.
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
-pub fn note_hidden_to_tray() {
-    note_hidden_to_tray_with_tip("Picoo Camera");
-}
-
 /// Hide-to-tray with a live status tip (preferred from GPUI close handler).
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn note_hidden_to_tray_with_tip(tip: &str) {
     if let Ok(mut icon) = NOTIFY_ICON.lock() {
         icon.show(tip);
@@ -444,7 +432,7 @@ pub fn note_hidden_to_tray_with_tip(tip: &str) {
 }
 
 /// Keep tray tip in sync while the icon is visible (status pump).
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn sync_tray_tip(status: ReceiverStatus) {
     let tip = tip_for_status(status);
     if let Ok(mut icon) = NOTIFY_ICON.lock() {
@@ -455,23 +443,15 @@ pub fn sync_tray_tip(status: ReceiverStatus) {
 }
 
 /// Clear tray icon when quitting (Windows `NIM_DELETE` when HWND is known).
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn note_tray_cleared() {
     if let Ok(mut icon) = NOTIFY_ICON.lock() {
         icon.hide();
     }
 }
 
-/// Test / GPUI / Win32 hook: provide HWND once the platform window exists.
-#[allow(dead_code)]
-pub fn set_notify_icon_hwnd(hwnd: Option<isize>) {
-    if let Ok(mut icon) = NOTIFY_ICON.lock() {
-        icon.set_hwnd(hwnd);
-    }
-}
-
 /// Queue a context-menu action (Win32 menu → GPUI pump).
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn enqueue_menu_action(action: TrayMenuAction) {
     if let Ok(mut slot) = PENDING_MENU_ACTION.lock() {
         *slot = Some(action);
@@ -479,7 +459,7 @@ pub fn enqueue_menu_action(action: TrayMenuAction) {
 }
 
 /// Drain one pending tray menu action for the GPUI / app pump.
-#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn take_pending_menu_action() -> Option<TrayMenuAction> {
     PENDING_MENU_ACTION.lock().ok()?.take()
 }
@@ -498,7 +478,7 @@ mod tests {
             TrayPolicy::from_pref(true).close_outcome(),
             CloseOutcome {
                 allow_close: false,
-                hide_to_tray: true,
+                hide_to_background: true,
             }
         );
     }
@@ -513,7 +493,19 @@ mod tests {
             TrayPolicy::from_pref(false).close_outcome(),
             CloseOutcome {
                 allow_close: true,
-                hide_to_tray: false,
+                hide_to_background: false,
+            }
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_close_keeps_receiver_in_background_without_tray_preference() {
+        assert_eq!(
+            TrayPolicy::for_current_platform(false).close_outcome(),
+            CloseOutcome {
+                allow_close: false,
+                hide_to_background: true,
             }
         );
     }

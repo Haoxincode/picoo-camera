@@ -1,24 +1,22 @@
 # CI 产物下载与目录结构
 
-> 映射 **REQ-PICOO-STACK-005**。Workflow：`.github/workflows/ci.yml`
+> 映射 **REQ-PICOO-STACK-005 / REQ-PICOO-STACK-007**。Workflow：`.github/workflows/ci.yml`
 
-## 最新绿 run（示例）
+## 最近绿 run（Android/Windows 基线）
 
 | 字段 | 值 |
 | --- | --- |
-| Run ID | [33147645233](https://github.com/Haoxincode/picoo-camera/actions/runs/33147645233) |
-| 分支 | `cursor/android-win-v1-gates-dbe3` |
-| Commit | `fcb9900` — paired fingerprint UI + 占位三选一 + ABR 480 阶梯（tip 含后续 UI P1） |
+| Run ID | [33257074152](https://github.com/Haoxincode/picoo-camera/actions/runs/33257074152) |
+| 分支 | `main` |
+| Commit | `b38be35` — Android / Windows release artifact CI |
 | 结论 | 3/3 jobs success（`rust-and-docs` + `android` + `windows`） |
 
-后续 tip 绿 run 用法相同：在 Actions 页打开对应 run → 页面底部 **Artifacts** 区域下载。
-
-PR #14（`cursor/vcam-repair-feedback-dbe3`）合并前请改用该分支 tip 的绿 run 产物。
+Apple job 的首次远端绿 run 尚未写入本节；在其完成前，`macos-receiver-unsigned` 与 `ios-rust-core-xcframework` 只具备本机 macOS 构建证据。
 
 ## 方式一：GitHub Web UI
 
 1. 打开 https://github.com/Haoxincode/picoo-camera/actions
-2. 筛选分支 `cursor/android-win-v1-gates-dbe3` 或 PR #10
+2. 筛选分支 `main`
 3. 点选 **绿色** 的 `CI` workflow run（commit 与 tip 一致）
 4. 滚动到 **Artifacts**，下载所需 zip（保留约 90 天）
 
@@ -28,20 +26,20 @@ PR #14（`cursor/vcam-repair-feedback-dbe3`）合并前请改用该分支 tip �
 
 ```bash
 # 列出某 run 的 artifact 名称
-gh api repos/Haoxincode/picoo-camera/actions/runs/33131999904/artifacts \
+gh api repos/Haoxincode/picoo-camera/actions/runs/33257074152/artifacts \
   --jq '.artifacts[] | "\(.name)\t\(.size_in_bytes) bytes"'
 
 # 下载全部 artifact 到当前目录
-gh run download 33131999904 -R Haoxincode/picoo-camera
+gh run download 33257074152 -R Haoxincode/picoo-camera
 
 # 只下载 Windows MSI
-gh run download 33131999904 -R Haoxincode/picoo-camera -n windows-msi
+gh run download 33257074152 -R Haoxincode/picoo-camera -n windows-msi
 ```
 
-替换 `33131999904` 为最新绿 run ID：
+替换 `33257074152` 为最新绿 run ID：
 
 ```bash
-gh run list --branch cursor/android-win-v1-gates-dbe3 --limit 1 --json databaseId,conclusion,headSha \
+gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
   --jq '.[] | select(.conclusion=="success") | .databaseId'
 ```
 
@@ -54,6 +52,10 @@ gh run list --branch cursor/android-win-v1-gates-dbe3 --limit 1 --json databaseI
 | | | `app-release.aab` | Play 分发形态（ sideload 用 APK 即可） |
 | `windows-msi` | ~8 MB | `PicooCamera.msi` | **Win11 安装首选** |
 | `windows-bundle` | ~18 MB | 见下表 | 开发态 / 免安装验证 |
+| `macos-receiver-unsigned` | 以 CI 为准 | `picoo-desktop` | macOS 15+ ARM64 GPUI 编译基线；不是可发布 `.app` |
+| `ios-rust-core-xcframework` | 以 CI 为准 | `PicooCore.xcframework/` | iOS 18+ ARM64 device/simulator Rust C ABI；不是 iOS App |
+
+Apple artifact 只证明原生链接与边界打包成功。VideoToolbox、SwiftUI、Camera Extension、签名、公证和真机媒体链路必须继续由对应 Requirement 验收。
 
 ### `windows-bundle` 解压后布局
 

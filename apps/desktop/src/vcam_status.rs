@@ -24,7 +24,7 @@ pub fn detect_vcam_status() -> VirtualCameraStatus {
     #[cfg(not(all(windows, feature = "windows-vcam")))]
     {
         // Linux CI: ring reader validates consumer path; treat as unknown until MF lands.
-        return VirtualCameraStatus::Unknown;
+        VirtualCameraStatus::Unknown
     }
 
     #[cfg(all(windows, feature = "windows-vcam"))]
