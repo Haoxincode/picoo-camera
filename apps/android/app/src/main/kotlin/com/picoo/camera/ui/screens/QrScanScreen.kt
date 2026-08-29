@@ -109,6 +109,7 @@ fun QrScanScreen(
                             onClose = {},
                             showCloseButton = false,
                         )
+                        // 扫描线会持续重组；QrCodeScanner 只在 factory 绑相机，不得跟着重绑。
                         QrViewportChrome()
                     }
                 }

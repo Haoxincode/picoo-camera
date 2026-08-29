@@ -12,10 +12,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -29,7 +27,10 @@ import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 
 /**
- * CameraX + ML Kit QR scanner — PUC-003 Scan QR Code fallback path.
+ * CameraX + ML Kit QR scanner — PUC-003 / REQ-PICOO-DISCOVERY-003 扫码兜底。
+ *
+ * 相机只在 [AndroidView] factory 里绑定一次。扫描线动画会让父级不断重组，
+ * `update` 不得 `unbindAll` / `bindToLifecycle`，否则取景会卡死。
  */
 @Composable
 fun QrCodeScanner(
@@ -40,12 +41,19 @@ fun QrCodeScanner(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    var lastPayload by remember { mutableStateOf("") }
+    val session = remember { QrScanSession() }
     val executor = remember { Executors.newSingleThreadExecutor() }
     val scanner = remember { BarcodeScanning.getClient() }
+    val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
+    val onQrDetectedState = rememberUpdatedState(onQrDetected)
 
     DisposableEffect(Unit) {
         onDispose {
+            runCatching {
+                if (cameraProviderFuture.isDone) {
+                    cameraProviderFuture.get().unbindAll()
+                }
+            }
             scanner.close()
             executor.shutdown()
         }
@@ -57,54 +65,68 @@ fun QrCodeScanner(
             factory = { ctx ->
                 PreviewView(ctx).apply {
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                }
-            },
-            update = { previewView ->
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-                cameraProviderFuture.addListener(
-                    {
-                        val cameraProvider = cameraProviderFuture.get()
-                        val preview = Preview.Builder().build()
-                        preview.setSurfaceProvider(previewView.surfaceProvider)
-                        val analysis = ImageAnalysis.Builder()
-                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                            .build()
-                        analysis.setAnalyzer(executor) { imageProxy ->
-                            val mediaImage = imageProxy.image
-                            if (mediaImage == null) {
-                                imageProxy.close()
-                                return@setAnalyzer
-                            }
-                            val image = InputImage.fromMediaImage(
-                                mediaImage,
-                                imageProxy.imageInfo.rotationDegrees,
-                            )
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    val preview = Preview.Builder().build()
+                    preview.setSurfaceProvider(surfaceProvider)
+                    val analysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+                    analysis.setAnalyzer(executor) { imageProxy ->
+                        if (!session.shouldAnalyze()) {
+                            imageProxy.close()
+                            return@setAnalyzer
+                        }
+                        val mediaImage = imageProxy.image
+                        if (mediaImage == null) {
+                            imageProxy.close()
+                            return@setAnalyzer
+                        }
+                        val image = InputImage.fromMediaImage(
+                            mediaImage,
+                            imageProxy.imageInfo.rotationDegrees,
+                        )
+                        try {
                             scanner.process(image)
                                 .addOnSuccessListener { barcodes ->
                                     for (barcode in barcodes) {
                                         if (barcode.format != Barcode.FORMAT_QR_CODE) continue
                                         val raw = barcode.rawValue ?: continue
-                                        if (raw == lastPayload) return@addOnSuccessListener
-                                        lastPayload = raw
-                                        onQrDetected(raw)
+                                        if (!session.tryEmit(raw)) return@addOnSuccessListener
+                                        try {
+                                            onQrDetectedState.value(raw)
+                                        } finally {
+                                            session.finishEmit()
+                                        }
+                                        return@addOnSuccessListener
                                     }
                                 }
                                 .addOnCompleteListener { imageProxy.close() }
-                        }
-                        try {
-                            cameraProvider.unbindAll()
-                            cameraProvider.bindToLifecycle(
-                                lifecycleOwner,
-                                CameraSelector.DEFAULT_BACK_CAMERA,
-                                preview,
-                                analysis,
-                            )
                         } catch (t: Throwable) {
-                            android.util.Log.w("QrCodeScanner", "bindToLifecycle failed", t)
+                            android.util.Log.w("QrCodeScanner", "ML Kit process failed", t)
+                            imageProxy.close()
                         }
-                    },
-                    ContextCompat.getMainExecutor(context),
-                )
+                    }
+                    cameraProviderFuture.addListener(
+                        {
+                            val cameraProvider = cameraProviderFuture.get()
+                            try {
+                                cameraProvider.unbindAll()
+                                cameraProvider.bindToLifecycle(
+                                    lifecycleOwner,
+                                    CameraSelector.DEFAULT_BACK_CAMERA,
+                                    preview,
+                                    analysis,
+                                )
+                            } catch (t: Throwable) {
+                                android.util.Log.w("QrCodeScanner", "bindToLifecycle failed", t)
+                            }
+                        },
+                        ContextCompat.getMainExecutor(ctx),
+                    )
+                }
+            },
+            update = {
+                // 扫描线每帧都会走到这里。重绑相机会让预览卡死。
             },
         )
         if (showCloseButton) {
