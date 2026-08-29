@@ -116,7 +116,7 @@ UI 不承担视频处理和协议逻辑，只负责：
 | 音频 | 使用电脑麦克风 |
 | 发现方式 | mDNS/DNS-SD 自动发现 |
 | 发现失败兜底 | 手动输入局域网 IP:端口 |
-| 首次配对授权 | Receiver 六位短期连接码 |
+| 首次配对授权 | 双端六位配对短码核对 |
 | 传输协议 | QUIC |
 | 视频数据 | QUIC Datagram |
 | 控制数据 | QUIC Reliable Stream |
@@ -189,9 +189,9 @@ macOS 的 Core Media I/O Camera Extension 从 macOS 12.3 开始提供，以系�
     ↓
 选择电脑
     ↓
-手机输入电脑端显示的六位连接码
+手机与电脑显示同一六位配对短码
     ↓
-电脑端用户确认连接请求
+用户在两端分别确认数字一致
     ↓
 保存可信设备关系
     ↓
@@ -280,9 +280,9 @@ IP:QUIC_PORT
 
 **FR-PAIR-001 首次确认**
 
-Receiver 在等待连接页显示短期六位连接码。Sender 通过 mDNS 或手动 `IP:端口` 确定 Receiver Endpoint 并建立 QUIC/TLS 连接后，在加密的可靠控制 Stream 内提交用户输入的连接码。
+Sender 通过 mDNS 或手动 `IP:端口` 确定 Receiver Endpoint 并建立 QUIC/TLS 连接。对于未配对 Sender，Receiver 为本次连接生成随机挑战及由双方设备 ID 派生的六位配对短码，并通过加密的可靠控制 Stream 发给 Sender；手机与电脑必须显示相同数字。
 
-Receiver 必须限制失败尝试频率；连接码成功使用、主动刷新或到期后立即失效。桌面端用户确认连接请求后，系统保存对方公钥。
+用户必须在手机端和桌面端分别确认数字一致。任一端拒绝、连接中断或 60 秒到期后，本次挑战与短码立即失效；短码不由用户输入，也不能跨连接复用。双向确认完成后，系统保存对方公钥。
 
 **FR-PAIR-002 密钥固定**
 
@@ -646,13 +646,13 @@ UI 必须区分：
 │                       Rust Sender Core                              │
 │               Packetizer · Session · Rate Control                  │
 │                              │                                     │
-│                     quiche / QUIC Datagram                          │
+│                  Quinn / QUIC Stream + Datagram                    │
 └──────────────────────────────┬─────────────────────────────────────┘
                                │                            Wi-Fi LAN
 ┌──────────────────────────────▼─────────────────────────────────────┐
 │                        Desktop Receiver                            │
 │                                                                    │
-│                     quiche / QUIC Receiver                         │
+│                     Quinn / QUIC Receiver                          │
 │                              │                                     │
 │                 Reassembly · Jitter · Session                      │
 │                              │                                     │
@@ -715,6 +715,10 @@ GPUI
 第一版不从 gpui-base 开始重做 Picoo Camera Design System。
 
 gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，并明确支持一套 Rust 代码运行于 macOS、Windows 和 Linux；gpui-base 则用于产品需要自行拥有完整设计系统时复用行为与基础设施。
+
+桌面端的视觉与信息架构以 `picoo-camera-receiver.html` 为准。HTML 中的 Tailwind 类名与 OKLCH `@theme` 变量应映射为 GPUI 的 `rem` 比例、组件语义尺寸和 Picoo 明暗主题；不引入 CSS、WebView 或浏览器运行时，也不以像素复刻为由绕过 gpui-component 已有的键盘、焦点、滚动与弹窗行为。
+
+桌面 Receiver 默认窗口为 1920×1080，最小窗口为 1180×720。连接页在 Sidebar 之后使用全部可用宽度，主体保持 58%:42% 分栏，不保留 HTML 演示壳的 1160px 内容上限；实时视频视口始终保持 16:9。
 
 第一版仅定制：
 
@@ -789,35 +793,34 @@ Rust Core 不负责：
 
 ### 11.2 QUIC 实现选型
 
-四端统一使用 Cloudflare quiche。
+四端统一使用 Quinn + Rustls（ring provider）。
 
 选择理由：
 
 1. Rust 实现；
 2. 支持 QUIC Stream；
 3. 支持 QUIC Datagram；
-4. 提供 Android 构建路径；
-5. 提供 iOS 构建路径；
-6. 当前项目 CI 包含 Android、iOS、Windows 和 macOS 目标；
-7. 可以作为静态库嵌入 Kotlin、Swift 和桌面程序。
+4. QUIC 状态机、TLS、可靠 Stream 与 Datagram 由 Cargo 统一管理；
+5. 可构建到 Android、iOS、Windows 和 macOS；
+6. 不引入 BoringSSL、CMake 或 NASM 构建步骤；
+7. Rust API 与项目的 Rust Core 边界一致。
 
-quiche 明确提供 Android 与 iOS 构建指导，并提供 QUIC DATAGRAM 的发送、接收和队列控制 API。
+Quinn 提供可靠 Stream 与 QUIC DATAGRAM；Rustls 使用 ring provider。ring 可能通过 Cargo
+编译少量 C/汇编，但不要求 CMake，且不把第二套原生构建系统带入仓库。
 
 QUIC Datagram 根据 RFC 9221 提供不可靠数据报，不保证交付，适合承载允许丢弃的实时视频片段。
 
-**quiche 封装要求**
+**Quinn 封装要求**
 
-quiche 本身是低层协议状态机，应用需要提供：
+Quinn 的 Endpoint、Connection、SendStream 等类型仍属于传输实现细节。`picoo-transport`
+以 actor 拥有异步连接、定时器和 I/O，并向业务层只暴露领域命令与事件：
 
-- UDP I/O
-- 事件循环
-- 定时器
-- 发送节奏控制
-- 连接表
+- 可靠控制消息队列；
+- 有界视频 Datagram 队列；
+- 连接、断开与错误事件；
+- 传输统计快照。
 
-同时其默认构建涉及 BoringSSL，Windows 构建还需要 CMake/NASM 等依赖。
-
-因此业务代码禁止直接调用 quiche::Connection，必须通过统一封装：
+业务代码禁止直接调用 `quinn::Connection`，必须通过统一封装：
 
 ```rust
 trait PicooTransport {
@@ -829,18 +832,19 @@ trait PicooTransport {
 }
 ```
 
-所有平台只依赖 picoo-transport，不直接感知 quiche 细节。
+所有平台只依赖 `picoo-transport`，不直接感知 Quinn 细节。视频队列达到上限时允许
+按实时媒体策略丢弃，控制消息和生命周期事件使用独立队列，不得被视频背压阻塞。
 
 ### 11.3 FFI
 
-Android 与 iOS 通过稳定 C ABI 调用 Rust Core。
+Android 由 `libpicoo_ffi.so` 直接导出 Rust JNI 方法，不经过 C++ shim；iOS 通过稳定
+C ABI 调用 Rust Core。
 
 生成方式：
 
 ```text
-Rust extern "C"
-    ↓ cbindgen
-    ↓ picoo_camera.h
+Android: Kotlin → Rust JNI exports → Rust Core
+iOS:     Swift → Rust extern "C" → cbindgen → picoo_camera.h
 ```
 
 平台封装：
@@ -1317,7 +1321,6 @@ picoo-camera/
 ├── crates/
 │   ├── picoo-protocol/
 │   ├── picoo-transport/
-│   ├── picoo-quiche/
 │   ├── picoo-session/
 │   ├── picoo-pairing/
 │   ├── picoo-packet/
@@ -1392,6 +1395,8 @@ picoo-camera/
 - cbindgen
 - prost-build
 - xtask
+
+Windows Media Source DLL 使用独立 Rust `cdylib` crate，通过 `windows-rs` 实现 COM 与 Media Foundation 接口，并由 Cargo 在 Windows runner 上构建。仓库不维护等价的 C++/WRL、VCXPROJ 或 MSBuild 工程；Windows SDK 与原生链接器仍是平台构建的必要条件。
 
 xtask 统一提供：
 
@@ -1547,7 +1552,7 @@ macOS：
 - 四种平台组合都可连接；
 - 自动发现可用；
 - 手动 `IP:端口` 直连兜底可用；
-- 六位连接码具备有效期、失败限流和使用后失效能力；
+- 六位配对短码在两端一致显示，绑定单次连接，并在成功、拒绝、中断或到期后失效；
 - 配对与撤销配对可用；
 - 前后摄像头切换可用；
 - 720p30 和 1080p30 可用；
@@ -1580,14 +1585,14 @@ macOS：
 
 必须先完成四个独立验证：
 
-- **验证 A：跨平台 QUIC** — Android quiche、iOS quiche、Windows quiche、macOS quiche；完成可靠 Stream、Datagram、TLS、丢包与重连测试。
+- **验证 A：跨平台 QUIC** — Android、iOS、Windows、macOS 统一使用 Quinn/Rustls；完成可靠 Stream、Datagram、TLS、背压、丢包与重连测试，构建不得依赖 CMake。
 - **验证 B：Windows 虚拟摄像头** — Rust/Native Producer → Shared Frame Ring → IMFMediaSource → MFCreateVirtualCamera；并在腾讯会议、Zoom、OBS 中验证。
 - **验证 C：macOS Camera Extension** — Main App → App Group mmap Ring → CMIO Camera Extension；并验证签名、安装、用户批准和卸载。
 - **验证 D：GPUI 视频预览** — Decoded Frame → Platform Texture → GPUI VideoSurface；验证 1080p30 预览无明显 CPU 拷贝瓶颈。
 
 **阶段 1：Android → Windows 纵向闭环**
 
-范围：Android Camera2、MediaCodec H.264、quiche Datagram、Windows Decode、Windows Virtual Camera、GPUI Preview、720p30。该阶段建立完整产品骨架。
+范围：Android Camera2、MediaCodec H.264、Quinn Datagram、Windows Decode、Windows Virtual Camera、GPUI Preview、720p30。该阶段建立完整产品骨架。
 
 **阶段 2：扩展四端**
 
@@ -1605,8 +1610,8 @@ macOS：
 
 | 风险 | 影响 | 控制措施 |
 | --- | --- | --- |
-| quiche 较低层 | 传输代码复杂 | 单独封装 picoo-transport，业务层禁止直接调用 |
-| BoringSSL 构建复杂 | 四端 CI 不稳定 | 固定工具链，CI 生成预构建静态库 |
+| 异步 QUIC 生命周期复杂 | 连接状态泄漏到业务层 | `picoo-transport` actor 独占 Quinn 对象，只暴露领域命令与事件 |
+| 实时视频背压 | 队列增长、延迟累积 | 控制/视频分队列；视频队列有界并允许丢弃，控制事件保持可靠 |
 | GPUI 版本快速变化 | 类型冲突、构建失败 | 锁定精确 commit，提交 Cargo.lock |
 | 小米等 OEM Camera2 差异 | 黑屏、规格不支持 | 能力探测、安全默认值、设备测试矩阵 |
 | mDNS 被路由器屏蔽 | 手机发现不到电脑 | 桌面端展示局域网 `IP:端口`，手机端支持手动直连 |
@@ -1632,7 +1637,7 @@ macOS：
 └── Rust
 
 传输
-└── Cloudflare quiche / QUIC
+└── Quinn + Rustls / QUIC
 
 设备发现
 ├── Android: NSD

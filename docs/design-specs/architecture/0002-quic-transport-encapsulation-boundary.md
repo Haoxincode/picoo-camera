@@ -10,11 +10,11 @@ Picoo Camera 需要在局域网内同时承载两类数据：
 - **控制数据**：Hello、Capabilities、Pairing、StartStream、CameraCommand、ReceiverStats 等，要求可靠、有序。
 - **视频数据**：H.264 片段，允许丢包，要求低延迟，不能因等待旧片段导致延迟累积。
 
-QUIC 同时提供 Reliable Stream 与 Datagram（RFC 9221），适合这一组合。四端统一选用 Cloudflare **quiche**，因其为 Rust 实现、支持 Android/iOS 构建路径，并可作为静态库嵌入 Kotlin、Swift 和桌面程序。
+QUIC 同时提供 Reliable Stream 与 Datagram（RFC 9221），适合这一组合。四端统一选用 **Quinn + Rustls（ring provider）**：QUIC 状态机、可靠 Stream、Datagram 与 TLS 均由 Cargo 依赖管理，不引入 BoringSSL 或 CMake 构建步骤。
 
 ## 架构决策
 
-业务代码禁止直接调用 `quiche::Connection`。所有平台只依赖统一封装：
+业务代码禁止直接调用 `quinn::Connection`。所有平台只依赖统一封装：
 
 ```rust
 trait PicooTransport {
@@ -26,7 +26,15 @@ trait PicooTransport {
 }
 ```
 
-`picoo-quiche` crate 负责 quiche 与 BoringSSL 的构建适配；`picoo-transport` crate 负责 trait、连接表、UDP I/O 事件循环、定时器和发送节奏控制。
+`picoo-transport` crate 独占 Quinn API，负责运行时适配、连接表、UDP I/O、定时器和发送节奏控制。业务 crate 不依赖 Quinn、Tokio 或 Rustls 的具体类型。
+
+### QUIC 实现选型
+
+| 候选 | 适用性判断 |
+| --- | --- |
+| Quinn + Rustls ring | 采用。支持可靠 Stream 与 Datagram，Android/iOS/Windows/macOS 可由 Cargo 统一构建；ring 可能编译少量 C/汇编，但不依赖 CMake。 |
+| Cloudflare quiche | 不采用。协议能力满足需求，但默认 BoringSSL 构建要求 CMake，扩大本地与 CI 工具链。 |
+| s2n-quic | 不采用。能力完整且可接 Rustls，但高层异步 Provider 模型与当前 `PicooTransport` 同步事件边界的适配成本不低于 Quinn，移动端验证积累也不是本项目的优先选择。 |
 
 ### 连接角色
 
@@ -59,14 +67,18 @@ QUIC ALPN：`picoocam/1`
 
 不采用。第一版不需要浏览器端、NAT 穿透或 SFU；WebRTC 栈体积和信令复杂度与局域网-only 目标不匹配。
 
-### 业务层直接使用 quiche API
+### 业务层直接使用 Quinn API
 
-不采用。见 [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)。
+不采用。异步运行时、证书与 QUIC 连接生命周期必须留在 Transport Adapter 内，见 [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)。
+
+### 为密码学引入实验性的纯 Rust Provider
+
+不采用。当前使用 Quinn 官方支持的 Rustls ring provider；不以“完全没有 C/汇编”为目标牺牲生产安全性和平台验证成熟度。
 
 ## 约束
 
-- 四端必须能构建并链接同一 quiche 版本族。
-- Windows 构建涉及 BoringSSL、CMake/NASM 等依赖，由 CI 与 xtask 固定工具链。
+- 四端必须能构建并链接同一 Quinn/Rustls 版本族。
+- QUIC 构建不得要求 CMake、BoringSSL 或 NASM；平台仍可使用 Cargo、NDK Clang、MSVC 与系统 SDK。
 - 视频 Datagram 不请求重传旧片段。
 - 控制 Stream 消息丢失或乱序由 QUIC 保证；应用层仍需做协议版本与配对状态校验。
 

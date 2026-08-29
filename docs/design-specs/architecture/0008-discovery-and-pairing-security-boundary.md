@@ -34,20 +34,20 @@ Sender 浏览该服务：
 - iOS：Bonjour
 - Desktop：Rust mDNS/DNS-SD Adapter
 
-### 连接码授权与手动 IP 直连
+### 配对短码核对与手动 IP 直连
 
-Receiver 在等待连接页显示：
+Receiver 在等待连接页始终显示当前局域网 `IP:端口`。未配对 Sender 通过 mDNS 或手动地址建立 QUIC/TLS 连接后，Receiver 才针对本次握手生成：
 
-- 短期六位连接码；
-- 当前局域网 `IP:端口`。
+- 随机挑战 nonce；
+- 由挑战、Receiver ID 与 Sender ID 派生的六位配对短码。
 
-连接码只负责首次配对授权，不负责发现或解析 Receiver Endpoint。mDNS 正常时，Sender 从服务发现结果获得 Endpoint；mDNS 不可用时，用户必须输入 `IP:端口`，Sender 才能绕过服务发现直接连接。
+配对短码只负责人工核对本次首次连接，不负责发现或解析 Receiver Endpoint。mDNS 正常时，Sender 从服务发现结果获得 Endpoint；mDNS 不可用时，用户必须输入 `IP:端口`，Sender 才能绕过服务发现直接连接。
 
-Sender 建立 QUIC/TLS 连接后，通过可靠控制 Stream 提交用户输入的连接码。Receiver 必须限制失败尝试频率；连接码成功使用、主动刷新或到期后立即失效。桌面端仍需向用户显示连接请求，未确认前不得建立信任关系。
+Receiver 通过可靠控制 Stream 将挑战和配对短码发给 Sender，两端同时显示同一短码。用户必须在手机端和桌面端分别确认数字一致；任一端拒绝、挑战到期或连接中断都应终止本次配对。短码不作为密码提交，因此不存在输入错误与尝试次数模型；它必须绑定本次握手，不能跨连接复用。未完成双向确认前不得建立信任关系。
 
 ### 配对与公钥固定
 
-首次连接时，Sender 提交 Receiver 显示的 **短期六位连接码**，桌面端用户确认连接请求后保存：
+首次连接时，两端核对相同的 **六位配对短码** 并分别确认。Receiver 校验 Sender 针对本次挑战发送的 `PairingConfirm` 后保存：
 
 - `device_id`
 - `device_name`
@@ -93,7 +93,7 @@ Sender 建立 QUIC/TLS 连接后，通过可靠控制 Stream 提交用户输入�
 
 ### 二维码生成与扫码连接
 
-不采用。连接所需信息已由 mDNS、手动 `IP:端口` 与六位连接码覆盖；二维码会额外引入生成、解析、扫码 UI 与移动端扫码 SDK，增加包体积和权限路径。
+不采用。连接所需信息已由 mDNS、手动 `IP:端口` 与六位配对短码核对覆盖；二维码会额外引入生成、解析、扫码 UI 与移动端扫码 SDK，增加包体积和权限路径。
 
 ## 约束
 

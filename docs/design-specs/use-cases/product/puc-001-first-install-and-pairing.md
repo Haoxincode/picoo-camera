@@ -12,7 +12,7 @@
 
 用户在 Android 或 iPhone 上安装 Sender 应用。当用户尝试发现或连接电脑时，系统按平台要求请求摄像头、局域网和 Bonjour/NSD 相关权限；权限必须在相应操作触发时请求，而不是应用启动后一次性弹出全部权限。
 
-手机端通过 mDNS 发现附近 Receiver；若 mDNS 不可用，用户也可以输入桌面端显示的局域网 `IP:端口` 建立 QUIC 连接。首次连接时，Receiver 显示短期六位连接码，Sender 在已建立的加密控制 Stream 内提交该码，桌面端用户确认连接请求后，系统保存对方公钥、设备名称和时间戳，建立可信设备关系。
+手机端通过 mDNS 发现附近 Receiver；若 mDNS 不可用，用户也可以输入桌面端显示的局域网 `IP:端口` 建立 QUIC 连接。首次加密连接建立后，Receiver 为本次握手生成六位配对短码并发送给 Sender。两端同时显示同一短码，用户分别确认数字一致后，系统保存对方公钥、设备名称和时间戳，建立可信设备关系。
 
 配对完成前，Receiver 不得向虚拟摄像头输出真实视频，也不得接受摄像头切换、分辨率修改或码率控制。
 
@@ -21,7 +21,7 @@
 - 桌面端首次启动能明确显示虚拟摄像头状态：`Installed` / `Not Installed`，并提供安装或修复入口。
 - macOS 首次使用时能引导用户完成 Camera Extension 批准；Windows 安装器能注册 `Picoo Camera` 虚拟摄像头。
 - 手机端授予必要权限后，能浏览 `_picoocam._udp.local` 服务；mDNS 不可用时，可通过用户输入的局域网 `IP:端口` 建立连接。
-- 首次配对时，Sender 提交 Receiver 显示的短期六位连接码；桌面端用户确认后，双方保存 `device_id`、`device_name`、`public_key`、`certificate_fingerprint`、`paired_at`。
+- 首次配对时，Sender 与 Receiver 显示相同的六位配对短码；用户在两端分别确认一致后，双方保存 `device_id`、`device_name`、`public_key`、`certificate_fingerprint`、`paired_at`。
 - 未完成配对的连接尝试不能接收视频、不能驱动虚拟摄像头、不能读取对方设备详细信息。
 - 配对成功后，Receiver 进入等待连接或直播就绪状态；Sender 可将该 Receiver 记为已配对设备。
 

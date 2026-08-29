@@ -20,7 +20,6 @@ picoo-camera/                    # 本仓库根目录
   proto/picoo_camera.proto
   crates/picoo-protocol/
   crates/picoo-transport/
-  crates/picoo-quiche/
   crates/picoo-session/
   crates/picoo-pairing/
   crates/picoo-packet/
@@ -51,7 +50,7 @@ picoo-camera/                    # 本仓库根目录
 Rust Core 负责：
 
 - PCP/1 协议类型与控制消息编解码。
-- QUIC 传输封装（基于 quiche，经 `picoo-transport` 隔离）。
+- QUIC 传输封装（基于 Quinn + Rustls，经 `picoo-transport` 隔离）。
 - 会话状态机、重连退避与能力协商。
 - 配对、公钥固定与设备模型。
 - 视频分包、重组、`stream_epoch` 隔离与抖动缓冲策略接口。
@@ -70,10 +69,10 @@ Rust Core 不负责：
 
 ### FFI 边界
 
-Android 与 iOS 通过 C ABI 调用 Rust Core：
+Android 与 iOS 通过稳定平台边界调用 Rust Core：
 
 ```text
-Android: Kotlin → JNI → C ABI → Rust
+Android: Kotlin → Rust JNI exports → Rust Core
 iOS:     Swift → Bridging Header → C ABI → Rust
 ```
 
@@ -89,15 +88,17 @@ FFI 边界只允许：
 
 `xtask` 是本仓库任务组合入口，不是产品引擎。适合放置构建 Android/iOS/Windows/macOS、协议测试、打包和 cbindgen 编排；不适合放置 parser、会话状态机或码率算法。
 
+各平台最终二进制由 GitHub Actions 在对应 runner 上调用 `cargo xtask …` 产出；Cloud Agent（Linux）负责 Rust Core 与 Android 构建，Windows/macOS/iOS 原生产物不在 Linux 上交叉编译。见 [CI 与跨平台构建](../../development/ci-and-build.md)。
+
 ## 不采用的方案
 
 ### Flutter / React Native / Electron / Tauri / WebView 作为跨端 UI
 
 不采用。手机端 UI 很薄，但摄像头、编码器、权限与生命周期必须调用原生 API；桌面端 Windows 与 macOS 共用 GPUI 即可减少重复，无需引入额外跨端框架。
 
-### 业务层直接调用 quiche::Connection
+### 业务层直接调用 quinn::Connection
 
-不采用。quiche 是低层协议状态机，应用必须提供 UDP I/O、定时器、连接表和发送节奏。所有平台只依赖 `picoo-transport` trait，不直接感知 quiche 细节。
+不采用。所有平台只依赖 `picoo-transport` trait，不直接感知 Quinn、Rustls 或异步运行时细节。
 
 ### 在虚拟摄像头进程内持有网络会话
 
@@ -108,6 +109,7 @@ FFI 边界只允许：
 - 四端业务状态、协议、传输、配对、重连和码率控制尽可能统一在 Rust Core。
 - 原始 YUV/RGB 摄像头帧不跨 FFI；编码发生在平台原生媒体层。
 - `gpui`、`gpui_platform` 和 `gpui-component` 必须在 workspace 根目录统一锁定到相互兼容的 Git revision。
+- 仓库构建不得依赖 CMake，也不为 Windows Virtual Camera 维护第二套 C++/MSBuild 工程。Android JNI 由 Rust `jni` crate 直接导出；Windows Media Foundation Source 使用独立 Rust `cdylib` crate，通过 `windows-rs` 实现 COM/MF 接口并由 Cargo 构建。原生平台链接器与系统 SDK 仍是允许且必需的平台边界。
 - 第一版不在本仓库引入云账号、Registry HTTP 服务或 Plugin 体系。
 
 ## 相关 Use Case

@@ -19,9 +19,22 @@ Picoo Camera 是一套局域网无线摄像头系统。用户在 Android 或 iPh
 - [Architecture](docs/design-specs/architecture/)
 - [Requirements](docs/design-specs/requirements/)
 
+### 开发与构建
+
+- [CI 与跨平台构建](docs/development/ci-and-build.md) — Cloud Agent 与 GitHub Actions 分工、各平台 runner 矩阵
+
+## 开发
+
+```bash
+cargo test --workspace          # Rust Core 测试
+cargo xtask test protocol       # 协议测试套件
+cargo xtask build android       # Android（Gradle 就绪后）
+cargo xtask build windows       # Windows 桌面（windows-latest）
+```
+
 ### 前端 UI 交互原型
 
-- [Picoo Camera Receiver 桌面端 UI 交互原型](picoo-camera-receiver.html) — 展示桌面端 Receiver（GPUI）的连接、预览、虚拟摄像头与设置流程。
+- [Picoo Camera Receiver 桌面端 UI 交互原型](picoo-camera-receiver.html) — 当前桌面端 Receiver（GPUI）的连接、预览、虚拟摄像头与设置设计基线。
 
 ## 平台支持
 

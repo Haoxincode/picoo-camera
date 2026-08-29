@@ -42,7 +42,7 @@ Architecture 和 Use Case 一样是长期评审入口。它描述模块边界、
 
 维护分解后的稳定 Requirement ID。Requirements 是代码映射层；后续代码注释、测试和配置应优先映射到这里的 `REQ-*` ID。
 
-当前第一版 Design Specs 以 Use Case 和 Architecture 为主；Requirement 分解将在实现前按同一规则补齐。
+当前第一版以 Use Case 和 Architecture 为主；Requirement 分解见 [requirements/README.md](requirements/README.md)（Android + Windows 范围）。
 
 ## ID 管理规则
 
@@ -107,7 +107,7 @@ User request / product requirement
 | `FrameHub` | 桌面端解码帧的统一出口，采用固定容量三槽环形缓冲，同时服务 GPUI 预览与虚拟摄像头 Producer。 | 一条视频流只解码一次；消费者变慢时丢弃旧帧。 |
 | `Shared Frame Ring` | 主应用与虚拟摄像头扩展/组件之间的跨进程 NV12 帧共享区。Windows 使用 Named Shared Memory；macOS 使用 App Group mmap。 | 第一版不依赖 IOSurface 或跨进程 GPU 纹理共享。 |
 | `Virtual Camera` | 向操作系统注册的标准摄像头设备，统一名称为 `Picoo Camera`。 | Windows 使用 MF Virtual Camera；macOS 使用 CMIO Camera Extension。 |
-| `Pairing` | 首次连接时，Receiver 显示短期六位连接码；Sender 在已建立的加密连接内提交该码，用户确认后固定双方公钥并建立可信设备关系。 | 连接码只用于短期授权，不负责解析网络地址；未配对设备不得接收视频或驱动虚拟摄像头输出。 |
+| `Pairing` | 首次加密连接建立后，Receiver 基于本次挑战生成六位配对短码并通过可靠控制 Stream 发给 Sender；两端显示相同短码，用户分别确认一致后固定双方公钥并建立可信设备关系。 | 短码是本次握手的人工核对值，不由用户输入，也不负责解析网络地址；未配对设备不得接收视频或驱动虚拟摄像头输出。 |
 | `stream_epoch` | 标识一次连续视频流世代的递增计数，用于摄像头切换、分辨率变化、编码器重建和连接恢复后的帧重组隔离。 | Receiver 不得将不同 epoch 的片段组成同一帧。 |
 | `VideoPacket` | 固定二进制结构的 H.264 视频片段包头，承载 `stream_epoch`、`frame_id`、分片索引和载荷。 | 不使用 Protobuf 承载每个视频片段。 |
 

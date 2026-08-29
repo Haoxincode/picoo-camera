@@ -2,7 +2,7 @@
 
 - **Requirement ID**: `REQ-PICOO-UI-0001`
 - **Area**: `PICOO-UI`
-- **Status**: `implemented`
+- **Status**: `planned`
 - **Design Prototypes**:
   - Desktop Receiver: [`picoo-camera-receiver.html`](../../../picoo-camera-receiver.html)
   - Mobile Sender: [`picoo-camera-sender.html`](../../../picoo-camera-sender.html)
@@ -38,7 +38,7 @@
 - `Surface-Panel-1`（一级容器）：`#14171f`，边框 `rgba(255, 255, 255, 0.08)`。
 - `Surface-Panel-2`（二级卡片）：`#1b202c`，边框 `rgba(255, 255, 255, 0.12)`。
 - `Surface-Overlay`（弹窗/浮层）：`#242b3b`，阴影 `box-shadow: 0 16px 40px rgba(0,0,0,0.6)`。
-- `Brand-Accent`（品牌强调色）：活力橙渐变 `linear-gradient(135deg, #ff6a3d 0%, #ff8c42 100%)`。
+- `Brand-Accent`（品牌强调色）：与桌面 HTML 一致的深蓝 `#193cb8`，交互高亮使用 `#2b7fff`；浅色主题主色使用 `#1447e6`，前景统一为 `#eff6ff`。
 - `Status-Ready`（活跃/在线/良好）：翠绿 `#3ecf8e`，胶囊背景 `rgba(62, 207, 142, 0.12)`。
 - `Status-Warn`（警告/过热）：暖黄 `#f0c14a`，胶囊背景 `rgba(240, 193, 74, 0.14)`。
 - `Status-Danger`（断开/拒绝/错误）：柔红 `#ff5c6c` / `#ff4757`，胶囊背景 `rgba(255, 92, 108, 0.14)`。
@@ -50,25 +50,28 @@
 
 ### 2.3 矢量图标体系（统一基于 Reicon 24×24 像素网格，严禁使用 Emoji）
 
-全平台（移动端 Compose/SwiftUI、桌面端 GPUI、Web 原型）统一采用 **[Reicon](https://github.com/dqev/reicon)**（24×24 标准网格，2px 纯净描边与标准几何曲率）作为核心图标库：
+全平台（移动端 Compose/SwiftUI、桌面端 GPUI、Web 原型）统一采用 **[Reicon](https://github.com/dqev/reicon)** Outline（24×24 标准网格，1.5px 描边与标准几何曲率）作为核心图标体系。仓库只提取产品实际使用的单个 SVG 到 `assets/icons/reicon/`，以固定的上游 commit 作为共享事实源，不引入任一平台的完整图标依赖；Android Vector Drawable、iOS Asset Catalog 与 GPUI SVG 都必须从同一 SVG 子集派生：
 
-| 语义角色 | Reicon 标准图标 | Android (Compose ImageVector) | iOS (SwiftUI Vector / SF Symbols) | 桌面 GPUI (Rust SVG Path) |
+| 语义角色 | Reicon 标准图标 | Android (本地 Vector Drawable) | iOS (SVG Asset) | 桌面 GPUI (SVG Path) |
 | :--- | :--- | :--- | :--- | :--- |
-| **系统设置** | `reicon::settings` | `Reicon.Settings` | `Image("reicon_settings")` | `svg().path("reicon/settings.svg")` |
-| **前后摄翻转** | `reicon::camera-rotate` | `Reicon.CameraRotate` | `Image("reicon_camera_rotate")` | N/A |
-| **曝光补偿** | `reicon::sun` | `Reicon.Sun` | `Image("reicon_sun")` | N/A |
-| **水平镜像** | `reicon::flip-horizontal` | `Reicon.FlipHorizontal` | `Image("reicon_flip_horizontal")` | N/A |
-| **防误触锁定** | `reicon::lock` / `unlock` | `Reicon.Lock` | `Image("reicon_lock")` | N/A |
-| **恢复自动测光** | `reicon::rotate-ccw` | `Reicon.RotateCcw` | `Image("reicon_rotate_ccw")` | N/A |
+| **系统设置** | `reicon::settings` | `Reicon.Settings` | `Image("reicon_settings")` | `svg().path("assets/icons/reicon/settings.svg")` |
+| **前后摄翻转** | `reicon::camera-rotate` | `Reicon.CameraRotate` | `Image("reicon_camera_rotate")` | `svg().path("assets/icons/reicon/camera_rotate.svg")` |
+| **曝光补偿** | `reicon::sun` | `Reicon.Sun` | `Image("reicon_sun")` | `svg().path("assets/icons/reicon/sun.svg")` |
+| **水平镜像** | `reicon::flip-h` | `Reicon.FlipHorizontal` | `Image("reicon_flip_horizontal")` | `svg().path("assets/icons/reicon/flip_horizontal.svg")` |
+| **防误触锁定** | `reicon::lock` / `unlock` | `Reicon.Lock` / `Reicon.Unlock` | `Image("reicon_lock")` / `Image("reicon_unlock")` | `svg().path("assets/icons/reicon/lock.svg")` / `svg().path("assets/icons/reicon/unlock.svg")` |
+| **恢复自动测光** | `reicon::refresh` | `Reicon.Refresh` | `Image("reicon_refresh")` | `svg().path("assets/icons/reicon/refresh.svg")` |
 | **停止推流快门** | `reicon::square` (圆角) | `Reicon.Square` | `Image("reicon_square")` | `svg().path("reicon/square.svg")` |
-| **画面修复/刷新** | `reicon::refresh-cw` | N/A | N/A | `svg().path("reicon/refresh_cw.svg")` |
+| **画面修复/刷新** | `reicon::refresh` | `Reicon.Refresh` | `Image("reicon_refresh")` | `svg().path("assets/icons/reicon/refresh.svg")` |
 | **断开连接** | `reicon::phone-off` | `Reicon.PhoneOff` | `Image("reicon_phone_off")` | `svg().path("reicon/phone_off.svg")` |
 | **局域网广播** | `reicon::radio` | `Reicon.Radio` | `Image("reicon_radio")` | `svg().path("reicon/radio.svg")` |
 | **加密直连** | `reicon::shield-check` | `Reicon.ShieldCheck` | `Image("reicon_shield_check")` | `svg().path("reicon/shield_check.svg")` |
 | **服务发现/雷达** | `reicon::radio` | `Reicon.Radio` | `Image("reicon_radio")` | `svg().path("reicon/radio.svg")` |
-| **过热降档** | `reicon::flame` | `Reicon.Flame` | `Image("reicon_flame")` | `svg().path("reicon/flame.svg")` |
-| **更多操作** | `reicon::more-horizontal` | `Reicon.MoreHorizontal` | `Image("reicon_more_horizontal")` | `svg().path("reicon/more_horizontal.svg")` |
-| **导航返回** | `reicon::chevron-left` | `Reicon.ChevronLeft` | `Image("reicon_chevron_left")` | `svg().path("reicon/chevron_left.svg")` |
+| **过热降档** | `reicon::flame` | `Reicon.Flame` | `Image("reicon_flame")` | `svg().path("assets/icons/reicon/flame.svg")` |
+| **网络状态** | `reicon::wifi` | `Reicon.Wifi` | `Image("reicon_wifi")` | `svg().path("assets/icons/reicon/wifi.svg")` |
+| **更多操作** | `reicon::more-h` | `Reicon.MoreHorizontal` | `Image("reicon_more_horizontal")` | `svg().path("assets/icons/reicon/more_horizontal.svg")` |
+| **导航返回** | `reicon::chevron-left` | `Reicon.ChevronLeft` | `Image("reicon_chevron_left")` | `svg().path("assets/icons/reicon/chevron_left.svg")` |
+| **拒绝/关闭** | `reicon::xmark` | `Reicon.Xmark` | `Image("reicon_xmark")` | `svg().path("assets/icons/reicon/xmark.svg")` |
+| **等待超时** | `reicon::clock` | `Reicon.Clock` | `Image("reicon_clock")` | `svg().path("assets/icons/reicon/clock.svg")` |
 
 ---
 
@@ -76,19 +79,20 @@
 
 ### 3.1 发现与主页（Screen 1）
 - [ ] **AC-M-DISC-01**：顶栏左侧展示产品名，右侧胶囊实时显示当前 Wi-Fi 名称（如 `Wi‑Fi · Office‑5G`），最右侧为 `Settings` 矢量图标按钮。
-- [ ] **AC-M-DISC-02**：顶部常驻呼吸脉冲点指示发现中（橙色波纹）或监听中（绿色常驻）。
-- [ ] **AC-M-DISC-03**：已配对设备（Paired）卡片带有 `已配对` 橙黄徽标，右侧独立收纳 `More Horizontal` 按钮呼出管理菜单，主体点按直接发起直连。
-- [ ] **AC-M-DISC-05**：局域网广播未发现设备时展示空状态排查卡片，底部提供「输入 IP 直连」按钮；到达 Receiver 后再进入连接码授权页。
+- [ ] **AC-M-DISC-02**：顶部常驻呼吸脉冲点指示发现中（品牌蓝波纹）或监听中（绿色常驻）。
+- [ ] **AC-M-DISC-03**：已配对设备（Paired）卡片带有 `已配对` 蓝色徽标，右侧独立收纳 `More Horizontal` 按钮呼出管理菜单，主体点按直接发起直连。
+- [ ] **AC-M-DISC-04**：未配对新电脑卡片显示 `在线 · 首次连接需核对短码`；离线电脑置灰显示最近连接时间，点击给出友好提示。
+- [ ] **AC-M-DISC-05**：局域网广播未发现设备时展示空状态排查卡片，底部提供「输入 IP 直连」按钮；到达 Receiver 后再进入双端短码核对页。
 
-### 3.2 连接码授权与手动 IP 直连抽屉（Screen 2 - Manual Connect Sheet）
-- [ ] **AC-M-MANUAL-01**：点击主页底部按钮升起原生半屏抽屉；已通过 mDNS 确定 Receiver 时输入桌面端展示的 6 位连接码，发现失败时先输入局域网 IP:端口（如 `192.168.1.108:4433`），连接建立后再输入连接码。
-- [ ] **AC-M-MANUAL-02**：输入 IP:端口后，Sender 直接向目标 Endpoint 发起 QUIC/TLS 握手；六位连接码仅在加密控制 Stream 内提交，不得被解释为地址查询码。
+### 3.2 手动 IP 直连抽屉（Screen 2 - Manual Connect Sheet）
+- [ ] **AC-M-MANUAL-01**：点击主页底部按钮升起原生半屏抽屉，只接收局域网 `IP:端口`（如 `192.168.1.108:4433`）；通过 mDNS 选择设备时不展示此输入。
+- [ ] **AC-M-MANUAL-02**：输入 IP:端口后，Sender 直接向目标 Endpoint 发起 QUIC/TLS 握手；连接建立后进入与自动发现路径相同的双端短码核对，短码不得被解释为地址查询码。
 - [ ] **AC-M-MANUAL-03**：首屏 0 相机权限要求，相机权限延迟至正式进入推流（Screen 5）时按需申请。
 - [ ] **AC-M-MANUAL-04**：连接流程不提供二维码生成或扫码入口，不引入 ZXing、ML Kit Barcode Scanning 或其他扫码 SDK。
 
 ### 3.3 配对确认与等待态（Screen 3 & Screen 4）
-- [ ] **AC-M-PAIR-01**：Sender 使用大字号等宽输入框接收桌面端展示的 6 位连接码（`482 917`，`letter-spacing: 0.25em`），并显示剩余有效时间。
-- [ ] **AC-M-PAIR-02**：连接码到期后输入结果不可提交，文案红字提示 `连接码已过期，请在电脑端刷新`。
+- [ ] **AC-M-PAIR-01**：Sender 使用大字号等宽只读文本显示 6 位配对短码（`482 917`，`letter-spacing: 0.25em`），说明用户核对手机与电脑数字，并显示剩余有效时间。
+- [ ] **AC-M-PAIR-02**：短码到期后确认按钮不可用，文案红字提示 `短码已过期`，并提供重新发起本次配对的明确操作。
 - [ ] **AC-M-PAIR-03**：等待电脑确认过程中，若对端点击拒绝，即时切换为红色 `X` 图标并提示 `电脑端拒绝了连接`。
 
 ### 3.4 实时推流原生相机控制台（Screen 5 - 核心重点）
@@ -134,39 +138,43 @@
 - [ ] **AC-D-TECH-02**：视频监视器核心自定义组件必须封装为 **`VideoSurface`**，绑定 FrameHub 解码环形缓冲，保持 16:9 画幅与断流占位画面平滑切换。
 - [ ] **AC-D-TECH-03（gpui-component 与 Tailwind CSS 4.0 对齐）**：
   - 桌面 UI 组件库必须基于 `gpui-component` 体系；
-  - 样式遵循 **Tailwind CSS 4.0** 的原子化类名与 `@theme` 变量体系（如 `bg-zinc-950`, `bg-zinc-900/80`, `border-zinc-800`, `rounded-xl`, `font-mono` 等），确保前端原型类名可 1:1 无损映射为 Rust GPUI DSL。
+  - HTML 原型中的 Tailwind CSS 4.0 类名与 `@theme` 变量是视觉比例和语义角色的来源，不是在 Rust 中保留 CSS/Web 运行时的要求；
+  - 间距、字号、图标和普通布局尺寸必须映射为 GPUI 的 `rem` scale helper 或 `gpui-component` 语义尺寸，产品颜色、圆角与阴影必须集中映射到 Picoo 语义主题，禁止在页面调用点散落原始色值和普通布局 `px(...)`；
+  - Button、Switch、AlertDialog、滚动条等交互必须保留 `gpui-component` 的跨平台键盘、焦点、禁用态和 dismissal 契约；HTML 仅负责外观与信息架构，不能以像素复刻为由降级这些行为；
+  - 允许且必须保留经产品确认的原型覆盖项：默认窗口为 1920×1080、最小窗口为 1180×720、连接页使用可用宽度而不保留 HTML 的 1160px 上限、实时预览严格保持 16:9；窗口边界属于平台物理尺寸，可使用 `px(...)`。
 
 ### 4.2 待机与连接主页（Desktop Connect View - 左右 58% : 42% 黄金分栏）
 - [ ] **AC-D-LAYOUT-01（左右 58%:42% 黄金分栏）**：
-  - 左侧 58% 宽度承载主机标识、连接码与开始使用指引；
+  - 左侧 58% 宽度承载主机标识、配对短码状态与开始使用指引；
   - 右侧 42% 宽度由「Box 1 设备与连接状态机」与「Box 2 极简网络状态」纵向排列组成。
+  - 连接页滚动由主内容面板统一持有，内容 inset 位于滚动容器内部，滚动条必须贴合面板尾边；两个分栏以相同 `rem` 比例和共同间距缩放，不得以固定像素分别修正。
 - [ ] **AC-D-HOST-02（主机识别卡片）**：
   - 顶部展示纯粹设备名 `Studio PC`（彻底移除生硬的 `（本机）` 括号文字）；
   - 搭配绿色状态徽标 `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 接收端已就绪`；
-  - 居中呈现大号等宽 6 位局域网无线连接码（`482 917`，支持点击重新生成）与局域网 IP 直连胶囊（`192.168.1.108:4433`，带一键复制）。
+  - 未收到配对请求时显示 `等待请求`；收到未配对 Sender 请求后，居中呈现本次握手的大号等宽 6 位配对短码（`482 917`）与局域网 IP 直连胶囊（`192.168.1.108:4433`，带一键复制）。
 - [ ] **AC-D-ONBOARDING-03（开始使用与硬件拓扑）**：
-  - 左卡片底部包含清晰的开始使用 3 步指南（1. 打开手机 App → 2. 选择自动发现的电脑或输入 IP → 3. 输入连接码并开始推流）；
+  - 左卡片底部包含清晰的开始使用 3 步指南（1. 打开手机 App → 2. 选择自动发现的电脑或输入 IP → 3. 核对两端短码并开始推流）；
   - 包含真机硬件互联拓扑图（手机 ➔ 无线波纹 ➔ 电脑）与 3 项轻量系统状态（虚拟摄像头、自动发现、连接方式）。
 
 ### 4.3 右侧卡片：设备连接状态机与极简网络状态
-- [ ] **AC-D-DEVICE-01（待机多设备纵向滚动卡片）**：
-  - 待机未连接时，Box 1 呈现多设备独立卡片构成的纵向滚动列表（`iPhone 16 Pro`、`iPad Pro 11"`、`Xiaomi 14 Ultra`、`MacBook Air M2`），每一台设备显示型号、镜头规格、在线状态及 `[ 连接 ]` 按钮；
-  - 填满右侧纵向高度，视觉紧凑充实，彻底消除空旷感。
+- [ ] **AC-D-DEVICE-01（已信任与最近连接设备列表）**：
+  - Receiver 不主动发现或连接 Sender。待机时 Box 1 只呈现本机可信设备存储中的已信任/最近连接设备，显示名称、平台、最近连接时间和等待/离线状态，不提供伪造的 `[ 连接 ]` 动作；
+  - 列表拥有独立纵向滚动区域并填充右侧可用高度；空列表显示首次连接指引。
 - [ ] **AC-D-DEVICE-02（推流状态无缝切换）**：
-  - 点击任意设备连接后，多设备列表自动收起；
-  - 原地切换为当前推流设备条目（显示 `实时推流中 · 1080p 60FPS` 及红色危险态 `[ 断开 ]` 按钮）；
-  - 展开实时视频规格参数（1080p 60FPS/码率/电量）与 4 组镜头画面控制网格。
+  - Sender 建立推流后，设备列表自动收起；
+  - 原地切换为当前推流设备条目（显示 `实时推流中 · 1080p 30FPS` 及红色危险态 `[ 断开 ]` 按钮）；
+  - 展开真实视频规格参数（H.264、720p30/1080p30、码率/电量）与 3 组已实现的镜头画面控制。
 - [ ] **AC-D-NET-03（极简网络状态卡片）**：
   - Box 2 保持极简 4 行原生指标（网络: 局域网可用 / 发现服务: 在线 / 延迟: 低 / 安全: 已保护）。
 
 ### 4.4 直播接收监视器与镜头控制面板
 - [ ] **AC-D-LIVE-01**：推流时左侧大卡片自动切换为实时大屏视频流监视器（16:9 画幅、Canvas 动态推流渲染、左上角实时规格水印、右上角虚拟摄像头输出状态）。
-- [ ] **AC-D-LIVE-02（镜头与画面控制网格）**：
-  - 右侧 Box 1 展开 4 组 2×2 镜头控制按钮：
+- [ ] **AC-D-LIVE-02（镜头与画面控制）**：
+  - 右侧 Box 1 展开 3 组真实可用的镜头控制按钮：
     1. ⇋ **`镜像翻转`**（水平镜像翻转画面）；
     2. 📷 **`镜头切换`**（前置 / 后置主摄 / 超广角）；
-    3. 🔄 **`画面修复`**（请求 IDR 关键帧消除卡顿与花屏）；
-    4. 📸 **`拍照截图`**（截取当前高清帧画面保存）。
+    3. 🔄 **`画面修复`**（请求 IDR 关键帧消除卡顿与花屏）。
+  - 未实现本地截图保存前不展示或伪装 `拍照截图` 控件。
 
 ### 4.5 Sidebar 导航结构收敛
 - [ ] **AC-D-NAV-01（4+2 极简导航体系）**：
@@ -174,7 +182,8 @@
   - 彻底移除冗余的「系统状态」卡片；
   - Sidebar 导航项固定为：`连接`（首页）、`虚拟摄像头`、`网络`、`通用`，底部固定为 `帮助`、`关于` 与主题切换。
 - [ ] **AC-D-NAV-02（100% Reicon 矢量图标标准化）**：
-  - 全局所有功能图标严格采用 `dqev/reicon` 官方 24×24 像素网格矢量标准，严禁在功能交互中使用系统 emoji。
+  - 所有产品功能图标严格采用 `dqev/reicon` 官方 24×24 像素网格矢量标准，严禁在功能交互中使用系统 emoji；
+  - 最小化、最大化、关闭等平台窗口装饰由 `gpui-component::TitleBar` 统一提供，以保留 Windows/macOS 的原生控制区域与窗口拖拽契约，不视为产品功能图标。
 
 ---
 
@@ -205,9 +214,9 @@
 
 | 验收项分类 | 对应验证方式 | 关联 Use Case | 原型验证入口 |
 | :--- | :--- | :--- | :--- |
-| **连接码授权与桌面确认** | 单元测试 + 双端联动模拟 | PUC-001 | 剧本① (首次配对) |
+| **双端短码核对与确认** | 单元测试 + 双端联动模拟 | PUC-001 | 剧本① (首次配对) |
 | **已配对快速直连** | 单元测试 + 状态快照检查 | PUC-002 | 剧本② (已配对直连) |
-| **连接码授权与 IP 直连** | 协议状态测试 + 输入 UI 交互 + 失败限流检查 | PUC-008 | 剧本③ (手动连接) |
+| **短码核对与 IP 直连** | 协议状态测试 + 地址输入 UI + 双端确认检查 | PUC-008 | 剧本③ (手动连接) |
 | **虚拟摄像头就绪** | 跨进程共享内存测试 + 驱动状态检查 | PUC-004 | 剧本④ (虚拟摄像头) |
 | **画质/镜头/调光交互** | UI 自动化测试 + 手势微动效检查 | PUC-005 | 剧本⑤ ~ ⑧ (相机操作) |
 | **弱网中断退避重连** | 模拟丢包/网络切断断言 | PUC-006 | 剧本⑨ (网络中断重连) |

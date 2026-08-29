@@ -58,14 +58,14 @@ struct DesktopAppState {
 桌面端主要页面：
 
 - **首次启动页**：虚拟摄像头安装状态与引导。
-- **等待连接页**：等待 Sender、六位连接码、局域网 `IP:端口`、虚拟摄像头 Ready 状态。
-- **直播页**：VideoSurface 预览、设备名、分辨率/帧率/码率/延迟、网络质量、断开。
+- **等待连接页**：等待 Sender、局域网 `IP:端口`、虚拟摄像头 Ready 状态；收到未配对连接请求后显示六位配对短码。
+- **直播页**：VideoSurface 预览、设备名、分辨率/帧率/码率/延迟、网络质量、远程摄像头控制（前后摄 / 远端镜像）、断开。
 - **设置页**：显示名称、自动接受已配对设备、开机启动、托盘、占位画面、日志级别、已配对设备、虚拟摄像头修复、诊断导出。
 
 手机端主要页面：
 
-- **设备列表页**：Available Computers、连接码输入、手动 IP 直连。
-- **配对页**：提交六位连接码并等待桌面端确认。
+- **设备列表页**：Available Computers、已信任状态、手动 IP 直连。
+- **配对页**：显示六位配对短码，供用户与桌面端核对并确认一致。
 - **传输页**：本机预览、连接质量、摄像头/分辨率/镜像控制、断开。
 
 ### UI 不承担的逻辑
@@ -114,4 +114,6 @@ UI 同样不承担二维码生成、二维码解析或扫码相机预览；连�
 
 ## 相关 Requirements
 
-- [REQ-PICOO-UI-0001 (全端 UI 交互设计与细化验收规范)](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
+- [REQ-PICOO-UI-0001（全端 UI 交互设计与细化验收规范）](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
+- `REQ-PICOO-UI-001` … `REQ-PICOO-UI-009`（见 [requirements/ui.md](../requirements/ui.md)）
+- 桌面远程摄像头控制：`REQ-PICOO-UI-009`（PUC-005）
