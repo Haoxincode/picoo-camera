@@ -1,3 +1,8 @@
+#![cfg_attr(
+    all(target_os = "windows", feature = "gpui-ui"),
+    windows_subsystem = "windows"
+)]
+
 //! Picoo Camera desktop Receiver — ARCH-PICOO-UI-001 shell.
 
 mod diagnostics_export;

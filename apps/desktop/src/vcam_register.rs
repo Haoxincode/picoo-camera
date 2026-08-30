@@ -30,18 +30,32 @@ pub struct VirtualCameraRegistration {
 }
 
 impl VirtualCameraRegistration {
+    /// Start an already-installed virtual camera without attempting privileged repair.
+    pub fn start_registered() -> Result<Self, String> {
+        if !com_server_registered() {
+            return Err(
+                "Picoo Camera COM registration is missing or stale; reinstall the MSI or use the explicit repair action"
+                    .to_string(),
+            );
+        }
+        create_virtual_camera(MFVirtualCameraLifetime_Session)
+    }
+
     /// Register and start the Picoo Camera virtual camera for the current user session.
     pub fn register_and_start() -> Result<Self, String> {
+        ensure_com_server_registered()?;
         create_virtual_camera(MFVirtualCameraLifetime_Session)
     }
 
     /// Register a system-lifetime virtual camera (survives process exit; used by MSI install).
     pub fn register_system() -> Result<Self, String> {
+        ensure_com_server_registered()?;
         create_virtual_camera(MFVirtualCameraLifetime_System)
     }
 
     /// Remove a system-lifetime virtual camera registration (used by MSI uninstall).
     pub fn remove_system() -> Result<(), String> {
+        ensure_com_server_registered()?;
         let registration = create_virtual_camera(MFVirtualCameraLifetime_System)?;
         registration.remove()?;
         unregister_com_server()
@@ -88,8 +102,6 @@ pub fn ensure_com_server_registered() -> Result<(), String> {
 fn create_virtual_camera(
     lifetime: windows::Win32::Media::MediaFoundation::MFVirtualCameraLifetime,
 ) -> Result<VirtualCameraRegistration, String> {
-    ensure_com_server_registered()?;
-
     let _com = ComInit::new()?;
     let _mf = MfInit::new()?;
 

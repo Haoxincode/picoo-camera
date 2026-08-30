@@ -14,9 +14,11 @@
 
 1. [ ] 安装 `PicooCamera.msi`（或解压 `windows-bundle` 后以管理员运行 `register-vcam.ps1`）
 2. [ ] 启动 `picoo-desktop.exe`（开始菜单 **Picoo Camera**）
-3. [ ] 设置页 VCam 状态：**就绪 (Ready)** / **Active**（非 `0x80040154`）
-4. [ ] 打开 **Windows 相机** 或 **设置 → 蓝牙和设备 → 摄像头**，确认列表有 **Picoo Camera**
-5. [ ] 未连接手机时，相机预览为占位（黑底 + Waiting for phone…）
+3. [ ] 启动时不出现命令行窗口；标题栏、完整侧栏和连接页主内容均可见，普通启动不要求管理员权限
+4. [ ] 开启 Windows 辅助功能后分别观察空闲和直播状态，日志不持续出现 `gpui::window: RefCell already borrowed`
+5. [ ] 设置页 VCam 状态：**就绪 (Ready)** / **Active**（非 `0x80040154`）
+6. [ ] 打开 **Windows 相机** 或 **设置 → 蓝牙和设备 → 摄像头**，确认列表有 **Picoo Camera**
+7. [ ] 未连接手机时，相机预览为占位（黑底 + Waiting for phone…）
 
 ## B. Android 安装与权限
 

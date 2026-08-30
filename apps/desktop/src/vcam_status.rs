@@ -16,11 +16,6 @@ pub fn detect_vcam_status() -> VirtualCameraStatus {
         return VirtualCameraStatus::NotInstalled;
     }
 
-    #[cfg(all(windows, feature = "windows-vcam"))]
-    if vcam_registry_present() {
-        return VirtualCameraStatus::Installed;
-    }
-
     #[cfg(not(all(windows, feature = "windows-vcam")))]
     {
         // Linux CI: ring reader validates consumer path; treat as unknown until MF lands.
@@ -57,26 +52,6 @@ fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
             "extensions/windows-virtual-camera/mf-source/build/PicooVirtualCameraSource.dll",
         ));
         paths
-    }
-}
-
-#[cfg(all(windows, feature = "windows-vcam"))]
-fn vcam_registry_present() -> bool {
-    use std::process::Command;
-
-    // Best-effort: MF virtual camera registration leaves a friendly name key on Win11.
-    let output = Command::new("reg")
-        .args([
-            "query",
-            r"HKLM\SOFTWARE\Microsoft\Windows Media Foundation\Platform",
-            "/s",
-            "/f",
-            "Picoo",
-        ])
-        .output();
-    match output {
-        Ok(out) => out.status.success() && !out.stdout.is_empty(),
-        Err(_) => false,
     }
 }
 

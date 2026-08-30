@@ -18,14 +18,14 @@ use picoo_transport::Endpoint;
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub struct ActiveSenderSummary {
     pub sender_id: String,
     pub device_name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)] // GPUI settings reads fields when `gpui-ui` is enabled.
 pub struct TrustedDeviceSummary {
     pub device_id: String,
@@ -55,7 +55,7 @@ impl Default for ReceiverRuntimeConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // GPUI shell reads fields when `gpui-ui` is enabled.
 pub struct ReceiverSnapshot {
     pub status: ReceiverStatus,
@@ -307,7 +307,7 @@ impl ReceiverRuntime {
             link_jitter_ms: self
                 .receiver
                 .last_stats()
-                .map(|s| s.jitter_ms)
+                .map(|s| finite_metric(s.jitter_ms))
                 .unwrap_or(0.0),
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
@@ -319,8 +319,10 @@ impl ReceiverRuntime {
                     height: cfg.map(|c| c.height).unwrap_or(0),
                     fps: 30,
                     bitrate_bps: stats.map(|s| s.receive_bitrate).unwrap_or(0),
-                    latency_ms: stats.map(|s| s.rtt_ms + s.frame_age_ms).unwrap_or(0.0),
-                    packet_loss: stats.map(|s| s.packet_loss).unwrap_or(0.0),
+                    latency_ms: stats
+                        .map(|s| finite_metric(s.rtt_ms + s.frame_age_ms))
+                        .unwrap_or(0.0),
+                    packet_loss: stats.map(|s| finite_metric(s.packet_loss)).unwrap_or(0.0),
                 }
             },
             trusted_device_count: self.receiver.trusted_devices().list().count(),
@@ -379,6 +381,14 @@ impl ReceiverRuntime {
     #[allow(dead_code)]
     pub fn trusted_store_path(&self) -> Option<&Path> {
         self.receiver.trusted_store_path()
+    }
+}
+
+fn finite_metric(value: f64) -> f64 {
+    if value.is_finite() {
+        value
+    } else {
+        0.0
     }
 }
 
@@ -463,11 +473,19 @@ pub fn format_last_connected_ms(ms: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_last_connected_ms;
+    use super::{finite_metric, format_last_connected_ms};
 
     #[test]
     fn format_last_connected_utc_date_or_dash() {
         assert_eq!(format_last_connected_ms(0), "—");
         assert_eq!(format_last_connected_ms(1_577_836_800_000), "2020-01-01");
+    }
+
+    #[test]
+    fn presentation_metrics_replace_non_finite_values() {
+        assert_eq!(finite_metric(f64::NAN), 0.0);
+        assert_eq!(finite_metric(f64::INFINITY), 0.0);
+        assert_eq!(finite_metric(f64::NEG_INFINITY), 0.0);
+        assert_eq!(finite_metric(18.5), 18.5);
     }
 }

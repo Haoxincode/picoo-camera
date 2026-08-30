@@ -14,7 +14,7 @@ pub struct ReceiverStats {
     pub jitter_buffer_depth_ms: f64,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct StreamMetrics {
     pub width: u32,
     pub height: u32,

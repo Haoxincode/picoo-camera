@@ -51,6 +51,7 @@ pub struct PicooDesktopApp {
     page: DesktopPage,
     section: DesktopSection,
     pump_started: bool,
+    last_presented_snapshot: ReceiverSnapshot,
     video_surface: VideoSurface,
     display_name_input: Entity<InputState>,
     vcam_status: VirtualCameraStatus,
@@ -77,6 +78,7 @@ impl PicooDesktopApp {
         } else {
             DesktopPage::FirstLaunch
         };
+        let last_presented_snapshot = runtime.snapshot();
         Self {
             runtime,
             prefs: prefs.clone(),
@@ -84,6 +86,7 @@ impl PicooDesktopApp {
             page,
             section: DesktopSection::Connect,
             pump_started: false,
+            last_presented_snapshot,
             video_surface: VideoSurface::default(),
             display_name_input,
             vcam_status,
@@ -230,10 +233,13 @@ impl PicooDesktopApp {
             if this
                 .update(cx, |this, cx| {
                     let _ = this.runtime.pump();
-                    if let Some(slot) = this.runtime.receiver().latest_frame() {
-                        this.video_surface.update_from_slot(slot);
-                    }
-                    let snapshot = this.runtime.snapshot();
+                    let video_changed = this
+                        .runtime
+                        .receiver()
+                        .latest_frame()
+                        .is_some_and(|slot| this.video_surface.update_from_slot(slot));
+                    let mut snapshot = this.runtime.snapshot();
+                    let previous_page = this.page;
                     // REQ-PICOO-UI-008: Windows tray message/tip pump.
                     #[cfg(all(windows, feature = "windows-vcam"))]
                     {
@@ -272,6 +278,7 @@ impl PicooDesktopApp {
                         this.vcam_status = VirtualCameraStatus::Active;
                         this.runtime
                             .set_virtual_camera_status(VirtualCameraStatus::Active);
+                        snapshot.virtual_camera = VirtualCameraStatus::Active;
                     }
 
                     let pairing_request = snapshot.pairing_short_code.as_ref().and_then(|code| {
@@ -346,7 +353,13 @@ impl PicooDesktopApp {
                             .detach();
                         }
                     }
-                    cx.notify();
+                    let snapshot_changed = snapshot != this.last_presented_snapshot;
+                    if snapshot_changed {
+                        this.last_presented_snapshot = snapshot;
+                    }
+                    if snapshot_changed || video_changed || this.page != previous_page {
+                        cx.notify();
+                    }
                 })
                 .is_err()
             {
@@ -367,7 +380,8 @@ impl Render for PicooDesktopApp {
         } else {
             div()
                 .h_flex()
-                .flex_1()
+                .size_full()
+                .min_w_0()
                 .min_h_0()
                 .child(self.render_sidebar(cx))
                 .child(self.render_section(&snapshot, cx))
@@ -380,7 +394,16 @@ impl Render for PicooDesktopApp {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(self.render_header(cx))
-            .child(div().flex_1().min_h_0().relative().child(content))
+            .child(
+                div()
+                    .v_flex()
+                    .w_full()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .relative()
+                    .child(content),
+            )
     }
 }
 
@@ -423,6 +446,7 @@ impl PicooDesktopApp {
         div()
             .v_flex()
             .w(rems(12.75))
+            .h_full()
             .flex_shrink_0()
             .justify_between()
             .px_3()
@@ -533,11 +557,13 @@ impl PicooDesktopApp {
             DesktopSection::About => self.render_about_page(cx).into_any_element(),
         };
         div()
+            .w_full()
+            .h_full()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .overflow_y_scrollbar()
-            .child(div().min_h_full().p_8().child(page))
+            .child(div().w_full().min_h_full().p_8().child(page))
             .into_any_element()
     }
 
@@ -2314,20 +2340,26 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
 
     // REQ-PICOO-VCAM-002: keep Session-lifetime MF virtual camera for the desktop process.
     #[cfg(all(windows, feature = "windows-vcam"))]
-    let _vcam_registration =
-        match crate::vcam_register::VirtualCameraRegistration::register_and_start() {
+    let (vcam_status, _vcam_registration) = if should_auto_start_vcam(vcam_status) {
+        match crate::vcam_register::VirtualCameraRegistration::start_registered() {
             Ok(reg) => {
                 tracing::info!("Picoo Camera virtual camera started for this session");
                 runtime.set_virtual_camera_status(VirtualCameraStatus::Active);
-                Some(reg)
+                (VirtualCameraStatus::Active, Some(reg))
             }
             Err(err) => {
                 tracing::warn!(
                     "MF virtual camera start deferred: {err} (try Settings → 安装/激活虚拟摄像头, or run as Administrator)"
                 );
-                None
+                (vcam_status, None)
             }
-        };
+        }
+    } else {
+        tracing::info!(
+            "virtual camera is not installed; skip privileged startup repair and keep the explicit repair action available"
+        );
+        (vcam_status, None)
+    };
 
     let app = gpui_platform::application().with_assets(Assets);
     let prefs_for_window = prefs.clone();
@@ -2397,4 +2429,26 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     });
 
     Ok(())
+}
+
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
+fn should_auto_start_vcam(status: VirtualCameraStatus) -> bool {
+    matches!(
+        status,
+        VirtualCameraStatus::Installed | VirtualCameraStatus::Active
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_auto_start_vcam;
+    use crate::model::VirtualCameraStatus;
+
+    #[test]
+    fn only_an_installed_virtual_camera_is_started_automatically() {
+        assert!(should_auto_start_vcam(VirtualCameraStatus::Installed));
+        assert!(should_auto_start_vcam(VirtualCameraStatus::Active));
+        assert!(!should_auto_start_vcam(VirtualCameraStatus::NotInstalled));
+        assert!(!should_auto_start_vcam(VirtualCameraStatus::Unknown));
+    }
 }

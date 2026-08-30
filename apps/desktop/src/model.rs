@@ -20,7 +20,7 @@ pub struct SessionSummary {
     pub fps: u32,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VirtualCameraStatus {
     #[default]
     Unknown,

@@ -1212,6 +1212,8 @@ Virtual Camera: Ready
 - 虚拟摄像头修复；
 - 导出诊断信息。
 
+Windows 产品进程必须使用 GUI subsystem，从资源管理器或开机启动进入桌面 UI 时不得附带控制台窗口，也不得通过 `reg.exe` 等控制台子进程检测状态。普通启动只能以只读方式检测并启动已安装的虚拟摄像头；系统级 COM/Media Foundation 注册修复只能由安装器或用户明确触发的“虚拟摄像头修复”操作执行。
+
 ### 16.2 GPUI 状态边界
 
 GPUI View 不直接持有 QUIC Connection、Decoder 或 Frame Buffer。
@@ -1421,6 +1423,8 @@ cargo xtask package macos
 - 配置卸载清理；
 - 配置本地网络防火墙规则；
 - 可选配置开机启动。
+
+安装器承担系统级 COM/Media Foundation 注册与修复。桌面程序的普通启动路径不提升权限、不写入 HKLM，也不以启动失败为由隐式修复；只有安装流程或用户明确触发的修复入口可以进入该写入路径。
 
 ### 19.4 macOS 发布
 

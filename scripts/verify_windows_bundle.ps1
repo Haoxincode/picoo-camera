@@ -20,6 +20,35 @@ foreach ($path in @($Exe, $Dll)) {
     Write-Host "ok: $(Split-Path -Leaf $path) ($((Get-Item $path).Length) bytes)"
 }
 
+# REQ-PICOO-UI-002: Explorer/startup launches must not create a console window.
+# The PE Optional Header subsystem value 2 is IMAGE_SUBSYSTEM_WINDOWS_GUI.
+$exeBytes = [System.IO.File]::ReadAllBytes($Exe)
+if ($exeBytes.Length -lt 64 -or $exeBytes[0] -ne 0x4d -or $exeBytes[1] -ne 0x5a) {
+    Write-Error "picoo-desktop.exe has an invalid DOS header"
+}
+$peOffset = [BitConverter]::ToInt32($exeBytes, 0x3c)
+if ($peOffset -lt 0 -or $peOffset + 24 -gt $exeBytes.Length) {
+    Write-Error "picoo-desktop.exe has an invalid PE header offset"
+}
+if ($exeBytes[$peOffset] -ne 0x50 -or $exeBytes[$peOffset + 1] -ne 0x45 -or
+    $exeBytes[$peOffset + 2] -ne 0 -or $exeBytes[$peOffset + 3] -ne 0) {
+    Write-Error "picoo-desktop.exe has an invalid PE signature"
+}
+$optionalHeader = $peOffset + 24
+$optionalHeaderSize = [BitConverter]::ToUInt16($exeBytes, $peOffset + 20)
+if ($optionalHeaderSize -lt 70 -or $optionalHeader + $optionalHeaderSize -gt $exeBytes.Length) {
+    Write-Error "picoo-desktop.exe has an invalid optional header size"
+}
+$optionalHeaderMagic = [BitConverter]::ToUInt16($exeBytes, $optionalHeader)
+if ($optionalHeaderMagic -ne 0x10b -and $optionalHeaderMagic -ne 0x20b) {
+    Write-Error "picoo-desktop.exe has an unsupported optional header magic: $optionalHeaderMagic"
+}
+$subsystem = [BitConverter]::ToUInt16($exeBytes, $optionalHeader + 68)
+if ($subsystem -ne 2) {
+    Write-Error "picoo-desktop.exe must use the Windows GUI subsystem (2), got $subsystem"
+}
+Write-Host "ok: picoo-desktop.exe uses Windows GUI subsystem"
+
 if (-not (Test-Path $Msi)) {
     Write-Error "Missing MSI: $Msi (set PICOO_REQUIRE_MSI=1)"
 }
