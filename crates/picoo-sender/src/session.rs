@@ -14,7 +14,7 @@ use picoo_protocol::control::{
 };
 use picoo_protocol::VideoPacket;
 use picoo_protocol::ALPN;
-use picoo_rate_control::{BitrateAction, BitrateController};
+use picoo_rate_control::{BitrateAction, BitrateController, BitrateLadder};
 use picoo_session::{ReconnectBackoff, SenderStatus};
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
 use prost::Message;
@@ -22,9 +22,9 @@ use prost::Message;
 use crate::stream_config::StreamConfigParams;
 use crate::{SenderError, SenderPipeline, SenderStats};
 
-const DEFAULT_INITIAL_BITRATE_BPS: u32 = 6_000_000;
-const DEFAULT_MIN_BITRATE_BPS: u32 = 3_000_000;
-const DEFAULT_MAX_BITRATE_BPS: u32 = 10_000_000;
+pub const INITIAL_STREAM_EPOCH: u32 = 1;
+/// Mobile FFI exposes epochs as a positive signed 32-bit integer on Android.
+pub const MAX_STREAM_EPOCH: u32 = i32::MAX as u32;
 
 #[derive(Debug, Clone)]
 struct SenderPairing {
@@ -39,6 +39,23 @@ struct SenderPairing {
 pub struct SessionStats {
     pub pipeline: SenderStats,
     pub sent_datagrams: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EncoderDirectiveKind {
+    AbrDownshift = 1,
+    AbrUpshift = 2,
+}
+
+/// Rust-owned desired encoder transition. Reading it never acknowledges it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EncoderDirective {
+    pub id: u64,
+    pub kind: EncoderDirectiveKind,
+    pub target_height: u32,
+    pub target_bitrate_bps: u32,
+    pub stream_epoch: u32,
 }
 
 pub struct SenderSession<T: PicooTransport> {
@@ -59,6 +76,8 @@ pub struct SenderSession<T: PicooTransport> {
     last_scheduled_reconnect_delay_ms: Option<u64>,
     auto_reconnect: bool,
     bitrate: BitrateController,
+    /// User/platform preference before applying the current receiver cap.
+    requested_preferred_height: u32,
     last_bitrate_action: BitrateAction,
     last_receiver_stats: Option<MetricsReceiverStats>,
     pending_stream_config: Option<StreamConfigParams>,
@@ -66,10 +85,18 @@ pub struct SenderSession<T: PicooTransport> {
     stream_config_sent: bool,
     /// Receiver asked for IDR via EncoderCommand (REQ-PICOO-SESSION-003/004).
     keyframe_requested: bool,
-    /// ABR last rung: host should drop capture height (typically 1080→720).
-    resolution_downshift_requested: bool,
-    /// ABR recovery: host may restore preferred height (typically 720→1080).
-    resolution_upshift_requested: bool,
+    pending_encoder_directive: Option<EncoderDirective>,
+    next_encoder_directive_id: u64,
+    current_stream_epoch: u32,
+    last_allocated_stream_epoch: u32,
+    /// Zero until the platform reports its first actual encoder output.
+    committed_encoder_height: u32,
+    pending_local_stream_epoch: Option<u32>,
+    reconfiguration_rollback: Option<(Option<StreamConfigParams>, bool)>,
+    stream_config_staged_during_reconfiguration: bool,
+    /// A committed epoch must not emit media until its matching StreamConfig
+    /// has been queued on the reliable control stream.
+    media_blocked_for_stream_config: bool,
     /// Latest CameraCommand from receiver (PUC-005 desktop remote control).
     pending_camera_command: Option<CameraCommand>,
     /// Last SessionError code from receiver (e.g. PUBLIC_KEY_CHANGED).
@@ -94,19 +121,23 @@ impl<T: PicooTransport> SenderSession<T> {
             reconnect_after: None,
             last_scheduled_reconnect_delay_ms: None,
             auto_reconnect: true,
-            bitrate: BitrateController::new(
-                DEFAULT_INITIAL_BITRATE_BPS,
-                DEFAULT_MIN_BITRATE_BPS,
-                DEFAULT_MAX_BITRATE_BPS,
-            ),
+            bitrate: BitrateController::for_height(1080),
+            requested_preferred_height: 1080,
             last_bitrate_action: BitrateAction::Hold,
             last_receiver_stats: None,
             pending_stream_config: Some(StreamConfigParams::default()),
             receiver_capabilities: None,
             stream_config_sent: false,
             keyframe_requested: false,
-            resolution_downshift_requested: false,
-            resolution_upshift_requested: false,
+            pending_encoder_directive: None,
+            next_encoder_directive_id: 1,
+            current_stream_epoch: INITIAL_STREAM_EPOCH,
+            last_allocated_stream_epoch: INITIAL_STREAM_EPOCH,
+            committed_encoder_height: 0,
+            pending_local_stream_epoch: None,
+            reconfiguration_rollback: None,
+            stream_config_staged_during_reconfiguration: false,
+            media_blocked_for_stream_config: false,
             pending_camera_command: None,
             last_session_error: None,
         }
@@ -176,11 +207,14 @@ impl<T: PicooTransport> SenderSession<T> {
         self.receiver_capabilities.as_ref()
     }
 
-    pub fn set_stream_config(&mut self, config: StreamConfigParams) {
+    pub fn set_stream_config(&mut self, mut config: StreamConfigParams) {
         // Allow re-send when SPS/PPS arrive late or resolution/mirror changes (PUC-005/006).
+        config.stream_epoch = self.current_stream_epoch;
         self.pending_stream_config = Some(config);
         self.stream_config_sent = false;
-        self.apply_capability_height_clamp();
+        if self.reconfiguration_rollback.is_some() {
+            self.stream_config_staged_during_reconfiguration = true;
+        }
     }
 
     /// Max height from receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
@@ -191,36 +225,11 @@ impl<T: PicooTransport> SenderSession<T> {
             .unwrap_or(0)
     }
 
-    /// Clamp pending StreamConfig to advertised Capabilities heights.
-    fn apply_capability_height_clamp(&mut self) {
-        let max_h = self.receiver_max_height();
-        if max_h == 0 {
-            return;
-        }
-        let Some(cfg) = self.pending_stream_config.as_mut() else {
-            return;
-        };
-        if cfg.height <= max_h {
-            return;
-        }
-        // Map onto the receiver ladder (480p / 720p / 1080p).
-        if max_h < 720 {
-            cfg.width = 854;
-            cfg.height = 480;
-        } else if max_h < 1080 {
-            cfg.width = 1280;
-            cfg.height = 720;
-        } else {
-            cfg.width = 1920;
-            cfg.height = 1080.min(max_h);
-        }
-        self.stream_config_sent = false;
-        self.bitrate.sync_encode_height(cfg.height);
-    }
-
     /// User / capability preferred capture height (does not change active encode height).
     pub fn set_preferred_height(&mut self, height: u32) {
-        self.bitrate.set_preferred_height(height);
+        self.requested_preferred_height = picoo_rate_control::normalize_height(height);
+        let preferred = self.cap_to_receiver_height(self.requested_preferred_height);
+        self.bitrate.set_preferred_height(preferred);
     }
 
     /// Host thermal policy — block ABR upshift while overheating (MEDIA-010).
@@ -232,9 +241,108 @@ impl<T: PicooTransport> SenderSession<T> {
         self.bitrate.thermal_hold()
     }
 
-    /// Host applied encode height (thermal / user / ABR). Syncs ABR ladder.
-    pub fn sync_encode_height(&mut self, height: u32) {
+    /// Host applied an encode height for the current Rust-owned generation.
+    pub fn report_encoder_height(&mut self, height: u32, stream_epoch: u32) -> bool {
+        if height == 0 {
+            return false;
+        }
+        let normalized_height = picoo_rate_control::normalize_height(height);
+        if height != normalized_height {
+            return false;
+        }
+        if self.pending_local_stream_epoch == Some(stream_epoch) {
+            self.commit_stream_epoch(stream_epoch, normalized_height);
+        } else if self.pending_local_stream_epoch.is_some()
+            || self.pending_encoder_directive.is_some()
+            || stream_epoch != self.current_stream_epoch
+        {
+            return false;
+        } else if self.committed_encoder_height == 0 {
+            // Initial synchronization is allowed only for the StreamConfig
+            // already associated with the committed epoch.
+            let configured_height = self
+                .pending_stream_config
+                .as_ref()
+                .map(|config| config.height);
+            if configured_height != Some(height) {
+                return false;
+            }
+            self.committed_encoder_height = normalized_height;
+        } else if height != self.committed_encoder_height {
+            // Any actual resolution change must use begin/apply/report so it
+            // receives a fresh epoch and cannot mutate committed state.
+            return false;
+        }
         self.bitrate.sync_encode_height(height);
+        true
+    }
+
+    pub fn current_stream_epoch(&self) -> u32 {
+        self.current_stream_epoch
+    }
+
+    /// Allocate a fresh stream generation before a native encoder discontinuity.
+    pub fn begin_stream_reconfiguration(&mut self) -> u32 {
+        // The platform must explicitly ACK/NACK/cancel the existing transition.
+        // Silently replacing it would let a late native callback commit the
+        // wrong generation.
+        if self.pending_local_stream_epoch.is_some() || self.pending_encoder_directive.is_some() {
+            return 0;
+        }
+        let epoch = self.allocate_stream_epoch();
+        if epoch == 0 {
+            return 0;
+        }
+        self.begin_reconfiguration_transaction();
+        self.pending_local_stream_epoch = Some(epoch);
+        self.keyframe_requested = true;
+        epoch
+    }
+
+    fn allocate_stream_epoch(&mut self) -> u32 {
+        if self.last_allocated_stream_epoch >= MAX_STREAM_EPOCH {
+            self.last_session_error = Some("STREAM_EPOCH_EXHAUSTED".into());
+            return 0;
+        }
+        let Some(next) = self.last_allocated_stream_epoch.checked_add(1) else {
+            self.last_session_error = Some("STREAM_EPOCH_EXHAUSTED".into());
+            return 0;
+        };
+        self.last_allocated_stream_epoch = next;
+        next
+    }
+
+    fn commit_stream_epoch(&mut self, epoch: u32, actual_height: u32) {
+        // Keep only a config explicitly staged during this transaction and
+        // matching the native encoder output. The old epoch's config must
+        // never be relabelled and sent for the new epoch.
+        let staged_config = self
+            .stream_config_staged_during_reconfiguration
+            .then(|| self.pending_stream_config.clone())
+            .flatten()
+            .filter(|config| config.height == actual_height)
+            .map(|mut config| {
+                config.stream_epoch = epoch;
+                config
+            });
+        self.current_stream_epoch = epoch;
+        self.pending_local_stream_epoch = None;
+        self.committed_encoder_height = actual_height;
+        self.pending_stream_config = staged_config;
+        self.stream_config_sent = false;
+        self.media_blocked_for_stream_config = true;
+        self.keyframe_requested = true;
+        self.reconfiguration_rollback = None;
+        self.stream_config_staged_during_reconfiguration = false;
+    }
+
+    pub fn cancel_stream_reconfiguration(&mut self, stream_epoch: u32) -> bool {
+        if self.pending_local_stream_epoch != Some(stream_epoch) {
+            return false;
+        }
+        self.pending_local_stream_epoch = None;
+        self.rollback_reconfiguration_transaction();
+        true
     }
 
     pub fn stream_config_sent(&self) -> bool {
@@ -289,24 +397,123 @@ impl<T: PicooTransport> SenderSession<T> {
         Ok(())
     }
 
-    /// Consume ABR resolution downshift hint (REQ-PICOO-MEDIA-010 / PUC-006).
-    pub fn take_resolution_downshift(&mut self) -> bool {
-        let pending = self.resolution_downshift_requested;
-        self.resolution_downshift_requested = false;
-        if pending {
-            self.bitrate.acknowledge_resolution_downshift();
-        }
-        pending
+    pub fn pending_encoder_directive(&self) -> Option<EncoderDirective> {
+        self.pending_encoder_directive
     }
 
-    /// Consume ABR resolution upshift hint (REQ-PICOO-MEDIA-010 / PUC-006).
-    pub fn take_resolution_upshift(&mut self) -> bool {
-        let pending = self.resolution_upshift_requested;
-        self.resolution_upshift_requested = false;
-        if pending {
-            self.bitrate.acknowledge_resolution_upshift();
+    /// Advance ABR state only after the platform confirms the encoder reconfiguration.
+    pub fn acknowledge_encoder_directive(&mut self, id: u64, actual_height: u32) -> bool {
+        let Some(directive) = self.pending_encoder_directive else {
+            return false;
+        };
+        if directive.id != id
+            || self.pending_local_stream_epoch.is_some()
+            || directive.stream_epoch == self.current_stream_epoch
+            || actual_height != directive.target_height
+        {
+            return false;
         }
-        pending
+        self.bitrate.sync_encode_height(actual_height);
+        self.commit_stream_epoch(directive.stream_epoch, directive.target_height);
+        self.pending_encoder_directive = None;
+        true
+    }
+
+    /// Keep the active ladder unchanged and allow a later ReceiverStats tick to retry.
+    pub fn reject_encoder_directive(&mut self, id: u64) -> bool {
+        let Some(directive) = self.pending_encoder_directive else {
+            return false;
+        };
+        if directive.id != id {
+            return false;
+        }
+        let action = match directive.kind {
+            EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
+            EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
+        };
+        self.bitrate.reject_resolution_change(action);
+        self.pending_encoder_directive = None;
+        self.rollback_reconfiguration_transaction();
+        true
+    }
+
+    fn queue_encoder_directive(&mut self, kind: EncoderDirectiveKind, target_height: u32) {
+        if self.pending_encoder_directive.is_some() || self.pending_local_stream_epoch.is_some() {
+            return;
+        }
+        let target_height = self.cap_to_receiver_height(target_height);
+        if target_height == self.bitrate.active_height() {
+            let action = match kind {
+                EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
+                EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
+            };
+            self.bitrate.reject_resolution_change(action);
+            return;
+        }
+        let id = self.next_encoder_directive_id;
+        let Some(next_id) = id.checked_add(1) else {
+            self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
+            return;
+        };
+        let stream_epoch = self.allocate_stream_epoch();
+        if stream_epoch == 0 {
+            return;
+        }
+        self.next_encoder_directive_id = next_id;
+        self.begin_reconfiguration_transaction();
+        self.pending_encoder_directive = Some(EncoderDirective {
+            id,
+            kind,
+            target_height,
+            target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
+            stream_epoch,
+        });
+    }
+
+    fn abort_pending_reconfiguration(&mut self) {
+        if let Some(directive) = self.pending_encoder_directive.take() {
+            match directive.kind {
+                EncoderDirectiveKind::AbrDownshift => self
+                    .bitrate
+                    .reject_resolution_change(BitrateAction::DownshiftResolution),
+                EncoderDirectiveKind::AbrUpshift => self
+                    .bitrate
+                    .reject_resolution_change(BitrateAction::UpshiftResolution),
+            }
+        }
+        self.pending_local_stream_epoch = None;
+        self.rollback_reconfiguration_transaction();
+    }
+
+    fn begin_reconfiguration_transaction(&mut self) {
+        debug_assert!(self.reconfiguration_rollback.is_none());
+        self.reconfiguration_rollback =
+            Some((self.pending_stream_config.clone(), self.stream_config_sent));
+        self.stream_config_staged_during_reconfiguration = false;
+    }
+
+    fn rollback_reconfiguration_transaction(&mut self) {
+        if let Some((config, sent)) = self.reconfiguration_rollback.take() {
+            self.pending_stream_config = config;
+            self.stream_config_sent = sent;
+        }
+        self.stream_config_staged_during_reconfiguration = false;
+    }
+
+    fn cap_to_receiver_height(&self, height: u32) -> u32 {
+        let requested = picoo_rate_control::normalize_height(height);
+        let maximum = self.receiver_max_height();
+        if maximum == 0 {
+            requested
+        } else {
+            requested.min(picoo_rate_control::normalize_height(maximum))
+        }
+    }
+
+    fn clear_receiver_capabilities(&mut self) {
+        self.receiver_capabilities = None;
+        self.bitrate
+            .set_preferred_height(self.requested_preferred_height);
     }
 
     pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, SenderError> {
@@ -328,9 +535,13 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, SenderError> {
+        let previous = self.trusted.clone();
         let removed = self.trusted.remove(device_id);
         if removed {
-            self.persist_trusted()?;
+            if let Err(error) = self.persist_trusted() {
+                self.trusted = previous;
+                return Err(error);
+            }
         }
         Ok(removed)
     }
@@ -370,19 +581,32 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     fn send_pending_stream_config(&mut self) -> Result<(), SenderError> {
-        if self.stream_config_sent {
+        if self.stream_config_sent
+            || self.pending_local_stream_epoch.is_some()
+            || self.pending_encoder_directive.is_some()
+        {
             return Ok(());
         }
         let Some(config) = self.pending_stream_config.clone() else {
             return Ok(());
         };
+        if self.media_blocked_for_stream_config && config.height != self.committed_encoder_height {
+            self.last_session_error = Some("STREAM_CONFIG_HEIGHT_MISMATCH".into());
+            return Err(SenderError::StreamConfigHeightMismatch {
+                expected: self.committed_encoder_height,
+                got: config.height,
+            });
+        }
         self.send_stream_config(&config)?;
         self.stream_config_sent = true;
+        self.media_blocked_for_stream_config = false;
         Ok(())
     }
 
-    pub fn send_stream_config(&mut self, config: &StreamConfigParams) -> Result<(), SenderError> {
+    fn send_stream_config(&mut self, config: &StreamConfigParams) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
+        let mut config = config.clone();
+        config.stream_epoch = self.current_stream_epoch;
         let msg = config.to_proto();
         let mut buf = Vec::new();
         msg.encode(&mut buf)
@@ -390,7 +614,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.transport
             .send_control(session, bytes::Bytes::from(buf))
             .map_err(SenderError::Transport)?;
-        self.pending_stream_config = Some(config.clone());
+        self.pending_stream_config = Some(config);
         Ok(())
     }
 
@@ -444,9 +668,11 @@ impl<T: PicooTransport> SenderSession<T> {
                 }
                 TransportEvent::ControlMessage(_, msg) => self.handle_control(msg),
                 TransportEvent::Disconnected(_, _) => {
+                    self.abort_pending_reconfiguration();
                     self.session = None;
                     self.pairing = None;
                     self.stream_config_sent = false;
+                    self.clear_receiver_capabilities();
                     self.pipeline.clear_pending_packets();
                     self.schedule_reconnect();
                 }
@@ -469,11 +695,23 @@ impl<T: PicooTransport> SenderSession<T> {
             };
             self.last_receiver_stats = Some(metrics.clone());
             self.last_bitrate_action = self.bitrate.update(&metrics);
-            if self.last_bitrate_action == BitrateAction::DownshiftResolution {
-                self.resolution_downshift_requested = true;
-            }
-            if self.last_bitrate_action == BitrateAction::UpshiftResolution {
-                self.resolution_upshift_requested = true;
+            if self.pending_encoder_directive.is_none()
+                && self.pending_local_stream_epoch.is_none()
+                && matches!(
+                    self.last_bitrate_action,
+                    BitrateAction::DownshiftResolution | BitrateAction::UpshiftResolution
+                )
+            {
+                if let Some(target_height) =
+                    self.bitrate.target_height_for(self.last_bitrate_action)
+                {
+                    let kind = match self.last_bitrate_action {
+                        BitrateAction::DownshiftResolution => EncoderDirectiveKind::AbrDownshift,
+                        BitrateAction::UpshiftResolution => EncoderDirectiveKind::AbrUpshift,
+                        _ => unreachable!(),
+                    };
+                    self.queue_encoder_directive(kind, target_height);
+                }
             }
             // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
             if matches!(
@@ -504,7 +742,9 @@ impl<T: PicooTransport> SenderSession<T> {
             // Empty Capabilities is a prost false-positive for almost any blob.
             if !capabilities.codecs.is_empty() {
                 self.receiver_capabilities = Some(capabilities);
-                self.apply_capability_height_clamp();
+                self.bitrate.set_preferred_height(
+                    self.cap_to_receiver_height(self.requested_preferred_height),
+                );
                 if self.status == SenderStatus::Negotiating {
                     self.enter_streaming();
                 }
@@ -646,8 +886,10 @@ impl<T: PicooTransport> SenderSession<T> {
         self.drain_events();
         self.session = None;
         self.pairing = None;
-        self.stream_config_sent = false;
         self.pipeline.clear_pending_packets();
+        self.abort_pending_reconfiguration();
+        self.stream_config_sent = false;
+        self.clear_receiver_capabilities();
         self.status = SenderStatus::Disconnected;
     }
 
@@ -661,7 +903,7 @@ impl<T: PicooTransport> SenderSession<T> {
             self.status,
             SenderStatus::Streaming | SenderStatus::NetworkUnstable
         ) {
-            let _ = self.send_pending_stream_config();
+            self.send_pending_stream_config()?;
         }
         Ok(())
     }
@@ -681,6 +923,17 @@ impl<T: PicooTransport> SenderSession<T> {
     ) -> Result<usize, SenderError> {
         if self.session.is_none() {
             return Err(SenderError::NotConnected);
+        }
+        if stream_epoch != self.current_stream_epoch {
+            return Err(SenderError::StaleStreamEpoch {
+                got: stream_epoch,
+                current: self.current_stream_epoch,
+            });
+        }
+        if self.media_blocked_for_stream_config {
+            return Err(SenderError::StreamConfigPending {
+                stream_epoch: self.current_stream_epoch,
+            });
         }
         self.pipeline
             .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch)
@@ -838,7 +1091,7 @@ mod tests {
     use std::time::Duration;
 
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
-    use picoo_protocol::control::{PairingChallenge, ServerHello};
+    use picoo_protocol::control::{Capabilities, PairingChallenge, Resolution, ServerHello};
     use picoo_protocol::ALPN;
     use picoo_rate_control::BitrateAction;
     use picoo_session::SenderStatus;
@@ -995,7 +1248,7 @@ mod tests {
             .expect("inject stats");
         session.pump().expect("pump");
         assert_eq!(session.last_bitrate_action(), BitrateAction::Decrease);
-        assert!(session.current_bitrate_bps() < DEFAULT_INITIAL_BITRATE_BPS);
+        assert!(session.current_bitrate_bps() < BitrateLadder::for_height(1080).initial_bps);
     }
 
     #[test]
@@ -1033,7 +1286,7 @@ mod tests {
             session
                 .inject_control_for_test(bytes::Bytes::from(buf))
                 .expect("inject");
-            if session.take_resolution_downshift() {
+            if session.pending_encoder_directive().is_some() {
                 saw = true;
                 break;
             }
@@ -1042,7 +1295,323 @@ mod tests {
             saw,
             "expected resolution downshift after sustained floor congestion"
         );
-        assert!(!session.take_resolution_downshift());
+        let directive = session.pending_encoder_directive().expect("directive");
+        assert_eq!(directive.kind, EncoderDirectiveKind::AbrDownshift);
+        assert_eq!(directive.target_height, 720);
+        assert_eq!(session.bitrate_active_height(), 1080);
+        assert_eq!(session.pending_encoder_directive(), Some(directive));
+        assert!(session.acknowledge_encoder_directive(directive.id, 720));
+        assert_eq!(session.bitrate_active_height(), 720);
+        assert!(session.pending_encoder_directive().is_none());
+    }
+
+    #[test]
+    fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        for _ in 0..30 {
+            let stats = ReceiverStatsMsg {
+                packet_loss: 0.05,
+                frame_age_ms: 250.0,
+                ..Default::default()
+            };
+            let mut buf = Vec::new();
+            stats.encode(&mut buf).expect("encode");
+            session
+                .inject_control_for_test(bytes::Bytes::from(buf))
+                .expect("inject");
+            if session.pending_encoder_directive().is_some() {
+                break;
+            }
+        }
+        let first = session
+            .pending_encoder_directive()
+            .expect("first directive");
+        assert!(session.reject_encoder_directive(first.id));
+        assert_eq!(session.bitrate_active_height(), 1080);
+
+        for _ in 0..10 {
+            let stats = ReceiverStatsMsg {
+                packet_loss: 0.05,
+                frame_age_ms: 250.0,
+                ..Default::default()
+            };
+            let mut buf = Vec::new();
+            stats.encode(&mut buf).expect("encode");
+            session
+                .inject_control_for_test(bytes::Bytes::from(buf))
+                .expect("inject");
+            if session.pending_encoder_directive().is_some() {
+                break;
+            }
+        }
+        let retry = session
+            .pending_encoder_directive()
+            .expect("retry directive");
+        assert_ne!(retry.id, first.id);
+        assert_eq!(retry.target_height, 720);
+        assert_eq!(session.bitrate_active_height(), 1080);
+
+        assert_eq!(session.begin_stream_reconfiguration(), 0);
+        assert_eq!(session.pending_encoder_directive(), Some(retry));
+        assert!(session.reject_encoder_directive(retry.id));
+        let local_epoch = session.begin_stream_reconfiguration();
+        assert!(local_epoch > retry.stream_epoch);
+        assert_eq!(session.begin_stream_reconfiguration(), 0);
+        assert_eq!(session.bitrate_active_height(), 1080);
+    }
+
+    #[test]
+    fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        let committed_epoch = session.current_stream_epoch();
+        let pending_epoch = session.begin_stream_reconfiguration();
+        assert_ne!(pending_epoch, committed_epoch);
+        session
+            .ingest_access_unit(b"still-current", true, 1, committed_epoch)
+            .expect("committed epoch remains valid while apply is pending");
+        assert!(matches!(
+            session.ingest_access_unit(b"not-committed", true, 2, pending_epoch),
+            Err(SenderError::StaleStreamEpoch { got, current })
+                if got == pending_epoch && current == committed_epoch
+        ));
+        assert!(session.report_encoder_height(720, pending_epoch));
+        assert_eq!(session.current_stream_epoch(), pending_epoch);
+        assert!(matches!(
+            session.ingest_access_unit(b"now-stale", true, 3, committed_epoch),
+            Err(SenderError::StaleStreamEpoch { got, current })
+                if got == committed_epoch && current == pending_epoch
+        ));
+        assert!(matches!(
+            session.ingest_access_unit(b"before-config", true, 4, pending_epoch),
+            Err(SenderError::StreamConfigPending { stream_epoch })
+                if stream_epoch == pending_epoch
+        ));
+        session.set_stream_config(StreamConfigParams {
+            width: 1280,
+            height: 720,
+            ..Default::default()
+        });
+        session
+            .send_pending_stream_config()
+            .expect("queue matching config before media");
+        session
+            .ingest_access_unit(b"current", true, 5, pending_epoch)
+            .expect("committed pending epoch accepted");
+    }
+
+    #[test]
+    fn stream_config_epoch_changes_only_when_native_apply_commits() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        session.stream_config_sent = true;
+        let committed = session.current_stream_epoch();
+        let pending = session.begin_stream_reconfiguration();
+        assert_ne!(pending, committed);
+        assert!(session.stream_config_sent());
+        assert_eq!(
+            session
+                .pending_stream_config()
+                .map(|config| config.stream_epoch),
+            Some(committed)
+        );
+
+        assert!(session.report_encoder_height(720, pending));
+        assert!(!session.stream_config_sent());
+        assert!(session.pending_stream_config().is_none());
+        assert!(session.media_blocked_for_stream_config);
+
+        session.set_stream_config(StreamConfigParams {
+            width: 1280,
+            height: 720,
+            ..Default::default()
+        });
+        session
+            .send_pending_stream_config()
+            .expect("new config is sent");
+        assert_eq!(
+            session
+                .pending_stream_config()
+                .map(|config| config.stream_epoch),
+            Some(pending)
+        );
+        assert!(!session.media_blocked_for_stream_config);
+    }
+
+    #[test]
+    fn current_epoch_report_is_idempotent_not_a_resolution_transition() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        let epoch = session.current_stream_epoch();
+        session.set_stream_config(StreamConfigParams {
+            width: 1920,
+            height: 1080,
+            ..Default::default()
+        });
+        assert!(session.report_encoder_height(1080, epoch));
+        assert!(session.report_encoder_height(1080, epoch));
+        assert!(!session.report_encoder_height(720, epoch));
+        assert_eq!(session.bitrate_active_height(), 1080);
+    }
+
+    #[test]
+    fn stream_epoch_exhausts_before_crossing_android_signed_range() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session.last_allocated_stream_epoch = MAX_STREAM_EPOCH;
+        assert_eq!(session.begin_stream_reconfiguration(), 0);
+        assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
+        assert_eq!(session.last_session_error(), Some("STREAM_EPOCH_EXHAUSTED"));
+    }
+
+    #[test]
+    fn receiver_capability_caps_preferred_height_in_rust() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        let capabilities = Capabilities {
+            codecs: vec!["h264".into()],
+            resolutions: vec![
+                Resolution {
+                    width: 854,
+                    height: 480,
+                },
+                Resolution {
+                    width: 1280,
+                    height: 720,
+                },
+            ],
+            fps: vec![30],
+            front_camera: true,
+            back_camera: true,
+        };
+        let mut encoded = Vec::new();
+        capabilities.encode(&mut encoded).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(encoded))
+            .expect("inject capabilities");
+        session.set_preferred_height(1080);
+        assert_eq!(session.receiver_max_height(), 720);
+        assert_eq!(session.bitrate.preferred_height(), 720);
+
+        let expanded = Capabilities {
+            codecs: vec!["h264".into()],
+            resolutions: vec![Resolution {
+                width: 1920,
+                height: 1080,
+            }],
+            fps: vec![30],
+            front_camera: true,
+            back_camera: true,
+        };
+        let mut encoded = Vec::new();
+        expanded.encode(&mut encoded).expect("encode");
+        session
+            .inject_control_for_test(bytes::Bytes::from(encoded))
+            .expect("inject expanded capabilities");
+        assert_eq!(session.bitrate.preferred_height(), 1080);
+    }
+
+    #[test]
+    fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        let pending = session.begin_stream_reconfiguration();
+        session.set_stream_config(StreamConfigParams {
+            width: 1280,
+            height: 720,
+            sps: vec![1, 2, 3],
+            ..Default::default()
+        });
+        assert!(session.report_encoder_height(720, pending));
+        let config = session.pending_stream_config().expect("staged config");
+        assert_eq!(config.stream_epoch, pending);
+        assert_eq!(config.sps, vec![1, 2, 3]);
+        assert!(session.media_blocked_for_stream_config);
+    }
+
+    #[test]
+    fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .expect("connect");
+        let pending = session.begin_stream_reconfiguration();
+        assert!(session.report_encoder_height(720, pending));
+        session.set_stream_config(StreamConfigParams {
+            width: 1920,
+            height: 1080,
+            ..Default::default()
+        });
+        assert!(matches!(
+            session.send_pending_stream_config(),
+            Err(SenderError::StreamConfigHeightMismatch {
+                expected: 720,
+                got: 1080
+            })
+        ));
+        assert!(matches!(
+            session.ingest_access_unit(b"blocked", true, 1, pending),
+            Err(SenderError::StreamConfigPending { .. })
+        ));
+    }
+
+    #[test]
+    fn noncanonical_encoder_height_cannot_commit_ladder_epoch() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        let pending = session.begin_stream_reconfiguration();
+        session.set_stream_config(StreamConfigParams {
+            width: 1280,
+            height: 800,
+            ..Default::default()
+        });
+        assert!(!session.report_encoder_height(800, pending));
+        assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
+    }
+
+    #[test]
+    fn cancelled_reconfiguration_restores_committed_stream_config() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session.stream_config_sent = true;
+        let committed = session.pending_stream_config().cloned();
+        let pending = session.begin_stream_reconfiguration();
+        session.set_stream_config(StreamConfigParams {
+            width: 854,
+            height: 480,
+            ..Default::default()
+        });
+        assert_eq!(session.pending_stream_config().map(|c| c.height), Some(480));
+        assert!(session.cancel_stream_reconfiguration(pending));
+        assert_eq!(session.pending_stream_config().cloned(), committed);
+        assert!(session.stream_config_sent());
+    }
+
+    #[test]
+    fn disconnect_aborts_pending_local_and_directive_generations() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        let local = session.begin_stream_reconfiguration();
+        assert_eq!(session.pending_local_stream_epoch, Some(local));
+        session.disconnect();
+        assert_eq!(session.pending_local_stream_epoch, None);
+
+        session.queue_encoder_directive(EncoderDirectiveKind::AbrDownshift, 720);
+        assert!(session.pending_encoder_directive().is_some());
+        session.disconnect();
+        assert!(session.pending_encoder_directive().is_none());
     }
 
     #[test]
@@ -1271,5 +1840,25 @@ mod tests {
 
         let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("load");
         assert!(loaded.is_paired("windows-receiver"));
+    }
+
+    #[test]
+    fn failed_trusted_device_persist_rolls_back_memory_state() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session.trusted.upsert(picoo_pairing::TrustedDevice {
+            device_id: "receiver-rollback".into(),
+            device_name: "Receiver".into(),
+            public_key: vec![1, 2, 3],
+            certificate_fingerprint: "rollback".into(),
+            paired_at_ms: 1,
+            last_connected_at_ms: None,
+        });
+        // Writing JSON to a directory is guaranteed to fail. The in-memory
+        // trust decision must remain unchanged when persistence does not commit.
+        session.trusted_store_path = Some(dir.path().to_path_buf());
+
+        assert!(session.remove_trusted_device("receiver-rollback").is_err());
+        assert!(session.trusted.is_paired("receiver-rollback"));
     }
 }

@@ -199,12 +199,14 @@ fn try_macos_file_lock(
     exclusive: bool,
 ) -> Result<Option<KernelLockGuard>, SharedRingError> {
     use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
 
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
+        .custom_flags(libc::O_NONBLOCK)
         .open(lock_path)
         .map_err(|error| map_file_err(lock_path, error))?;
     let operation = if exclusive {
@@ -810,11 +812,14 @@ fn create_file_mapping(
     path: &Path,
     max_frame_bytes: usize,
 ) -> Result<FileMapping, SharedRingError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
     let size = layout_size(max_frame_bytes);
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
+        .custom_flags(libc::O_NONBLOCK)
         .open(path)
         .map_err(|error| map_file_err(path, error))?;
     file.set_len(size as u64)
@@ -831,10 +836,13 @@ fn create_file_mapping(
 
 #[cfg(target_os = "macos")]
 fn open_file_mapping(path: &Path, max_frame_bytes: usize) -> Result<FileMapping, SharedRingError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
     let size = layout_size(max_frame_bytes);
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
+        .custom_flags(libc::O_NONBLOCK)
         .open(path)
         .map_err(|error| map_file_err(path, error))?;
     validate_file_size(path, &file, size)?;
@@ -870,11 +878,14 @@ impl SharedFrameRingConsumer {
         path: impl AsRef<Path>,
         max_frame_bytes: usize,
     ) -> Result<Self, SharedRingError> {
+        use std::os::unix::fs::OpenOptionsExt;
+
         let path = path.as_ref();
         let size = layout_size(max_frame_bytes);
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
+            .custom_flags(libc::O_NONBLOCK)
             .open(path)
             .map_err(|error| map_file_err(path, error))?;
         validate_file_size(path, &file, size)?;
@@ -1079,6 +1090,24 @@ pub fn macos_app_group_ring_path(name: &str) -> Result<PathBuf, SharedRingError>
         ));
     }
     let identifier = macos_app_group_identifier()?;
+    // An unsigned development bundle has no valid App Group entitlement.
+    // Asking LaunchServices for that synthetic container before GPUI starts
+    // can block the app's main thread indefinitely. The embedded unsigned
+    // extension cannot be activated anyway, so keep host previews functional
+    // in a user-owned fallback directory until a real Team ID is injected.
+    if identifier.starts_with("UNSIGNED.") {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            SharedRingError::AppGroupUnavailable(
+                "HOME is unavailable for unsigned macOS fallback".into(),
+            )
+        })?;
+        return Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Picoo Camera")
+            .join("SharedFrameRing")
+            .join(format!("{name}.ring")));
+    }
     let manager = NSFileManager::defaultManager();
     let group = NSString::from_str(&identifier);
     let container = manager

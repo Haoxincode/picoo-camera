@@ -1,6 +1,6 @@
 # Picoo Camera iOS Sender
 
-状态：SwiftUI 设备流程、Rust C ABI 状态桥、mDNS/手动直连、AVFoundation 采集和 VideoToolbox H.264 媒体链路为 `implemented`；iPhone 真机 720p30 / 1080p30、弱网 ABR、方向与视觉验收仍待升级为 `verified`。
+状态：SwiftUI 设备流程、Rust C ABI 状态桥、mDNS/手动直连、AVFoundation 采集和 VideoToolbox H.264 媒体链路为 `implemented`；iPhone 真机 480p30 / 720p30 / 1080p30、弱网 ABR、方向与视觉验收仍待升级为 `verified`。
 
 ## 边界
 

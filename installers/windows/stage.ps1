@@ -7,6 +7,12 @@ $Bundle = Join-Path $Release "bundle"
 
 New-Item -ItemType Directory -Force -Path $Bundle | Out-Null
 
+$ObsoleteRegisterScript = Join-Path $Bundle "register-vcam.ps1"
+if (Test-Path $ObsoleteRegisterScript) {
+    Remove-Item -Force $ObsoleteRegisterScript
+    Write-Host "Removed obsolete register-vcam.ps1 from bundle"
+}
+
 $Artifacts = @(
     "picoo-desktop.exe",
     "picoo-vcam-ring-reader.exe"
@@ -42,12 +48,6 @@ if ($null -ne $VcamDll) {
         Write-Error "PicooVirtualCameraSource.dll not found (PICOO_REQUIRE_MSI=1)"
     }
     Write-Warning "PicooVirtualCameraSource.dll not found - Rust cdylib build skipped or failed"
-}
-
-$RegisterScript = Join-Path $Root "installers/windows/register-vcam.ps1"
-if (Test-Path $RegisterScript) {
-    Copy-Item -Force $RegisterScript (Join-Path $Bundle "register-vcam.ps1")
-    Write-Host "Staged register-vcam.ps1"
 }
 
 $BuildMsi = Join-Path $Root "installers/windows/build-msi.ps1"

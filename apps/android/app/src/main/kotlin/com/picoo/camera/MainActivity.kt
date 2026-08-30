@@ -23,8 +23,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -40,14 +38,16 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.media.EncoderReconfigurationCoordinator
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
-import com.picoo.camera.media.MediaBitrate
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
+import com.picoo.camera.runtime.SenderNativeRuntime
 import com.picoo.camera.ui.SenderTab
+import com.picoo.camera.ui.SenderHomeState
 import com.picoo.camera.network.WifiNetworkInfo
 import com.picoo.camera.ui.screens.DevicesScreen
 import com.picoo.camera.ui.screens.ManualConnectScreen
@@ -208,76 +208,56 @@ private fun SenderHomeScreen(
     onRequestNotifications: () -> Unit,
 ) {
     val context = LocalContext.current
-    var encoderState by remember { mutableStateOf(CaptureState.Idle) }
-    var errorText by remember { mutableStateOf<String?>(null) }
-    var hostText by remember { mutableStateOf("127.0.0.1") }
-    var portText by remember { mutableStateOf("4433") }
-    var senderStatus by remember { mutableIntStateOf(PicooNative.STATUS_DISCONNECTED) }
-    var pairingCode by remember { mutableStateOf("") }
-    val discoveredListState =
-        remember { mutableStateOf<List<PicooNative.DiscoveredReceiver>>(emptyList()) }
+    val uiState = remember { SenderHomeState() }
+    var encoderState by uiState::encoderState
+    var errorText by uiState::errorText
+    var hostText by uiState::hostText
+    var portText by uiState::portText
+    var senderStatus by uiState::senderStatus
+    var pairingCode by uiState::pairingCode
+    val discoveredListState = uiState.discoveredReceivers
     val discoveredList = discoveredListState.value
-    var connectedReceiverId by remember { mutableStateOf("") }
-    var connectedReceiverName by remember { mutableStateOf("") }
-    var pairedDevices by remember { mutableStateOf<List<PicooNative.TrustedDevice>>(emptyList()) }
-    var selectedReceiverId by remember { mutableStateOf("") }
-    var selectedReceiverName by remember { mutableStateOf("") }
-    var trustedStoreHandle by remember { mutableLongStateOf(0L) }
-    val pairedReceiverIds = remember { mutableStateOf<Set<String>>(emptySet()) }
-    val autoConnectAttemptedIds = remember { mutableStateOf<Set<String>>(emptySet()) }
-    var suppressAutoConnect by remember { mutableStateOf(false) }
-    var remoteMirrored by remember { mutableStateOf(false) }
-    var localPreviewMirrored by remember {
-        mutableStateOf(LocalPreviewMirror.defaultFor(LensFacing.Back))
-    }
-    var resolutionLabel by remember { mutableStateOf("720p") }
-    var preferredResolutionLabel by remember { mutableStateOf("1080p") }
-    var powerHint by remember { mutableStateOf("") }
-    var thermalForced720 by remember { mutableStateOf(false) }
-    var thermalToastShown by remember { mutableStateOf(false) }
-    var linkQualityChip by remember { mutableStateOf("") }
-    var adaptiveBitrateBps by remember { mutableIntStateOf(3_000_000) }
-    var exposureEv by remember { mutableIntStateOf(0) }
-    var senderTab by remember { mutableStateOf(SenderTab.Devices) }
-    var phonePairingConfirmed by remember { mutableStateOf(false) }
-    var discoveryComplete by remember { mutableStateOf(false) }
-    var wifiPillText by remember { mutableStateOf("Wi‑Fi · 局域网") }
-    var pairingRemainingSeconds by remember { mutableIntStateOf(60) }
-    var pairingExpired by remember { mutableStateOf(false) }
-    var pairingStartedAtMs by remember { mutableLongStateOf(0L) }
-    var waitOutcome by remember { mutableStateOf(WaitOutcome.Pending) }
-    var waitUserCancelled by remember { mutableStateOf(false) }
-    var reconnectAttempt by remember { mutableIntStateOf(0) }
-    var reconnectDelayMs by remember { mutableLongStateOf(0L) }
-    var lastShownSessionError by remember { mutableStateOf("") }
+    var connectedReceiverId by uiState::connectedReceiverId
+    var connectedReceiverName by uiState::connectedReceiverName
+    var pairedDevices by uiState::pairedDevices
+    var selectedReceiverId by uiState::selectedReceiverId
+    var selectedReceiverName by uiState::selectedReceiverName
+    var suppressAutoConnect by uiState::suppressAutoConnect
+    var remoteMirrored by uiState::remoteMirrored
+    var localPreviewMirrored by uiState::localPreviewMirrored
+    var resolutionLabel by uiState::resolutionLabel
+    var preferredResolutionLabel by uiState::preferredResolutionLabel
+    var powerHint by uiState::powerHint
+    var thermalForced720 by uiState::thermalForced720
+    var thermalToastShown by uiState::thermalToastShown
+    var linkQualityChip by uiState::linkQualityChip
+    var adaptiveBitrateBps by uiState::adaptiveBitrateBps
+    var exposureEv by uiState::exposureEv
+    var senderTab by uiState::senderTab
+    var phonePairingConfirmed by uiState::phonePairingConfirmed
+    var discoveryComplete by uiState::discoveryComplete
+    var wifiPillText by uiState::wifiPillText
+    var pairingRemainingSeconds by uiState::pairingRemainingSeconds
+    var pairingExpired by uiState::pairingExpired
+    var pairingStartedAtMs by uiState::pairingStartedAtMs
+    var waitOutcome by uiState::waitOutcome
+    var waitUserCancelled by uiState::waitUserCancelled
+    var reconnectAttempt by uiState::reconnectAttempt
+    var reconnectDelayMs by uiState::reconnectDelayMs
+    var lastShownSessionError by uiState::lastShownSessionError
     val parameterSetsRef = remember { AtomicReference<Pair<ByteArray, ByteArray>?>(null) }
     val streamConfigDirty = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
-
-    val trustedStorePath = remember {
-        java.io.File(context.filesDir, "trusted_devices.json").absolutePath
-    }
-    val identityPath = remember {
-        java.io.File(context.filesDir, "sender_identity.json").absolutePath
-    }
-    val identityHandle = remember {
-        PicooNative.loadOrCreateIdentity(identityPath, android.os.Build.MODEL)
-    }
-    val senderDeviceId = remember(identityHandle) {
-        if (identityHandle == 0L) "android-sender" else PicooNative.getIdentityDeviceId(identityHandle)
-    }
-    val senderPublicKey = remember(identityHandle) {
-        if (identityHandle == 0L) byteArrayOf(1, 2, 3) else PicooNative.getIdentityPublicKey(identityHandle)
-    }
-    val senderDeviceName = remember(identityHandle) {
-        if (identityHandle == 0L) {
-            android.os.Build.MODEL
-        } else {
-            PicooNative.getIdentityDeviceName(identityHandle).ifBlank { android.os.Build.MODEL }
-        }
-    }
-    val senderHandle = remember { PicooNative.createSender() }
+    val runtime = remember(context) { SenderNativeRuntime(context) }
+    val senderDeviceId = remember(runtime) { runtime.senderDeviceId }
+    val senderPublicKey = remember(runtime) { runtime.senderPublicKey }
+    val senderDeviceName = remember(runtime) { runtime.senderDeviceName }
+    val senderHandle = runtime.senderHandle
+    val pairedReceiverIds = TrustedDeviceList.ids(pairedDevices)
     LaunchedEffect(senderHandle) {
         (context as? MainActivity)?.bindSenderHandle(senderHandle)
+        if (senderHandle != 0L) {
+            adaptiveBitrateBps = PicooNative.readSenderSnapshot(senderHandle).currentBitrateBps
+        }
     }
     val nsdBrowser =
         remember {
@@ -356,6 +336,8 @@ private fun SenderHomeScreen(
     val encoder = remember {
         Camera2MediaEncoder(
             context = context,
+            initialBitrateBps = PicooNative.bitrateInitialForHeight(StreamResolution.P720.height),
+            initialStreamEpoch = PicooNative.readSenderSnapshot(senderHandle).streamEpoch,
             frameListener = EncodedFrameListener { data, isKeyFrame, ptsUs, streamEpoch ->
                 val fragments = PicooNative.ingestAccessUnit(
                     handle = senderHandle,
@@ -375,14 +357,16 @@ private fun SenderHomeScreen(
             },
         )
     }
+    val encoderReconfiguration = remember { EncoderReconfigurationCoordinator() }
 
     fun applyStreamConfigToSender() {
-        val res = StreamResolution.fromLabel(resolutionLabel)
-        val width = res.width
-        val height = res.height
-        val bitrate = when {
-            adaptiveBitrateBps > 0 -> adaptiveBitrateBps
-            else -> MediaBitrate.forResolution(width, height)
+        val width = encoder.profile.resolution.width
+        val height = encoder.profile.resolution.height
+        val rustBitrate = PicooNative.readSenderSnapshot(senderHandle).currentBitrateBps
+        val bitrate = if (rustBitrate > 0) {
+            rustBitrate
+        } else {
+            PicooNative.bitrateInitialForHeight(height)
         }
         val sets = parameterSetsRef.get()
         PicooNative.setStreamConfig(
@@ -391,13 +375,21 @@ private fun SenderHomeScreen(
             height = height,
             fps = 30,
             bitrateBps = bitrate,
-            streamEpoch = encoder.streamEpoch,
             mirrored = remoteMirrored,
             rotation = encoder.sensorOrientationDegrees(),
             sps = sets?.first,
             pps = sets?.second,
         )
         streamConfigDirty.set(false)
+    }
+
+    fun beginLocalEncoderReconfiguration(targetHeight: Int): Boolean {
+        val epoch = encoderReconfiguration.beginLocal(senderHandle, encoder, targetHeight)
+        if (epoch == 0) {
+            errorText = "正在完成上一项视频调整，请稍后重试"
+            return false
+        }
+        return true
     }
 
     fun connectToReceiver(host: String, port: Int, receiverId: String) {
@@ -418,14 +410,13 @@ private fun SenderHomeScreen(
         }
     }
 
-    fun reloadTrustedStore() {
-        if (trustedStoreHandle != 0L) {
-            PicooNative.destroyTrustedStore(trustedStoreHandle)
+    fun reloadTrustedStore(): Boolean {
+        val devices = runtime.reloadTrustedDevices() ?: run {
+            errorText = "无法读取已配对设备，已保留上一次有效数据"
+            return false
         }
-        trustedStoreHandle = PicooNative.loadTrustedStore(trustedStorePath)
-        val devices = TrustedDeviceList.load(trustedStoreHandle)
         pairedDevices = devices
-        pairedReceiverIds.value = TrustedDeviceList.ids(devices)
+        return true
     }
 
     fun resetToDevices() {
@@ -448,14 +439,14 @@ private fun SenderHomeScreen(
         connectToReceiver(hostText, port, selectedReceiverId)
     }
 
-    LaunchedEffect(senderHandle, trustedStorePath) {
-        if (senderHandle != 0L) {
-            PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
+    LaunchedEffect(runtime) {
+        if (runtime.attachTrustedStore() != 0) {
+            errorText = "无法加载配对存储"
         }
         reloadTrustedStore()
     }
 
-    LaunchedEffect(discoveredList, pairedReceiverIds.value, senderStatus, suppressAutoConnect) {
+    LaunchedEffect(discoveredList, pairedReceiverIds, senderStatus, suppressAutoConnect) {
         if (suppressAutoConnect) return@LaunchedEffect
         val sessionBusy = when (senderStatus) {
             PicooNative.STATUS_DISCONNECTED,
@@ -465,11 +456,11 @@ private fun SenderHomeScreen(
         }
         val pick = PairedAutoConnect.pick(
             discovered = discoveredList,
-            pairedReceiverIds = pairedReceiverIds.value,
+            pairedReceiverIds = pairedReceiverIds,
             sessionBusy = sessionBusy,
-            alreadyAttemptedIds = autoConnectAttemptedIds.value,
+            alreadyAttemptedIds = runtime.autoConnectAttempts(),
         ) ?: return@LaunchedEffect
-        autoConnectAttemptedIds.value = autoConnectAttemptedIds.value + pick.receiverId
+        runtime.markAutoConnectAttempt(pick.receiverId)
         hostText = pick.host
         portText = pick.quicPort.toString()
         selectedReceiverId = pick.receiverId
@@ -585,13 +576,14 @@ private fun SenderHomeScreen(
                 PicooNative.setThermalHold(senderHandle, force720)
             }
             if (force720 && resolutionLabel == "1080p") {
-                resolutionLabel = "720p"
-                encoder.setResolution(1280, 720)
-                if (senderHandle != 0L) {
-                    PicooNative.syncEncodeHeight(senderHandle, 720)
+                val targetBitrate = PicooNative.bitrateInitialForHeight(720)
+                if (beginLocalEncoderReconfiguration(720)) {
+                    resolutionLabel = "720p"
+                    encoder.setTargetBitrateBps(targetBitrate)
+                    encoder.setResolution(1280, 720)
+                    streamConfigDirty.set(true)
+                    encoder.requestKeyFrame()
                 }
-                streamConfigDirty.set(true)
-                encoder.requestKeyFrame()
             }
             delay(5_000)
         }
@@ -602,15 +594,66 @@ private fun SenderHomeScreen(
         while (true) {
             if (senderHandle != 0L) {
                 PicooNative.pump(senderHandle)
-                senderStatus = PicooNative.getSenderStatus(senderHandle)
+                var senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
+                senderStatus = senderSnapshot.status
                 if (senderStatus == PicooNative.STATUS_RECONNECTING) {
-                    reconnectAttempt = PicooNative.getReconnectAttempt(senderHandle)
-                    reconnectDelayMs = PicooNative.getLastScheduledReconnectDelayMs(senderHandle)
+                    reconnectAttempt = senderSnapshot.reconnectAttempt
+                    reconnectDelayMs = senderSnapshot.reconnectDelayMs
                 } else {
                     reconnectAttempt = 0
                     reconnectDelayMs = 0L
                 }
                 encoderState = encoder.state
+                if (senderStatus == PicooNative.STATUS_DISCONNECTED) {
+                    encoderReconfiguration.abandonDisconnectedSession(senderHandle)
+                }
+                when (val result = encoderReconfiguration.poll(senderHandle, encoder)) {
+                    is EncoderReconfigurationCoordinator.PollResult.Failed -> {
+                        streamConfigDirty.set(false)
+                        senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
+                        resolutionLabel =
+                            StreamResolution.fromHeight(senderSnapshot.activeHeight).label
+                        errorText = result.message
+                    }
+                    is EncoderReconfigurationCoordinator.PollResult.Applied -> {
+                        senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
+                        adaptiveBitrateBps = result.bitrateBps
+                        resolutionLabel = StreamResolution.fromHeight(result.actualHeight).label
+                        encoder.setTargetBitrateBps(adaptiveBitrateBps)
+                        streamConfigDirty.set(true)
+                        encoder.requestKeyFrame()
+                    }
+                    is EncoderReconfigurationCoordinator.PollResult.Recovered -> {
+                        senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
+                        adaptiveBitrateBps = result.bitrateBps
+                        resolutionLabel = StreamResolution.fromHeight(result.actualHeight).label
+                        encoder.setTargetBitrateBps(adaptiveBitrateBps)
+                        streamConfigDirty.set(true)
+                        encoder.requestKeyFrame()
+                        errorText = "${result.message}；已恢复上一视频配置"
+                    }
+                    null -> Unit
+                }
+                if (!encoderReconfiguration.isPending &&
+                    encoder.appliedStreamEpoch == senderSnapshot.streamEpoch &&
+                    encoder.appliedEncoderHeight > 0 &&
+                    encoder.appliedEncoderHeight != senderSnapshot.activeHeight
+                ) {
+                    val actualHeight = encoder.appliedEncoderHeight
+                    val reportResult = PicooNative.reportEncoderHeight(
+                            senderHandle,
+                            actualHeight,
+                            encoder.appliedStreamEpoch,
+                        )
+                    if (reportResult == 0) {
+                        senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
+                        resolutionLabel = StreamResolution.fromHeight(actualHeight).label
+                        streamConfigDirty.set(true)
+                    } else if (beginLocalEncoderReconfiguration(actualHeight)) {
+                        val actualSize = encoder.profile.resolution
+                        encoder.setResolution(actualSize.width, actualSize.height)
+                    }
+                }
                 pairingCode = PicooNative.getPairingShortCode(senderHandle)
                 connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
                 connectedReceiverName =
@@ -618,7 +661,7 @@ private fun SenderHomeScreen(
                 if (connectedReceiverName.isNotEmpty()) {
                     selectedReceiverName = connectedReceiverName
                 }
-                val bps = PicooNative.getCurrentBitrateBps(senderHandle)
+                val bps = senderSnapshot.currentBitrateBps
                 if (bps > 0) {
                     adaptiveBitrateBps = bps
                     encoder.setTargetBitrateBps(bps)
@@ -653,29 +696,40 @@ private fun SenderHomeScreen(
                     val camOut = IntArray(3)
                     when (PicooNative.takeCameraCommand(senderHandle, camOut)) {
                         1 -> {
-                            encoder.setLensFacing(LensFacing.Front)
-                            localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
+                            if (encoder.profile.lensFacing != LensFacing.Front &&
+                                beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
+                            ) {
+                                encoder.setLensFacing(LensFacing.Front)
+                                localPreviewMirrored =
+                                    LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
+                                streamConfigDirty.set(true)
+                            }
                         }
                         2 -> {
-                            encoder.setLensFacing(LensFacing.Back)
-                            localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
+                            if (encoder.profile.lensFacing != LensFacing.Back &&
+                                beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
+                            ) {
+                                encoder.setLensFacing(LensFacing.Back)
+                                localPreviewMirrored =
+                                    LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
+                                streamConfigDirty.set(true)
+                            }
                         }
                         3 -> {
                             val w = camOut[0]
                             val h = camOut[1]
                             if (w > 0 && h > 0) {
                                 val res = StreamResolution.fromHeight(h)
-                                resolutionLabel = res.label
-                                preferredResolutionLabel = res.label
-                                encoder.setResolution(res.width, res.height)
-                                PicooNative.setPreferredHeight(senderHandle, res.height)
-                                PicooNative.syncEncodeHeight(senderHandle, res.height)
-                                streamConfigDirty.set(true)
-                                encoder.requestKeyFrame()
+                                if (beginLocalEncoderReconfiguration(res.height)) {
+                                    resolutionLabel = res.label
+                                    preferredResolutionLabel = res.label
+                                    val bitrate = PicooNative.bitrateInitialForHeight(res.height)
+                                    encoder.setTargetBitrateBps(bitrate)
+                                    encoder.setResolution(res.width, res.height)
+                                    PicooNative.setPreferredHeight(senderHandle, res.height)
+                                    streamConfigDirty.set(true)
+                                    encoder.requestKeyFrame()
+                                }
                             }
                         }
                         4 -> {
@@ -684,49 +738,52 @@ private fun SenderHomeScreen(
                         }
                     }
                 }
-                if (PicooNative.takeResolutionDownshift(senderHandle) == 1) {
-                    val current = StreamResolution.fromLabel(resolutionLabel)
-                    val next = when (current) {
-                        StreamResolution.P1080 -> StreamResolution.P720
-                        StreamResolution.P720 -> StreamResolution.P480
-                        StreamResolution.P480 -> null
-                    }
-                    if (next != null) {
-                        resolutionLabel = next.label
-                        encoder.setResolution(next.width, next.height)
-                        PicooNative.syncEncodeHeight(senderHandle, next.height)
+                val receiverMaxHeight = senderSnapshot.receiverMaxHeight
+                if (!encoderReconfiguration.isPending &&
+                    receiverMaxHeight in 1 until encoder.profile.resolution.height
+                ) {
+                    val target = StreamResolution.fromHeight(receiverMaxHeight)
+                    val targetBitrate = PicooNative.bitrateInitialForHeight(target.height)
+                    if (beginLocalEncoderReconfiguration(target.height)) {
+                        resolutionLabel = target.label
+                        preferredResolutionLabel = target.label
+                        encoder.setTargetBitrateBps(targetBitrate)
+                        encoder.setResolution(target.width, target.height)
                         streamConfigDirty.set(true)
                         encoder.requestKeyFrame()
                     }
                 }
-                if (!PowerHints.shouldForce720p(PowerHints.readThermalStatus(context)) &&
-                    PicooNative.takeResolutionUpshift(senderHandle) == 1
-                ) {
-                    val preferred = StreamResolution.fromLabel(preferredResolutionLabel)
-                    val current = StreamResolution.fromLabel(resolutionLabel)
-                    val next = when {
-                        current == StreamResolution.P480 && preferred.height >= 720 ->
-                            StreamResolution.P720
-                        current == StreamResolution.P720 && preferred.height >= 1080 ->
-                            StreamResolution.P1080
-                        else -> null
-                    }
-                    if (next != null) {
-                        val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
-                        if (maxH == 0 || maxH >= next.height) {
-                            resolutionLabel = next.label
-                            encoder.setResolution(next.width, next.height)
-                            PicooNative.syncEncodeHeight(senderHandle, next.height)
-                            streamConfigDirty.set(true)
-                            encoder.requestKeyFrame()
+                if (!encoderReconfiguration.isPending) {
+                    val directive = PicooNative.readEncoderDirective(senderHandle)
+                    if (directive != null) {
+                        val maxH = senderSnapshot.receiverMaxHeight
+                        val thermalBlocks = thermalForced720 && directive.targetHeight > 720
+                        val capabilityBlocks = maxH in 1 until directive.targetHeight
+                        if (thermalBlocks || capabilityBlocks) {
+                            PicooNative.nackEncoderDirective(senderHandle, directive.id)
+                        } else {
+                            val next = StreamResolution.fromHeight(directive.targetHeight)
+                            if (encoderReconfiguration.beginDirective(
+                                    senderHandle,
+                                    encoder,
+                                    directive,
+                                )
+                            ) {
+                                resolutionLabel = next.label
+                                encoder.setTargetBitrateBps(directive.targetBitrateBps)
+                                encoder.setResolution(next.width, next.height)
+                            }
                         }
                     }
                 }
                 if (previousStatus == PicooNative.STATUS_RECONNECTING &&
                     senderStatus == PicooNative.STATUS_STREAMING
                 ) {
-                    encoder.requestKeyFrame()
-                    streamConfigDirty.set(true)
+                    if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
+                        encoder.stopPreview()
+                        encoder.startPreview()
+                        streamConfigDirty.set(true)
+                    }
                 }
                 if (senderTab == SenderTab.Wait &&
                     phonePairingConfirmed &&
@@ -740,10 +797,11 @@ private fun SenderHomeScreen(
                     previousStatus != PicooNative.STATUS_DISCONNECTED &&
                     !suppressAutoConnect
                 ) {
-                    autoConnectAttemptedIds.value = emptySet()
+                    runtime.clearAutoConnectAttempts()
                 }
                 previousStatus = senderStatus
-                if (streamConfigDirty.get() &&
+                if (!encoderReconfiguration.isPending &&
+                    streamConfigDirty.get() &&
                     (senderStatus == PicooNative.STATUS_STREAMING ||
                         senderStatus == PicooNative.STATUS_NEGOTIATING)
                 ) {
@@ -778,18 +836,11 @@ private fun SenderHomeScreen(
         }
     }
 
-    DisposableEffect(encoder, senderHandle, trustedStoreHandle, identityHandle) {
+    DisposableEffect(runtime, encoder) {
         onDispose {
             encoder.close()
-            if (trustedStoreHandle != 0L) {
-                PicooNative.destroyTrustedStore(trustedStoreHandle)
-            }
-            if (senderHandle != 0L) {
-                PicooNative.destroySender(senderHandle)
-            }
-            if (identityHandle != 0L) {
-                PicooNative.destroyIdentity(identityHandle)
-            }
+            (context as? MainActivity)?.bindSenderHandle(0L)
+            runtime.close()
         }
     }
 
@@ -801,7 +852,7 @@ private fun SenderHomeScreen(
             SenderTab.Devices -> DevicesScreen(
                 discoveredList = discoveredList,
                 pairedDevices = pairedDevices,
-                pairedReceiverIds = pairedReceiverIds.value,
+                pairedReceiverIds = pairedReceiverIds,
                 nearbyWifiGranted = nearbyWifiGranted,
                 discoveryComplete = discoveryComplete,
                 wifiPillText = wifiPillText,
@@ -820,14 +871,10 @@ private fun SenderHomeScreen(
                 },
                 onRemovePaired = { device ->
                     selectedReceiverId = device.deviceId
-                    val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, device.deviceId)
+                    val rc = runtime.removeTrustedDevice(device.deviceId)
                     if (rc == 1) {
-                        PicooNative.saveTrustedStore(trustedStoreHandle)
-                        PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
-                        autoConnectAttemptedIds.value =
-                            autoConnectAttemptedIds.value - device.deviceId
-                        reloadTrustedStore()
-                        errorText = null
+                        runtime.forgetAutoConnectAttempt(device.deviceId)
+                        if (reloadTrustedStore()) errorText = null
                     } else {
                         errorText = "删除失败 ($rc)"
                     }
@@ -845,6 +892,7 @@ private fun SenderHomeScreen(
             SenderTab.Settings -> SettingsScreen(
                 pairedDeviceCount = pairedDevices.size,
                 pairedDevices = pairedDevices,
+                errorText = errorText,
                 cameraGranted = cameraGranted,
                 nearbyWifiGranted = nearbyWifiGranted,
                 notificationsGranted = notificationsGranted,
@@ -858,13 +906,12 @@ private fun SenderHomeScreen(
                 },
                 onOpenPairedDevices = { senderTab = SenderTab.Devices },
                 onRemovePaired = { device ->
-                    val rc = PicooNative.removeTrustedDevice(trustedStoreHandle, device.deviceId)
+                    val rc = runtime.removeTrustedDevice(device.deviceId)
                     if (rc == 1) {
-                        PicooNative.saveTrustedStore(trustedStoreHandle)
-                        PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
-                        autoConnectAttemptedIds.value =
-                            autoConnectAttemptedIds.value - device.deviceId
-                        reloadTrustedStore()
+                        runtime.forgetAutoConnectAttempt(device.deviceId)
+                        if (reloadTrustedStore()) errorText = null
+                    } else {
+                        errorText = "删除失败 ($rc)"
                     }
                 },
                 onToggleAutoConnect = { suppressAutoConnect = !suppressAutoConnect },
@@ -963,16 +1010,18 @@ private fun SenderHomeScreen(
                 },
                 onRequestCamera = { onRequestCamera(null) },
                 onFlipCamera = {
-                    encoder.switchCamera()
-                    localPreviewMirrored =
-                        LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                    encoderState = encoder.state
-                    applyStreamConfigToSender()
+                    if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
+                        encoder.switchCamera()
+                        localPreviewMirrored =
+                            LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
+                        encoderState = encoder.state
+                        streamConfigDirty.set(true)
+                    }
                 },
                 onToggleResolution = {
                     val current = StreamResolution.fromLabel(resolutionLabel)
                     val next = StreamResolution.next(current, thermalForced720)
-                    val maxH = PicooNative.getReceiverMaxHeight(senderHandle)
+                    val maxH = PicooNative.readSenderSnapshot(senderHandle).receiverMaxHeight
                     if (maxH in 1 until next.height) {
                         errorText = "接收端最高 ${maxH}p — 无法切换至 ${next.label}"
                         return@StreamingScreen
@@ -986,16 +1035,19 @@ private fun SenderHomeScreen(
                         ).show()
                         return@StreamingScreen
                     }
-                    resolutionLabel = next.label
-                    if (!thermalForced720) {
-                        preferredResolutionLabel = next.label
+                    val bitrate = PicooNative.bitrateInitialForHeight(next.height)
+                    if (beginLocalEncoderReconfiguration(next.height)) {
+                        resolutionLabel = next.label
+                        if (!thermalForced720) {
+                            preferredResolutionLabel = next.label
+                        }
+                        PicooNative.setPreferredHeight(senderHandle, next.height)
+                        encoder.setTargetBitrateBps(bitrate)
+                        encoder.setResolution(next.width, next.height)
+                        encoderState = encoder.state
+                        streamConfigDirty.set(true)
+                        errorText = null
                     }
-                    PicooNative.setPreferredHeight(senderHandle, next.height)
-                    PicooNative.syncEncodeHeight(senderHandle, next.height)
-                    encoder.setResolution(next.width, next.height)
-                    encoderState = encoder.state
-                    applyStreamConfigToSender()
-                    errorText = null
                 },
                 onToggleMirror = { localPreviewMirrored = !localPreviewMirrored },
                 onEvMinus = {
@@ -1020,13 +1072,13 @@ private fun SenderHomeScreen(
                 onDisconnect = {
                     suppressAutoConnect = true
                     PicooNative.disconnect(senderHandle)
-                    senderStatus = PicooNative.getSenderStatus(senderHandle)
+                    senderStatus = PicooNative.readSenderSnapshot(senderHandle).status
                     resetToDevices()
                 },
                 onStopReconnect = {
                     suppressAutoConnect = true
                     PicooNative.disconnect(senderHandle)
-                    senderStatus = PicooNative.getSenderStatus(senderHandle)
+                    senderStatus = PicooNative.readSenderSnapshot(senderHandle).status
                     resetToDevices()
                 },
                 onPreviewSurfaceAvailable = { surface ->

@@ -37,6 +37,8 @@ interface CameraCaptureController {
     fun unbindPreviewSurface()
     fun startPreview()
     fun stopPreview()
+    /** Apply an epoch allocated by Rust before the next encoder discontinuity. */
+    fun prepareStreamEpoch(epoch: Int)
     fun switchCamera()
     /** Switch to a specific lens (desktop CameraCommand SWITCH_FRONT/BACK). */
     fun setLensFacing(facing: LensFacing)

@@ -117,7 +117,7 @@ Picoo Camera 第一版约束：
 
 - 仅在同一 Wi-Fi 局域网内工作，不依赖云服务器、账号系统、USB、ADB、浏览器或公网穿透。
 - 支持 Android/iOS Sender 与 Windows/macOS Receiver 的四种组合。
-- 视频格式为 H.264 720p30 / 1080p30；音频继续使用电脑麦克风。
+- 视频格式为 H.264 480p30 / 720p30 / 1080p30；音频继续使用电脑麦克风。
 - 业务状态、协议、传输、配对、重连和码率控制尽可能统一使用 Rust Core。
 - Windows 与 macOS 桌面 UI 共用一套 GPUI 代码；手机端分别使用 Jetpack Compose 与 SwiftUI。
 

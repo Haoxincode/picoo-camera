@@ -14,6 +14,7 @@ picoo-diagnostics.workspace = true
 picoo-pairing.workspace = true
 picoo-packet.workspace = true
 picoo-protocol.workspace = true
+picoo-rate-control.workspace = true
 picoo-session.workspace = true
 picoo-sender.workspace = true
 picoo-transport.workspace = true

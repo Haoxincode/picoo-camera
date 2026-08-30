@@ -36,20 +36,33 @@ impl ReceiverStatus {
     }
 }
 
+#[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SenderStatus {
-    Discovering,
-    Pairing,
-    Connecting,
-    Negotiating,
-    Streaming,
-    Reconnecting,
-    Disconnected,
-    PermissionRequired,
-    NetworkUnstable,
+    Disconnected = 0,
+    Discovering = 1,
+    Pairing = 2,
+    Connecting = 3,
+    Negotiating = 4,
+    Streaming = 5,
+    Reconnecting = 6,
+    PermissionRequired = 7,
+    NetworkUnstable = 8,
 }
 
 impl SenderStatus {
+    pub const ALL: [Self; 9] = [
+        Self::Disconnected,
+        Self::Discovering,
+        Self::Pairing,
+        Self::Connecting,
+        Self::Negotiating,
+        Self::Streaming,
+        Self::Reconnecting,
+        Self::PermissionRequired,
+        Self::NetworkUnstable,
+    ];
+
     /// Stable UI label (REQ-PICOO-SESSION-001).
     pub fn as_label(self) -> &'static str {
         match self {
@@ -65,19 +78,9 @@ impl SenderStatus {
         }
     }
 
-    /// FFI / JNI status code (must stay stable).
+    /// Stable FFI / JNI status code shared by generated platform bindings.
     pub fn as_code(self) -> i32 {
-        match self {
-            Self::Disconnected => 0,
-            Self::Discovering => 1,
-            Self::Pairing => 2,
-            Self::Connecting => 3,
-            Self::Negotiating => 4,
-            Self::Streaming => 5,
-            Self::Reconnecting => 6,
-            Self::PermissionRequired => 7,
-            Self::NetworkUnstable => 8,
-        }
+        self as i32
     }
 }
 

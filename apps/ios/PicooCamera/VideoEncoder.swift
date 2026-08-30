@@ -37,54 +37,27 @@ nonisolated enum VideoResolution: Int, Sendable {
     }
 }
 
-nonisolated enum VideoBitrate {
-    static func initial(for resolution: VideoResolution) -> UInt32 {
-        switch resolution {
-        case .p480: 1_800_000
-        case .p720: 3_000_000
-        case .p1080: 6_000_000
-        }
-    }
-
-    static func clamp(_ bitrate: UInt32, for resolution: VideoResolution) -> UInt32 {
-        let range: ClosedRange<UInt32> = switch resolution {
-        case .p480: 900_000 ... 2_500_000
-        case .p720: 1_500_000 ... 5_000_000
-        case .p1080: 3_000_000 ... 10_000_000
-        }
-        return min(max(bitrate, range.lowerBound), range.upperBound)
-    }
-}
-
-nonisolated enum StreamEpoch {
-    static let initial: UInt32 = 1
-
-    static func bump(_ current: UInt32) -> UInt32 {
-        current == .max ? initial : current + 1
-    }
-}
-
 nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {
     let resolution: VideoResolution
     let framesPerSecond: UInt32
     let bitrateBps: UInt32
     let streamEpoch: UInt32
+    let encoderGeneration: UInt64
     let rotation: UInt32
 
     init(
         resolution: VideoResolution,
         framesPerSecond: UInt32 = 30,
-        bitrateBps: UInt32? = nil,
-        streamEpoch: UInt32 = StreamEpoch.initial,
+        bitrateBps: UInt32,
+        streamEpoch: UInt32,
+        encoderGeneration: UInt64,
         rotation: UInt32 = 0
     ) {
         self.resolution = resolution
         self.framesPerSecond = framesPerSecond
-        self.bitrateBps = VideoBitrate.clamp(
-            bitrateBps ?? VideoBitrate.initial(for: resolution),
-            for: resolution
-        )
+        self.bitrateBps = bitrateBps
         self.streamEpoch = streamEpoch
+        self.encoderGeneration = encoderGeneration
         self.rotation = rotation % 360
     }
 }
@@ -103,14 +76,29 @@ nonisolated struct EncodedAccessUnit: Equatable, Sendable {
     let framesPerSecond: UInt32
     let bitrateBps: UInt32
     let streamEpoch: UInt32
+    let encoderGeneration: UInt64
     let rotation: UInt32
     let parameterSets: H264ParameterSets?
 }
 
 nonisolated enum VideoEncoderEvent: Sendable {
     case accessUnit(EncodedAccessUnit)
-    case failure(String)
-    case queueOverflow
+    case failure(streamEpoch: UInt32, encoderGeneration: UInt64, message: String)
+    case queueOverflow(streamEpoch: UInt32, encoderGeneration: UInt64)
+
+    var streamEpoch: UInt32 {
+        switch self {
+        case let .accessUnit(accessUnit): accessUnit.streamEpoch
+        case let .failure(streamEpoch, _, _), let .queueOverflow(streamEpoch, _): streamEpoch
+        }
+    }
+
+    var encoderGeneration: UInt64 {
+        switch self {
+        case let .accessUnit(accessUnit): accessUnit.encoderGeneration
+        case let .failure(_, generation, _), let .queueOverflow(_, generation): generation
+        }
+    }
 }
 
 /// Small bounded GOP-aware handoff between VideoToolbox and the Rust sender.
@@ -148,7 +136,10 @@ nonisolated final class VideoEncoderEventBuffer: @unchecked Sendable {
                 }
                 guard events.count < capacity else {
                     events.removeAll(keepingCapacity: true)
-                    events.append(.queueOverflow)
+                    events.append(.queueOverflow(
+                        streamEpoch: accessUnit.streamEpoch,
+                        encoderGeneration: accessUnit.encoderGeneration
+                    ))
                     waitingForKeyframe = !accessUnit.isKeyframe
                     if accessUnit.isKeyframe {
                         events.append(event)
@@ -228,14 +219,18 @@ nonisolated final class VideoEncoderPipeline: NSObject,
     )
 
     private let eventHandler: @Sendable (VideoEncoderEvent) -> Void
-    private var configuration = VideoEncoderConfiguration(resolution: .p1080)
+    private var configuration: VideoEncoderConfiguration
     private var compressionSession: VTCompressionSession?
     private var compressionContext: CompressionCallbackContext?
     private var pixelTransferSession: VTPixelTransferSession?
     private var isAcceptingFrames = false
     private var forceNextKeyframe = true
 
-    init(eventHandler: @escaping @Sendable (VideoEncoderEvent) -> Void) {
+    init(
+        initialConfiguration: VideoEncoderConfiguration,
+        eventHandler: @escaping @Sendable (VideoEncoderEvent) -> Void
+    ) {
+        configuration = initialConfiguration
         self.eventHandler = eventHandler
         super.init()
     }
@@ -257,23 +252,24 @@ nonisolated final class VideoEncoderPipeline: NSObject,
 
     func updateBitrate(_ bitrateBps: UInt32) async {
         await perform {
-            let clamped = VideoBitrate.clamp(
-                bitrateBps,
-                for: self.configuration.resolution
-            )
             self.configuration = VideoEncoderConfiguration(
                 resolution: self.configuration.resolution,
                 framesPerSecond: self.configuration.framesPerSecond,
-                bitrateBps: clamped,
+                bitrateBps: bitrateBps,
                 streamEpoch: self.configuration.streamEpoch,
+                encoderGeneration: self.configuration.encoderGeneration,
                 rotation: self.configuration.rotation
             )
             guard let session = self.compressionSession else { return }
             do {
-                try Self.setBitrate(clamped, on: session)
-                self.compressionContext?.updateBitrate(clamped)
+                try Self.setBitrate(bitrateBps, on: session)
+                self.compressionContext?.updateBitrate(bitrateBps)
             } catch {
-                self.eventHandler(.failure(error.localizedDescription))
+                self.eventHandler(.failure(
+                    streamEpoch: self.configuration.streamEpoch,
+                    encoderGeneration: self.configuration.encoderGeneration,
+                    message: error.localizedDescription
+                ))
             }
         }
     }
@@ -285,6 +281,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
                 framesPerSecond: self.configuration.framesPerSecond,
                 bitrateBps: self.configuration.bitrateBps,
                 streamEpoch: self.configuration.streamEpoch,
+                encoderGeneration: self.configuration.encoderGeneration,
                 rotation: rotation
             )
             self.compressionContext?.updateRotation(rotation)
@@ -339,6 +336,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             framesPerSecond: configuration.framesPerSecond,
             bitrateBps: configuration.bitrateBps,
             streamEpoch: configuration.streamEpoch,
+            encoderGeneration: configuration.encoderGeneration,
             rotation: configuration.rotation
         )
         let context = CompressionCallbackContext(
@@ -586,12 +584,20 @@ extension VideoEncoderPipeline {
                 infoFlagsOut: &infoFlags
             )
             guard status == noErr else {
-                eventHandler(.failure("H.264 帧编码失败（\(status)）"))
+                eventHandler(.failure(
+                    streamEpoch: configuration.streamEpoch,
+                    encoderGeneration: configuration.encoderGeneration,
+                    message: "H.264 帧编码失败（\(status)）"
+                ))
                 return
             }
             forceNextKeyframe = false
         } catch {
-            eventHandler(.failure(error.localizedDescription))
+            eventHandler(.failure(
+                streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration,
+                message: error.localizedDescription
+            ))
             isAcceptingFrames = false
             invalidateCompressionSession()
         }
@@ -604,6 +610,7 @@ nonisolated private struct EncodedFrameConfiguration: Sendable {
     let framesPerSecond: UInt32
     let bitrateBps: UInt32
     let streamEpoch: UInt32
+    let encoderGeneration: UInt64
     let rotation: UInt32
 }
 
@@ -628,6 +635,7 @@ nonisolated private final class CompressionCallbackContext: @unchecked Sendable 
                 framesPerSecond: configuration.framesPerSecond,
                 bitrateBps: bitrateBps,
                 streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration,
                 rotation: configuration.rotation
             )
         }
@@ -641,6 +649,7 @@ nonisolated private final class CompressionCallbackContext: @unchecked Sendable 
                 framesPerSecond: configuration.framesPerSecond,
                 bitrateBps: configuration.bitrateBps,
                 streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration,
                 rotation: rotation % 360
             )
         }
@@ -652,7 +661,12 @@ nonisolated private final class CompressionCallbackContext: @unchecked Sendable 
         sampleBuffer: CMSampleBuffer?
     ) {
         guard status == noErr else {
-            eventHandler(.failure("VideoToolbox 输出失败（\(status)）"))
+            let configuration = configurationLock.withLock { self.configuration }
+            eventHandler(.failure(
+                streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration,
+                message: "VideoToolbox 输出失败（\(status)）"
+            ))
             return
         }
         guard !infoFlags.contains(.frameDropped),
@@ -684,11 +698,17 @@ nonisolated private final class CompressionCallbackContext: @unchecked Sendable 
                 framesPerSecond: configuration.framesPerSecond,
                 bitrateBps: configuration.bitrateBps,
                 streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration,
                 rotation: configuration.rotation,
                 parameterSets: parameterSets
             )))
         } catch {
-            eventHandler(.failure(error.localizedDescription))
+            let configuration = configurationLock.withLock { self.configuration }
+            eventHandler(.failure(
+                streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration,
+                message: error.localizedDescription
+            ))
         }
     }
 

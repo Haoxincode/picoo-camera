@@ -1,8 +1,9 @@
 //! StreamConfig helpers — REQ-PICOO-PROTOCOL-005.
 
 use picoo_protocol::control::StreamConfig;
+use picoo_rate_control::BitrateLadder;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamConfigParams {
     pub width: u32,
     pub height: u32,
@@ -22,7 +23,7 @@ impl Default for StreamConfigParams {
             width: 1280,
             height: 720,
             fps: 30,
-            bitrate_bps: 6_000_000,
+            bitrate_bps: BitrateLadder::for_height(720).initial_bps,
             stream_epoch: 1,
             mirrored: false,
             rotation: 0,

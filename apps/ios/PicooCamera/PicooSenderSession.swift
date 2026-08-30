@@ -33,6 +33,24 @@ nonisolated enum SenderCameraCommand: Equatable, Sendable {
     case setMirror(Bool)
 }
 
+nonisolated struct SenderEncoderDirective: Equatable, Sendable {
+    let id: UInt64
+    let kind: UInt32
+    let targetHeight: UInt32
+    let targetBitrateBps: UInt32
+    let streamEpoch: UInt32
+}
+
+nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
+    let status: PicooSenderStatus
+    let currentBitrateBps: UInt32
+    let activeHeight: UInt32
+    let receiverMaxHeight: UInt32
+    let streamEpoch: UInt32
+    let reconnectAttempt: UInt32
+    let reconnectDelayMs: UInt64
+}
+
 /// Rust's `SenderInner` serializes every operation with one `Mutex`. The Swift
 /// wrapper therefore supports the MainActor control plane and the media actor
 /// calling the same handle concurrently. Both retain this object for its full
@@ -78,12 +96,28 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         picoo_sender_destroy(sender)
     }
 
-    var status: PicooSenderStatus {
-        PicooSenderStatus(code: picoo_sender_status(sender))
-    }
-
-    var statusCode: Int32 {
-        status.rawValue
+    var snapshot: SenderSessionSnapshot {
+        var value = PicooSenderSnapshot()
+        guard picoo_sender_snapshot(sender, &value) == 0 else {
+            return SenderSessionSnapshot(
+                status: .disconnected,
+                currentBitrateBps: 0,
+                activeHeight: 0,
+                receiverMaxHeight: 0,
+                streamEpoch: Self.initialStreamEpoch,
+                reconnectAttempt: 0,
+                reconnectDelayMs: 0
+            )
+        }
+        return SenderSessionSnapshot(
+            status: PicooSenderStatus(code: value.status),
+            currentBitrateBps: value.current_bitrate_bps,
+            activeHeight: value.active_height,
+            receiverMaxHeight: value.receiver_max_height,
+            streamEpoch: value.stream_epoch,
+            reconnectAttempt: value.reconnect_attempt,
+            reconnectDelayMs: value.reconnect_delay_ms
+        )
     }
 
     var pairingShortCode: String {
@@ -151,7 +185,6 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
                     configuration.height,
                     configuration.framesPerSecond,
                     configuration.bitrateBps,
-                    configuration.streamEpoch,
                     configuration.mirrored ? 1 : 0,
                     configuration.rotation,
                     sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
@@ -188,14 +221,6 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         try pump()
     }
 
-    var currentBitrateBps: UInt32 {
-        picoo_sender_current_bitrate_bps(sender)
-    }
-
-    var receiverMaxHeight: UInt32 {
-        picoo_sender_receiver_max_height(sender)
-    }
-
     func takeKeyframeRequest() throws -> Bool {
         try takeFlag(
             picoo_sender_take_keyframe_request(sender),
@@ -203,18 +228,36 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         )
     }
 
-    func takeResolutionDownshift() throws -> Bool {
-        try takeFlag(
-            picoo_sender_take_resolution_downshift(sender),
-            operation: "sender_take_resolution_downshift"
+    func encoderDirective() throws -> SenderEncoderDirective? {
+        var directive = PicooEncoderDirective()
+        let code = picoo_sender_peek_encoder_directive(sender, &directive)
+        try check(code, operation: "sender_peek_encoder_directive")
+        guard code == 1 else { return nil }
+        return SenderEncoderDirective(
+            id: directive.id,
+            kind: directive.kind,
+            targetHeight: directive.target_height,
+            targetBitrateBps: directive.target_bitrate_bps,
+            streamEpoch: directive.stream_epoch
         )
     }
 
-    func takeResolutionUpshift() throws -> Bool {
-        try takeFlag(
-            picoo_sender_take_resolution_upshift(sender),
-            operation: "sender_take_resolution_upshift"
-        )
+    func acknowledgeEncoderDirective(_ id: UInt64, actualHeight: UInt32) throws {
+        guard picoo_sender_ack_encoder_directive(sender, id, actualHeight) == 1 else {
+            throw PicooSenderSessionError.operationFailed(
+                name: "sender_ack_encoder_directive",
+                code: 0
+            )
+        }
+    }
+
+    func rejectEncoderDirective(_ id: UInt64) throws {
+        guard picoo_sender_nack_encoder_directive(sender, id) == 1 else {
+            throw PicooSenderSessionError.operationFailed(
+                name: "sender_nack_encoder_directive",
+                code: 0
+            )
+        }
     }
 
     func takeCameraCommand() throws -> SenderCameraCommand? {
@@ -253,11 +296,34 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         )
     }
 
-    func syncEncodeHeight(_ height: UInt32) throws {
+    func beginStreamReconfiguration() -> UInt32 {
+        picoo_sender_begin_stream_reconfiguration(sender)
+    }
+
+    func cancelStreamReconfiguration(_ streamEpoch: UInt32) throws {
         try check(
-            picoo_sender_sync_encode_height(sender, height),
-            operation: "sender_sync_encode_height"
+            picoo_sender_cancel_stream_reconfiguration(sender, streamEpoch),
+            operation: "sender_cancel_stream_reconfiguration"
         )
+    }
+
+    func reportEncoderHeight(_ height: UInt32, streamEpoch: UInt32) throws {
+        try check(
+            picoo_sender_report_encoder_height(sender, height, streamEpoch),
+            operation: "sender_report_encoder_height"
+        )
+    }
+
+    static func initialBitrate(forHeight height: UInt32) -> UInt32 {
+        picoo_bitrate_initial_for_height(height)
+    }
+
+    static func clampBitrate(_ bitrate: UInt32, forHeight height: UInt32) -> UInt32 {
+        picoo_bitrate_clamp_for_height(bitrate, height)
+    }
+
+    static var initialStreamEpoch: UInt32 {
+        picoo_stream_epoch_initial()
     }
 
     func markCameraPermissionRequired() throws {

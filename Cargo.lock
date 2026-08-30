@@ -5160,6 +5160,7 @@ dependencies = [
  "picoo-packet",
  "picoo-pairing",
  "picoo-protocol",
+ "picoo-rate-control",
  "picoo-sender",
  "picoo-session",
  "picoo-transport",
@@ -9391,6 +9392,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "picoo-session",
  "serde_json",
  "xshell",
 ]

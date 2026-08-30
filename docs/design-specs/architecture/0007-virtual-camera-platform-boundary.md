@@ -50,7 +50,7 @@ Picoo Camera Desktop.app
 
 Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用户批准。扩展是独立进程边界；主应用不得把网络会话逻辑放入扩展。
 
-当前原生基线使用 Swift 6、Core Media I/O 和 C17 原子共享环读取边界，提供 480p/720p/1080p、30 fps、NV12 输出。`xtask package macos` 在 ARM64 macOS runner 上生成 `Picoo Camera.app`，并将与 Bundle ID 同名的 Camera Extension 嵌入 `Contents/Library/SystemExtensions/`；打包门禁校验 Host/Extension Bundle ID、App Group、Host sandbox/network/System Extension 签名输入与 ARM64 slice。无签名构建使用明确的 `UNSIGNED.` Team 前缀；发布构建必须从真实 Team ID 生成同一 App Group。激活授权、实际签名、公证和会议软件枚举仍属于真机验收，因此本 Architecture 保持 `planned`。
+当前原生基线使用 Swift 6、Core Media I/O 和 C17 原子共享环读取边界，提供 480p/720p/1080p、30 fps、NV12 输出。`xtask package macos` 在 ARM64 macOS runner 上生成 `Picoo Camera.app`，并将与 Bundle ID 同名的 Camera Extension 嵌入 `Contents/Library/SystemExtensions/`；打包门禁校验 Host/Extension Bundle ID、App Group、Host sandbox/network/System Extension 签名输入与 ARM64 slice。无签名构建使用明确的 `UNSIGNED.` Team 前缀，Host 将共享环降级到用户 Application Support 目录，避免 LaunchServices 在无有效 App Group entitlement 时阻塞启动；该降级不作为扩展互通验收。发布构建必须从真实 Team ID 生成 Host 与 Extension 共用的 App Group。激活授权、实际签名、公证和会议软件枚举仍属于真机验收，因此本 Architecture 保持 `planned`。
 
 ### 数据流
 
@@ -67,7 +67,7 @@ Rust Receiver Core
 
 - Windows 安装器：注册 COM/Media Foundation 组件、配置防火墙规则、卸载清理。
 - macOS 发布：签名、Hardened Runtime、Developer ID、Notarization、扩展激活引导。
-- 桌面设置页提供虚拟摄像头状态检查与修复入口。
+- 桌面“虚拟摄像头”页提供状态检查与修复入口；Windows 显式修复通过 UAC 提权的独立维护进程写系统注册，GPUI 进程只负责发起、等待与展示结果。
 
 ## 不采用的方案
 

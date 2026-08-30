@@ -14,7 +14,10 @@ use picoo_transport::TransportError;
 use thiserror::Error;
 
 pub use picoo_rate_control::BitrateAction;
-pub use session::{SenderSession, SessionStats};
+pub use session::{
+    EncoderDirective, EncoderDirectiveKind, SenderSession, SessionStats, INITIAL_STREAM_EPOCH,
+    MAX_STREAM_EPOCH,
+};
 pub use stream_config::StreamConfigParams;
 
 const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE;
@@ -23,6 +26,10 @@ const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE
 pub enum SenderError {
     #[error("empty access unit")]
     EmptyAccessUnit,
+    #[error("access unit requires too many datagram fragments")]
+    AccessUnitTooLarge,
+    #[error("frame id exhausted; start a new sender session")]
+    FrameIdExhausted,
     #[error("not connected")]
     NotConnected,
     #[error("transport: {0}")]
@@ -35,6 +42,12 @@ pub enum SenderError {
     Pairing(#[from] PairingError),
     #[error("pairing store: {0}")]
     Store(#[from] StoreError),
+    #[error("stale stream epoch: got {got}, current {current}")]
+    StaleStreamEpoch { got: u32, current: u32 },
+    #[error("stream config for epoch {stream_epoch} has not been sent")]
+    StreamConfigPending { stream_epoch: u32 },
+    #[error("stream config height mismatch: expected {expected}, got {got}")]
+    StreamConfigHeightMismatch { expected: u32, got: u32 },
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -80,9 +93,13 @@ impl SenderPipeline {
             return Err(SenderError::EmptyAccessUnit);
         }
 
-        self.frame_id = self.frame_id.wrapping_add(1);
+        self.frame_id = self
+            .frame_id
+            .checked_add(1)
+            .ok_or(SenderError::FrameIdExhausted)?;
         let frame_id = self.frame_id;
-        let fragment_count = data.len().div_ceil(MAX_FRAGMENT_PAYLOAD) as u16;
+        let fragment_count = u16::try_from(data.len().div_ceil(MAX_FRAGMENT_PAYLOAD))
+            .map_err(|_| SenderError::AccessUnitTooLarge)?;
         let mut created = 0usize;
 
         for fragment_index in 0..fragment_count {
@@ -142,6 +159,19 @@ mod tests {
             .flags
             .contains(VideoPacketFlags::START_OF_ACCESS_UNIT));
         assert!(packet.flags.contains(VideoPacketFlags::END_OF_ACCESS_UNIT));
+    }
+
+    #[test]
+    fn frame_id_exhaustion_never_wraps_or_queues_media() {
+        let mut sender = SenderPipeline {
+            frame_id: u64::MAX,
+            ..Default::default()
+        };
+        assert!(matches!(
+            sender.ingest_access_unit(b"h264", true, 0, 1),
+            Err(SenderError::FrameIdExhausted)
+        ));
+        assert!(sender.pending_packets().is_empty());
     }
 
     #[test]

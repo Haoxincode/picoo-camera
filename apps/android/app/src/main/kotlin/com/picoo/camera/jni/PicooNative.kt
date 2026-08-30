@@ -84,13 +84,8 @@ object PicooNative {
 
     external fun pump(handle: Long): Int
 
-    external fun getSenderStatus(handle: Long): Int
-
-    /** REQ-PICOO-TRANSPORT-004 / PUC-006 — last scheduled reconnect delay; 0 if none. */
-    external fun getLastScheduledReconnectDelayMs(handle: Long): Long
-
-    /** 1-based attempt while Reconnecting; 0 otherwise. */
-    external fun getReconnectAttempt(handle: Long): Int
+    /** Coherent Rust sender state; prefer this to combining independent getters. */
+    external fun getSenderSnapshot(handle: Long): LongArray
 
     /** REQ-PICOO-SESSION-001: surface Permission Required when CAMERA denied. */
     external fun markPermissionRequired(handle: Long): Int
@@ -115,24 +110,17 @@ object PicooNative {
         height: Int,
         fps: Int,
         bitrateBps: Int,
-        streamEpoch: Int,
         mirrored: Boolean,
         rotation: Int = 0,
         sps: ByteArray? = null,
         pps: ByteArray? = null,
     ): Int
 
-    /** Adaptive bitrate target from ReceiverStats feedback (REQ-PICOO-MEDIA-007). */
-    external fun getCurrentBitrateBps(handle: Long): Int
-
     /**
      * Latest ReceiverStats feedback for Streaming metrics (PUC-005).
      * @return [rttMs, packetLoss, jitterMs, frameAgeMs, receiveBitrate, jitterDepthMs] or null.
      */
     external fun getLinkStats(handle: Long): DoubleArray?
-
-    /** Max height from receiver Capabilities; 0 if unknown (REQ-PICOO-MEDIA-002). */
-    external fun getReceiverMaxHeight(handle: Long): Int
 
     /** 1 if receiver requested IDR (consumes flag). REQ-PICOO-SESSION-003. */
     external fun takeKeyframeRequest(handle: Long): Int
@@ -147,17 +135,27 @@ object PicooNative {
     /** Last SessionError code (e.g. PUBLIC_KEY_CHANGED), or empty. */
     external fun lastSessionError(handle: Long): String
 
-    /** 1 if ABR asks to drop 1080p→720p (consumes flag). REQ-PICOO-MEDIA-010. */
-    external fun takeResolutionDownshift(handle: Long): Int
+    /** Pending Rust-owned ABR directive: [id, kind, height, bitrate, epoch]. */
+    external fun getEncoderDirective(handle: Long): LongArray?
 
-    /** 1 if ABR asks to restore 720p→1080p (consumes flag). REQ-PICOO-MEDIA-010. */
-    external fun takeResolutionUpshift(handle: Long): Int
+    external fun ackEncoderDirective(handle: Long, directiveId: Long, actualHeight: Int): Int
 
-    /** User preferred height for ABR upshift (720 or 1080). */
+    external fun nackEncoderDirective(handle: Long, directiveId: Long): Int
+
+    /** User preferred height for ABR decisions (480, 720, or 1080). */
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
-    /** Host applied encode height — sync ABR ladder (MEDIA-010). */
-    external fun syncEncodeHeight(handle: Long, height: Int): Int
+    /** Allocate a fresh Rust-owned epoch before camera/encoder discontinuity. */
+    external fun beginStreamReconfiguration(handle: Long): Int
+
+    external fun cancelStreamReconfiguration(handle: Long, streamEpoch: Int): Int
+
+    /** Host successfully applied an encode height outside an ABR directive. */
+    external fun reportEncoderHeight(handle: Long, height: Int, streamEpoch: Int): Int
+
+    external fun bitrateInitialForHeight(height: Int): Int
+
+    external fun bitrateClampForHeight(bitrateBps: Int, height: Int): Int
 
     /** Thermal hold blocks ABR upshift while overheating (MEDIA-010). */
     external fun setThermalHold(handle: Long, hold: Boolean): Int
@@ -167,6 +165,9 @@ object PicooNative {
      * @return `[sps, pps]` or null when extraction fails.
      */
     external fun extractSpsPps(data: ByteArray): Array<ByteArray>?
+
+    /** Canonical Rust validation for Android NSD TXT bytes. */
+    external fun parseDiscoveryTxt(keys: Array<String>, values: Array<ByteArray>): Array<String>?
 
     external fun createDiscoveryBrowser(): Long
 
@@ -256,6 +257,49 @@ object PicooNative {
         val pairedAtMs: Long,
         val lastConnectedAtMs: Long,
     )
+
+    data class EncoderDirective(
+        val id: Long,
+        val kind: Int,
+        val targetHeight: Int,
+        val targetBitrateBps: Int,
+        val streamEpoch: Int,
+    )
+
+    data class SenderSnapshot(
+        val status: Int,
+        val currentBitrateBps: Int,
+        val activeHeight: Int,
+        val receiverMaxHeight: Int,
+        val streamEpoch: Int,
+        val reconnectAttempt: Int,
+        val reconnectDelayMs: Long,
+    )
+
+    fun readSenderSnapshot(handle: Long): SenderSnapshot {
+        val values = getSenderSnapshot(handle)
+        return SenderSnapshot(
+            status = values.getOrElse(0) { STATUS_DISCONNECTED.toLong() }.toInt(),
+            currentBitrateBps = values.getOrElse(1) { 0 }.toInt(),
+            activeHeight = values.getOrElse(2) { 0 }.toInt(),
+            receiverMaxHeight = values.getOrElse(3) { 0 }.toInt(),
+            streamEpoch = values.getOrElse(4) { 0 }.toInt(),
+            reconnectAttempt = values.getOrElse(5) { 0 }.toInt(),
+            reconnectDelayMs = values.getOrElse(6) { 0 },
+        )
+    }
+
+    fun readEncoderDirective(handle: Long): EncoderDirective? {
+        val values = getEncoderDirective(handle) ?: return null
+        if (values.size < 5) return null
+        return EncoderDirective(
+            id = values[0],
+            kind = values[1].toInt(),
+            targetHeight = values[2].toInt(),
+            targetBitrateBps = values[3].toInt(),
+            streamEpoch = values[4].toInt(),
+        )
+    }
 
     fun readSenderStats(handle: Long): SenderStats {
         check(isAvailable) { "native unavailable: $loadError" }

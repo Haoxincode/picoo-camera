@@ -24,6 +24,7 @@ class NsdReceiverBrowser(
     private val nsdManager = appContext.getSystemService(Context.NSD_SERVICE) as NsdManager
     private val mainHandler = Handler(Looper.getMainLooper())
     private val receivers = ConcurrentHashMap<String, PicooNative.DiscoveredReceiver>()
+    private val receiverIdsByServiceName = ConcurrentHashMap<String, String>()
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var started = false
@@ -46,10 +47,7 @@ class NsdReceiverBrowser(
                 }
 
                 override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                    val key = serviceInfo.serviceName
-                    receivers.remove(key)
-                    // Also drop by receiver_id if present in name.
-                    receivers.entries.removeIf { it.value.displayName == serviceInfo.serviceName }
+                    receiverIdsByServiceName.remove(serviceInfo.serviceName)?.let(receivers::remove)
                     publish()
                 }
 
@@ -87,6 +85,7 @@ class NsdReceiverBrowser(
             runCatching { nsdManager.stopServiceDiscovery(listener) }
         }
         receivers.clear()
+        receiverIdsByServiceName.clear()
         started = false
         releaseMulticastLock()
         publish()
@@ -119,6 +118,7 @@ class NsdReceiverBrowser(
                             pairingState = parsed.pairingState,
                         )
                     receivers[parsed.receiverId] = entry
+                    receiverIdsByServiceName[resolved.serviceName] = parsed.receiverId
                     publish()
                 }
             },

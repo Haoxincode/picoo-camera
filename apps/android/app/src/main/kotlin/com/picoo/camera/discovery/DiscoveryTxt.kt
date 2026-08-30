@@ -1,22 +1,14 @@
 package com.picoo.camera.discovery
 
+import com.picoo.camera.jni.PicooNative
+
 /**
  * TXT attribute parsing for `_picoocam._udp` (REQ-PICOO-DISCOVERY-005).
  *
- * Keys must stay aligned with `picoo_discovery::ALLOWED_TXT_KEYS`.
+ * Android owns NSD transport; Rust Core owns the TXT schema and validation.
  */
 object DiscoveryTxt {
     const val SERVICE_TYPE: String = "_picoocam._udp"
-
-    val ALLOWED_KEYS: Set<String> =
-        setOf(
-            "receiver_id",
-            "display_name",
-            "protocol_version",
-            "quic_port",
-            "pairing_state",
-            "public_key_fingerprint_prefix",
-        )
 
     data class Parsed(
         val receiverId: String,
@@ -28,23 +20,20 @@ object DiscoveryTxt {
     )
 
     fun parseAttributes(raw: Map<String, ByteArray?>): Parsed? {
-        val values = LinkedHashMap<String, String>()
-        for ((key, bytes) in raw) {
-            if (key !in ALLOWED_KEYS) continue
-            val text = bytes?.toString(Charsets.UTF_8)?.trim().orEmpty()
-            if (text.isNotEmpty()) {
-                values[key] = text
-            }
-        }
-        val receiverId = values["receiver_id"] ?: return null
-        val quicPort = values["quic_port"]?.toIntOrNull()?.takeIf { it in 1..65535 } ?: return null
+        if (raw.isEmpty() || raw.values.any { it == null }) return null
+        val entries = raw.entries.toList()
+        val fields = PicooNative.parseDiscoveryTxt(
+            keys = entries.map { it.key }.toTypedArray(),
+            values = entries.map { requireNotNull(it.value) }.toTypedArray(),
+        ) ?: return null
+        if (fields.size < 6) return null
         return Parsed(
-            receiverId = receiverId,
-            displayName = values["display_name"] ?: receiverId,
-            protocolVersion = values["protocol_version"],
-            quicPort = quicPort,
-            pairingState = values["pairing_state"],
-            fingerprintPrefix = values["public_key_fingerprint_prefix"],
+            receiverId = fields[0],
+            displayName = fields[1],
+            protocolVersion = fields[2],
+            quicPort = fields[3].toInt(),
+            pairingState = fields[4],
+            fingerprintPrefix = fields[5],
         )
     }
 }

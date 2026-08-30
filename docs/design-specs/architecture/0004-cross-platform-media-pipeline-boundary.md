@@ -5,7 +5,7 @@ Source: product PRD V1.0 / PUC-004 / PUC-005
 
 ## 背景
 
-Picoo Camera 第一版固定 H.264 720p30 / 1080p30。媒体路径涉及四套平台原生 API，但语义必须一致：硬件优先、低延迟、动态码率、正确方向、镜像分离，以及 Receiver 侧单次解码、多路消费。
+Picoo Camera 第一版固定 H.264 480p30 / 720p30 / 1080p30。媒体路径涉及四套平台原生 API，但语义必须一致：硬件优先、低延迟、动态码率、正确方向、镜像分离，以及 Receiver 侧单次解码、多路消费。
 
 ## 架构决策
 
@@ -22,6 +22,7 @@ QUIC Datagram
 ```
 
 - 优先硬件编码；使用 `MediaCodec.createInputSurface()` 直接将摄像头输出送入编码器。
+- MediaCodec 的释放、创建、配置和启动必须在同一 codec 线程串行执行；旧实例完全释放后才能创建新实例，以兼容只支持单个硬件 H.264 encoder 的设备。
 - 第一版不使用 CameraX Recorder 作为实时传输核心。
 
 ### Sender：iOS
@@ -71,8 +72,46 @@ H.264 Access Units
 
 | 模式 | 初始 | 最低 | 最高 |
 | --- | --- | --- | --- |
+| 480p30 | 1.8 Mbps | 0.9 Mbps | 2.5 Mbps |
 | 720p30 | 3 Mbps | 1.5 Mbps | 5 Mbps |
 | 1080p30 | 6 Mbps | 3 Mbps | 10 Mbps |
+
+### Rust 与原生编码器的状态契约
+
+Rust Core 是码率阶梯、ABR 分辨率意图和 `stream_epoch` 的唯一事实源。Android/iOS
+只负责把 Rust 的目标配置应用到 Camera2/MediaCodec 或 AVFoundation/VideoToolbox，
+不得在原生层复制码率阶梯或自行分配 epoch。
+
+ABR 分辨率变化采用显式的 `directive -> apply -> ack/nack` 契约：
+
+1. Rust 产生带单调且不回绕的 `directive_id`、目标高度、目标码率和候选 `stream_epoch` 的编码指令；候选 epoch 此时只被分配，尚未成为 committed epoch；
+2. 原生层保持该指令 pending、暂停发送媒体并重建编码器；每次原生编码器重建还要递增仅在进程内使用的 generation，并同时按 `stream_epoch + generation` 丢弃迟到回调。generation 不进入协议、不替代 Rust 分配的 epoch，专门隔离失败重建与同一 committed epoch 上的回滚重建；
+3. 原生层只有在实际收到候选 epoch、目标高度的首个 IDR 后才能 `ack`；本地相机/分辨率调整以同样条件 `report`；
+4. Rust 仅在匹配的 `ack/report` 后原子提交 epoch、推进活动码率阶梯；旧 epoch 的 `StreamConfig` 不得被改写成新 epoch，新 epoch 的匹配 `StreamConfig` 在可靠控制流排队前必须继续阻止 AU 入队；
+5. 失败、超时、断连或取消通过 `nack/cancel` 丢弃 pending；原生层随后必须重建最后 committed 配置，并等待其首个匹配 IDR 后恢复发送；恢复仍失败则停止编码并明确断开连接；
+6. 读取指令不得隐式改变 Rust 的活动编码状态，也不得覆盖另一个 pending 调整。
+
+无 pending 时，平台对当前 epoch 的高度回报只允许首次同步匹配的 `StreamConfig` 或
+幂等回报已经 committed 的高度；分辨率变化不能绕过 `begin -> apply -> report`。接收端
+能力上限同时约束 Rust 的 preferred height 和 ABR 目标，平台仍须对已排队但超出能力的
+旧指令显式 `nack`。Rust 分别保存用户请求高度与当前接收端下的有效高度；接收端能力
+扩大或会话结束后必须从用户请求恢复，不得把临时 720p 上限永久写回偏好。
+
+V1 编码高度只接受精确的 `480/720/1080`。提交后的媒体闸门只允许由高度与 committed
+编码器完全一致的 `StreamConfig` 打开；错误配置必须返回显式错误并继续阻止 AU。
+
+用户切换摄像头、手动修改分辨率或连接恢复同样必须先从 Rust 获取新的
+`stream_epoch`，再重建编码器。允许失败的重建消耗一个 epoch；epoch 只要求单调隔离，
+不要求连续。Android JNI 使用正 `Int` 表达 epoch，因此 V1 在 `Int32.max` 处 fail-fast，
+不得回绕或跨入负值。
+
+Android NSD 和 Apple 原生媒体 API 仍保留在平台层；协议字段校验、码率/分辨率业务
+策略与会话状态仍归 Rust Core。
+
+平台轮询会话时必须通过单次 Rust 锁读取原子 `SenderSnapshot`（状态、码率、活动高度、
+接收端能力上限、epoch 和重连信息），不得组合多个独立 getter 推导同一时刻的状态。
+Kotlin/Swift 的稳定状态码由 `SenderStatus` 生成，CI 以 `cargo xtask generate sender-status --check`
+拒绝过期绑定；平台代码不得手写数值副本。
 
 ### 镜像与方向
 
@@ -110,6 +149,7 @@ H.264 Access Units
 
 - 设备不支持目标规格时必须通过 Capabilities 协商回退。
 - 切换摄像头或分辨率时允许短暂重建编码器，并递增 `stream_epoch`、请求 IDR。
+- 原生编码器应用失败不得提前推进 Rust 的活动码率档位；必须显式回报失败。
 - Sender 传输期间必须保持前台；提供防锁屏与过热/低电提示。
 - 音频继续使用电脑麦克风；Sender 不传输手机麦克风。
 

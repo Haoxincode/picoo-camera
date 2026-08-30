@@ -8,7 +8,7 @@ Independent IMFMediaSource DLL (`PicooVirtualCameraSource.dll`) consuming Shared
 | --- | --- | --- |
 | `picoo-vcam-ring-reader` | implemented | Polls Shared Frame Ring; validates VCam consumer path on Linux CI |
 | `picoo-windows-vcam-source` | implemented | Rust `cdylib`：IMFActivate + IMFMediaSourceEx + NV12 stream from Shared Frame Ring |
-| `register-vcam.ps1` | implemented | 调用桌面 CLI 修复声明式 COM 注册并执行 MFCreateVirtualCamera |
+| `PicooCamera.msi` | implemented | perMachine 安装、声明式 COM 注册与 MFCreateVirtualCamera 维护命令 |
 
 ## Requirement mapping
 
@@ -39,12 +39,10 @@ Frame Provider 每 250 ms 检查 Shared Frame Ring 的 Producer 代际；Receive
 ```powershell
 cargo xtask build windows
 cargo xtask package windows
-powershell -ExecutionPolicy Bypass -File target/release/bundle/register-vcam.ps1
-# Dev interactive (session lifetime, waits for Enter):
-picoo-desktop --register-vcam
-# MSI / headless (system lifetime):
-picoo-desktop --register-vcam --no-wait
+msiexec /i target/release/bundle/msi/PicooCamera.msi
 ```
+
+松散 `windows-bundle` 仅用于编译、导出与加载 smoke，不能从用户可写目录完成系统注册。安装后如需修复，请使用桌面“虚拟摄像头”页的“安装或修复…”入口。
 
 COM CLSID: `{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}` — friendly name **Picoo Camera**.
 
@@ -53,5 +51,4 @@ COM CLSID: `{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}` — friendly name **Picoo Ca
 - `DllGetClassObject`：创建 Media Foundation Source 的 COM class factory
 - `DllCanUnloadNow`：在无活动 COM 对象与 server lock 时允许卸载
 
-DLL 不提供自注册入口。MSI 使用 WiX 声明式写入 COM 注册表；开发态由桌面 CLI
-以同一组键完成修复，然后调用 `MFCreateVirtualCamera`。
+DLL 不提供自注册入口。MSI 使用 WiX 声明式写入 COM 注册表；安装目录中的桌面维护命令可经 UAC 修复同一组键，然后调用 `MFCreateVirtualCamera`。

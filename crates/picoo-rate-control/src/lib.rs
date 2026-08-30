@@ -2,7 +2,7 @@
 
 use picoo_metrics::ReceiverStats;
 
-/// 480p ladder (weak-network floor; aligns with Android MediaBitrate).
+/// 480p ladder (weak-network floor).
 pub const LADDER_480_MIN_BPS: u32 = 900_000;
 pub const LADDER_480_MAX_BPS: u32 = 2_500_000;
 pub const LADDER_480_INITIAL_BPS: u32 = 1_800_000;
@@ -117,6 +117,38 @@ impl BitrateController {
 
     pub fn preferred_height(&self) -> u32 {
         self.preferred_height
+    }
+
+    /// Canonical height the native encoder should apply for a pending ABR action.
+    pub fn target_height_for(&self, action: BitrateAction) -> Option<u32> {
+        match action {
+            BitrateAction::DownshiftResolution if self.active_height > 480 => {
+                Some(if self.active_height >= 1080 { 720 } else { 480 })
+            }
+            BitrateAction::UpshiftResolution if self.active_height < self.preferred_height => Some(
+                if self.active_height < 720 && self.preferred_height >= 720 {
+                    720
+                } else {
+                    1080.min(self.preferred_height)
+                },
+            ),
+            _ => None,
+        }
+    }
+
+    /// Re-arm an ABR transition that the platform encoder could not apply.
+    pub fn reject_resolution_change(&mut self, action: BitrateAction) {
+        match action {
+            BitrateAction::DownshiftResolution => {
+                self.downshift_armed = self.active_height > 480;
+                self.congested_at_floor_ticks = 0;
+            }
+            BitrateAction::UpshiftResolution => {
+                self.upshift_armed = self.active_height < self.preferred_height;
+                self.stable_seconds = 0;
+            }
+            _ => {}
+        }
     }
 
     /// Sync preferred height from StreamConfig / user Resolution toggle.

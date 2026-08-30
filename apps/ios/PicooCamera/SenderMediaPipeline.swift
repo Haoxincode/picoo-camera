@@ -52,7 +52,7 @@ actor SenderMediaPipeline {
 
     func consume(_ event: VideoEncoderEvent) throws {
         switch event {
-        case let .failure(message):
+        case let .failure(_, _, message):
             throw SenderMediaPipelineError.encoder(message)
         case let .accessUnit(accessUnit):
             try consume(accessUnit)

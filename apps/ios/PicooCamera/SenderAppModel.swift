@@ -1,6 +1,23 @@
 import Observation
 import SwiftUI
 
+private struct PendingEncoderApply {
+    let directive: SenderEncoderDirective?
+    let streamEpoch: UInt32
+    let encoderGeneration: UInt64
+    let targetHeight: UInt32
+    let targetBitrateBps: UInt32
+    let deadline: ContinuousClock.Instant
+    let recoveryMessage: String?
+}
+
+private struct CommittedEncoderState {
+    let resolution: VideoResolution
+    let position: CameraPosition
+    let streamEpoch: UInt32
+    let bitrateBps: UInt32
+}
+
 // REQ-PICOO-UI-010: SwiftUI observes snapshots and sends actions; Rust owns
 // the protocol/session state machine, AVFoundation owns camera lifecycle.
 @MainActor
@@ -19,13 +36,13 @@ final class SenderAppModel {
     private(set) var phoneConfirmedPairing = false
     private(set) var stopArmed = false
     private(set) var remoteMirrored = false
-    private(set) var activeBitrateBps = VideoBitrate.initial(for: .p1080)
+    private(set) var activeBitrateBps: UInt32
 
     var manualEndpointText = ""
     var isManualConnectPresented = false
     var isSettingsPresented = false
 
-    let camera = CameraCaptureModel()
+    let camera: CameraCaptureModel
     let protocolVersion = PicooSenderSession.protocolVersion
 
     @ObservationIgnored private let session: PicooSenderSession?
@@ -43,8 +60,21 @@ final class SenderAppModel {
     @ObservationIgnored private var selectedInitialResolution = false
     @ObservationIgnored private var isMediaSendEnabled = false
     @ObservationIgnored private var isSceneActive = true
+    @ObservationIgnored private var pendingEncoderApply: PendingEncoderApply?
+    @ObservationIgnored private var committedEncoderState: CommittedEncoderState?
+    @ObservationIgnored private var encoderRecoveryTask: Task<Void, Never>?
 
     init(session: PicooSenderSession?) {
+        let initialBitrate = session?.snapshot.currentBitrateBps
+            ?? PicooSenderSession.initialBitrate(forHeight: 1080)
+        let initialEpoch = session?.snapshot.streamEpoch
+            ?? PicooSenderSession.initialStreamEpoch
+        activeBitrateBps = initialBitrate
+        camera = CameraCaptureModel(
+            initialBitrateBps: initialBitrate,
+            initialStreamEpoch: initialEpoch
+        )
+        committedEncoderState = nil
         self.session = session
         mediaPipeline = session.map(SenderMediaPipeline.init)
         if session == nil {
@@ -58,6 +88,7 @@ final class SenderAppModel {
         mediaTask?.cancel()
         mediaControlTask?.cancel()
         cameraLifecycleTask?.cancel()
+        encoderRecoveryTask?.cancel()
         stopResetTask?.cancel()
     }
 
@@ -85,21 +116,38 @@ final class SenderAppModel {
                     guard !Task.isCancelled else { return }
                     guard let self else { return }
                     let events = self.camera.drainEncoderEvents()
-                    guard self.isMediaSendEnabled,
-                          self.matchesActiveMediaState
-                    else {
-                        continue
-                    }
                     for event in events {
+                        guard event.streamEpoch == self.camera.streamEpoch,
+                              event.encoderGeneration == self.camera.encoderGeneration
+                        else {
+                            continue
+                        }
+                        let wasApplyingEncoder = self.pendingEncoderApply != nil
+                        let completedApply = self.completePendingEncoderApply(with: event)
+                        if case let .failure(_, _, message) = event,
+                           !wasApplyingEncoder
+                        {
+                            self.suspendMediaSending()
+                            self.scheduleEncoderRecovery(after: message)
+                            continue
+                        }
+                        guard self.isMediaSendEnabled,
+                              self.matchesActiveMediaState
+                        else {
+                            continue
+                        }
                         switch event {
                         case .queueOverflow:
                             await self.camera.requestKeyframe()
-                        case .accessUnit, .failure:
+                        case .accessUnit where completedApply || self.pendingEncoderApply == nil,
+                             .failure:
                             do {
                                 try await mediaPipeline.consume(event)
                             } catch {
                                 self.errorMessage = error.localizedDescription
                             }
+                        case .accessUnit:
+                            continue
                         }
                     }
                 }
@@ -117,6 +165,9 @@ final class SenderAppModel {
         case .inactive, .background:
             isSceneActive = false
             suspendMediaSending()
+            cancelPendingEncoderApply()
+            encoderRecoveryTask?.cancel()
+            encoderRecoveryTask = nil
             cameraLifecycleTask?.cancel()
             await camera.stop()
         @unknown default:
@@ -200,12 +251,25 @@ final class SenderAppModel {
     }
 
     func switchCamera() async {
+        guard let session else { return }
         suspendMediaSending()
-        if await camera.switchCamera() {
-            await resumeMediaSending()
+        let streamEpoch = beginLocalEncoderReconfiguration(session)
+        guard streamEpoch > 0 else { return }
+        let switched = await camera.switchCamera(streamEpoch: streamEpoch)
+        guard !Task.isCancelled else {
+            try? session.cancelStreamReconfiguration(streamEpoch)
+            return
+        }
+        if switched {
+            waitForEncoderApply(
+                directive: nil,
+                streamEpoch: streamEpoch,
+                height: UInt32(camera.resolution.rawValue),
+                bitrateBps: activeBitrateBps
+            )
         } else {
-            errorMessage = "无法切换摄像头，已继续使用当前镜头。"
-            await resumeMediaSending()
+            try? session.cancelStreamReconfiguration(streamEpoch)
+            scheduleEncoderRecovery(after: "无法切换摄像头。")
         }
     }
 
@@ -258,7 +322,8 @@ final class SenderAppModel {
         }
 
         let previousSenderStatus = senderStatus
-        senderStatus = session.status
+        let senderSnapshot = session.snapshot
+        senderStatus = senderSnapshot.status
         isConnecting = senderStatus == .connecting
         if matchesActiveMediaState(previousSenderStatus),
            !matchesActiveMediaState
@@ -307,6 +372,7 @@ final class SenderAppModel {
             pollDiscovery()
         }
         pollMediaControl()
+        expirePendingEncoderApplyIfNeeded()
     }
 
     private func pollDiscovery() {
@@ -332,47 +398,80 @@ final class SenderAppModel {
     private func activateCamera() async {
         guard let session, let mediaPipeline else { return }
         guard !Task.isCancelled else { return }
+        if camera.state == .running {
+            isMediaSendEnabled = matchesActiveMediaState
+            return
+        }
         suspendMediaSending()
-        camera.prepareForStreamingStart()
         let initialResolution: VideoResolution
         let requestedResolution: VideoResolution?
         if selectedInitialResolution {
             initialResolution = camera.resolution
             requestedResolution = nil
         } else {
-            let receiverMaxHeight = session.receiverMaxHeight
+            let receiverMaxHeight = session.snapshot.receiverMaxHeight
             initialResolution = receiverMaxHeight > 0 && receiverMaxHeight < 1080
                 ? VideoResolution.supported(forRequestedHeight: receiverMaxHeight)
                 : .p1080
             requestedResolution = initialResolution
         }
         if let requestedResolution {
-            activeBitrateBps = VideoBitrate.initial(for: requestedResolution)
-        }
-        do {
-            try session.syncEncodeHeight(UInt32(initialResolution.rawValue))
-            try await mediaPipeline.prime(
-                resolution: initialResolution,
-                bitrateBps: activeBitrateBps,
-                streamEpoch: camera.streamEpoch,
-                mirrored: remoteMirrored
+            activeBitrateBps = PicooSenderSession.initialBitrate(
+                forHeight: UInt32(requestedResolution.rawValue)
             )
-        } catch {
-            errorMessage = "无法准备视频传输参数。"
-            return
+        }
+        let streamEpoch = selectedInitialResolution
+            ? beginLocalEncoderReconfiguration(session)
+            : session.snapshot.streamEpoch
+        guard streamEpoch > 0 else { return }
+        if !selectedInitialResolution {
+            do {
+                try await mediaPipeline.prime(
+                    resolution: initialResolution,
+                    bitrateBps: activeBitrateBps,
+                    streamEpoch: streamEpoch,
+                    mirrored: remoteMirrored
+                )
+            } catch {
+                errorMessage = "无法准备视频传输参数。"
+                return
+            }
         }
 
-        guard !Task.isCancelled else { return }
-        let granted = await camera.start(resolution: requestedResolution)
-        guard !Task.isCancelled else { return }
+        guard !Task.isCancelled else {
+            if selectedInitialResolution {
+                try? session.cancelStreamReconfiguration(streamEpoch)
+            }
+            return
+        }
+        let granted = await camera.start(
+            resolution: requestedResolution,
+            bitrateBps: activeBitrateBps,
+            streamEpoch: streamEpoch
+        )
+        guard !Task.isCancelled else {
+            if selectedInitialResolution {
+                try? session.cancelStreamReconfiguration(streamEpoch)
+            }
+            await camera.stop()
+            return
+        }
         if granted {
             selectedInitialResolution = true
-            await resumeMediaSending()
+            waitForEncoderApply(
+                directive: nil,
+                streamEpoch: streamEpoch,
+                height: UInt32(initialResolution.rawValue),
+                bitrateBps: activeBitrateBps
+            )
         }
         do {
             if granted {
                 try session.clearCameraPermissionRequired()
             } else {
+                if streamEpoch != session.snapshot.streamEpoch {
+                    try? session.cancelStreamReconfiguration(streamEpoch)
+                }
                 try session.markCameraPermissionRequired()
             }
         } catch {
@@ -392,7 +491,10 @@ final class SenderAppModel {
         errorMessage = nil
         mediaControlTask?.cancel()
         mediaControlTask = nil
+        encoderRecoveryTask?.cancel()
+        encoderRecoveryTask = nil
         mediaControlGeneration &+= 1
+        pendingEncoderApply = nil
         try? session?.disconnect()
         screen = .devices
         selectedInitialResolution = false
@@ -416,15 +518,11 @@ final class SenderAppModel {
     private func pollMediaControl() {
         guard isSceneActive, matchesActiveMediaState, let session else { return }
 
-        let requestedBitrate = session.currentBitrateBps
-        let clampedBitrate = VideoBitrate.clamp(
-            requestedBitrate,
-            for: camera.resolution
-        )
-        if requestedBitrate > 0, clampedBitrate != activeBitrateBps {
-            activeBitrateBps = clampedBitrate
+        let requestedBitrate = session.snapshot.currentBitrateBps
+        if requestedBitrate > 0, requestedBitrate != activeBitrateBps {
+            activeBitrateBps = requestedBitrate
             Task { [weak self] in
-                await self?.camera.updateBitrate(clampedBitrate)
+                await self?.camera.updateBitrate(requestedBitrate)
             }
         }
 
@@ -432,14 +530,31 @@ final class SenderAppModel {
             Task { [weak self] in await self?.camera.requestKeyframe() }
         }
 
-        guard mediaControlTask == nil else { return }
+        guard mediaControlTask == nil, pendingEncoderApply == nil else { return }
+        let receiverMaxHeight = session.snapshot.receiverMaxHeight
+        if camera.state == .running,
+           receiverMaxHeight > 0,
+           UInt32(camera.resolution.rawValue) > receiverMaxHeight
+        {
+            mediaControlTask = Task { [weak self] in
+                guard let self else { return }
+                await self.applyResolution(
+                    VideoResolution.supported(forRequestedHeight: receiverMaxHeight)
+                )
+                self.mediaControlTask = nil
+            }
+            return
+        }
         let cameraCommand = try? session.takeCameraCommand()
-        let downshift = cameraCommand == nil
-            && (try? session.takeResolutionDownshift()) == true
-        let upshift = cameraCommand == nil
-            && !downshift
-            && (try? session.takeResolutionUpshift()) == true
-        guard cameraCommand != nil || downshift || upshift else { return }
+        let encoderDirective = cameraCommand == nil ? try? session.encoderDirective() : nil
+        if let encoderDirective,
+           receiverMaxHeight > 0,
+           encoderDirective.targetHeight > receiverMaxHeight
+        {
+            try? session.rejectEncoderDirective(encoderDirective.id)
+            return
+        }
+        guard cameraCommand != nil || encoderDirective != nil else { return }
 
         mediaControlGeneration &+= 1
         let operation = mediaControlGeneration
@@ -452,26 +567,13 @@ final class SenderAppModel {
             }
             if let cameraCommand {
                 await self.apply(cameraCommand)
-            } else if downshift {
-                let next: VideoResolution? = switch self.camera.resolution {
-                case .p1080: .p720
-                case .p720: .p480
-                case .p480: nil
-                }
-                if let next { await self.applyResolution(next) }
-            } else if upshift {
-                let next: VideoResolution? = switch self.camera.resolution {
-                case .p480: .p720
-                case .p720: .p1080
-                case .p1080: nil
-                }
-                let receiverMaxHeight = session.receiverMaxHeight
-                if let next,
-                   receiverMaxHeight == 0
-                    || UInt32(next.rawValue) <= receiverMaxHeight
-                {
-                    await self.applyResolution(next)
-                }
+            } else if let encoderDirective {
+                await self.applyResolution(
+                    VideoResolution.supported(
+                        forRequestedHeight: encoderDirective.targetHeight
+                    ),
+                    directive: encoderDirective
+                )
             }
             guard operation == self.mediaControlGeneration else { return }
             self.mediaControlTask = nil
@@ -481,12 +583,46 @@ final class SenderAppModel {
     private func apply(_ command: SenderCameraCommand) async {
         switch command {
         case .switchFront:
-            if camera.position != .front, !(await camera.switchCamera()) {
-                errorMessage = "电脑请求的前置摄像头不可用。"
+            guard camera.position != .front, let session else { return }
+            suspendMediaSending()
+            let epoch = beginLocalEncoderReconfiguration(session)
+            guard epoch > 0 else { return }
+            let switched = await camera.switchCamera(streamEpoch: epoch)
+            guard !Task.isCancelled else {
+                try? session.cancelStreamReconfiguration(epoch)
+                return
+            }
+            if switched {
+                waitForEncoderApply(
+                    directive: nil,
+                    streamEpoch: epoch,
+                    height: UInt32(camera.resolution.rawValue),
+                    bitrateBps: activeBitrateBps
+                )
+            } else {
+                try? session.cancelStreamReconfiguration(epoch)
+                scheduleEncoderRecovery(after: "电脑请求的前置摄像头不可用。")
             }
         case .switchBack:
-            if camera.position != .back, !(await camera.switchCamera()) {
-                errorMessage = "电脑请求的后置摄像头不可用。"
+            guard camera.position != .back, let session else { return }
+            suspendMediaSending()
+            let epoch = beginLocalEncoderReconfiguration(session)
+            guard epoch > 0 else { return }
+            let switched = await camera.switchCamera(streamEpoch: epoch)
+            guard !Task.isCancelled else {
+                try? session.cancelStreamReconfiguration(epoch)
+                return
+            }
+            if switched {
+                waitForEncoderApply(
+                    directive: nil,
+                    streamEpoch: epoch,
+                    height: UInt32(camera.resolution.rawValue),
+                    bitrateBps: activeBitrateBps
+                )
+            } else {
+                try? session.cancelStreamReconfiguration(epoch)
+                scheduleEncoderRecovery(after: "电脑请求的后置摄像头不可用。")
             }
         case let .setResolution(_, height):
             await applyResolution(VideoResolution.supported(forRequestedHeight: height))
@@ -500,24 +636,216 @@ final class SenderAppModel {
         }
     }
 
-    private func applyResolution(_ resolution: VideoResolution) async {
+    private func applyResolution(
+        _ resolution: VideoResolution,
+        directive: SenderEncoderDirective? = nil
+    ) async {
         guard let session else { return }
-        suspendMediaSending()
         let supportedResolution = resolution.clamped(
-            toMaximumHeight: session.receiverMaxHeight
+            toMaximumHeight: session.snapshot.receiverMaxHeight
         )
-        guard await camera.setResolution(supportedResolution) else {
-            errorMessage = "当前摄像头不支持 \(supportedResolution.rawValue)P。"
-            await resumeMediaSending()
+        if let directive,
+           UInt32(supportedResolution.rawValue) != directive.targetHeight
+        {
+            try? session.rejectEncoderDirective(directive.id)
+            errorMessage = "接收端能力不支持电脑请求的 \(directive.targetHeight)P。"
             return
         }
-        activeBitrateBps = VideoBitrate.initial(for: supportedResolution)
-        do {
-            try session.syncEncodeHeight(UInt32(supportedResolution.rawValue))
-        } catch {
-            errorMessage = "无法同步视频分辨率。"
+        suspendMediaSending()
+        let targetBitrate = directive?.targetBitrateBps
+            ?? PicooSenderSession.initialBitrate(
+                forHeight: UInt32(supportedResolution.rawValue)
+            )
+        let streamEpoch = directive?.streamEpoch
+            ?? beginLocalEncoderReconfiguration(session)
+        guard streamEpoch > 0 else {
+            errorMessage = "接收端要求先完成当前编码器调整。"
+            return
         }
-        await resumeMediaSending()
+        let applied = await camera.setResolution(
+            supportedResolution,
+            bitrateBps: targetBitrate,
+            streamEpoch: streamEpoch
+        )
+        guard !Task.isCancelled else {
+            if let directive {
+                try? session.rejectEncoderDirective(directive.id)
+            } else {
+                try? session.cancelStreamReconfiguration(streamEpoch)
+            }
+            return
+        }
+        guard applied else {
+            if let directive {
+                try? session.rejectEncoderDirective(directive.id)
+            } else {
+                try? session.cancelStreamReconfiguration(streamEpoch)
+            }
+            scheduleEncoderRecovery(
+                after: "当前摄像头不支持 \(supportedResolution.rawValue)P。"
+            )
+            return
+        }
+        waitForEncoderApply(
+            directive: directive,
+            streamEpoch: streamEpoch,
+            height: UInt32(supportedResolution.rawValue),
+            bitrateBps: targetBitrate
+        )
+    }
+
+    private func waitForEncoderApply(
+        directive: SenderEncoderDirective?,
+        streamEpoch: UInt32,
+        height: UInt32,
+        bitrateBps: UInt32
+    ) {
+        pendingEncoderApply = PendingEncoderApply(
+            directive: directive,
+            streamEpoch: streamEpoch,
+            encoderGeneration: camera.encoderGeneration,
+            targetHeight: height,
+            targetBitrateBps: bitrateBps,
+            deadline: ContinuousClock.now.advanced(by: .seconds(3)),
+            recoveryMessage: nil
+        )
+    }
+
+    private func beginLocalEncoderReconfiguration(
+        _ session: PicooSenderSession
+    ) -> UInt32 {
+        encoderRecoveryTask?.cancel()
+        encoderRecoveryTask = nil
+        cancelPendingEncoderApply()
+        if let queuedDirective = try? session.encoderDirective() {
+            try? session.rejectEncoderDirective(queuedDirective.id)
+        }
+        return session.beginStreamReconfiguration()
+    }
+
+    private func completePendingEncoderApply(with event: VideoEncoderEvent) -> Bool {
+        guard let pending = pendingEncoderApply, let session else { return false }
+        guard event.streamEpoch == pending.streamEpoch,
+              event.encoderGeneration == pending.encoderGeneration
+        else {
+            return false
+        }
+        switch event {
+        case let .accessUnit(accessUnit):
+            guard accessUnit.isKeyframe,
+                  accessUnit.streamEpoch == pending.streamEpoch,
+                  accessUnit.height == pending.targetHeight
+            else {
+                return false
+            }
+            do {
+                if let directive = pending.directive {
+                    try session.acknowledgeEncoderDirective(
+                        directive.id,
+                        actualHeight: accessUnit.height
+                    )
+                } else {
+                    try session.reportEncoderHeight(
+                        accessUnit.height,
+                        streamEpoch: accessUnit.streamEpoch
+                    )
+                }
+                activeBitrateBps = pending.targetBitrateBps
+                committedEncoderState = CommittedEncoderState(
+                    resolution: VideoResolution.supported(
+                        forRequestedHeight: accessUnit.height
+                    ),
+                    position: camera.position,
+                    streamEpoch: accessUnit.streamEpoch,
+                    bitrateBps: pending.targetBitrateBps
+                )
+                pendingEncoderApply = nil
+                isMediaSendEnabled = isSceneActive && matchesActiveMediaState
+                if let recoveryMessage = pending.recoveryMessage {
+                    errorMessage = "\(recoveryMessage)；已恢复上一视频配置。"
+                }
+                return true
+            } catch {
+                failPendingEncoderApply("无法同步视频分辨率。")
+                return false
+            }
+        case let .failure(_, _, message):
+            failPendingEncoderApply(message)
+            return false
+        case .queueOverflow:
+            return false
+        }
+    }
+
+    private func expirePendingEncoderApplyIfNeeded() {
+        guard let pending = pendingEncoderApply,
+              ContinuousClock.now >= pending.deadline
+        else {
+            return
+        }
+        failPendingEncoderApply("编码器未在 3 秒内输出目标关键帧。")
+    }
+
+    private func failPendingEncoderApply(_ message: String) {
+        guard let pending = pendingEncoderApply, let session else { return }
+        if let directive = pending.directive {
+            try? session.rejectEncoderDirective(directive.id)
+        } else {
+            try? session.cancelStreamReconfiguration(pending.streamEpoch)
+        }
+        pendingEncoderApply = nil
+        isMediaSendEnabled = false
+        if pending.recoveryMessage != nil {
+            disconnectImmediately()
+            errorMessage = "\(message)；恢复上一视频配置失败，已断开连接。"
+            return
+        }
+        scheduleEncoderRecovery(after: message)
+    }
+
+    private func cancelPendingEncoderApply() {
+        guard let pending = pendingEncoderApply, let session else { return }
+        if let directive = pending.directive {
+            try? session.rejectEncoderDirective(directive.id)
+        } else {
+            try? session.cancelStreamReconfiguration(pending.streamEpoch)
+        }
+        pendingEncoderApply = nil
+    }
+
+    private func scheduleEncoderRecovery(after message: String) {
+        encoderRecoveryTask?.cancel()
+        guard let committed = committedEncoderState else {
+            disconnectImmediately()
+            errorMessage = "\(message)；尚无可恢复的视频配置，已断开连接。"
+            return
+        }
+        encoderRecoveryTask = Task { [weak self] in
+            guard let self else { return }
+            let restored = await self.camera.restoreCommittedConfiguration(
+                resolution: committed.resolution,
+                position: committed.position,
+                bitrateBps: committed.bitrateBps,
+                streamEpoch: committed.streamEpoch
+            )
+            guard !Task.isCancelled else { return }
+            self.encoderRecoveryTask = nil
+            guard restored else {
+                self.disconnectImmediately()
+                self.errorMessage = "\(message)；恢复上一视频配置失败，已断开连接。"
+                return
+            }
+            self.pendingEncoderApply = PendingEncoderApply(
+                directive: nil,
+                streamEpoch: committed.streamEpoch,
+                encoderGeneration: self.camera.encoderGeneration,
+                targetHeight: UInt32(committed.resolution.rawValue),
+                targetBitrateBps: committed.bitrateBps,
+                deadline: ContinuousClock.now.advanced(by: .seconds(3)),
+                recoveryMessage: message
+            )
+            await self.camera.requestKeyframe()
+        }
     }
 
     private var matchesActiveMediaState: Bool {
@@ -531,13 +859,6 @@ final class SenderAppModel {
     private func suspendMediaSending() {
         isMediaSendEnabled = false
         camera.discardEncoderEventsUntilKeyframe()
-    }
-
-    private func resumeMediaSending() async {
-        camera.discardEncoderEventsUntilKeyframe()
-        guard !Task.isCancelled, isSceneActive, matchesActiveMediaState else { return }
-        isMediaSendEnabled = true
-        await camera.requestKeyframe()
     }
 
     private func scheduleCameraActivation() {
@@ -557,17 +878,28 @@ final class SenderAppModel {
     }
 
     private func scheduleReconnectRebuild() {
-        guard isSceneActive else { return }
+        guard isSceneActive, let session else { return }
         suspendMediaSending()
+        let streamEpoch = beginLocalEncoderReconfiguration(session)
+        guard streamEpoch > 0 else { return }
         cameraLifecycleTask?.cancel()
         cameraLifecycleTask = Task { [weak self] in
             guard let self else { return }
-            let rebuilt = await self.camera.rebuildAfterReconnect()
-            guard !Task.isCancelled else { return }
+            let rebuilt = await self.camera.rebuildAfterReconnect(streamEpoch: streamEpoch)
+            guard !Task.isCancelled else {
+                try? session.cancelStreamReconfiguration(streamEpoch)
+                return
+            }
             if !rebuilt {
-                self.errorMessage = "网络恢复后无法重建视频编码器。"
+                try? session.cancelStreamReconfiguration(streamEpoch)
+                self.scheduleEncoderRecovery(after: "网络恢复后无法重建视频编码器。")
             } else {
-                await self.resumeMediaSending()
+                self.waitForEncoderApply(
+                    directive: nil,
+                    streamEpoch: streamEpoch,
+                    height: UInt32(self.camera.resolution.rawValue),
+                    bitrateBps: self.activeBitrateBps
+                )
             }
         }
     }

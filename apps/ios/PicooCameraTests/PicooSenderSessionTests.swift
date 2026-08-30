@@ -16,9 +16,9 @@ struct PicooSenderSessionTests {
         try autoreleasepool {
             let session = try PicooSenderSession(defaultDeviceName: "Swift Testing")
             releasedSession = session
-            #expect(session.statusCode == PicooSenderStatus.disconnected.rawValue)
+            #expect(session.snapshot.status == .disconnected)
             try session.disconnect()
-            #expect(session.statusCode == PicooSenderStatus.disconnected.rawValue)
+            #expect(session.snapshot.status == .disconnected)
         }
 
         #expect(releasedSession == nil)
@@ -87,30 +87,43 @@ struct PicooSenderSessionTests {
         #expect(VideoResolution.p1080.clamped(toMaximumHeight: 720) == .p720)
         #expect(VideoResolution.p1080.clamped(toMaximumHeight: 480) == .p480)
         #expect(VideoResolution.p720.clamped(toMaximumHeight: 0) == .p720)
-        #expect(VideoBitrate.clamp(800_000, for: .p720) == 1_500_000)
-        #expect(VideoBitrate.clamp(400_000, for: .p480) == 900_000)
-        #expect(VideoBitrate.clamp(3_000_000, for: .p480) == 2_500_000)
-        #expect(VideoBitrate.clamp(8_000_000, for: .p720) == 5_000_000)
-        #expect(VideoBitrate.clamp(2_000_000, for: .p1080) == 3_000_000)
-        #expect(VideoBitrate.clamp(12_000_000, for: .p1080) == 10_000_000)
+        #expect(PicooSenderSession.clampBitrate(800_000, forHeight: 720) == 1_500_000)
+        #expect(PicooSenderSession.clampBitrate(400_000, forHeight: 480) == 900_000)
+        #expect(PicooSenderSession.clampBitrate(3_000_000, forHeight: 480) == 2_500_000)
+        #expect(PicooSenderSession.clampBitrate(8_000_000, forHeight: 720) == 5_000_000)
+        #expect(PicooSenderSession.clampBitrate(2_000_000, forHeight: 1080) == 3_000_000)
+        #expect(PicooSenderSession.clampBitrate(12_000_000, forHeight: 1080) == 10_000_000)
     }
 
-    @Test("stream epoch is monotonic and wraps without using zero")
-    func streamEpochPolicy() {
-        #expect(StreamEpoch.bump(StreamEpoch.initial) == 2)
-        #expect(StreamEpoch.bump(.max) == StreamEpoch.initial)
+    @Test("stream epoch is monotonic and never overwrites a pending apply")
+    func streamEpochPolicy() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Epoch Testing")
+        #expect(session.snapshot.streamEpoch == PicooSenderSession.initialStreamEpoch)
+        let pending = session.beginStreamReconfiguration()
+        #expect(pending == PicooSenderSession.initialStreamEpoch + 1)
+        #expect(session.beginStreamReconfiguration() == 0)
+        try session.cancelStreamReconfiguration(pending)
+        let next = session.beginStreamReconfiguration()
+        #expect(next == pending + 1)
+        try session.cancelStreamReconfiguration(next)
     }
 
     @Test("encoder configuration normalizes rotation and clamps bitrate")
     func encoderConfigurationPolicy() {
+        let canonicalBitrate = PicooSenderSession.clampBitrate(
+            12_000_000,
+            forHeight: 1080
+        )
         let configuration = VideoEncoderConfiguration(
             resolution: .p1080,
-            bitrateBps: 12_000_000,
+            bitrateBps: canonicalBitrate,
             streamEpoch: 7,
+            encoderGeneration: 11,
             rotation: 450
         )
-        #expect(configuration.bitrateBps == 10_000_000)
+        #expect(configuration.bitrateBps == canonicalBitrate)
         #expect(configuration.streamEpoch == 7)
+        #expect(configuration.encoderGeneration == 11)
         #expect(configuration.rotation == 90)
     }
 
@@ -152,6 +165,7 @@ struct PicooSenderSessionTests {
             framesPerSecond: 30,
             bitrateBps: 3_000_000,
             streamEpoch: 1,
+            encoderGeneration: 1,
             rotation: 0,
             parameterSets: nil
         )

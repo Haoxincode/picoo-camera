@@ -114,10 +114,16 @@ impl ReceiverAdvertisement {
             .ok_or(AdvertisementError::MissingField("display_name".into()))?;
         let protocol_version = lookup("protocol_version")
             .ok_or(AdvertisementError::MissingField("protocol_version".into()))?;
+        if protocol_version != ALPN {
+            return Err(AdvertisementError::InvalidProtocolVersion);
+        }
         let quic_port = lookup("quic_port")
             .ok_or(AdvertisementError::MissingField("quic_port".into()))?
             .parse::<u16>()
             .map_err(|_| AdvertisementError::InvalidPort)?;
+        if quic_port == 0 {
+            return Err(AdvertisementError::InvalidPort);
+        }
         let pairing_state = lookup("pairing_state")
             .ok_or(AdvertisementError::MissingField("pairing_state".into()))?;
         let pairing_state =
@@ -145,6 +151,8 @@ pub enum AdvertisementError {
     UnknownField(String),
     #[error("invalid quic_port")]
     InvalidPort,
+    #[error("unsupported protocol_version")]
+    InvalidProtocolVersion,
     #[error("invalid pairing_state")]
     InvalidPairingState,
 }
@@ -197,6 +205,38 @@ mod tests {
         assert_eq!(
             ReceiverAdvertisement::from_txt_properties(&props),
             Err(AdvertisementError::UnknownField("video_state".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_unsupported_protocol_version() {
+        let props = vec![
+            ("receiver_id".into(), "r".into()),
+            ("display_name".into(), "n".into()),
+            ("protocol_version".into(), "picoocam/0".into()),
+            ("quic_port".into(), "4433".into()),
+            ("pairing_state".into(), "open".into()),
+            ("public_key_fingerprint_prefix".into(), "fp".into()),
+        ];
+        assert_eq!(
+            ReceiverAdvertisement::from_txt_properties(&props),
+            Err(AdvertisementError::InvalidProtocolVersion)
+        );
+    }
+
+    #[test]
+    fn rejects_zero_quic_port() {
+        let props = vec![
+            ("receiver_id".into(), "r".into()),
+            ("display_name".into(), "n".into()),
+            ("protocol_version".into(), ALPN.into()),
+            ("quic_port".into(), "0".into()),
+            ("pairing_state".into(), "open".into()),
+            ("public_key_fingerprint_prefix".into(), "fp".into()),
+        ];
+        assert_eq!(
+            ReceiverAdvertisement::from_txt_properties(&props),
+            Err(AdvertisementError::InvalidPort)
         );
     }
 }

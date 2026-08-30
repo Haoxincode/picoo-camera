@@ -246,16 +246,6 @@ sender_int_call!(Java_com_picoo_camera_jni_PicooNative_pump, -1, |session| {
     session.pump().map(|_| 0).unwrap_or(-2)
 });
 sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_getSenderStatus,
-    0,
-    |session| session.status().as_code()
-);
-sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_getReconnectAttempt,
-    0,
-    |session| session.reconnect_attempt() as jint
-);
-sender_int_call!(
     Java_com_picoo_camera_jni_PicooNative_markPermissionRequired,
     -1,
     |session| {
@@ -272,46 +262,126 @@ sender_int_call!(
     }
 );
 sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_getCurrentBitrateBps,
-    0,
-    |session| session.current_bitrate_bps() as jint
-);
-sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_getReceiverMaxHeight,
-    0,
-    |session| session.receiver_max_height() as jint
-);
-sender_int_call!(
     Java_com_picoo_camera_jni_PicooNative_takeKeyframeRequest,
     -1,
     |session| i32::from(session.take_keyframe_request())
 );
 sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_takeResolutionDownshift,
-    -1,
-    |session| i32::from(session.take_resolution_downshift())
-);
-sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_takeResolutionUpshift,
-    -1,
-    |session| i32::from(session.take_resolution_upshift())
+    Java_com_picoo_camera_jni_PicooNative_beginStreamReconfiguration,
+    0,
+    |session| session.begin_stream_reconfiguration() as jint
 );
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getLastScheduledReconnectDelayMs(
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_cancelStreamReconfiguration(
     _env: JNIEnv<'_>,
     _this: JObject<'_>,
     handle: jlong,
-) -> jlong {
+    stream_epoch: jint,
+) -> jint {
     with_sender(handle, |inner| {
-        inner
-            .session
-            .lock()
-            .ok()
-            .and_then(|session| session.last_scheduled_reconnect_delay_ms())
-            .unwrap_or(0) as jlong
+        let Ok(mut session) = inner.session.lock() else {
+            return -1;
+        };
+        if session.cancel_stream_reconfiguration(stream_epoch as u32) {
+            0
+        } else {
+            -2
+        }
     })
-    .unwrap_or(0)
+    .unwrap_or(-1)
+}
+
+/// [status, bitrate, activeHeight, receiverMaxHeight, epoch, reconnectAttempt,
+/// reconnectDelayMs], captured under one sender-session lock.
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getSenderSnapshot(
+    env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+) -> jlongArray {
+    let Ok(result) = env.new_long_array(7) else {
+        return ptr::null_mut();
+    };
+    let values = with_sender(handle, |inner| {
+        let Ok(session) = inner.session.lock() else {
+            return [0; 7];
+        };
+        let snapshot = sender_snapshot(&session);
+        [
+            snapshot.status as jlong,
+            snapshot.current_bitrate_bps as jlong,
+            snapshot.active_height as jlong,
+            snapshot.receiver_max_height as jlong,
+            snapshot.stream_epoch as jlong,
+            snapshot.reconnect_attempt as jlong,
+            snapshot.reconnect_delay_ms as jlong,
+        ]
+    })
+    .unwrap_or([0; 7]);
+    let _ = env.set_long_array_region(&result, 0, &values);
+    result.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getEncoderDirective(
+    env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+) -> jlongArray {
+    let Some(directive) = with_sender(handle, |inner| {
+        inner.session.lock().ok()?.pending_encoder_directive()
+    })
+    .flatten() else {
+        return ptr::null_mut();
+    };
+    let Ok(result) = env.new_long_array(5) else {
+        return ptr::null_mut();
+    };
+    let values = [
+        directive.id as jlong,
+        directive.kind as u32 as jlong,
+        directive.target_height as jlong,
+        directive.target_bitrate_bps as jlong,
+        directive.stream_epoch as jlong,
+    ];
+    if env.set_long_array_region(&result, 0, &values).is_err() {
+        return ptr::null_mut();
+    }
+    result.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_ackEncoderDirective(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    directive_id: jlong,
+    actual_height: jint,
+) -> jint {
+    with_sender(handle, |inner| {
+        let Ok(mut session) = inner.session.lock() else {
+            return -1;
+        };
+        i32::from(session.acknowledge_encoder_directive(directive_id as u64, actual_height as u32))
+    })
+    .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_nackEncoderDirective(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    directive_id: jlong,
+) -> jint {
+    with_sender(handle, |inner| {
+        let Ok(mut session) = inner.session.lock() else {
+            return -1;
+        };
+        i32::from(session.reject_encoder_directive(directive_id as u64))
+    })
+    .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -406,7 +476,6 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
     height: jint,
     fps: jint,
     bitrate_bps: jint,
-    stream_epoch: jint,
     mirrored: jboolean,
     rotation: jint,
     sps: JByteArray<'_>,
@@ -442,7 +511,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
             height: height as u32,
             fps: fps as u32,
             bitrate_bps: bitrate_bps as u32,
-            stream_epoch: stream_epoch as u32,
+            stream_epoch: 0,
             mirrored: mirrored == JNI_TRUE,
             rotation: rotation as u32,
             sps,
@@ -542,10 +611,46 @@ sender_set_u32!(
     Java_com_picoo_camera_jni_PicooNative_setPreferredHeight,
     set_preferred_height
 );
-sender_set_u32!(
-    Java_com_picoo_camera_jni_PicooNative_syncEncodeHeight,
-    sync_encode_height
-);
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_reportEncoderHeight(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    height: jint,
+    stream_epoch: jint,
+) -> jint {
+    with_sender(handle, |inner| {
+        let Ok(mut session) = inner.session.lock() else {
+            return -1;
+        };
+        if session.report_encoder_height(height as u32, stream_epoch as u32) {
+            0
+        } else {
+            -2
+        }
+    })
+    .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_bitrateInitialForHeight(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    height: jint,
+) -> jint {
+    BitrateLadder::for_height(height as u32).initial_bps as jint
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_bitrateClampForHeight(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    bitrate_bps: jint,
+    height: jint,
+) -> jint {
+    let ladder = BitrateLadder::for_height(height as u32);
+    (bitrate_bps as u32).clamp(ladder.min_bps, ladder.max_bps) as jint
+}
 
 #[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setThermalHold(
@@ -599,6 +704,81 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_extractSpsPps(
 fn with_browser<R>(handle: jlong, f: impl FnOnce(&mut BrowserInner) -> R) -> Option<R> {
     let mut handles = browsers().lock().ok()?;
     Some(f(handles.values.get_mut(&handle)?))
+}
+
+/// Validate Android NSD TXT bytes with the canonical Rust discovery parser.
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseDiscoveryTxt(
+    mut env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    keys: jobjectArray,
+    values: jobjectArray,
+) -> jobjectArray {
+    if keys.is_null() || values.is_null() {
+        return ptr::null_mut();
+    }
+    let keys = unsafe { jni::objects::JObjectArray::from_raw(keys) };
+    let values = unsafe { jni::objects::JObjectArray::from_raw(values) };
+    let (Ok(key_count), Ok(value_count)) =
+        (env.get_array_length(&keys), env.get_array_length(&values))
+    else {
+        return ptr::null_mut();
+    };
+    if key_count != value_count {
+        return ptr::null_mut();
+    }
+
+    let mut properties = Vec::with_capacity(key_count as usize);
+    for index in 0..key_count {
+        let (Ok(key), Ok(value)) = (
+            env.get_object_array_element(&keys, index),
+            env.get_object_array_element(&values, index),
+        ) else {
+            return ptr::null_mut();
+        };
+        let Some(key) = java_string(&mut env, JString::from(key)) else {
+            return ptr::null_mut();
+        };
+        let Ok(bytes) = env.convert_byte_array(JByteArray::from(value)) else {
+            return ptr::null_mut();
+        };
+        let Ok(value) = String::from_utf8(bytes) else {
+            return ptr::null_mut();
+        };
+        properties.push((key, value.trim().to_owned()));
+    }
+
+    let Ok(advertisement) =
+        picoo_discovery::ReceiverAdvertisement::from_txt_properties(&properties)
+    else {
+        return ptr::null_mut();
+    };
+    let Ok(string_class) = env.find_class("java/lang/String") else {
+        return ptr::null_mut();
+    };
+    let Ok(result) = env.new_object_array(6, string_class, JObject::null()) else {
+        return ptr::null_mut();
+    };
+    let fields = [
+        advertisement.receiver_id,
+        advertisement.display_name,
+        advertisement.protocol_version,
+        advertisement.quic_port.to_string(),
+        advertisement.pairing_state.as_str().to_owned(),
+        advertisement.public_key_fingerprint_prefix,
+    ];
+    for (index, field) in fields.iter().enumerate() {
+        let Ok(value) = env.new_string(field) else {
+            return ptr::null_mut();
+        };
+        if env
+            .set_object_array_element(&result, index as jint, value)
+            .is_err()
+        {
+            return ptr::null_mut();
+        }
+    }
+    result.into_raw()
 }
 
 #[no_mangle]
@@ -884,12 +1064,14 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_removeTrustedDevice
     let Some(device_id) = java_string(&mut env, device_id) else {
         return -1;
     };
-    with_trusted_store(handle, |inner| {
-        inner
-            .store
-            .lock()
-            .map(|mut store| i32::from(store.remove(&device_id)))
-            .unwrap_or(-1)
+    with_sender(handle, |inner| {
+        let Ok(mut session) = inner.session.lock() else {
+            return -1;
+        };
+        match session.remove_trusted_device(&device_id) {
+            Ok(removed) => i32::from(removed),
+            Err(_) => -2,
+        }
     })
     .unwrap_or(-1)
 }

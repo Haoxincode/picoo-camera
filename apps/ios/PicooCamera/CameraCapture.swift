@@ -78,16 +78,18 @@ actor CameraCaptureService {
     private var videoOutput: AVCaptureVideoDataOutput?
     private var position: CameraPosition = .back
     private var resolution: VideoResolution = .p1080
-    private var encoderConfiguration = VideoEncoderConfiguration(resolution: .p1080)
+    private var encoderConfiguration: VideoEncoderConfiguration
     private var captureRotation: UInt32 = 0
     private var operationGeneration: UInt64 = 0
 
     fileprivate init(
         sessionReference: CaptureSessionReference,
-        encoder: VideoEncoderPipeline
+        encoder: VideoEncoderPipeline,
+        initialConfiguration: VideoEncoderConfiguration
     ) {
         self.sessionReference = sessionReference
         self.encoder = encoder
+        encoderConfiguration = initialConfiguration
     }
 
     func start(
@@ -149,6 +151,7 @@ actor CameraCaptureService {
             framesPerSecond: encoderConfiguration.framesPerSecond,
             bitrateBps: bitrateBps,
             streamEpoch: encoderConfiguration.streamEpoch,
+            encoderGeneration: encoderConfiguration.encoderGeneration,
             rotation: encoderConfiguration.rotation
         )
         await encoder.updateBitrate(bitrateBps)
@@ -362,6 +365,7 @@ nonisolated private extension VideoEncoderConfiguration {
             framesPerSecond: framesPerSecond,
             bitrateBps: bitrateBps,
             streamEpoch: streamEpoch,
+            encoderGeneration: encoderGeneration,
             rotation: rotation
         )
     }
@@ -373,7 +377,8 @@ final class CameraCaptureModel {
     private(set) var state: CameraCaptureState = .idle
     private(set) var position: CameraPosition = .back
     private(set) var resolution: VideoResolution = .p1080
-    private(set) var streamEpoch = StreamEpoch.initial
+    private(set) var streamEpoch: UInt32
+    private(set) var encoderGeneration: UInt64
     private(set) var previewLayer: AVCaptureVideoPreviewLayer?
 
     let encoderEventSignals: AsyncStream<Void>
@@ -382,33 +387,46 @@ final class CameraCaptureModel {
     @ObservationIgnored private let service: CameraCaptureService
     @ObservationIgnored private let encoder: VideoEncoderPipeline
     @ObservationIgnored private let encoderEventBuffer: VideoEncoderEventBuffer
-    @ObservationIgnored private var targetBitrateBps = VideoBitrate.initial(for: .p1080)
+    @ObservationIgnored private var targetBitrateBps: UInt32
     @ObservationIgnored private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
     @ObservationIgnored private var rotationTask: Task<Void, Never>?
     @ObservationIgnored private var operationGeneration: UInt64 = 0
-    @ObservationIgnored private var hasRunEncoder = false
     @ObservationIgnored private var startPrepared = false
     @ObservationIgnored private var orientationNotificationsActive = false
 
-    init() {
+    init(initialBitrateBps: UInt32, initialStreamEpoch: UInt32) {
         let sessionReference = CaptureSessionReference()
         let eventBuffer = VideoEncoderEventBuffer()
-        let encoder = VideoEncoderPipeline { event in
+        let initialConfiguration = VideoEncoderConfiguration(
+            resolution: .p1080,
+            bitrateBps: initialBitrateBps,
+            streamEpoch: initialStreamEpoch,
+            encoderGeneration: 1
+        )
+        let encoder = VideoEncoderPipeline(initialConfiguration: initialConfiguration) { event in
             eventBuffer.enqueue(event)
         }
+        targetBitrateBps = initialBitrateBps
+        streamEpoch = initialStreamEpoch
+        encoderGeneration = 1
         self.sessionReference = sessionReference
         self.encoder = encoder
         encoderEventBuffer = eventBuffer
         encoderEventSignals = eventBuffer.signals
         service = CameraCaptureService(
             sessionReference: sessionReference,
-            encoder: encoder
+            encoder: encoder,
+            initialConfiguration: initialConfiguration
         )
     }
 
-    func start(resolution requestedResolution: VideoResolution? = nil) async -> Bool {
+    func start(
+        resolution requestedResolution: VideoResolution? = nil,
+        bitrateBps: UInt32,
+        streamEpoch: UInt32
+    ) async -> Bool {
         if state == .running { return true }
-        prepareForStreamingStart()
+        prepareForStreamingStart(streamEpoch: streamEpoch)
         startPrepared = false
         let operation = beginOperation()
         let authorized: Bool
@@ -432,11 +450,13 @@ final class CameraCaptureModel {
         }
 
         state = .starting
+        let previousEncoderGeneration = encoderGeneration
+        encoderGeneration &+= 1
         do {
             if let requestedResolution {
                 resolution = requestedResolution
-                targetBitrateBps = VideoBitrate.initial(for: requestedResolution)
             }
+            targetBitrateBps = bitrateBps
             try await service.start(
                 at: position,
                 configuration: encoderConfiguration
@@ -448,10 +468,10 @@ final class CameraCaptureModel {
             self.previewLayer = previewLayer
             startRotationUpdates(previewLayer: previewLayer)
             state = .running
-            hasRunEncoder = true
             return true
         } catch let error as CameraCaptureError {
             guard operation == operationGeneration else { return false }
+            encoderGeneration = previousEncoderGeneration
             previewLayer = nil
             switch error {
             case .deviceUnavailable:
@@ -462,29 +482,30 @@ final class CameraCaptureModel {
             return false
         } catch {
             guard operation == operationGeneration else { return false }
+            encoderGeneration = previousEncoderGeneration
             previewLayer = nil
             state = .failed(error.localizedDescription)
             return false
         }
     }
 
-    func prepareForStreamingStart() {
+    func prepareForStreamingStart(streamEpoch: UInt32) {
         guard state == .idle || state == .stopping,
               !startPrepared
         else {
             return
         }
-        if hasRunEncoder {
-            streamEpoch = StreamEpoch.bump(streamEpoch)
-        }
+        self.streamEpoch = streamEpoch
         startPrepared = true
     }
 
-    func rebuildAfterReconnect() async -> Bool {
+    func rebuildAfterReconnect(streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
-        let previousEpoch = streamEpoch
-        streamEpoch = StreamEpoch.bump(streamEpoch)
+        let previousEpoch = self.streamEpoch
+        let previousEncoderGeneration = encoderGeneration
+        self.streamEpoch = streamEpoch
+        encoderGeneration &+= 1
         do {
             try await service.setResolution(
                 resolution,
@@ -496,16 +517,19 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
-            streamEpoch = previousEpoch
+            self.streamEpoch = previousEpoch
+            encoderGeneration = previousEncoderGeneration
             return false
         }
     }
 
-    func switchCamera() async -> Bool {
+    func switchCamera(streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
-        let previousEpoch = streamEpoch
-        streamEpoch = StreamEpoch.bump(streamEpoch)
+        let previousEpoch = self.streamEpoch
+        let previousEncoderGeneration = encoderGeneration
+        self.streamEpoch = streamEpoch
+        encoderGeneration &+= 1
         do {
             let switchedPosition = try await service.switchCamera(
                 configuration: encoderConfiguration
@@ -521,21 +545,27 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
-            streamEpoch = previousEpoch
+            self.streamEpoch = previousEpoch
+            encoderGeneration = previousEncoderGeneration
             return false
         }
     }
 
-    func setResolution(_ requestedResolution: VideoResolution) async -> Bool {
+    func setResolution(
+        _ requestedResolution: VideoResolution,
+        bitrateBps: UInt32,
+        streamEpoch: UInt32
+    ) async -> Bool {
         guard state == .running else { return false }
-        guard resolution != requestedResolution else { return true }
         let operation = beginOperation()
         let previousResolution = resolution
         let previousBitrate = targetBitrateBps
-        let previousEpoch = streamEpoch
+        let previousEpoch = self.streamEpoch
+        let previousEncoderGeneration = encoderGeneration
         resolution = requestedResolution
-        targetBitrateBps = VideoBitrate.initial(for: requestedResolution)
-        streamEpoch = StreamEpoch.bump(streamEpoch)
+        targetBitrateBps = bitrateBps
+        self.streamEpoch = streamEpoch
+        encoderGeneration &+= 1
         do {
             try await service.setResolution(
                 requestedResolution,
@@ -549,16 +579,77 @@ final class CameraCaptureModel {
             guard operation == operationGeneration else { return false }
             resolution = previousResolution
             targetBitrateBps = previousBitrate
+            self.streamEpoch = previousEpoch
+            encoderGeneration = previousEncoderGeneration
+            return false
+        }
+    }
+
+    /// Rebuild VideoToolbox/AVFoundation at the last Rust-committed state.
+    /// Recovery is complete only after the caller observes the first matching
+    /// IDR from this generation.
+    func restoreCommittedConfiguration(
+        resolution committedResolution: VideoResolution,
+        position committedPosition: CameraPosition,
+        bitrateBps committedBitrateBps: UInt32,
+        streamEpoch committedStreamEpoch: UInt32
+    ) async -> Bool {
+        guard state == .running else { return false }
+        let operation = beginOperation()
+        let previousResolution = resolution
+        let previousPosition = position
+        let previousBitrate = targetBitrateBps
+        let previousEpoch = streamEpoch
+        let previousEncoderGeneration = encoderGeneration
+
+        resolution = committedResolution
+        targetBitrateBps = committedBitrateBps
+        streamEpoch = committedStreamEpoch
+        encoderGeneration &+= 1
+        do {
+            if position != committedPosition {
+                let restoredPosition = try await service.switchCamera(
+                    configuration: encoderConfiguration
+                )
+                guard operation == operationGeneration,
+                      restoredPosition == committedPosition
+                else {
+                    throw CancellationError()
+                }
+                position = restoredPosition
+            } else {
+                try await service.setResolution(
+                    committedResolution,
+                    configuration: encoderConfiguration
+                )
+                guard operation == operationGeneration else {
+                    throw CancellationError()
+                }
+            }
+            await service.updateBitrate(committedBitrateBps)
+            guard operation == operationGeneration else {
+                throw CancellationError()
+            }
+            if let previewLayer {
+                updatePreviewMirroring(previewLayer)
+                startRotationUpdates(previewLayer: previewLayer)
+            }
+            return true
+        } catch {
+            guard operation == operationGeneration else { return false }
+            resolution = previousResolution
+            position = previousPosition
+            targetBitrateBps = previousBitrate
             streamEpoch = previousEpoch
+            encoderGeneration = previousEncoderGeneration
             return false
         }
     }
 
     func updateBitrate(_ bitrateBps: UInt32) async {
-        let clamped = VideoBitrate.clamp(bitrateBps, for: resolution)
-        guard clamped != targetBitrateBps else { return }
-        targetBitrateBps = clamped
-        await service.updateBitrate(clamped)
+        guard bitrateBps != targetBitrateBps else { return }
+        targetBitrateBps = bitrateBps
+        await service.updateBitrate(bitrateBps)
     }
 
     func requestKeyframe() async {
@@ -591,7 +682,8 @@ final class CameraCaptureModel {
         VideoEncoderConfiguration(
             resolution: resolution,
             bitrateBps: targetBitrateBps,
-            streamEpoch: streamEpoch
+            streamEpoch: streamEpoch,
+            encoderGeneration: encoderGeneration
         )
     }
 

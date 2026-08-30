@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Ensure Android DiscoveryTxt keys stay aligned with Rust ALLOWED_TXT_KEYS
-# (REQ-PICOO-DISCOVERY-005).
+# Ensure Android delegates TXT validation to Rust instead of recreating the
+# ALLOWED_TXT_KEYS schema (REQ-PICOO-DISCOVERY-005).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUST="$ROOT/crates/picoo-discovery/src/types.rs"
@@ -15,22 +15,13 @@ print("\n".join(sorted(re.findall(r'"([^"]+)"', block))))
 PY
 )
 
-kt_keys=$(python3 - <<PY
-import re
-from pathlib import Path
-text = Path("$KT").read_text()
-block = re.search(r"ALLOWED_KEYS[^=]*=\s*setOf\([^)]*\)", text, re.S).group(0)
-print("\n".join(sorted(re.findall(r'"([^"]+)"', block))))
-PY
-)
-
-if [[ "$rust_keys" != "$kt_keys" ]]; then
-  echo "TXT key mismatch between Rust and Android:"
-  echo "--- rust ---"
-  echo "$rust_keys"
-  echo "--- kotlin ---"
-  echo "$kt_keys"
+if grep -Eq 'ALLOWED_(TXT_)?KEYS|setOf\([^)]*receiver_id' "$KT"; then
+  echo "Android must not duplicate the Rust discovery TXT schema: $KT"
   exit 1
 fi
-echo "ok discovery TXT keys aligned:"
+if ! grep -Fq 'PicooNative.parseDiscoveryTxt' "$KT"; then
+  echo "Android DiscoveryTxt must delegate validation to Rust: $KT"
+  exit 1
+fi
+echo "ok discovery TXT schema is Rust-owned; Android delegates parsing:"
 echo "$rust_keys" | sed 's/^/  /'

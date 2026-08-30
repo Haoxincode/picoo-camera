@@ -4,7 +4,6 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WXS="$ROOT/installers/windows/picoo-camera.wxs"
-REG_PS1="$ROOT/installers/windows/register-vcam.ps1"
 VCAM_IDS="$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/mod.rs"
 VCAM_MANIFEST="$ROOT/extensions/windows-virtual-camera/mf-source/Cargo.toml"
 VCAM_RS="$ROOT/apps/desktop/src/vcam_register.rs"
@@ -107,7 +106,7 @@ if ! grep -qE 'Port="4433"' "$WXS"; then
   fail=1
 fi
 
-# COM CLSID must stay identical across the Rust cdylib, desktop and register script.
+# COM CLSID must stay identical across the Rust cdylib and desktop maintenance command.
 need "$VCAM_IDS" "$CLSID_RUST"
 need "$VCAM_IDS" 'DllGetClassObject'
 need "$VCAM_IDS" 'DllCanUnloadNow'
@@ -115,10 +114,6 @@ need "$VCAM_MANIFEST" 'crate-type = ["cdylib", "rlib"]'
 need "$VCAM_MANIFEST" 'windows-core = "0.62.2"'
 need "$VCAM_MANIFEST" 'windows = { version = "0.62.2"'
 need "$VCAM_RS" "$CLSID"
-need "$REG_PS1" "$CLSID"
-need "$REG_PS1" '--register-vcam'
-need "$REG_PS1" '--no-wait'
-need "$REG_PS1" '--unregister-vcam'
 
 if find "$ROOT/extensions/windows-virtual-camera/mf-source" \
     \( -name '*.cpp' -o -name '*.h' -o -name '*.vcxproj' -o -name 'CMakeLists.txt' \) \

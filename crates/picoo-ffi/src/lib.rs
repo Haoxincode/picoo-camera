@@ -9,12 +9,13 @@ use picoo_diagnostics::{build_report, export_json, DiagnosticInput};
 use picoo_discovery::MdnsBrowser;
 use picoo_packet::extract_sps_pps;
 use picoo_pairing::{DeviceIdentity, TrustedDeviceStore};
-use picoo_sender::{SenderSession, SessionStats, StreamConfigParams};
+use picoo_rate_control::BitrateLadder;
+use picoo_sender::{EncoderDirective, SenderSession, SessionStats, StreamConfigParams};
 use picoo_session::SenderStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
 use std::ffi::CStr;
 use std::slice;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 /// Opaque handle placeholder for future session context.
@@ -25,6 +26,19 @@ pub struct PicooSessionHandle {
 struct BrowserInner {
     browser: Mutex<MdnsBrowser>,
     receivers: Mutex<Vec<PicooDiscoveredReceiver>>,
+}
+
+/// Never unwind through C/JNI after an earlier host callback poisoned a lock.
+/// The next ABI call recovers ownership and can return its documented status.
+trait RecoverMutex<T> {
+    fn lock_or_recover(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> RecoverMutex<T> for Mutex<T> {
+    fn lock_or_recover(&self) -> MutexGuard<'_, T> {
+        self.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }
 
 fn sender_status_code(status: SenderStatus) -> i32 {
@@ -86,7 +100,7 @@ pub extern "C" fn picoo_sender_connect(
     }
     let host = unsafe { CStr::from_ptr(host) }.to_string_lossy();
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let mut session = inner.session.lock().expect("sender lock");
+    let mut session = inner.session.lock_or_recover();
     match session.connect(Endpoint {
         host: host.into_owned(),
         port,
@@ -103,7 +117,7 @@ pub extern "C" fn picoo_sender_disconnect(handle: *mut std::ffi::c_void) -> i32 
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner.session.lock().expect("sender lock").disconnect();
+    inner.session.lock_or_recover().disconnect();
     0
 }
 
@@ -114,7 +128,7 @@ pub extern "C" fn picoo_sender_pump(handle: *mut std::ffi::c_void) -> i32 {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    match inner.session.lock().expect("sender lock").pump() {
+    match inner.session.lock_or_recover().pump() {
         Ok(()) => 0,
         Err(_) => -2,
     }
@@ -137,7 +151,7 @@ pub extern "C" fn picoo_sender_ingest_access_unit(
 
     let inner = unsafe { &*(handle as *mut SenderInner) };
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    let mut session = inner.session.lock().expect("sender lock");
+    let mut session = inner.session.lock_or_recover();
 
     match session.ingest_access_unit(slice, is_keyframe != 0, pts_us, stream_epoch) {
         Ok(count) => {
@@ -159,7 +173,7 @@ pub extern "C" fn picoo_sender_flush(handle: *mut std::ffi::c_void, out_sent: *m
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let mut session = inner.session.lock().expect("sender lock");
+    let mut session = inner.session.lock_or_recover();
     match session.flush_pending() {
         Ok(sent) => {
             if !out_sent.is_null() {
@@ -181,6 +195,56 @@ pub struct PicooSenderStats {
     pub sent_datagrams: u64,
 }
 
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PicooEncoderDirective {
+    pub id: u64,
+    pub kind: u32,
+    pub target_height: u32,
+    pub target_bitrate_bps: u32,
+    pub stream_epoch: u32,
+}
+
+/// Coherent sender control-plane state captured under one Rust session lock.
+///
+/// Platform UIs should prefer this over combining individual getters: fields
+/// in one snapshot always describe the same session instant.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PicooSenderSnapshot {
+    pub status: i32,
+    pub current_bitrate_bps: u32,
+    pub active_height: u32,
+    pub receiver_max_height: u32,
+    pub stream_epoch: u32,
+    pub reconnect_attempt: u32,
+    pub reconnect_delay_ms: u64,
+}
+
+fn sender_snapshot(session: &SenderSession<QuicSenderTransport>) -> PicooSenderSnapshot {
+    PicooSenderSnapshot {
+        status: sender_status_code(session.status()),
+        current_bitrate_bps: session.current_bitrate_bps(),
+        active_height: session.bitrate_active_height(),
+        receiver_max_height: session.receiver_max_height(),
+        stream_epoch: session.current_stream_epoch(),
+        reconnect_attempt: session.reconnect_attempt(),
+        reconnect_delay_ms: session.last_scheduled_reconnect_delay_ms().unwrap_or(0),
+    }
+}
+
+impl From<EncoderDirective> for PicooEncoderDirective {
+    fn from(value: EncoderDirective) -> Self {
+        Self {
+            id: value.id,
+            kind: value.kind as u32,
+            target_height: value.target_height,
+            target_bitrate_bps: value.target_bitrate_bps,
+            stream_epoch: value.stream_epoch,
+        }
+    }
+}
+
 /// Read cumulative sender stats.
 #[no_mangle]
 pub extern "C" fn picoo_sender_stats(
@@ -191,7 +255,7 @@ pub extern "C" fn picoo_sender_stats(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let stats: SessionStats = inner.session.lock().expect("sender lock").stats();
+    let stats: SessionStats = inner.session.lock_or_recover().stats();
     unsafe {
         (*out).access_units = stats.pipeline.access_units;
         (*out).packets = stats.pipeline.packets;
@@ -208,48 +272,22 @@ pub extern "C" fn picoo_sender_pending_packets(handle: *mut std::ffi::c_void) ->
         return 0;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner.session.lock().expect("sender lock").pending_packets() as u64
+    inner.session.lock_or_recover().pending_packets() as u64
 }
 
-/// Current sender session status (see `PicooSenderStatus` values).
+/// Read coherent sender control-plane state under one session lock.
 #[no_mangle]
-pub extern "C" fn picoo_sender_status(handle: *mut std::ffi::c_void) -> i32 {
-    if handle.is_null() {
-        return sender_status_code(SenderStatus::Disconnected);
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    sender_status_code(inner.session.lock().expect("sender lock").status())
-}
-
-/// Last scheduled reconnect backoff delay in ms (REQ-PICOO-TRANSPORT-004 / PUC-006).
-#[no_mangle]
-pub extern "C" fn picoo_sender_last_scheduled_reconnect_delay_ms(
+pub extern "C" fn picoo_sender_snapshot(
     handle: *mut std::ffi::c_void,
-) -> u64 {
-    if handle.is_null() {
-        return 0;
+    out: *mut PicooSenderSnapshot,
+) -> i32 {
+    if handle.is_null() || out.is_null() {
+        return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .last_scheduled_reconnect_delay_ms()
-        .unwrap_or(0)
-}
-
-/// 1-based reconnect attempt while Reconnecting; 0 otherwise.
-#[no_mangle]
-pub extern "C" fn picoo_sender_reconnect_attempt(handle: *mut std::ffi::c_void) -> u32 {
-    if handle.is_null() {
-        return 0;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .reconnect_attempt()
+    let snapshot = sender_snapshot(&inner.session.lock_or_recover());
+    unsafe { *out = snapshot };
+    0
 }
 
 /// Mark Permission Required (REQ-PICOO-SESSION-001). Returns 0 on success.
@@ -259,11 +297,7 @@ pub extern "C" fn picoo_sender_mark_permission_required(handle: *mut std::ffi::c
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .mark_permission_required();
+    inner.session.lock_or_recover().mark_permission_required();
     0
 }
 
@@ -274,11 +308,7 @@ pub extern "C" fn picoo_sender_clear_permission_required(handle: *mut std::ffi::
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .clear_permission_required();
+    inner.session.lock_or_recover().clear_permission_required();
     0
 }
 
@@ -304,8 +334,7 @@ pub extern "C" fn picoo_sender_send_client_hello(
     let inner = unsafe { &*(handle as *mut SenderInner) };
     match inner
         .session
-        .lock()
-        .expect("sender lock")
+        .lock_or_recover()
         .send_client_hello(&sender_id, &device_name, key)
     {
         Ok(()) => 0,
@@ -326,8 +355,7 @@ pub extern "C" fn picoo_sender_send_pairing_confirm(
     let inner = unsafe { &*(handle as *mut SenderInner) };
     match inner
         .session
-        .lock()
-        .expect("sender lock")
+        .lock_or_recover()
         .send_pairing_confirm(&receiver_id)
     {
         Ok(()) => 0,
@@ -346,7 +374,7 @@ pub extern "C" fn picoo_sender_pairing_short_code(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let session = inner.session.lock().expect("sender lock");
+    let session = inner.session.lock_or_recover();
     match session.pairing_short_code() {
         Some(code) => copy_str_to_buf(code, out, out_len),
         None => 0,
@@ -365,7 +393,6 @@ pub extern "C" fn picoo_sender_set_stream_config(
     height: u32,
     fps: u32,
     bitrate_bps: u32,
-    stream_epoch: u32,
     mirrored: u8,
     rotation: u32,
     sps: *const u8,
@@ -380,14 +407,13 @@ pub extern "C" fn picoo_sender_set_stream_config(
     let inner = unsafe { &*(handle as *mut SenderInner) };
     inner
         .session
-        .lock()
-        .expect("sender lock")
+        .lock_or_recover()
         .set_stream_config(StreamConfigParams {
             width,
             height,
             fps,
             bitrate_bps,
-            stream_epoch,
+            stream_epoch: 0,
             mirrored: mirrored != 0,
             rotation,
             sps: sps_bytes,
@@ -466,20 +492,6 @@ pub extern "C" fn picoo_h264_extract_sps_pps(
     0
 }
 
-/// Current adaptive bitrate in bps.
-#[no_mangle]
-pub extern "C" fn picoo_sender_current_bitrate_bps(handle: *mut std::ffi::c_void) -> u32 {
-    if handle.is_null() {
-        return 0;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .current_bitrate_bps()
-}
-
 /// Latest ReceiverStats feedback for live UI (PUC-005 / REQ-PICOO-PROTOCOL-006).
 ///
 /// Writes `[rtt_ms, packet_loss, jitter_ms, frame_age_ms, receive_bitrate, jitter_depth_ms]`
@@ -494,7 +506,7 @@ pub extern "C" fn picoo_sender_last_receiver_stats(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let session = inner.session.lock().expect("sender lock");
+    let session = inner.session.lock_or_recover();
     let Some(stats) = session.last_receiver_stats() else {
         return 1;
     };
@@ -516,12 +528,7 @@ pub extern "C" fn picoo_sender_take_keyframe_request(handle: *mut std::ffi::c_vo
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    if inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .take_keyframe_request()
-    {
+    if inner.session.lock_or_recover().take_keyframe_request() {
         1
     } else {
         0
@@ -540,7 +547,7 @@ pub extern "C" fn picoo_sender_last_session_error(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let session = inner.session.lock().expect("sender lock");
+    let session = inner.session.lock_or_recover();
     let Some(code) = session.last_session_error() else {
         unsafe { *out = 0 };
         return 0;
@@ -554,42 +561,59 @@ pub extern "C" fn picoo_sender_last_session_error(
     copy as i32
 }
 
-/// Returns 1 if ABR asks the host to drop resolution (consumes the flag). REQ-PICOO-MEDIA-010.
+/// Read the pending ABR encoder transition without acknowledging it.
 #[no_mangle]
-pub extern "C" fn picoo_sender_take_resolution_downshift(handle: *mut std::ffi::c_void) -> i32 {
-    if handle.is_null() {
+pub extern "C" fn picoo_sender_peek_encoder_directive(
+    handle: *mut std::ffi::c_void,
+    out: *mut PicooEncoderDirective,
+) -> i32 {
+    if handle.is_null() || out.is_null() {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    if inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .take_resolution_downshift()
-    {
-        1
-    } else {
-        0
-    }
+    let session = inner.session.lock_or_recover();
+    let Some(directive) = session.pending_encoder_directive() else {
+        return 0;
+    };
+    unsafe { *out = directive.into() };
+    1
 }
 
-/// Returns 1 if ABR asks the host to restore preferred resolution (consumes the flag).
+/// Confirm that the native encoder applied the matching directive.
 #[no_mangle]
-pub extern "C" fn picoo_sender_take_resolution_upshift(handle: *mut std::ffi::c_void) -> i32 {
+pub extern "C" fn picoo_sender_ack_encoder_directive(
+    handle: *mut std::ffi::c_void,
+    directive_id: u64,
+    actual_height: u32,
+) -> i32 {
     if handle.is_null() {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    if inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .take_resolution_upshift()
-    {
-        1
-    } else {
-        0
+    i32::from(
+        inner
+            .session
+            .lock_or_recover()
+            .acknowledge_encoder_directive(directive_id, actual_height),
+    )
+}
+
+/// Reject a directive without changing the active Rust ABR ladder.
+#[no_mangle]
+pub extern "C" fn picoo_sender_nack_encoder_directive(
+    handle: *mut std::ffi::c_void,
+    directive_id: u64,
+) -> i32 {
+    if handle.is_null() {
+        return -1;
     }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    i32::from(
+        inner
+            .session
+            .lock_or_recover()
+            .reject_encoder_directive(directive_id),
+    )
 }
 
 /// Consume a desktop-originated CameraCommand (PUC-005 / REQ-PICOO-UI-009).
@@ -608,12 +632,7 @@ pub extern "C" fn picoo_sender_take_camera_command(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let Some(cmd) = inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .take_camera_command()
-    else {
+    let Some(cmd) = inner.session.lock_or_recover().take_camera_command() else {
         return 0;
     };
     if !out_width.is_null() || !out_height.is_null() {
@@ -641,7 +660,7 @@ pub extern "C" fn picoo_sender_take_camera_command(
     cmd.command
 }
 
-/// Set preferred capture height for ABR upshift decisions (720 or 1080).
+/// Set preferred capture height for ABR decisions (480, 720, or 1080).
 #[no_mangle]
 pub extern "C" fn picoo_sender_set_preferred_height(
     handle: *mut std::ffi::c_void,
@@ -651,56 +670,90 @@ pub extern "C" fn picoo_sender_set_preferred_height(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .set_preferred_height(height);
+    inner.session.lock_or_recover().set_preferred_height(height);
     0
 }
 
-/// Host applied encode height — sync ABR ladder (thermal / user toggle). MEDIA-010.
+/// Allocate the next stream epoch before a native encoder discontinuity.
 #[no_mangle]
-pub extern "C" fn picoo_sender_sync_encode_height(
+pub extern "C" fn picoo_sender_begin_stream_reconfiguration(handle: *mut std::ffi::c_void) -> u32 {
+    if handle.is_null() {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock_or_recover()
+        .begin_stream_reconfiguration()
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_sender_cancel_stream_reconfiguration(
     handle: *mut std::ffi::c_void,
-    height: u32,
+    stream_epoch: u32,
 ) -> i32 {
     if handle.is_null() {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
+    if inner
         .session
-        .lock()
-        .expect("sender lock")
-        .sync_encode_height(height);
-    0
+        .lock_or_recover()
+        .cancel_stream_reconfiguration(stream_epoch)
+    {
+        0
+    } else {
+        -2
+    }
 }
 
-/// Thermal hold: block ABR 720→1080 while overheating (MEDIA-010).
+/// Report a successfully applied native encoder height outside an ABR directive.
+#[no_mangle]
+pub extern "C" fn picoo_sender_report_encoder_height(
+    handle: *mut std::ffi::c_void,
+    height: u32,
+    stream_epoch: u32,
+) -> i32 {
+    if handle.is_null() || height == 0 {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    if inner
+        .session
+        .lock_or_recover()
+        .report_encoder_height(height, stream_epoch)
+    {
+        0
+    } else {
+        -2
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_bitrate_initial_for_height(height: u32) -> u32 {
+    BitrateLadder::for_height(height).initial_bps
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_bitrate_clamp_for_height(bitrate_bps: u32, height: u32) -> u32 {
+    let ladder = BitrateLadder::for_height(height);
+    bitrate_bps.clamp(ladder.min_bps, ladder.max_bps)
+}
+
+#[no_mangle]
+pub extern "C" fn picoo_stream_epoch_initial() -> u32 {
+    picoo_sender::INITIAL_STREAM_EPOCH
+}
+
+/// Thermal hold: block ABR upshift above 720 while overheating (MEDIA-010).
 #[no_mangle]
 pub extern "C" fn picoo_sender_set_thermal_hold(handle: *mut std::ffi::c_void, hold: i32) -> i32 {
     if handle.is_null() {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock()
-        .expect("sender lock")
-        .set_thermal_hold(hold != 0);
+    inner.session.lock_or_recover().set_thermal_hold(hold != 0);
     0
-}
-
-/// Max height advertised by receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
-#[no_mangle]
-pub extern "C" fn picoo_sender_receiver_max_height(handle: *mut std::ffi::c_void) -> u32 {
-    if handle.is_null() {
-        return 0;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    let session = inner.session.lock().expect("sender lock");
-    session.receiver_max_height()
 }
 
 /// Attach trusted device store path to sender (load + auto-save on pairing).
@@ -716,8 +769,7 @@ pub extern "C" fn picoo_sender_attach_trusted_store(
     let inner = unsafe { &*(handle as *mut SenderInner) };
     match inner
         .session
-        .lock()
-        .expect("sender lock")
+        .lock_or_recover()
         .attach_trusted_store(path.as_ref())
     {
         Ok(()) => 0,
@@ -736,7 +788,7 @@ pub extern "C" fn picoo_sender_connected_receiver_id(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let session = inner.session.lock().expect("sender lock");
+    let session = inner.session.lock_or_recover();
     match session.connected_receiver_id() {
         Some(id) => copy_str_to_buf(id, out, out_len),
         None => 0,
@@ -754,7 +806,7 @@ pub extern "C" fn picoo_sender_connected_receiver_display_name(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    let session = inner.session.lock().expect("sender lock");
+    let session = inner.session.lock_or_recover();
     match session.connected_receiver_display_name() {
         Some(name) => copy_str_to_buf(name, out, out_len),
         None => 0,
@@ -828,7 +880,7 @@ pub extern "C" fn picoo_trusted_store_count(handle: *mut std::ffi::c_void) -> u3
         return 0;
     }
     let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
-    inner.store.lock().expect("store lock").list().count() as u32
+    inner.store.lock_or_recover().list().count() as u32
 }
 
 #[no_mangle]
@@ -841,7 +893,7 @@ pub extern "C" fn picoo_trusted_store_get(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
-    let store = inner.store.lock().expect("store lock");
+    let store = inner.store.lock_or_recover();
     let Some(device) = store.list().nth(index as usize) else {
         return -2;
     };
@@ -875,7 +927,7 @@ pub extern "C" fn picoo_trusted_store_remove(
     }
     let device_id = unsafe { CStr::from_ptr(device_id) }.to_string_lossy();
     let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
-    let mut store = inner.store.lock().expect("store lock");
+    let mut store = inner.store.lock_or_recover();
     if store.remove(&device_id) {
         1
     } else {
@@ -890,7 +942,7 @@ pub extern "C" fn picoo_trusted_store_clear(handle: *mut std::ffi::c_void) -> i3
         return -1;
     }
     let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
-    let mut store = inner.store.lock().expect("store lock");
+    let mut store = inner.store.lock_or_recover();
     store.clear() as i32
 }
 
@@ -900,11 +952,11 @@ pub extern "C" fn picoo_trusted_store_save(handle: *mut std::ffi::c_void) -> i32
         return -1;
     }
     let inner = unsafe { &*(handle as *mut TrustedStoreInner) };
-    let path = inner.path.lock().expect("path lock").clone();
+    let path = inner.path.lock_or_recover().clone();
     let Some(path) = path else {
         return -2;
     };
-    match inner.store.lock().expect("store lock").save_to_path(&path) {
+    match inner.store.lock_or_recover().save_to_path(&path) {
         Ok(()) => 0,
         Err(_) => -3,
     }
@@ -1042,14 +1094,14 @@ pub extern "C" fn picoo_discovery_browser_poll(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut BrowserInner) };
-    let mut browser = inner.browser.lock().expect("browser lock");
+    let mut browser = inner.browser.lock_or_recover();
     if browser
         .poll(Duration::from_millis(timeout_ms as u64))
         .is_err()
     {
         return -2;
     }
-    let mut cached = inner.receivers.lock().expect("cache lock");
+    let mut cached = inner.receivers.lock_or_recover();
     cached.clear();
     for entry in browser.list() {
         let mut item = PicooDiscoveredReceiver {
@@ -1077,7 +1129,7 @@ pub extern "C" fn picoo_discovery_browser_count(handle: *mut std::ffi::c_void) -
         return 0;
     }
     let inner = unsafe { &*(handle as *mut BrowserInner) };
-    inner.receivers.lock().expect("cache lock").len() as u32
+    inner.receivers.lock_or_recover().len() as u32
 }
 
 #[no_mangle]
@@ -1090,7 +1142,7 @@ pub extern "C" fn picoo_discovery_browser_get(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut BrowserInner) };
-    let cached = inner.receivers.lock().expect("cache lock");
+    let cached = inner.receivers.lock_or_recover();
     let Some(item) = cached.get(index as usize) else {
         return -2;
     };
@@ -1294,10 +1346,10 @@ mod tests {
             "no CameraCommand pending"
         );
         assert_eq!(picoo_sender_disconnect(handle), 0);
-        assert_eq!(
-            picoo_sender_status(handle),
-            picoo_session::SenderStatus::Disconnected.as_code()
-        );
+        let mut snapshot = PicooSenderSnapshot::default();
+        assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
+        assert_eq!(snapshot.status, SenderStatus::Disconnected.as_code());
+        assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
         picoo_sender_destroy(handle);
     }
 
@@ -1363,11 +1415,77 @@ mod tests {
     }
 
     #[test]
-    fn receiver_max_height_zero_before_capabilities() {
+    fn sender_snapshot_is_coherent_before_capabilities() {
         let handle = picoo_sender_create();
         assert!(!handle.is_null());
-        assert_eq!(picoo_sender_receiver_max_height(handle), 0);
+        let mut snapshot = PicooSenderSnapshot::default();
+        assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
+        assert_eq!(snapshot.receiver_max_height, 0);
+        assert_eq!(snapshot.active_height, 1080);
+        assert!(snapshot.current_bitrate_bps > 0);
         picoo_sender_destroy(handle);
+    }
+
+    #[test]
+    fn encoder_height_report_commits_only_the_matching_pending_epoch() {
+        let handle = picoo_sender_create();
+        assert!(!handle.is_null());
+        let pending = picoo_sender_begin_stream_reconfiguration(handle);
+        assert!(pending > picoo_sender::INITIAL_STREAM_EPOCH);
+        assert_eq!(
+            picoo_sender_report_encoder_height(handle, 720, pending + 1),
+            -2
+        );
+        let mut snapshot = PicooSenderSnapshot::default();
+        assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
+        assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
+        assert_eq!(picoo_sender_report_encoder_height(handle, 720, pending), 0);
+        assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
+        assert_eq!(snapshot.stream_epoch, pending);
+        assert_eq!(snapshot.active_height, 720);
+        picoo_sender_destroy(handle);
+    }
+
+    #[test]
+    fn platform_sender_status_codes_match_rust_abi() {
+        let kotlin = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/android/app/src/main/kotlin/com/picoo/camera/jni/SenderStatusCodes.kt"
+        ));
+        let swift = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../apps/ios/PicooCamera/SenderModels.swift"
+        ));
+        let cases = [
+            ("DISCONNECTED", "disconnected", SenderStatus::Disconnected),
+            ("DISCOVERING", "discovering", SenderStatus::Discovering),
+            ("PAIRING", "pairing", SenderStatus::Pairing),
+            ("CONNECTING", "connecting", SenderStatus::Connecting),
+            ("NEGOTIATING", "negotiating", SenderStatus::Negotiating),
+            ("STREAMING", "streaming", SenderStatus::Streaming),
+            ("RECONNECTING", "reconnecting", SenderStatus::Reconnecting),
+            (
+                "PERMISSION_REQUIRED",
+                "permissionRequired",
+                SenderStatus::PermissionRequired,
+            ),
+            (
+                "NETWORK_UNSTABLE",
+                "networkUnstable",
+                SenderStatus::NetworkUnstable,
+            ),
+        ];
+        for (kotlin_name, swift_name, status) in cases {
+            let code = status.as_code();
+            assert!(
+                kotlin.contains(&format!("const val {kotlin_name} = {code}")),
+                "Kotlin status {kotlin_name} drifted from Rust ABI"
+            );
+            assert!(
+                swift.contains(&format!("case {swift_name} = {code}")),
+                "Swift status {swift_name} drifted from Rust ABI"
+            );
+        }
     }
 
     #[test]

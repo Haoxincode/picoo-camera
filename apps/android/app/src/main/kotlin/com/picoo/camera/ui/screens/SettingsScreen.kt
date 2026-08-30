@@ -46,6 +46,7 @@ import com.picoo.camera.ui.theme.PicooFont
 fun SettingsScreen(
     pairedDeviceCount: Int,
     pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
+    errorText: String? = null,
     cameraGranted: Boolean,
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
@@ -141,6 +142,7 @@ fun SettingsScreen(
         if (showPairedSheet) {
             PairedDevicesSheet(
                 devices = pairedDevices,
+                errorText = errorText,
                 onDismiss = { showPairedSheet = false },
                 onRemove = onRemovePaired,
                 onFallback = {
@@ -165,6 +167,7 @@ fun SettingsScreen(
 @Composable
 private fun PairedDevicesSheet(
     devices: List<PicooNative.TrustedDevice>,
+    errorText: String?,
     onDismiss: () -> Unit,
     onRemove: (PicooNative.TrustedDevice) -> Unit,
     onFallback: () -> Unit,
@@ -178,6 +181,14 @@ private fun PairedDevicesSheet(
         },
         onDismiss = onDismiss,
     ) {
+        errorText?.let { message ->
+            Text(
+                text = message,
+                color = PicooColors.Danger,
+                fontSize = 13.sp,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+            )
+        }
         devices.forEach { device ->
             PicooSheetRow(
                 title = device.deviceName,

@@ -77,15 +77,14 @@ Picoo Camera.app/
 
 ```text
 windows-bundle/
-├── picoo-desktop.exe              # GPUI Receiver + VCam 注册 CLI
+├── picoo-desktop.exe              # GPUI Receiver；松散运行仅用于 smoke
 ├── picoo-vcam-ring-reader.exe     # Shared Frame Ring 诊断
 ├── PicooVirtualCameraSource.dll   # MF IMFMediaSource（UTF-16「Picoo Camera」已嵌入）
-├── register-vcam.ps1              # 开发态调用桌面 CLI 完成 COM 修复与 MF 注册
 └── msi/
     └── PicooCamera.msi            # 与 windows-msi artifact 相同
 ```
 
-CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 含 CLSID、`InprocServer32` 与 `--register-vcam --no-wait`，同时禁止自注册 CustomAction 与 `DllRegisterServer`（REQ-VCAM-004）。**不**在 CI 上执行 `msiexec /i`（perMachine 需 Win11 管理员真机验收）。
+CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 含 CLSID、`InprocServer32` 与 `--register-vcam --no-wait`，同时禁止自注册 CustomAction 与 `DllRegisterServer`（REQ-VCAM-004）。松散 bundle 仅用于编译、导出与加载 smoke，不能写系统 COM 注册；**不**在 CI 上执行 `msiexec /i`（perMachine 需 Win11 管理员真机验收）。
 
 ### `android-release` 解压后布局
 
@@ -105,7 +104,7 @@ adb install -r app-release.apk
 
 | 平台 | 文件 | 安装 |
 | --- | --- | --- |
-| Windows 11 | `PicooCamera.msi` | **管理员**双击安装（perMachine；WiX 写入 COM CLSID + 防火墙 + 安装时自动 MF 注册）。失败时见 [vcam-meeting-apps.md](vcam-meeting-apps.md) §0；或解压 bundle 后 **管理员**运行 `.\register-vcam.ps1` |
+| Windows 11 | `PicooCamera.msi` | **管理员**双击安装（perMachine；WiX 写入 COM CLSID + 防火墙 + 安装时自动 MF 注册）。失败时见 [vcam-meeting-apps.md](vcam-meeting-apps.md) §0；不要用松散 bundle 替代安装。 |
 | Android | `app-release.apk` | adb 或文件管理器安装 |
 
 安装完成后按 [device-e2e-android-win11.md](device-e2e-android-win11.md) 走通配对与 Streaming。

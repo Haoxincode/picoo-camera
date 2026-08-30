@@ -82,9 +82,10 @@ tasks.register<Exec>("cargoBuildFfi") {
     group = "build"
     description = "Build picoo-ffi Rust cdylib for Android arm64"
     workingDir = workspaceRoot
-    val ndkHome = System.getenv("ANDROID_NDK_HOME") ?: android.ndkDirectory.absolutePath
     doFirst {
         jniLibsDir.asFile.mkdirs()
+        val ndkHome = System.getenv("ANDROID_NDK_HOME") ?: android.ndkDirectory.absolutePath
+        environment("ANDROID_NDK_HOME", ndkHome)
     }
     commandLine(
         "cargo",
@@ -98,7 +99,6 @@ tasks.register<Exec>("cargoBuildFfi") {
         "-p",
         "picoo-ffi",
     )
-    environment("ANDROID_NDK_HOME", ndkHome)
     // Ensure the single Rust/JNI cdylib has 16 KB-aligned LOAD segments.
     environment(
         "CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS",
@@ -106,6 +106,8 @@ tasks.register<Exec>("cargoBuildFfi") {
     )
 }
 
-tasks.named("preBuild") {
+// Only APK/AAB JNI merge tasks need the Rust shared library. Pure JVM unit tests
+// stay independent from the NDK and cargo-ndk toolchain.
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
     dependsOn("cargoBuildFfi")
 }

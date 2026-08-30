@@ -1289,9 +1289,7 @@ fn stream_config_and_capabilities_after_paired_hello() {
     }
 
     if receiver.stream_config().is_none() {
-        sender
-            .send_stream_config(&StreamConfigParams::default())
-            .expect("stream config send");
+        sender.set_stream_config(StreamConfigParams::default());
     }
 
     for _ in 0..100 {
@@ -1369,7 +1367,7 @@ fn stream_epoch_bump_requests_keyframe() {
         stream_epoch: 1,
         ..Default::default()
     };
-    sender.send_stream_config(&cfg).expect("cfg1");
+    sender.set_stream_config(cfg.clone());
     let mut got_first_idr = false;
     for _ in 0..50 {
         receiver.pump().expect("rx");
@@ -1384,14 +1382,23 @@ fn stream_epoch_bump_requests_keyframe() {
         "first StreamConfig must request IDR (SESSION-004 / MEDIA-003)"
     );
 
-    cfg.stream_epoch = 2;
-    sender.send_stream_config(&cfg).expect("cfg2");
+    cfg.stream_epoch = sender.begin_stream_reconfiguration();
+    assert_eq!(cfg.stream_epoch, 2);
+    assert!(sender.take_keyframe_request());
+    sender.set_stream_config(cfg.clone());
+    assert!(sender.report_encoder_height(cfg.height, cfg.stream_epoch));
     let mut got_idr = false;
     for _ in 0..80 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
         if sender.take_keyframe_request() {
             got_idr = true;
+        }
+        if got_idr
+            && receiver
+                .stream_config()
+                .is_some_and(|c| c.stream_epoch == 2)
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -1399,27 +1406,16 @@ fn stream_epoch_bump_requests_keyframe() {
     assert!(got_idr, "epoch bump must request IDR");
     assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 
-    // QUIC control streams and datagrams have no cross-channel ordering. A
-    // datagram from the next epoch must wait for its reliable StreamConfig,
-    // instead of entering reassembly under stale decoder parameters.
+    // A candidate epoch is not accepted until native output confirms it. This
+    // prevents QUIC datagrams from racing ahead of the reliable StreamConfig.
     let access_units_before = receiver.stats().access_units;
-    sender
-        .ingest_and_flush(b"future-epoch", true, 1, 3)
-        .expect("future epoch AU");
-    let mut requested_future_idr = false;
-    for _ in 0..80 {
-        receiver.pump().expect("rx future epoch");
-        sender.pump().expect("tx future epoch");
-        if sender.take_keyframe_request() {
-            requested_future_idr = true;
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    assert!(
-        requested_future_idr,
-        "future epoch must request a fresh IDR"
-    );
+    let future_epoch = sender.begin_stream_reconfiguration();
+    assert_eq!(future_epoch, 3);
+    assert!(sender.take_keyframe_request());
+    assert!(sender
+        .ingest_and_flush(b"future-epoch", true, 1, future_epoch)
+        .is_err());
+    assert!(sender.cancel_stream_reconfiguration(future_epoch));
     assert_eq!(receiver.stats().access_units, access_units_before);
     assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 }
@@ -1490,11 +1486,21 @@ fn remote_mirrored_flips_framehub_nv12() {
         stream_epoch: 1,
         ..Default::default()
     };
-    sender.send_stream_config(&cfg).expect("mirrored cfg");
-    for _ in 0..50 {
+    sender.set_stream_config(cfg);
+    for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
+        if receiver
+            .stream_config()
+            .is_some_and(|config| config.width == width && config.height == height)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
+    assert!(receiver
+        .stream_config()
+        .is_some_and(|config| config.width == width && config.height == height));
 
     sender
         .ingest_access_unit(&pattern, true, 1, 1)
@@ -1503,7 +1509,10 @@ fn remote_mirrored_flips_framehub_nv12() {
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
-        if receiver.latest_frame().is_some() {
+        if receiver
+            .latest_frame()
+            .is_some_and(|frame| frame.width == width && frame.height == height)
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -1580,11 +1589,20 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         rotation: 90,
         ..Default::default()
     };
-    sender.send_stream_config(&cfg).expect("rotation cfg");
-    for _ in 0..50 {
+    sender.set_stream_config(cfg);
+    for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
+        if receiver.stream_config().is_some_and(|config| {
+            config.width == width && config.height == height && config.rotation == 90
+        }) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
     }
+    assert!(receiver.stream_config().is_some_and(|config| {
+        config.width == width && config.height == height && config.rotation == 90
+    }));
 
     sender
         .ingest_access_unit(&pattern, true, 1, 1)
@@ -1593,7 +1611,10 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
-        if receiver.latest_frame().is_some() {
+        if receiver
+            .latest_frame()
+            .is_some_and(|frame| frame.width == height && frame.height == width)
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -3016,7 +3037,10 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
             sender
                 .inject_control_for_test(bytes::Bytes::from(bytes))
                 .expect("inject stats");
-            if sender.take_resolution_downshift() {
+            if let Some(directive) = sender.pending_encoder_directive() {
+                assert!(
+                    sender.acknowledge_encoder_directive(directive.id, directive.target_height,)
+                );
                 return;
             }
         }
@@ -3119,7 +3143,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
     sender.set_preferred_height(1080);
-    sender.sync_encode_height(720);
+    assert!(sender.report_encoder_height(720, sender.current_stream_epoch()));
     sender.set_thermal_hold(true);
     assert_eq!(sender.bitrate_active_height(), 720);
     assert!(sender.thermal_hold());
@@ -3137,7 +3161,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject");
         assert!(
-            !sender.take_resolution_upshift(),
+            sender.pending_encoder_directive().is_none(),
             "thermal hold must suppress upshift hint"
         );
     }
@@ -3155,7 +3179,8 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
         sender
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject");
-        if sender.take_resolution_upshift() {
+        if let Some(directive) = sender.pending_encoder_directive() {
+            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             up = true;
             break;
         }
@@ -3437,8 +3462,8 @@ fn mismatched_protocol_version_rejects_client_hello() {
 }
 
 #[test]
-fn capabilities_720_only_clamps_sender_stream_config() {
-    // REQ-PICOO-MEDIA-002: Sender must not exceed advertised Capabilities height.
+fn capabilities_720_only_are_applied_before_sender_stream_config() {
+    // REQ-PICOO-MEDIA-002: platform applies the advertised limit, then commits epoch/config.
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_transport::{Endpoint, QuicSenderTransport};
@@ -3475,7 +3500,8 @@ fn capabilities_720_only_clamps_sender_stream_config() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    // Prefer 1080 before Caps arrive — will be clamped when Capabilities returns.
+    // Prefer 1080 before Caps arrive. Rust exposes the limit but does not claim
+    // a native resolution change before the platform reports successful apply.
     sender.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
@@ -3499,9 +3525,41 @@ fn capabilities_720_only_clamps_sender_stream_config() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(sender.receiver_max_height(), 720);
-    let pending = sender.pending_stream_config().expect("pending config");
-    assert_eq!(pending.height, 720);
-    assert_eq!(pending.width, 1280);
+    assert_eq!(
+        sender.pending_stream_config().map(|config| config.height),
+        Some(1080)
+    );
+
+    let epoch = sender.begin_stream_reconfiguration();
+    assert!(sender.report_encoder_height(720, epoch));
+    sender.set_stream_config(StreamConfigParams {
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 0,
+        mirrored: false,
+        rotation: 0,
+        sps: vec![0x67],
+        pps: vec![0x68],
+    });
+    for _ in 0..80 {
+        sender.pump().ok();
+        receiver.pump().ok();
+        if receiver
+            .stream_config()
+            .is_some_and(|config| config.height == 720)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(
+        receiver
+            .stream_config()
+            .map(|config| (config.height, config.stream_epoch)),
+        Some((720, epoch))
+    );
 }
 
 #[test]
@@ -4276,7 +4334,8 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         sender
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject");
-        if sender.take_resolution_downshift() {
+        if let Some(directive) = sender.pending_encoder_directive() {
+            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             downshifted = true;
             break;
         }
@@ -4341,7 +4400,8 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         sender
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject");
-        if sender.take_resolution_downshift() {
+        if let Some(directive) = sender.pending_encoder_directive() {
+            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             downshifted_480 = true;
             break;
         }
@@ -4498,7 +4558,8 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         sender
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject");
-        if sender.take_resolution_downshift() {
+        if let Some(directive) = sender.pending_encoder_directive() {
+            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             downshifted = true;
             break;
         }
@@ -4549,7 +4610,8 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         sender
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject");
-        if sender.take_resolution_upshift() {
+        if let Some(directive) = sender.pending_encoder_directive() {
+            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             upshifted = true;
             break;
         }

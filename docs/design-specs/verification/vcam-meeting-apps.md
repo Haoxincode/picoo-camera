@@ -15,20 +15,16 @@
 | 文件 | 说明 |
 | --- | --- |
 | `PicooCamera.msi` | 推荐：安装文件 + COM 注册（WiX 注册表）+ 防火墙规则 + **安装结束时自动 MF 注册**（`--register-vcam --no-wait`） |
-| 或 `windows-bundle` 解压 | 开发态：`register-vcam.ps1`（**管理员** PowerShell） |
 
-**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 与 `InprocServer32` 由 WiX 声明式写入；`InstallFiles` 后调用 `picoo-desktop --register-vcam --no-wait` 注册 MF（system lifetime）。若仍见 `0x80040154`（类未注册），桌面端的安装/激活操作会检查并直接修复同一组 COM 注册表值；也可手动：
+**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 与 `InprocServer32` 由 WiX 声明式写入；`InstallFiles` 后调用 `picoo-desktop --register-vcam --no-wait` 注册 MF（system lifetime）。若仍见 `0x80040154`（类未注册），桌面端“虚拟摄像头”页的“安装或修复…”操作会通过 UAC 检查并修复同一组 COM 注册表值；也可手动：
 
 ```powershell
-# 开发态示例（在解压后的 bundle 目录）
-Set-ExecutionPolicy -Scope Process Bypass
-.\register-vcam.ps1
-# 卸载：.\register-vcam.ps1 -Unregister
-
 # 若 MSI 自动 MF 注册失败时的补救（管理员 PowerShell，路径按实际安装目录）
 cd "C:\Program Files\Picoo Camera"
 .\picoo-desktop.exe --register-vcam --no-wait
 ```
+
+`windows-bundle` 的松散 exe/DLL 仅供 CI 编译、导出与加载 smoke，不能替代 MSI，也不允许从用户可写目录注册系统 COM。
 
 **MSI 诊断日志**（安装失败时）：
 
@@ -109,7 +105,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 ## 5. 负面路径
 
 - [ ] **未配对 / 无 Sender**：会议软件仍能打开 Picoo Camera，显示占位（Waiting for phone…）
-- [ ] **卸载 MSI**（或 `register-vcam.ps1 -Unregister`）：重启会议软件后列表**不再**出现 Picoo Camera
+- [ ] **卸载 MSI**：重启会议软件后列表**不再**出现 Picoo Camera
 - [ ] **公钥变化**（清除 PC 配对数据后重配）：旧信任不自动出画（需重新配对）
 
 ## 6. 证据与关闭条件
@@ -136,7 +132,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 
 | 现象 | 处理 |
 | --- | --- |
-| MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log` 搜索 `RegisterVcamOnInstall` / `WixQuietExec`；若文件已复制成功，手动运行 `picoo-desktop --register-vcam --no-wait`；开发态可用 `register-vcam.ps1`（见 §0） |
+| MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log` 搜索 `RegisterVcamOnInstall` / `WixQuietExec`；若文件已复制到 Program Files，按 §0 手动运行安装目录中的 `picoo-desktop --register-vcam --no-wait` |
 | 列表有 Picoo Camera 但黑屏 | 确认 desktop Streaming；运行 `picoo-vcam-ring-reader.exe` |
 | 只有 Integrated Camera | 重启应用；检查 MSI 安装；系统相机是否可见 Picoo |
 | Zoom 报摄像头被占用 | 关闭 Windows 相机 App 与其他占用 VCam 的程序 |
