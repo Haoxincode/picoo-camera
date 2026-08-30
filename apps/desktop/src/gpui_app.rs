@@ -1020,14 +1020,14 @@ impl PicooDesktopApp {
             .small()
             .tooltip(label)
             .accessibility_label(label)
-            .icon(
-                Icon::new(if collapsed {
-                    IconName::PanelLeftOpen
+            .child(reicon_named(
+                if collapsed {
+                    "sidebar-right"
                 } else {
-                    IconName::PanelLeftClose
-                })
-                .size_4(),
-            )
+                    "sidebar-left"
+                },
+                cx.theme().foreground,
+            ))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.sidebar_collapsed = !this.sidebar_collapsed;
                 cx.notify();
@@ -2879,6 +2879,8 @@ fn reicon_named(name: &str, color: Hsla) -> Svg {
         "server" => include_bytes!("../../../assets/icons/reicon/server.svg"),
         "settings" => include_bytes!("../../../assets/icons/reicon/settings.svg"),
         "sidebar" => include_bytes!("../../../assets/icons/reicon/sidebar.svg"),
+        "sidebar-left" => include_bytes!("../../../assets/icons/reicon/sidebar_left.svg"),
+        "sidebar-right" => include_bytes!("../../../assets/icons/reicon/sidebar_right.svg"),
         "shield" => include_bytes!("../../../assets/icons/reicon/shield.svg"),
         "shield-check" => include_bytes!("../../../assets/icons/reicon/shield_check.svg"),
         "sun" => include_bytes!("../../../assets/icons/reicon/sun.svg"),
@@ -3867,6 +3869,14 @@ mod tests {
             (
                 "sidebar",
                 include_bytes!("../../../assets/icons/reicon/sidebar.svg").as_slice(),
+            ),
+            (
+                "sidebar-left",
+                include_bytes!("../../../assets/icons/reicon/sidebar_left.svg").as_slice(),
+            ),
+            (
+                "sidebar-right",
+                include_bytes!("../../../assets/icons/reicon/sidebar_right.svg").as_slice(),
             ),
             (
                 "shield",

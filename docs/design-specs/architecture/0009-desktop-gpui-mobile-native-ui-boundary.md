@@ -22,7 +22,7 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 
 ### gpui-component 使用方式
 
-桌面端直接使用完整的 `gpui-component → gpui-base → GPUI`。第一版不从 gpui-base 重做 Design System，仅定制颜色、字体、圆角、间距、暗色模式、状态色和品牌图标。
+桌面端直接使用完整的 `gpui-component → gpui-base → GPUI`。第一版不从 gpui-base 重做 Design System，仅定制颜色、字体、圆角、间距、明暗主题（默认亮色）、状态色和品牌图标。
 
 第一版使用的组件：Button、Card、Badge、Select、Switch、Slider、Dialog、Tooltip、Popover、Toast、Progress、Separator、Icon。
 
@@ -65,7 +65,7 @@ struct DesktopAppState {
 - **通用页**：只承载电脑名称与桌面生命周期偏好（关闭窗口后后台运行、登录时启动）；Windows 托盘与 macOS Dock/后台行为使用平台正确文案，不互相借用平台术语。
 - **帮助页诊断区**：承载日志级别与脱敏诊断导出，避免把面向故障排查的能力混入日常通用设置。
 
-桌面一级导航由 GPUI View 持有进程内展开/折叠状态：原生窗口标题栏独立位于工作区上方，标题栏下方由一个内嵌圆角边框共同包住 Sidebar 与主内容区；外框拥有工作区外边界，Sidebar 只拥有与主内容相邻的分割线。展开态遵循 HTML 原型的 `204px` 导航布局，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。折叠控制属于主内容区顶部工具行，不占用 Sidebar 导航行，并遵循 `gpui-component::SidebarToggleButton` 的紧凑几何和方向状态语义；应用层补充稳定 ID、中文 Tooltip 与无障碍名称。macOS 不在标题栏重复展示应用图标和应用名，折叠控制始终位于标题栏下方且与 Sidebar 分割线相邻，不进入系统窗口控制区；Windows 标题栏保留品牌图标和标题。两端继续复用 `gpui-component::TitleBar` 的窗口装饰与拖拽契约。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。
+桌面一级导航由 GPUI View 持有进程内展开/折叠状态：原生窗口标题栏独立位于工作区上方，标题栏下方由一个内嵌圆角边框共同包住 Sidebar 与主内容区；外框拥有工作区外边界，Sidebar 只拥有与主内容相邻的分割线。展开态遵循 HTML 原型的 `204px` 导航布局，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。折叠控制属于主内容区顶部工具行，不占用 Sidebar 导航行，并遵循 `gpui-component::SidebarToggleButton` 的紧凑几何和方向状态语义；图标使用 Reicon Filled `sidebar-left` / `sidebar-right`，与业务导航保持统一视觉重量；应用层补充稳定 ID、中文 Tooltip 与无障碍名称。macOS 不在标题栏重复展示应用图标和应用名，折叠控制始终位于标题栏下方且与 Sidebar 分割线相邻，不进入系统窗口控制区；Windows 标题栏保留品牌图标和标题。两端继续复用 `gpui-component::TitleBar` 的窗口装饰与拖拽契约。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。
 
 手机端主要页面：
 

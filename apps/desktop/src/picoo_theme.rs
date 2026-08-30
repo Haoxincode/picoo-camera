@@ -7,6 +7,8 @@
 use gpui::App;
 use gpui_component::{Theme, ThemeMode, ThemeRegistry};
 
+const DEFAULT_THEME_MODE: ThemeMode = ThemeMode::Light;
+
 const PICOO_THEME_SET: &str = r##"
 {
   "name": "Picoo Camera",
@@ -146,14 +148,14 @@ pub fn install(cx: &mut App) {
     let theme = Theme::global_mut(cx);
     theme.light_theme = light;
     theme.dark_theme = dark;
-    Theme::change(ThemeMode::Dark, None, cx);
+    Theme::change(DEFAULT_THEME_MODE, None, cx);
 }
 
 #[cfg(test)]
 mod tests {
     use gpui_component::ThemeSet;
 
-    use super::PICOO_THEME_SET;
+    use super::{DEFAULT_THEME_MODE, PICOO_THEME_SET};
 
     #[test]
     fn bundled_theme_contains_light_and_dark_variants() {
@@ -161,5 +163,10 @@ mod tests {
         assert_eq!(set.themes.len(), 2);
         assert!(set.themes.iter().any(|theme| theme.mode.is_dark()));
         assert!(set.themes.iter().any(|theme| !theme.mode.is_dark()));
+    }
+
+    #[test]
+    fn desktop_defaults_to_light_theme() {
+        assert!(!DEFAULT_THEME_MODE.is_dark());
     }
 }

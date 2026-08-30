@@ -721,7 +721,7 @@ GPUI
 
 gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，并明确支持一套 Rust 代码运行于 macOS、Windows 和 Linux；gpui-base 则用于产品需要自行拥有完整设计系统时复用行为与基础设施。
 
-桌面端的视觉与信息架构以 `picoo-camera-receiver.html` 为准。HTML 中的 Tailwind 类名与 OKLCH `@theme` 变量应映射为 GPUI 的 `rem` 比例、组件语义尺寸和 Picoo 明暗主题；不引入 CSS、WebView 或浏览器运行时，也不以像素复刻为由绕过 gpui-component 已有的键盘、焦点、滚动与弹窗行为。
+桌面端的视觉与信息架构以 `picoo-camera-receiver.html` 为准。HTML 中的 Tailwind 类名与 OKLCH `@theme` 变量应映射为 GPUI 的 `rem` 比例、组件语义尺寸和 Picoo 明暗主题，首次启动默认使用亮色主题，用户仍可在 Sidebar 中切换深色主题；不引入 CSS、WebView 或浏览器运行时，也不以像素复刻为由绕过 gpui-component 已有的键盘、焦点、滚动与弹窗行为。
 
 桌面 Receiver 默认窗口为 1920×1080，最小窗口为 1180×720。连接页在 Sidebar 之后使用全部可用宽度，主体保持 58%:42% 分栏，不保留 HTML 演示壳的 1160px 内容上限；实时视频视口始终保持 16:9。
 
@@ -731,7 +731,7 @@ gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，�
 - 字体
 - 圆角
 - 间距
-- 暗色模式
+- 明暗主题（默认亮色）
 - 状态色
 - 品牌图标
 
