@@ -53,7 +53,7 @@ export_github_env() {
   fi
 }
 
-ensure_cmdline_tools() {
+ensure_cmdline_tools() (
   if [ -x "${CMDLINE_TOOLS}/bin/sdkmanager" ]; then
     return 0
   fi
@@ -64,14 +64,15 @@ ensure_cmdline_tools() {
   fi
   log "安装 Android command-line tools 到 ${ANDROID_HOME}"
   mkdir -p "${ANDROID_HOME}/cmdline-tools"
+  local tmp
   tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' RETURN
+  trap 'rm -rf "${tmp}"' EXIT
   curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
     -o "${tmp}/cmdline-tools.zip"
   unzip -q "${tmp}/cmdline-tools.zip" -d "${tmp}/cmdline-tools-unpack"
   rm -rf "${CMDLINE_TOOLS}"
   mv "${tmp}/cmdline-tools-unpack/cmdline-tools" "${CMDLINE_TOOLS}"
-}
+)
 
 write_licenses "${ANDROID_HOME}"
 # Also seed the runner preinstall root so accidental sdk.dir fallbacks still work.

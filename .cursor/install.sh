@@ -18,7 +18,7 @@ BIN_DIR="/usr/local/bin"
 
 log() { printf '\n[install] %s\n' "$*"; }
 
-install_lychee() {
+install_lychee() (
   if command -v lychee >/dev/null 2>&1; then
     local current
     current="$(lychee --version 2>/dev/null | awk '{print $NF}')"
@@ -30,13 +30,13 @@ install_lychee() {
   log "安装 lychee ${LYCHEE_VERSION}"
   local tmp
   tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' RETURN
+  trap 'rm -rf "${tmp}"' EXIT
   curl -fsSL "${LYCHEE_URL}" -o "${tmp}/lychee.tar.gz"
   tar -xzf "${tmp}/lychee.tar.gz" -C "${tmp}" --strip-components=1 \
     "lychee-x86_64-unknown-linux-musl/lychee"
   sudo install -m 0755 "${tmp}/lychee" "${BIN_DIR}/lychee"
   log "lychee 安装到 ${BIN_DIR}/lychee"
-}
+)
 
 log "Rust 工具链"
 rustc --version
