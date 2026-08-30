@@ -888,7 +888,7 @@ impl Render for PicooDesktopApp {
             div()
                 .v_flex()
                 .size_full()
-                .child(self.render_first_launch_title_bar(cx))
+                .child(self.render_window_title_bar(cx))
                 .child(
                     div()
                         .v_flex()
@@ -899,9 +899,9 @@ impl Render for PicooDesktopApp {
                 )
                 .into_any_element()
         } else {
-            div()
+            let workspace = div()
                 .h_flex()
-                .size_full()
+                .flex_1()
                 .min_w_0()
                 .min_h_0()
                 .overflow_hidden()
@@ -909,12 +909,22 @@ impl Render for PicooDesktopApp {
                 .child(
                     div()
                         .v_flex()
+                        .h_full()
                         .flex_1()
                         .min_w_0()
                         .min_h_0()
-                        .child(self.render_workspace_title_bar(cx))
+                        .child(self.render_workspace_toolbar(cx))
                         .child(self.render_section(&snapshot, cx)),
-                )
+                );
+            div()
+                .v_flex()
+                .size_full()
+                .min_w_0()
+                .min_h_0()
+                .when(cfg!(target_os = "macos"), |this| {
+                    this.child(self.render_window_title_bar(cx))
+                })
+                .child(workspace)
                 .into_any_element()
         };
 
@@ -927,11 +937,8 @@ impl Render for PicooDesktopApp {
 }
 
 impl PicooDesktopApp {
-    fn render_first_launch_title_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        TitleBar::new()
-            .h_12()
-            .border_b_0()
-            .bg(cx.theme().background)
+    fn render_window_title_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        TitleBar::new().border_b_0().bg(cx.theme().background)
     }
 
     fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -948,7 +955,8 @@ impl PicooDesktopApp {
             .justify_between()
             .when(collapsed, |this| this.px_2())
             .when(!collapsed, |this| this.px_3())
-            .py_3()
+            .pt_2()
+            .pb_3()
             .child(
                 div()
                     .v_flex()
@@ -982,25 +990,14 @@ impl PicooDesktopApp {
             .border_r_1()
             .border_color(cx.theme().border)
             .bg(cx.theme().sidebar)
-            .child(
-                div()
-                    .h_12()
-                    .w_full()
-                    .flex_shrink_0()
-                    .border_b_1()
-                    .border_color(cx.theme().border),
-            )
             .child(navigation);
 
-        let transition = window.use_keyed_state("picoo-sidebar-width-transition", cx, |_, _| {
-            SidebarWidthTransition::new(target_width)
-        });
-        if transition.read(cx).target_width != target_width {
-            transition.update(cx, |transition, _| {
-                transition.update_target(target_width);
-            });
-        }
-        let transition = *transition.read(cx);
+        let transition = self.sidebar_width_transition(
+            "picoo-sidebar-width-transition",
+            target_width,
+            window,
+            cx,
+        );
         let wrapper = div()
             .id("picoo-sidebar-clip")
             .flex()
@@ -1019,6 +1016,23 @@ impl PicooDesktopApp {
             .into_any_element()
     }
 
+    fn sidebar_width_transition(
+        &self,
+        key: &'static str,
+        target_width: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> SidebarWidthTransition {
+        let transition =
+            window.use_keyed_state(key, cx, |_, _| SidebarWidthTransition::new(target_width));
+        if transition.read(cx).target_width != target_width {
+            transition.update(cx, |transition, _| {
+                transition.update_target(target_width);
+            });
+        }
+        *transition.read(cx)
+    }
+
     fn sidebar_toggle_button(&self, cx: &Context<Self>) -> impl IntoElement {
         let collapsed = self.sidebar_collapsed;
         let label = if collapsed {
@@ -1030,6 +1044,7 @@ impl PicooDesktopApp {
         Button::new("toggle-sidebar")
             .ghost()
             .small()
+            .h_8()
             .tooltip(label)
             .accessibility_label(label)
             .child(reicon_named(
@@ -1164,24 +1179,27 @@ impl PicooDesktopApp {
             .into_any_element()
     }
 
-    fn render_workspace_title_bar(&self, cx: &Context<Self>) -> impl IntoElement {
-        TitleBar::new()
-            .h_12()
-            .pl_0()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().background)
+    fn render_workspace_toolbar(&self, cx: &Context<Self>) -> gpui::AnyElement {
+        let content = div()
+            .h_flex()
+            .h_full()
+            .w_full()
+            .min_w_0()
+            .items_end()
+            .pl_3()
             .child(
                 div()
                     .h_flex()
-                    .h_full()
-                    .flex_1()
-                    .min_w_0()
+                    .h_8()
                     .items_center()
                     .gap_3()
-                    .when(cfg!(target_os = "macos"), |this| this.pl_8())
-                    .when(!cfg!(target_os = "macos"), |this| this.pl_3())
-                    .child(self.sidebar_toggle_button(cx))
+                    .child(
+                        div()
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                cx.stop_propagation();
+                            })
+                            .child(self.sidebar_toggle_button(cx)),
+                    )
                     .child(div().h_4().border_l_1().border_color(cx.theme().border))
                     .child(
                         div()
@@ -1191,7 +1209,28 @@ impl PicooDesktopApp {
                             .text_color(cx.theme().muted_foreground)
                             .child(self.section.label()),
                     ),
-            )
+            );
+
+        if cfg!(target_os = "macos") {
+            div()
+                .h_flex()
+                .h_10()
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .child(content)
+                .into_any_element()
+        } else {
+            TitleBar::new()
+                .h_10()
+                .pl_0()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .child(content)
+                .into_any_element()
+        }
     }
 
     fn render_first_launch(&self, cx: &Context<Self>) -> impl IntoElement {
@@ -2351,7 +2390,13 @@ impl PicooDesktopApp {
                             .child(
                                 Button::new("refresh-vcam-page")
                                     .outline()
-                                    .label("重新检测")
+                                    .small()
+                                    .accessibility_label("重新检测")
+                                    .child(reicon_button_content(
+                                        "重新检测",
+                                        "refresh",
+                                        cx.theme().primary,
+                                    ))
                                     .disabled(self.vcam_setup_state.is_running())
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.refresh_vcam_status(cx);
@@ -2363,7 +2408,14 @@ impl PicooDesktopApp {
                                 |this| {
                                     this.child(
                                         Button::new("repair-vcam-page")
-                                            .label(self.vcam_setup_button_label())
+                                            .primary()
+                                            .small()
+                                            .accessibility_label(self.vcam_setup_button_label())
+                                            .child(reicon_button_content(
+                                                self.vcam_setup_button_label(),
+                                                "play-filled",
+                                                cx.theme().primary_foreground,
+                                            ))
                                             .loading(self.vcam_setup_state.is_running())
                                             .disabled(self.vcam_setup_state.is_running())
                                             .on_click(cx.listener(|this, _, _, cx| {
