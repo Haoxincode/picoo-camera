@@ -46,11 +46,11 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Msi = Join-Path $OutDir "PicooCamera.msi"
 
 Write-Host "Building MSI from $Wxs with bindpath Bundle=$Bundle"
-& wix build $Wxs -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle
+& wix build $Wxs -arch x64 -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle
 if ($LASTEXITCODE -ne 0) {
     # WiX 7+ requires OSMF EULA acceptance (WIX7015).
     Write-Host "Retrying wix build with -acceptEula wix7 (WiX 7+)"
-    & wix build $Wxs -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle -acceptEula wix7
+    & wix build $Wxs -arch x64 -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle -acceptEula wix7
     if ($LASTEXITCODE -ne 0) {
         Write-Error "wix build failed with exit code $LASTEXITCODE"
     }

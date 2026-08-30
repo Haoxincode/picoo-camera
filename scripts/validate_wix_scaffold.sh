@@ -4,6 +4,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WXS="$ROOT/installers/windows/picoo-camera.wxs"
+BUILD_MSI="$ROOT/installers/windows/build-msi.ps1"
 VCAM_IDS="$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/mod.rs"
 VCAM_MANIFEST="$ROOT/extensions/windows-virtual-camera/mf-source/Cargo.toml"
 VCAM_RS="$ROOT/apps/desktop/src/vcam_register.rs"
@@ -72,6 +73,7 @@ need "$WXS" 'FirewallQuic'
 need "$WXS" 'KeyPath="yes"'
 need "$WXS" 'MajorUpgrade'
 need "$WXS" 'StartMenuDesktop'
+need "$BUILD_MSI" 'wix build $Wxs -arch x64'
 need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[1234]"'
 need "$WXS" 'Component Id="DesktopExe"'
 need "$WXS" 'Component Id="VcamDll"'

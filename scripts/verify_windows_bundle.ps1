@@ -54,6 +54,31 @@ if (-not (Test-Path $Msi)) {
 }
 Write-Host "ok: PicooCamera.msi ($((Get-Item $Msi).Length) bytes)"
 
+# `wix build` defaults to x86 even when the authoring references
+# ProgramFiles64Folder. Read PID_TEMPLATE (7) from the built MSI so CI proves
+# that Windows Installer will use the 64-bit component/registry view.
+$windowsInstaller = New-Object -ComObject WindowsInstaller.Installer
+$summaryInfo = $windowsInstaller.GetType().InvokeMember(
+    "SummaryInformation",
+    "GetProperty",
+    $null,
+    $windowsInstaller,
+    @($Msi, 0)
+)
+$templateSummary = $summaryInfo.GetType().InvokeMember(
+    "Property",
+    "GetProperty",
+    $null,
+    $summaryInfo,
+    @(7)
+)
+[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($summaryInfo)
+[void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($windowsInstaller)
+if (-not $templateSummary.StartsWith("x64;", [StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "PicooCamera.msi must be an x64 package; Template Summary is '$templateSummary'"
+}
+Write-Host "ok: PicooCamera.msi Template Summary is $templateSummary"
+
 # Post-build MSI smoke (REQ-PICOO-VCAM-004): COM registration is declarative WiX data.
 # The Rust cdylib does not expose or require self-registration through regsvr32.
 # Limitation: CI cannot run msiexec /i (perMachine admin + Win11 GUI); install acceptance
