@@ -51,6 +51,13 @@ nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
     let reconnectDelayMs: UInt64
 }
 
+nonisolated struct TrustedReceiverSummary: Identifiable, Equatable, Sendable {
+    let id: String
+    let name: String
+    let certificateFingerprint: String
+    let lastConnectedAtMs: UInt64
+}
+
 /// Rust's `SenderInner` serializes every operation with one `Mutex`. The Swift
 /// wrapper therefore supports the MainActor control plane and the media actor
 /// calling the same handle concurrently. Both retain this object for its full
@@ -341,17 +348,36 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
     }
 
     func trustedReceiverIDs() -> Set<String> {
+        Set(trustedReceivers().map(\.id))
+    }
+
+    func trustedReceivers() -> [TrustedReceiverSummary] {
         guard let store = trustedStorePath.withCString({ picoo_trusted_store_load($0) }) else {
             return []
         }
         defer { picoo_trusted_store_destroy(store) }
 
         let count = picoo_trusted_store_count(store)
-        return Set((0..<count).compactMap { index in
+        return (0..<count).compactMap { index in
             var item = PicooTrustedDevice()
             guard picoo_trusted_store_get(store, index, &item) == 0 else { return nil }
-            return stringFromFixedBytes(&item.device_id)
-        })
+            return TrustedReceiverSummary(
+                id: stringFromFixedBytes(&item.device_id),
+                name: stringFromFixedBytes(&item.device_name),
+                certificateFingerprint: stringFromFixedBytes(&item.certificate_fingerprint),
+                lastConnectedAtMs: item.last_connected_at_ms
+            )
+        }.sorted {
+            if $0.lastConnectedAtMs == $1.lastConnectedAtMs {
+                return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+            }
+            return $0.lastConnectedAtMs > $1.lastConnectedAtMs
+        }
+    }
+
+    func removeTrustedReceiver(id: String) throws {
+        let code = id.withCString { picoo_sender_remove_trusted_device(sender, $0) }
+        try check(code, operation: "sender_remove_trusted_device")
     }
 
     private func check(_ code: Int32, operation: String) throws {

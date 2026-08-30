@@ -82,6 +82,12 @@ nonisolated enum SenderScreen: Equatable, Sendable {
     case live
 }
 
+nonisolated enum PairingWaitOutcome: Equatable, Sendable {
+    case pending
+    case rejected
+    case expired
+}
+
 nonisolated enum SenderScreenResolver {
     static func resolve(
         status: PicooSenderStatus,

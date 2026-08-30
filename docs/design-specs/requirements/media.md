@@ -2,7 +2,7 @@
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
-| REQ-PICOO-MEDIA-001 | implemented | PUC-005 | Android Camera2 + MediaCodec InputSurface 硬件 H.264；本机 TextureView 按实际相机缓冲尺寸与传感器/显示方向保持比例并居中裁剪，不允许拉伸 | `Camera2MediaEncoder`；`CameraPreviewSurface.calculatePreviewTransform`；`CameraPreviewTransformTest`；码率配置来自 Rust Core（真机预览/编码仍待） |
+| REQ-PICOO-MEDIA-001 | implemented | PUC-005 | Android Camera2 + MediaCodec InputSurface 硬件 H.264；本机 TextureView 按实际相机缓冲尺寸与传感器/显示方向保持比例并居中裁剪，不允许拉伸 | `Camera2MediaEncoder` 以 Camera/Codec generation 隔离过期回调，在 Camera2 callback thread 按 SurfaceTexture identity 重建会话，并以 `outputSurfaceLock` 串行化 preview/codec Surface 的配置与释放；`CameraPreviewSurface.calculatePreviewTransform`；`CameraPreviewTransformTest`；码率配置来自 Rust Core（真机预览/编码仍待） |
 | REQ-PICOO-MEDIA-002 | implemented | PUC-005 | 480p30 / 720p30 / 1080p30 能力协商与回退；中途分辨率切换 | Rust 以 `receiver_max_height` 约束 preferred height 与 ABR 目标，平台对遗留超能力指令 NACK、实际重建编码器并在首个 IDR 后回报；`receiver_capability_caps_preferred_height_in_rust`；JVM OEM 回退 |
 | REQ-PICOO-MEDIA-003 | implemented | PUC-005 | Rust 为前后摄切换、分辨率变化、编码器重建与连接恢复分配候选 stream_epoch；原生首个匹配 IDR 后才提交，失败/超时/断连取消且不复用 epoch，3s 内恢复 | `SenderSession::begin/report/cancel_stream_reconfiguration` 两阶段契约；旧配置不得换 epoch，新配置排队前 AU 被阻止；Android/iOS generation 隔离、失败后恢复 committed 编码器，恢复失败则断连；epoch 在 Android `Int32.max` fail-fast；`stream_config_epoch_changes_only_when_native_apply_commits`；`stream_epoch_bump_recovers_openh264_framehub_under_three_seconds` |
 | REQ-PICOO-MEDIA-004 | implemented | PUC-005 | 本机预览镜像与远端输出镜像独立 | Android `LocalPreviewMirror` 按前后摄默认；Receiver `nv12_mirror_horizontal` 应用 `StreamConfig.mirrored` |

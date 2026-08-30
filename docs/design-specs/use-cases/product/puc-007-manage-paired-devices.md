@@ -8,7 +8,7 @@
 
 ## 场景
 
-用户在桌面端“通用”页查看已配对设备列表，包含设备名称、平台、最近连接时间和公钥指纹前缀。用户可删除某台已配对 Sender；删除后，该 Sender 下一次连接必须重新走 [PUC-001](puc-001-first-install-and-pairing.md) 的双端配对短码核对与确认流程。
+用户在桌面端“连接”页的设备与连接区域查看已配对设备列表，包含设备名称、平台、最近连接时间和公钥指纹前缀。用户可删除某台已配对 Sender；删除后，该 Sender 下一次连接必须重新走 [PUC-001](puc-001-first-install-and-pairing.md) 的双端配对短码核对与确认流程。
 
 用户在手机端也可删除已配对 Receiver。删除后，系统不再自动连接该 Receiver，且下一次连接必须重新配对。
 
@@ -31,6 +31,8 @@
 
 - [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
 - [ARCH-PICOO-STACK-001](../../architecture/0001-rust-core-monorepo-boundary.md)
+- [ARCH-PICOO-UI-001](../../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
+- [ARCH-PICOO-UI-002](../../architecture/0010-cross-platform-design-system-boundary.md)
 
 ## 相关 Requirements
 

@@ -33,6 +33,7 @@ class SenderHomeState {
     var pairedDevices by mutableStateOf<List<PicooNative.TrustedDevice>>(emptyList())
     var selectedReceiverId by mutableStateOf("")
     var selectedReceiverName by mutableStateOf("")
+    var autoConnectEnabled by mutableStateOf(true)
     var suppressAutoConnect by mutableStateOf(false)
     var remoteMirrored by mutableStateOf(false)
     var localPreviewMirrored by mutableStateOf(LocalPreviewMirror.defaultFor(LensFacing.Back))

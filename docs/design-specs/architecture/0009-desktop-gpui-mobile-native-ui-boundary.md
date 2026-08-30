@@ -20,6 +20,10 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 
 不引入：Flutter、React Native、Electron、Tauri、WebView、GPUI Mobile。
 
+颜色、排版、间距、圆角、动效、组件状态和功能 Icon 的跨端语义由
+[ARCH-PICOO-UI-002](0010-cross-platform-design-system-boundary.md) 约束。本 Architecture 只决定平台 UI
+技术、状态所有权和运行时边界，不允许任何平台以“原生实现”为由另建一套产品视觉语义。
+
 ### gpui-component 使用方式
 
 桌面端直接使用完整的 `gpui-component → gpui-base → GPUI`。第一版不从 gpui-base 重做 Design System，仅定制颜色、字体、圆角、间距、明暗主题（默认亮色）、状态色和品牌图标。
@@ -65,13 +69,14 @@ struct DesktopAppState {
 - **通用页**：只承载电脑名称与桌面生命周期偏好（关闭窗口后后台运行、登录时启动）；Windows 托盘与 macOS Dock/后台行为使用平台正确文案，不互相借用平台术语。
 - **帮助页诊断区**：承载日志级别与脱敏诊断导出，避免把面向故障排查的能力混入日常通用设置。
 
-桌面一级导航由 GPUI View 持有进程内展开/折叠状态。窗口采用贴边的单层工作区，不再叠加独立品牌标题栏、外侧留白或包住 Sidebar 与主内容的第二层圆角边框；Sidebar 只拥有与主内容相邻的分割线。展开态遵循 HTML 原型的 `204px` 导航布局，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。`gpui-component::TitleBar` 不再表现为独立标题栏，而是作为主内容顶部工具行的窗口行为容器：折叠控制、当前页面和平台窗口装饰位于同一水平线，折叠控制随 Sidebar 边界平滑移动；Windows 的最小化、最大化和关闭按钮固定在该行最右侧。两端都不重复展示相机图标或 `Picoo Camera` 文案；macOS 交通灯保留在左上 Sidebar 安全区，工具行增加平台安全间距，避免与系统窗口控制竞争空间。折叠控制遵循 `gpui-component::SidebarToggleButton` 的紧凑几何和方向状态语义，图标使用 Reicon Filled `sidebar-left` / `sidebar-right`，应用层补充稳定 ID、中文 Tooltip 与无障碍名称。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。
+桌面一级导航由 GPUI View 持有进程内展开/折叠状态。窗口采用贴边的单层工作区，不再叠加品牌图标、应用标题、外侧留白或包住 Sidebar 与主内容的第二层圆角边框；Sidebar 只拥有与主内容相邻的分割线。展开态遵循 HTML 原型的 `204px` 导航布局，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。“连接”必须保留在 Sidebar 导航列表并与其他导航项共享相同结构；主内容侧的折叠控制通过与首个“连接”导航行共用高度和顶部 inset，严格位于同一水平中心线，同时保持在 Sidebar 分割线右侧。Windows 不保留额外空标题行，主内容顶部工具行复用 `gpui-component::TitleBar` 的拖拽和窗口按钮契约，最小化、最大化、关闭位于同一行最右侧；macOS 单独保留最上方交通灯与拖拽安全行，导航和主内容工具行位于其下方。两端都不重复展示相机图标或 `Picoo Camera` 文案。折叠控制遵循 `gpui-component::SidebarToggleButton` 的紧凑几何和方向状态语义，图标使用 Reicon Filled `sidebar-left` / `sidebar-right`，应用层补充稳定 ID、中文 Tooltip 与无障碍名称。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。
 
 手机端主要页面：
 
-- **设备列表页**：Available Computers、已信任状态、手动 IP 直连。
-- **配对页**：显示六位配对短码，供用户与桌面端核对并确认一致。
-- **传输页**：本机预览、连接质量、摄像头/分辨率/镜像控制、断开。
+- **设备列表页**：使用 Control context 展示 Available Computers、已信任状态和手动 IP 直连，跟随系统明暗。
+- **配对页**：使用 Control context 显示 Receiver 身份、六位配对短码、有效期和双端确认。
+- **设置页**：使用平台原生分组、Switch、Disclosure 与 Sheet 管理自动直连、画质、信任设备和权限状态。
+- **传输页**：进入独立 Camera context，保持深色沉浸预览、连接质量、摄像头/分辨率/镜像控制和安全断开；不得把应用级强制深色泄漏到其他页面。
 
 Android Compose 的可渲染状态集中在 screen-level `SenderHomeState`，`LaunchedEffect` 只负责把
 Rust 原子快照和平台媒体结果写入该 holder；编码器指令与 epoch 事务由非 Compose 的
@@ -118,6 +123,7 @@ UI 同样不承担二维码生成、二维码解析或扫码相机预览；连�
 
 ## 相关 Architecture
 
+- [ARCH-PICOO-UI-002](0010-cross-platform-design-system-boundary.md)
 - [ARCH-PICOO-FRAME-001](0006-framehub-shared-frame-ring-boundary.md)
 - [ARCH-PICOO-STACK-001](0001-rust-core-monorepo-boundary.md)
 - [ARCH-PICOO-VCAM-001](0007-virtual-camera-platform-boundary.md)
@@ -125,5 +131,5 @@ UI 同样不承担二维码生成、二维码解析或扫码相机预览；连�
 ## 相关 Requirements
 
 - [REQ-PICOO-UI-0001（全端 UI 交互设计与细化验收规范）](../requirements/req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md)
-- `REQ-PICOO-UI-001` … `REQ-PICOO-UI-009`（见 [requirements/ui.md](../requirements/ui.md)）
+- `REQ-PICOO-UI-001` … `REQ-PICOO-UI-012`（见 [requirements/ui.md](../requirements/ui.md)）
 - 桌面远程摄像头控制：`REQ-PICOO-UI-009`（PUC-005）

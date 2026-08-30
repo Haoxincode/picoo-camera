@@ -1,31 +1,32 @@
 package com.picoo.camera.ui.screens
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
+import com.picoo.camera.ui.components.Reicon
+import com.picoo.camera.ui.components.ReiconIcon
 import com.picoo.camera.ui.formatPairingCode
-import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
+import com.picoo.camera.ui.theme.PicooTheme
 
-/** REQ-PICOO-UI-0001 AC-M-PAIR-01/02 — 配对页，对齐 m-screen-pairing。 */
+/** REQ-PICOO-UI-012 / AC-M-PAIR-01..02 — secure pairing in Control context. */
 @Composable
 fun PairingScreen(
     receiverName: String,
@@ -38,105 +39,100 @@ fun PairingScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val colors = PicooTheme.colors
+    val dimensions = PicooTheme.dimensions
     val formattedCode = formatPairingCode(pairingCode)
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(PicooColors.Panel)
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(PicooColors.Accent2.copy(alpha = 0.14f), Color.Transparent),
-                    radius = 900f,
-                ),
-            )
-            .padding(horizontal = 18.dp, vertical = 24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Text(
-            text = "连接到 ${receiverName.ifBlank { "电脑" }}",
-            color = PicooColors.Muted,
-            fontSize = 14.sp,
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "核对 6 位配对短码",
-            color = PicooColors.Text,
-            fontFamily = PicooFont.Display,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.3).sp,
-        )
-        Spacer(modifier = Modifier.height(18.dp))
-        Text(
-            text = formattedCode.ifBlank { "······" },
-            fontFamily = PicooFont.Mono,
-            fontSize = 51.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 8.sp,
-            style = if (expired) {
-                TextStyle(color = PicooColors.MutedDark)
-            } else {
-                TextStyle(
-                    brush = Brush.verticalGradient(
-                        colors = listOf(Color.White, Color(0xFFBFDBFE)),
-                    ),
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = colors.surfacePage,
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentAlignment = Alignment.Center,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = dimensions.maxContentWidth)
+                    .verticalScroll(rememberScrollState())
+                    .padding(dimensions.space24),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(dimensions.space16),
+            ) {
+                ReiconIcon(
+                    icon = Reicon.SecureConnection,
+                    contentDescription = null,
+                    tint = colors.actionHighlight,
+                    modifier = Modifier.size(dimensions.iconHero),
                 )
-            },
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            text = if (expired) {
-                "短码已过期"
-            } else {
-                "短码 ${remainingSeconds.coerceAtLeast(0)} 秒内有效"
-            },
-            color = if (expired) PicooColors.Danger else PicooColors.Muted,
-            fontSize = 13.sp,
-            fontFamily = PicooFont.Mono,
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-        Text(
-            text = if (expired) {
-                "60 秒内未完成双向确认，请重新发起配对。"
-            } else {
-                "核对手机与电脑屏幕上是否显示相同数字。"
-            },
-            color = PicooColors.Muted,
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
-            textAlign = TextAlign.Center,
-        )
-        if (!expired) {
-            Text(
-                text = "数字不一致？可能连错设备，请取消。",
-                color = PicooColors.Warn,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp),
-                textAlign = TextAlign.Center,
-            )
-        }
-        Spacer(modifier = Modifier.height(24.dp))
-        if (expired) {
-            PicooPrimaryButton(text = "重新发起配对", onClick = onRegenerate)
-        } else {
-            PicooPrimaryButton(
-                text = "两端数字一致，确认配对",
-                onClick = onConfirm,
-                enabled = pairingCode.isNotEmpty(),
-            )
-        }
-        Spacer(modifier = Modifier.height(10.dp))
-        PicooGhostButton(text = "取消", onClick = onCancel)
-        errorText?.let {
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = it,
-                color = PicooColors.Danger,
-                fontSize = 13.sp,
-                modifier = Modifier.fillMaxWidth(),
-                textAlign = TextAlign.Center,
-            )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(dimensions.space4),
+                ) {
+                    Text(
+                        text = receiverName.ifBlank { "电脑" },
+                        color = colors.contentMuted,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "核对 6 位配对短码",
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                }
+                Text(
+                    text = formattedCode.ifBlank { "··· ···" },
+                    color = if (expired) colors.contentMuted else colors.actionHighlight,
+                    fontFamily = PicooFont.Mono,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = if (expired) "短码已过期" else "剩余 ${remainingSeconds.coerceAtLeast(0)} 秒",
+                    color = if (expired) colors.statusDanger else colors.contentMuted,
+                    fontFamily = PicooFont.Mono,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = if (expired) {
+                        "60 秒内未完成双向确认，请重新发起配对。"
+                    } else {
+                        "确认手机与电脑屏幕上显示相同数字；不一致时请立即取消。"
+                    },
+                    color = colors.contentMuted,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center,
+                )
+                if (expired) {
+                    PicooPrimaryButton(
+                        text = "重新发起配对",
+                        onClick = onRegenerate,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    PicooPrimaryButton(
+                        text = "两端数字一致，确认配对",
+                        onClick = onConfirm,
+                        enabled = pairingCode.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                PicooGhostButton(
+                    text = "取消",
+                    onClick = onCancel,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                errorText?.let { message ->
+                    Text(
+                        text = message,
+                        color = colors.statusDanger,
+                        style = MaterialTheme.typography.bodyMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
         }
     }
 }

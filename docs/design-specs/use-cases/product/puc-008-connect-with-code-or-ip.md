@@ -34,6 +34,7 @@ mDNS 被企业网络、访客网络或路由器设置屏蔽时，用户先在 Se
 - [ARCH-PICOO-DISCOVERY-001](../../architecture/0008-discovery-and-pairing-security-boundary.md)
 - [ARCH-PICOO-TRANSPORT-001](../../architecture/0002-quic-transport-encapsulation-boundary.md)
 - [ARCH-PICOO-UI-001](../../architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)
+- [ARCH-PICOO-UI-002](../../architecture/0010-cross-platform-design-system-boundary.md)
 
 ## 相关 Requirements
 

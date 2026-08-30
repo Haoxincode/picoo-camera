@@ -94,6 +94,7 @@ class Camera2MediaEncoder(
     private val reopenAfterCameraGeneration = AtomicLong(-1)
     private val cameraLifecycleLock = Any()
     private val codecLifecycleLock = Any()
+    private val outputSurfaceLock = Any()
 
     private data class DetachedCodec(
         val codec: MediaCodec?,
@@ -147,33 +148,69 @@ class Camera2MediaEncoder(
     override fun bindPreviewSurface(surfaceTexture: SurfaceTexture) {
         val changed = previewSurfaceTexture !== surfaceTexture
         if (changed) {
-            closeCaptureSession()
-            previewSurface?.release()
-            previewSurfaceTexture = surfaceTexture
             val bufferSize = previewTransformInfo.bufferSize
-            surfaceTexture.setDefaultBufferSize(bufferSize.width, bufferSize.height)
-            previewSurface = Surface(surfaceTexture)
+            val nextSurface = runCatching {
+                surfaceTexture.setDefaultBufferSize(bufferSize.width, bufferSize.height)
+                Surface(surfaceTexture)
+            }.onFailure {
+                lastError = "Preview surface bind failed: ${it.message}"
+            }.getOrNull() ?: return
+            closeCaptureSession()
+            synchronized(outputSurfaceLock) {
+                previewSurface?.release()
+                previewSurfaceTexture = surfaceTexture
+                previewSurface = nextSurface
+            }
         }
-        if (changed && cameraDevice != null && codecInputSurface != null) {
-            rebuildCaptureSession(cameraDevice!!)
+        if (changed) {
+            scheduleCaptureSessionRebuild(surfaceTexture)
         }
     }
 
     override fun unbindPreviewSurface(surfaceTexture: SurfaceTexture) {
         if (previewSurfaceTexture !== surfaceTexture) return
-        previewSurfaceTexture = null
         closeCaptureSession()
-        previewSurface?.release()
-        previewSurface = null
+        val removed = synchronized(outputSurfaceLock) {
+            if (previewSurfaceTexture !== surfaceTexture) {
+                false
+            } else {
+                previewSurfaceTexture = null
+                previewSurface?.release()
+                previewSurface = null
+                true
+            }
+        }
+        if (!removed) return
         // Keep H.264 encode alive when the Compose TextureView is torn down
         // (tab switch / config change); rebuild a codec-only Camera2 session.
-        val camera = cameraDevice
-        val state = _state.get()
-        if ((state == CaptureState.Opening || state == CaptureState.Previewing) &&
-            camera != null &&
-            codecInputSurface != null
-        ) {
-            rebuildCaptureSession(camera)
+        scheduleCaptureSessionRebuild(expectedPreviewSurfaceTexture = null)
+    }
+
+    /**
+     * Reconcile preview-surface changes on the Camera2 callback thread.
+     *
+     * CameraDevice callbacks can clear [cameraDevice] while Compose binds or
+     * destroys its SurfaceTexture on the main thread. Posting the reconciliation
+     * avoids a check-then-force-unwrap race and the identity check prevents a
+     * stale bind/unbind callback from rebuilding the current session.
+     */
+    private fun scheduleCaptureSessionRebuild(
+        expectedPreviewSurfaceTexture: SurfaceTexture?,
+    ) {
+        cameraHandler.post {
+            if (previewSurfaceTexture !== expectedPreviewSurfaceTexture) {
+                return@post
+            }
+            val state = _state.get()
+            if (state != CaptureState.Opening && state != CaptureState.Previewing) {
+                return@post
+            }
+            val camera = cameraDevice ?: return@post
+            if (codecInputSurface == null) {
+                return@post
+            }
+            val codecGenerationSnapshot = codecGeneration.get()
+            rebuildCaptureSession(camera, codecGenerationSnapshot)
         }
     }
 
@@ -259,9 +296,11 @@ class Camera2MediaEncoder(
 
     override fun close() {
         stopPreview()
-        previewSurfaceTexture = null
-        previewSurface?.release()
-        previewSurface = null
+        synchronized(outputSurfaceLock) {
+            previewSurfaceTexture = null
+            previewSurface?.release()
+            previewSurface = null
+        }
         cameraThread.quitSafely()
         codecThread.quitSafely()
     }
@@ -314,7 +353,24 @@ class Camera2MediaEncoder(
         activePhysicalCameraId = null
         captureSize = chooseCaptureSize(cameraId, profile.resolution)
         refreshPreviewTransformInfo()
-        previewSurfaceTexture?.setDefaultBufferSize(captureSize.width, captureSize.height)
+        synchronized(outputSurfaceLock) {
+            val surfaceTexture = previewSurfaceTexture
+            if (surfaceTexture != null) {
+                runCatching {
+                    surfaceTexture.setDefaultBufferSize(captureSize.width, captureSize.height)
+                }.onFailure {
+                    // A disappearing local TextureView must not terminate the
+                    // remote encoder. Drop only the invalid preview target;
+                    // the next SurfaceTexture callback will bind a fresh one.
+                    if (previewSurfaceTexture === surfaceTexture) {
+                        previewSurfaceTexture = null
+                        previewSurface?.release()
+                        previewSurface = null
+                    }
+                    lastError = "Preview surface resize failed: ${it.message}"
+                }
+            }
+        }
         refreshExposureRange(cameraId)
         val openingProfile = profile
         val openingStreamEpoch = streamEpoch
@@ -498,32 +554,36 @@ class Camera2MediaEncoder(
         camera: CameraDevice,
         codecGenerationSnapshot: Long = codecGeneration.get(),
     ) {
-        val codecSurface = codecInputSurface ?: run {
-            if (codecGenerationSnapshot == codecGeneration.get() &&
-                camera === cameraDevice &&
-                _state.get() != CaptureState.Idle
-            ) {
-                fail("Codec input surface missing")
-            }
-            return
-        }
         closeCaptureSession()
         val sessionGeneration = captureSessionGeneration.incrementAndGet()
-        val previewTarget = previewSurface
-        val targets = buildList {
-            previewTarget?.let { surface ->
-                add(
-                    OutputConfiguration(surface).apply {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
-                        }
-                    },
-                )
-            }
-            add(OutputConfiguration(codecSurface))
-        }
+        var codecSurfaceMissing = false
         runCatching {
-            val callback = object : CameraCaptureSession.StateCallback() {
+            synchronized(outputSurfaceLock) {
+                if (sessionGeneration != captureSessionGeneration.get() ||
+                    codecGenerationSnapshot != codecGeneration.get() ||
+                    camera !== cameraDevice ||
+                    _state.get() == CaptureState.Idle
+                ) {
+                    return@synchronized
+                }
+                val codecSurface = codecInputSurface ?: run {
+                    codecSurfaceMissing = true
+                    return@synchronized
+                }
+                val previewTarget = previewSurface
+                val targets = buildList {
+                    previewTarget?.let { surface ->
+                        add(
+                            OutputConfiguration(surface).apply {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
+                                }
+                            },
+                        )
+                    }
+                    add(OutputConfiguration(codecSurface))
+                }
+                val callback = object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
                         val accepted = synchronized(cameraLifecycleLock) {
                             if (sessionGeneration == captureSessionGeneration.get() &&
@@ -597,14 +657,15 @@ class Camera2MediaEncoder(
                         }
                     }
                 }
-            camera.createCaptureSession(
-                SessionConfiguration(
-                    SessionConfiguration.SESSION_REGULAR,
-                    targets,
-                    Executor { command -> cameraHandler.post(command) },
-                    callback,
-                ),
-            )
+                camera.createCaptureSession(
+                    SessionConfiguration(
+                        SessionConfiguration.SESSION_REGULAR,
+                        targets,
+                        Executor { command -> cameraHandler.post(command) },
+                        callback,
+                    ),
+                )
+            }
         }.onFailure {
             if (sessionGeneration == captureSessionGeneration.get() &&
                 codecGenerationSnapshot == codecGeneration.get() &&
@@ -612,6 +673,14 @@ class Camera2MediaEncoder(
             ) {
                 fail("createCaptureSession failed: ${it.message}")
             }
+        }
+        if (codecSurfaceMissing &&
+            sessionGeneration == captureSessionGeneration.get() &&
+            codecGenerationSnapshot == codecGeneration.get() &&
+            camera === cameraDevice &&
+            _state.get() != CaptureState.Idle
+        ) {
+            fail("Codec input surface missing")
         }
     }
 
@@ -959,9 +1028,14 @@ class Camera2MediaEncoder(
     }
 
     private fun releaseCodecResources(detached: DetachedCodec) {
-        runCatching { detached.codec?.stop() }
-        runCatching { detached.codec?.release() }
-        runCatching { detached.surface?.release() }
+        synchronized(outputSurfaceLock) {
+            // Releasing MediaCodec can invalidate its InputSurface before the
+            // Java Surface wrapper is released, so the complete teardown must
+            // stay mutually exclusive with Camera2 target construction.
+            runCatching { detached.codec?.stop() }
+            runCatching { detached.codec?.release() }
+            runCatching { detached.surface?.release() }
+        }
     }
 
     private fun fail(message: String) {

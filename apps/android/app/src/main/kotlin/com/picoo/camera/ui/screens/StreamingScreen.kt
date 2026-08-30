@@ -19,10 +19,13 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +51,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,12 +66,15 @@ import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.ExposurePreview
 import com.picoo.camera.ui.components.PicooGhostButton
+import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
+import com.picoo.camera.ui.components.PicooVisualContext
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
 import com.picoo.camera.ui.ReconnectBackoffFormat
 import com.picoo.camera.ui.theme.PicooColors
 import com.picoo.camera.ui.theme.PicooFont
+import com.picoo.camera.ui.theme.PicooTheme
 
 /** REQ-PICOO-UI-003 / REQ-PICOO-UI-005 — 传输页，对齐 m-screen-streaming。 */
 @Composable
@@ -81,9 +93,6 @@ fun StreamingScreen(
     thermalForced720: Boolean,
     powerHint: String,
     reconnecting: Boolean,
-    networkUnstable: Boolean = false,
-    reconnectAttempt: Int = 0,
-    reconnectDelayMs: Long = 0L,
     packetLossLabel: String,
     onRequestCamera: () -> Unit,
     onFlipCamera: () -> Unit,
@@ -100,7 +109,12 @@ fun StreamingScreen(
     onPreviewSurfaceDestroyed: (android.graphics.SurfaceTexture) -> Unit,
     onPreviewDisplayChanged: () -> Unit,
     modifier: Modifier = Modifier,
+    networkUnstable: Boolean = false,
+    reconnectAttempt: Int = 0,
+    reconnectDelayMs: Long = 0L,
 ) {
+    val dimensions = PicooTheme.dimensions
+    val motion = PicooTheme.motion
     var uiLocked by remember { mutableStateOf(false) }
     var showEvPanel by remember { mutableStateOf(false) }
     var shutterArmed by remember { mutableStateOf(false) }
@@ -112,7 +126,7 @@ fun StreamingScreen(
     var focusRingActive by remember { mutableStateOf(false) }
     val flipRotation by animateFloatAsState(
         targetValue = flipRotationTarget,
-        animationSpec = tween(durationMillis = 280),
+        animationSpec = tween(durationMillis = motion.normalMillis),
         label = "flipRotation",
     )
 
@@ -203,6 +217,7 @@ fun StreamingScreen(
                         text = "启用相机",
                         onClick = onRequestCamera,
                         modifier = Modifier.padding(horizontal = 32.dp),
+                        context = PicooVisualContext.Camera,
                     )
                 }
             }
@@ -236,7 +251,8 @@ fun StreamingScreen(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, top = 40.dp),
+                    .statusBarsPadding()
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -279,10 +295,10 @@ fun StreamingScreen(
                         contentDescription = "曝光补偿",
                     ) {
                         ReiconIcon(
-                            icon = Reicon.Sun,
+                            icon = Reicon.Exposure,
                             contentDescription = null,
                             tint = if (showEvPanel) PicooColors.Accent2 else PicooColors.Muted,
-                            modifier = Modifier.size(15.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                     CamToolButton(
@@ -291,10 +307,10 @@ fun StreamingScreen(
                         contentDescription = "预览镜像",
                     ) {
                         ReiconIcon(
-                            icon = Reicon.FlipHorizontal,
+                            icon = Reicon.Mirror,
                             contentDescription = null,
                             tint = if (localPreviewMirrored) PicooColors.Accent2 else PicooColors.Muted,
-                            modifier = Modifier.size(15.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                     CamToolButton(
@@ -303,10 +319,10 @@ fun StreamingScreen(
                         contentDescription = "防误触锁定",
                     ) {
                         ReiconIcon(
-                            icon = if (uiLocked) Reicon.Lock else Reicon.Unlock,
+                            icon = if (uiLocked) Reicon.InteractionLock else Reicon.InteractionUnlock,
                             contentDescription = null,
                             tint = if (uiLocked) PicooColors.Accent2 else PicooColors.Muted,
-                            modifier = Modifier.size(15.dp),
+                            modifier = Modifier.size(20.dp),
                         )
                     }
                 }
@@ -337,6 +353,7 @@ fun StreamingScreen(
                             colors = listOf(Color.Transparent, Color(0xF2030406)),
                         ),
                     )
+                    .navigationBarsPadding()
                     .padding(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 24.dp),
             ) {
                 if (thermalForced720) {
@@ -380,23 +397,28 @@ fun StreamingScreen(
                             initialValue = 1f,
                             targetValue = if (shutterArmed) 1.06f else 1f,
                             animationSpec = infiniteRepeatable(
-                                animation = tween(durationMillis = 500),
+                                animation = tween(durationMillis = motion.deliberateMillis),
                                 repeatMode = RepeatMode.Reverse,
                             ),
                             label = "shutterScale",
                         )
                         Box(
                             modifier = Modifier
-                                .size(64.dp)
+                                .size(dimensions.cameraStopTarget)
                                 .scale(if (shutterArmed) pulseScale else 1f)
                                 .clip(CircleShape)
                                 .border(
-                                    width = 3.5.dp,
+                                    width = dimensions.cameraStopStroke,
                                     color = if (shutterArmed) PicooColors.Danger else Color.White.copy(alpha = 0.85f),
                                     shape = CircleShape,
                                 )
                                 .background(Color(0x4D000000))
-                                .clickable {
+                                .semantics {
+                                    contentDescription = "断开连接"
+                                    stateDescription = if (shutterArmed) "等待再次确认" else "未确认"
+                                    role = Role.Button
+                                }
+                                .clickable(role = Role.Button) {
                                     if (shutterArmed) {
                                         onDisconnect()
                                     } else {
@@ -405,11 +427,11 @@ fun StreamingScreen(
                                 },
                             contentAlignment = Alignment.Center,
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(if (shutterArmed) 26.dp else 22.dp)
-                                    .clip(if (shutterArmed) CircleShape else RoundedCornerShape(5.dp))
-                                    .background(if (shutterArmed) Color(0xFFFF2D46) else PicooColors.Danger),
+                            ReiconIcon(
+                                icon = Reicon.StopStream,
+                                contentDescription = null,
+                                tint = if (shutterArmed) Color(0xFFFF2D46) else PicooColors.Danger,
+                                modifier = Modifier.size(24.dp),
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
@@ -423,11 +445,15 @@ fun StreamingScreen(
 
                     Box(
                         modifier = Modifier
-                            .size(46.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .border(1.dp, Color(0x2FFFFFFF), CircleShape)
                             .background(Color(0x14FFFFFF))
-                            .clickable {
+                            .semantics {
+                                contentDescription = "切换前后摄像头"
+                                role = Role.Button
+                            }
+                            .clickable(role = Role.Button) {
                                 flipRotationTarget += 180f
                                 flipBlurActive = true
                                 onFlipCamera()
@@ -435,11 +461,11 @@ fun StreamingScreen(
                         contentAlignment = Alignment.Center,
                     ) {
                         ReiconIcon(
-                            icon = Reicon.CameraRotate,
-                            contentDescription = "切换前后摄像头",
+                            icon = Reicon.SwitchCamera,
+                            contentDescription = null,
                             tint = Color.White,
                             modifier = Modifier
-                                .size(22.dp)
+                                .size(24.dp)
                                 .rotate(flipRotation),
                         )
                     }
@@ -477,7 +503,7 @@ fun StreamingScreen(
 private fun FocusRing(center: Offset) {
     val shrink by animateFloatAsState(
         targetValue = 0.82f,
-        animationSpec = tween(durationMillis = 220),
+        animationSpec = tween(durationMillis = PicooTheme.motion.fastMillis),
         label = "focusShrink",
     )
     val halfPx = with(LocalDensity.current) { 28.dp.toPx() }
@@ -568,7 +594,12 @@ private fun ReconnectOverlay(
                 textAlign = TextAlign.Center,
             )
             Spacer(modifier = Modifier.height(16.dp))
-            PicooGhostButton(text = "停止重连并退出", onClick = onStopReconnect, small = true)
+            PicooGhostButton(
+                text = "停止重连并退出",
+                onClick = onStopReconnect,
+                small = true,
+                context = PicooVisualContext.Camera,
+            )
         }
     }
 }
@@ -598,20 +629,19 @@ private fun EvPanel(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = "−",
-            color = PicooColors.Text,
-            fontSize = 18.sp,
-            modifier = Modifier
-                .clickable(onClick = onEvMinus)
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-        )
+        PicooIconButton(
+            onClick = onEvMinus,
+            contentDescription = "降低曝光",
+            context = PicooVisualContext.Camera,
+        ) {
+            Text(text = "−", color = PicooColors.Text, fontSize = 18.sp)
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             ReiconIcon(
-                icon = Reicon.Sun,
+                icon = Reicon.Exposure,
                 contentDescription = null,
                 tint = PicooColors.Accent2,
                 modifier = Modifier.size(16.dp),
@@ -627,22 +657,25 @@ private fun EvPanel(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(
-                text = "＋",
-                color = PicooColors.Text,
-                fontSize = 18.sp,
-                modifier = Modifier
-                    .clickable(onClick = onEvPlus)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-            ReiconIcon(
-                icon = Reicon.Refresh,
+            PicooIconButton(
+                onClick = onEvPlus,
+                contentDescription = "提高曝光",
+                context = PicooVisualContext.Camera,
+            ) {
+                Text(text = "＋", color = PicooColors.Text, fontSize = 18.sp)
+            }
+            PicooIconButton(
+                onClick = onEvReset,
                 contentDescription = "恢复自动测光",
-                tint = if (exposureEv == 0) PicooColors.Muted else PicooColors.Accent2,
-                modifier = Modifier
-                    .size(18.dp)
-                    .clickable(onClick = onEvReset),
-            )
+                context = PicooVisualContext.Camera,
+            ) {
+                ReiconIcon(
+                    icon = Reicon.ResetExposure,
+                    contentDescription = null,
+                    tint = if (exposureEv == 0) PicooColors.Muted else PicooColors.Accent2,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
@@ -671,10 +704,16 @@ private fun CamToolButton(
 ) {
     Box(
         modifier = Modifier
-            .size(28.dp)
+            .size(PicooTheme.dimensions.touchTarget)
             .clip(CircleShape)
             .background(if (active) PicooColors.Accent2.copy(alpha = 0.20f) else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick),
+            .semantics {
+                this.contentDescription = contentDescription
+                selected = active
+                stateDescription = if (active) "已开启" else "已关闭"
+                role = Role.Button
+            }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         content()
@@ -690,17 +729,22 @@ private fun ResPill(text: String, throttled: Boolean, onClick: () -> Unit) {
     val label = if (throttled) "热降档 · $text" else text
     Row(
         modifier = Modifier
+            .defaultMinSize(minHeight = PicooTheme.dimensions.touchTarget)
             .clip(RoundedCornerShape(999.dp))
             .background(bg)
             .border(1.dp, border, RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
+            .semantics {
+                contentDescription = "切换画质，当前 $label"
+                role = Role.Button
+            }
+            .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (throttled) {
             ReiconIcon(
-                icon = Reicon.Flame,
+                icon = Reicon.Overheat,
                 contentDescription = "过热降档",
                 tint = PicooColors.Warn,
                 modifier = Modifier.size(12.dp),

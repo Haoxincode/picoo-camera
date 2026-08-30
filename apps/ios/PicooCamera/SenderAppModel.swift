@@ -37,16 +37,37 @@ final class SenderAppModel {
     private(set) var stopArmed = false
     private(set) var remoteMirrored = false
     private(set) var activeBitrateBps: UInt32
+    private(set) var trustedReceivers: [TrustedReceiverSummary] = []
+    private(set) var pairingWaitOutcome: PairingWaitOutcome = .pending
+    private(set) var reconnectAttempt: UInt32 = 0
+    private(set) var reconnectDelayMs: UInt64 = 0
 
     var manualEndpointText = ""
     var isManualConnectPresented = false
     var isSettingsPresented = false
+    var autoConnectEnabled: Bool {
+        didSet {
+            defaults.set(autoConnectEnabled, forKey: Self.autoConnectPreferenceKey)
+            lastAutoConnectReceiverID = ""
+        }
+    }
+    var preferredResolution: VideoResolution {
+        didSet {
+            defaults.set(preferredResolution.rawValue, forKey: Self.resolutionPreferenceKey)
+            if senderStatus == .disconnected {
+                activeBitrateBps = PicooSenderSession.initialBitrate(
+                    forHeight: UInt32(preferredResolution.rawValue)
+                )
+            }
+        }
+    }
 
     let camera: CameraCaptureModel
     let protocolVersion = PicooSenderSession.protocolVersion
 
     @ObservationIgnored private let session: PicooSenderSession?
     @ObservationIgnored private let mediaPipeline: SenderMediaPipeline?
+    @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var discoveryBrowser: PicooDiscoveryBrowser?
     @ObservationIgnored private var runtimeTask: Task<Void, Never>?
     @ObservationIgnored private var mediaTask: Task<Void, Never>?
@@ -63,10 +84,26 @@ final class SenderAppModel {
     @ObservationIgnored private var pendingEncoderApply: PendingEncoderApply?
     @ObservationIgnored private var committedEncoderState: CommittedEncoderState?
     @ObservationIgnored private var encoderRecoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var lastAutoConnectReceiverID = ""
+
+    private static let autoConnectPreferenceKey = "sender.autoConnectEnabled"
+    private static let resolutionPreferenceKey = "sender.preferredResolution"
 
     init(session: PicooSenderSession?) {
-        let initialBitrate = session?.snapshot.currentBitrateBps
-            ?? PicooSenderSession.initialBitrate(forHeight: 1080)
+        let defaults = UserDefaults.standard
+        self.defaults = defaults
+        autoConnectEnabled = defaults.object(forKey: Self.autoConnectPreferenceKey) == nil
+            ? true
+            : defaults.bool(forKey: Self.autoConnectPreferenceKey)
+        preferredResolution = VideoResolution(
+            rawValue: defaults.integer(forKey: Self.resolutionPreferenceKey)
+        ) ?? .p1080
+        let snapshotBitrate = session?.snapshot.currentBitrateBps ?? 0
+        let initialBitrate = snapshotBitrate > 0
+            ? snapshotBitrate
+            : PicooSenderSession.initialBitrate(
+                forHeight: UInt32(preferredResolution.rawValue)
+            )
         let initialEpoch = session?.snapshot.streamEpoch
             ?? PicooSenderSession.initialStreamEpoch
         activeBitrateBps = initialBitrate
@@ -94,6 +131,7 @@ final class SenderAppModel {
 
     func start() {
         guard runtimeTask == nil, session != nil else { return }
+        trustedReceivers = session?.trustedReceivers() ?? []
 
         do {
             discoveryBrowser = try PicooDiscoveryBrowser()
@@ -177,7 +215,25 @@ final class SenderAppModel {
 
     func refreshDiscovery() {
         lastDiscoveryTick = 0
+        lastAutoConnectReceiverID = ""
         pollDiscovery()
+    }
+
+    var preferredResolutionLabel: String {
+        "\(preferredResolution.rawValue)P · 30 FPS"
+    }
+
+    func setPreferredResolution(_ resolution: VideoResolution) {
+        preferredResolution = resolution
+    }
+
+    func removeTrustedReceiver(_ receiver: TrustedReceiverSummary) {
+        do {
+            try session?.removeTrustedReceiver(id: receiver.id)
+            trustedReceivers = session?.trustedReceivers() ?? []
+        } catch {
+            errorMessage = "无法撤销对 \(receiver.name) 的信任。"
+        }
     }
 
     func selectReceiver(_ receiver: ReceiverSummary) {
@@ -195,8 +251,9 @@ final class SenderAppModel {
         selectedReceiverID = "manual-\(endpoint.host)"
         receiverName = endpoint.displayText
         receiverEndpoint = endpoint
-        isManualConnectPresented = false
-        connect(to: endpoint)
+        if connect(to: endpoint) {
+            isManualConnectPresented = false
+        }
     }
 
     func confirmPairing() {
@@ -218,6 +275,7 @@ final class SenderAppModel {
         do {
             try session.confirmPairing(receiverID: receiverID)
             phoneConfirmedPairing = true
+            pairingWaitOutcome = .pending
             screen = .waiting
             errorMessage = nil
         } catch {
@@ -292,11 +350,13 @@ final class SenderAppModel {
         return "\(pairingCode[..<midpoint]) \(pairingCode[midpoint...])"
     }
 
-    private func connect(to endpoint: ReceiverEndpoint) {
-        guard let session else { return }
+    @discardableResult
+    private func connect(to endpoint: ReceiverEndpoint) -> Bool {
+        guard let session else { return false }
         suspendMediaSending()
         selectedInitialResolution = false
         phoneConfirmedPairing = false
+        pairingWaitOutcome = .pending
         pairingCode = ""
         pairingDeadline = nil
         pairingSecondsRemaining = 60
@@ -304,12 +364,17 @@ final class SenderAppModel {
         errorMessage = nil
 
         do {
-            try session.setPreferredHeight(UInt32(VideoResolution.p1080.rawValue))
+            activeBitrateBps = PicooSenderSession.initialBitrate(
+                forHeight: UInt32(preferredResolution.rawValue)
+            )
+            try session.setPreferredHeight(UInt32(preferredResolution.rawValue))
             try session.setStreamConfiguration(initialStreamConfiguration)
             try session.connect(to: endpoint)
+            return true
         } catch {
             isConnecting = false
             errorMessage = "无法连接 \(endpoint.displayText)，请确认电脑端已启动。"
+            return false
         }
     }
 
@@ -325,6 +390,13 @@ final class SenderAppModel {
         let senderSnapshot = session.snapshot
         senderStatus = senderSnapshot.status
         isConnecting = senderStatus == .connecting
+        if senderStatus == .reconnecting {
+            reconnectAttempt = senderSnapshot.reconnectAttempt
+            reconnectDelayMs = senderSnapshot.reconnectDelayMs
+        } else {
+            reconnectAttempt = 0
+            reconnectDelayMs = 0
+        }
         if matchesActiveMediaState(previousSenderStatus),
            !matchesActiveMediaState
         {
@@ -352,11 +424,27 @@ final class SenderAppModel {
         }
         updatePairingCountdown()
 
-        let resolved = SenderScreenResolver.resolve(
-            status: senderStatus,
-            pairingCode: pairingCode,
-            phoneConfirmedPairing: phoneConfirmedPairing
-        )
+        if phoneConfirmedPairing, screen == .waiting {
+            if pairingSecondsRemaining == 0,
+               senderStatus != .streaming,
+               senderStatus != .reconnecting,
+               senderStatus != .networkUnstable
+            {
+                pairingWaitOutcome = .expired
+            } else if senderStatus == .disconnected,
+                      previousSenderStatus != .disconnected
+            {
+                pairingWaitOutcome = .rejected
+            }
+        }
+
+        let resolved = pairingWaitOutcome == .pending
+            ? SenderScreenResolver.resolve(
+                status: senderStatus,
+                pairingCode: pairingCode,
+                phoneConfirmedPairing: phoneConfirmedPairing
+            )
+            : .waiting
         if resolved != screen {
             screen = resolved
             if resolved == .live, isSceneActive {
@@ -376,12 +464,39 @@ final class SenderAppModel {
     }
 
     private func pollDiscovery() {
-        guard let discoveryBrowser, let session else { return }
+        guard let session else { return }
+        trustedReceivers = session.trustedReceivers()
+        guard let discoveryBrowser else {
+            isDiscovering = false
+            return
+        }
         do {
             receivers = try discoveryBrowser.poll(
                 trustedReceiverIDs: session.trustedReceiverIDs()
             )
             isDiscovering = receivers.isEmpty
+            let trustedByID = Dictionary(
+                uniqueKeysWithValues: trustedReceivers.map { ($0.id, $0.lastConnectedAtMs) }
+            )
+            let preferredReceiver = receivers
+                .filter(\.isTrusted)
+                .max { left, right in
+                    let leftTime = trustedByID[left.id] ?? 0
+                    let rightTime = trustedByID[right.id] ?? 0
+                    if leftTime == rightTime {
+                        return left.displayName.localizedStandardCompare(right.displayName) == .orderedDescending
+                    }
+                    return leftTime < rightTime
+                }
+            if autoConnectEnabled,
+               senderStatus == .disconnected,
+               !isConnecting,
+               let receiver = preferredReceiver,
+               receiver.id != lastAutoConnectReceiverID
+            {
+                lastAutoConnectReceiverID = receiver.id
+                selectReceiver(receiver)
+            }
         } catch {
             isDiscovering = false
             errorMessage = "局域网发现暂不可用，仍可输入 IP 地址直连。"
@@ -410,9 +525,11 @@ final class SenderAppModel {
             requestedResolution = nil
         } else {
             let receiverMaxHeight = session.snapshot.receiverMaxHeight
-            initialResolution = receiverMaxHeight > 0 && receiverMaxHeight < 1080
-                ? VideoResolution.supported(forRequestedHeight: receiverMaxHeight)
-                : .p1080
+            let preferredHeight = UInt32(preferredResolution.rawValue)
+            let requestedHeight = receiverMaxHeight > 0
+                ? min(preferredHeight, receiverMaxHeight)
+                : preferredHeight
+            initialResolution = VideoResolution.supported(forRequestedHeight: requestedHeight)
             requestedResolution = initialResolution
         }
         if let requestedResolution {
@@ -484,6 +601,7 @@ final class SenderAppModel {
         stopResetTask?.cancel()
         stopArmed = false
         phoneConfirmedPairing = false
+        pairingWaitOutcome = .pending
         pairingCode = ""
         pairingDeadline = nil
         pairingSecondsRemaining = 60
@@ -503,8 +621,8 @@ final class SenderAppModel {
 
     private var initialStreamConfiguration: SenderStreamConfiguration {
         SenderStreamConfiguration(
-            width: UInt32(camera.resolution.width),
-            height: UInt32(camera.resolution.height),
+            width: UInt32(preferredResolution.width),
+            height: UInt32(preferredResolution.height),
             framesPerSecond: 30,
             bitrateBps: activeBitrateBps,
             streamEpoch: camera.streamEpoch,

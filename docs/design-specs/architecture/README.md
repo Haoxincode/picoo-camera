@@ -19,3 +19,4 @@ ARCH-PICOO-<AREA>-NNN
 - [ARCH-PICOO-VCAM-001: 虚拟摄像头平台边界](0007-virtual-camera-platform-boundary.md)
 - [ARCH-PICOO-DISCOVERY-001: 设备发现、配对与安全边界](0008-discovery-and-pairing-security-boundary.md)
 - [ARCH-PICOO-UI-001: 桌面 GPUI 与手机原生 UI 边界](0009-desktop-gpui-mobile-native-ui-boundary.md)
+- [ARCH-PICOO-UI-002: 跨端视觉语义、原生适配与 Icon 边界](0010-cross-platform-design-system-boundary.md)

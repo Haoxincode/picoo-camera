@@ -47,6 +47,7 @@ class SenderNativeRuntime(context: Context) : Closeable {
 
     fun attachTrustedStore(): Int {
         if (senderHandle == 0L) return -1
+        if (senderTrustedStoreAttached) return 0
         val result = PicooNative.attachTrustedStore(senderHandle, trustedStorePath)
         senderTrustedStoreAttached = result == 0
         return result

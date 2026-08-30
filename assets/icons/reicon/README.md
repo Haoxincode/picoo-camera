@@ -8,4 +8,4 @@
 - 网格：`24 × 24`
 - 许可证：MIT，见同目录 `LICENSE`
 
-只提交产品实际使用的单个 SVG，不引入 Reicon 完整依赖。平台适配产物必须保持相同文件名和语义；Android 的 `res/drawable/reicon_*.xml` 是这些 SVG 的 Vector Drawable 转换结果。
+只提交产品实际使用的单个 SVG，不引入 Reicon 完整依赖。`manifest.json` 固定上游版本并维护产品语义 → Source glyph 映射；业务页面只能依赖平台类型安全语义层。平台适配产物必须保持相同文件名和语义；Android 的 `res/drawable/reicon_*.xml` 是这些 SVG 的 Vector Drawable 转换结果，iOS 使用对应的 SVG Image Set。

@@ -6,7 +6,7 @@ import VideoToolbox
 
 // REQ-PICOO-MEDIA-011: native 420v capture -> hardware H.264 Access Units.
 
-nonisolated enum VideoResolution: Int, Sendable {
+nonisolated enum VideoResolution: Int, CaseIterable, Hashable, Sendable {
     case p480 = 480
     case p720 = 720
     case p1080 = 1080

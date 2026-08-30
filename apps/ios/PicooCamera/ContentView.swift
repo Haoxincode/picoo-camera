@@ -8,7 +8,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            PicooPalette.background.ignoresSafeArea()
+            PicooColor.surfacePage.ignoresSafeArea()
 
             switch model.screen {
             case .devices:
@@ -21,23 +21,22 @@ struct ContentView: View {
                 LiveCameraView(model: model)
             }
         }
-        .foregroundStyle(PicooPalette.foreground)
-        .preferredColorScheme(.dark)
+        .foregroundStyle(PicooColor.contentPrimary)
         .task { model.start() }
         .onChange(of: scenePhase) { _, phase in
             Task { await model.handleScenePhase(phase) }
         }
         .sheet(isPresented: $model.isManualConnectPresented) {
             ManualConnectSheet(model: model)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(PicooPalette.panel)
+                .presentationBackground(PicooColor.surfaceGroup)
         }
         .sheet(isPresented: $model.isSettingsPresented) {
             SettingsSheet(model: model)
-                .presentationDetents([.medium])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(PicooPalette.panel)
+                .presentationBackground(PicooColor.surfaceGroup)
         }
     }
 }
@@ -46,81 +45,66 @@ private struct DevicesView: View {
     @Bindable var model: SenderAppModel
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 18) {
-                header
-                discoveryBanner
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: PicooSpace.xl) {
+                    VStack(alignment: .leading, spacing: PicooSpace.xs) {
+                        Text("把手机变成无线摄像头")
+                            .font(.largeTitle.weight(.bold))
+                        Text("选择同一 Wi-Fi 下的电脑，已配对设备点按直连。")
+                            .font(.subheadline)
+                            .foregroundStyle(PicooColor.contentMuted)
+                    }
 
-                if model.receivers.isEmpty {
-                    emptyState
-                } else {
-                    receiverList
+                    discoveryStatus
+
+                    if model.receivers.isEmpty {
+                        emptyState
+                    } else {
+                        receiverList
+                    }
+
+                    if let error = model.errorMessage {
+                        InlineNotice(text: error, tone: .danger)
+                    }
+
+                    manualConnectButton
                 }
-
-                if let error = model.errorMessage {
-                    InlineNotice(text: error, tone: .danger)
-                }
-
-                manualConnectButton
-
-                Text("\(model.protocolVersion) · QUIC 4433")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(PicooPalette.muted)
-                    .padding(.top, 2)
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(.horizontal, PicooSpace.lg)
+                .padding(.top, PicooSpace.lg)
+                .padding(.bottom, PicooSpace.xl)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 14)
-            .padding(.bottom, 24)
+            .background(PicooColor.surfacePage)
+            .navigationTitle("Picoo Camera")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        model.isSettingsPresented = true
+                    } label: {
+                        ReiconIcon(icon: .settings)
+                            .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
+                    }
+                    .buttonStyle(PicooIconButtonStyle())
+                    .accessibilityLabel("设置")
+                }
+            }
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            ReiconIcon(name: "reicon_camera")
-                .frame(width: 22, height: 22)
-                .padding(9)
-                .background(PicooPalette.primary, in: RoundedRectangle(cornerRadius: 11))
+    private var discoveryStatus: some View {
+        HStack(spacing: PicooSpace.md) {
+            ReiconIcon(icon: .discovering)
+                .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
+                .foregroundStyle(model.isDiscovering ? PicooColor.actionHighlight : PicooColor.statusSuccess)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Picoo Camera")
-                    .font(.headline.weight(.bold))
-                Text("无线推流端 · iPhone")
-                    .font(.caption)
-                    .foregroundStyle(PicooPalette.muted)
-            }
-
-            Spacer()
-
-            Button {
-                model.isSettingsPresented = true
-            } label: {
-                ReiconIcon(name: "reicon_settings")
-                    .frame(width: 20, height: 20)
-                    .padding(10)
-                    .background(PicooPalette.panel, in: RoundedRectangle(cornerRadius: 11))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("设置")
-        }
-    }
-
-    private var discoveryBanner: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(PicooPalette.primary.opacity(0.16))
-                    .frame(width: 42, height: 42)
-                ReiconIcon(name: "reicon_wifi")
-                    .frame(width: 21, height: 21)
-                    .foregroundStyle(PicooPalette.highlight)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(model.isDiscovering ? "局域网自动发现中" : "局域网设备")
+            VStack(alignment: .leading, spacing: PicooSpace.xxs) {
+                Text(model.isDiscovering ? "正在发现附近电脑…" : "局域网设备 · 持续监听中")
                     .font(.subheadline.weight(.semibold))
-                Text("Wi-Fi · Bonjour _picoocam._udp")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(PicooPalette.muted)
+                Text("Bonjour · _picoocam._udp")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(PicooColor.contentMuted)
             }
 
             Spacer()
@@ -128,83 +112,76 @@ private struct DevicesView: View {
             Button {
                 model.refreshDiscovery()
             } label: {
-                ReiconIcon(name: "reicon_refresh")
-                    .frame(width: 18, height: 18)
-                    .foregroundStyle(PicooPalette.highlight)
+                ReiconIcon(icon: .refreshDiscovery)
+                    .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
+                    .foregroundStyle(PicooColor.actionHighlight)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PicooIconButtonStyle())
             .accessibilityLabel("刷新局域网设备")
-        }
-        .padding(14)
-        .background(PicooPalette.panel, in: RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(PicooPalette.border, lineWidth: 1)
         }
     }
 
     private var receiverList: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: PicooSpace.sm) {
             HStack {
-                Text("附近可连接的电脑")
+                Text("可连接的电脑")
                 Spacer()
                 Text("\(model.receivers.filter(\.isTrusted).count) 台已信任")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(PicooPalette.highlight)
+                    .font(.caption.monospacedDigit())
             }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(PicooPalette.muted)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(PicooColor.contentMuted)
 
-            ForEach(model.receivers) { receiver in
-                Button {
-                    model.selectReceiver(receiver)
-                } label: {
-                    ReceiverRow(receiver: receiver, isConnecting: model.isConnecting)
+            VStack(spacing: 0) {
+                ForEach(Array(model.receivers.enumerated()), id: \.offset) { index, receiver in
+                    Button {
+                        model.selectReceiver(receiver)
+                    } label: {
+                        ReceiverRow(receiver: receiver, isConnecting: model.isConnecting)
+                    }
+                    .buttonStyle(.plain)
+                    if index != model.receivers.indices.last {
+                        Divider().padding(.leading, 56)
+                    }
                 }
-                .buttonStyle(.plain)
             }
+            .background(PicooColor.surfaceGroup, in: RoundedRectangle(cornerRadius: PicooRadius.surface))
         }
     }
 
     private var emptyState: some View {
-        VStack(spacing: 14) {
-            ReiconIcon(name: "reicon_desktop")
-                .frame(width: 34, height: 34)
-                .foregroundStyle(PicooPalette.muted)
+        VStack(spacing: PicooSpace.md) {
+            ReiconIcon(icon: .receiverDevice)
+                .frame(width: PicooIconSize.hero, height: PicooIconSize.hero)
+                .foregroundStyle(PicooColor.contentMuted)
             Text("还没有发现电脑")
                 .font(.headline)
-            Text("请确认电脑端已启动，并且手机与电脑连接到同一个 Wi-Fi。")
+            Text("确认电脑端已启动，且手机与电脑连接同一个 Wi-Fi；企业网络可能屏蔽 mDNS。")
                 .font(.subheadline)
-                .foregroundStyle(PicooPalette.muted)
+                .foregroundStyle(PicooColor.contentMuted)
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 42)
-        .padding(.horizontal, 24)
-        .background(PicooPalette.panel.opacity(0.72), in: RoundedRectangle(cornerRadius: 18))
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(PicooPalette.border, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
-        }
+        .padding(.vertical, PicooSpace.xxl)
+        .padding(.horizontal, PicooSpace.xl)
     }
 
     private var manualConnectButton: some View {
         Button {
             model.isManualConnectPresented = true
         } label: {
-            HStack(spacing: 9) {
-                ReiconIcon(name: "reicon_lock")
-                    .frame(width: 18, height: 18)
-                    .foregroundStyle(PicooPalette.highlight)
+            HStack(spacing: PicooSpace.sm) {
+                ReiconIcon(icon: .secureConnection)
+                    .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
+                    .foregroundStyle(PicooColor.actionHighlight)
                 Text("输入 IP 地址直连")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.body.weight(.semibold))
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .background(PicooPalette.panel, in: RoundedRectangle(cornerRadius: 14))
+            .frame(maxWidth: .infinity, minHeight: PicooIconSize.touchTarget)
+            .background(PicooColor.surfaceGroup, in: RoundedRectangle(cornerRadius: PicooRadius.control))
             .overlay {
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(PicooPalette.border, lineWidth: 1)
+                RoundedRectangle(cornerRadius: PicooRadius.control)
+                    .stroke(PicooColor.borderDefault, lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
@@ -216,46 +193,38 @@ private struct ReceiverRow: View {
     let isConnecting: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            ReiconIcon(name: "reicon_desktop")
-                .frame(width: 21, height: 21)
-                .foregroundStyle(PicooPalette.highlight)
-                .padding(10)
-                .background(PicooPalette.background, in: RoundedRectangle(cornerRadius: 11))
+        HStack(spacing: PicooSpace.md) {
+            ReiconIcon(icon: .receiverDevice)
+                .frame(width: PicooIconSize.emphasis, height: PicooIconSize.emphasis)
+                .foregroundStyle(PicooColor.actionHighlight)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: PicooSpace.xs) {
+                HStack(spacing: PicooSpace.sm) {
                     Text(receiver.displayName)
-                        .font(.subheadline.weight(.bold))
+                        .font(.body.weight(.semibold))
                     if receiver.isTrusted {
-                        Text("已信任")
+                        Text("已配对")
                             .font(.caption2.weight(.semibold))
-                            .foregroundStyle(PicooPalette.ready)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(PicooPalette.ready.opacity(0.12), in: Capsule())
+                            .foregroundStyle(PicooColor.actionHighlight)
+                            .padding(.horizontal, PicooSpace.sm)
+                            .padding(.vertical, PicooSpace.xxs)
+                            .background(PicooColor.actionHighlight.opacity(0.10), in: Capsule())
                     }
                 }
                 Text(receiver.endpoint.displayText)
                     .font(.caption2.monospaced())
-                    .foregroundStyle(PicooPalette.muted)
+                    .foregroundStyle(PicooColor.contentMuted)
             }
 
             Spacer()
 
-            Text(isConnecting ? "连接中" : (receiver.isTrusted ? "推流" : "连接"))
-                .font(.caption.weight(.bold))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .foregroundStyle(.white)
-                .background(PicooPalette.primary, in: RoundedRectangle(cornerRadius: 10))
+            Text(isConnecting ? "连接中" : "连接")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(PicooColor.actionHighlight)
         }
-        .padding(13)
-        .background(PicooPalette.panel, in: RoundedRectangle(cornerRadius: 16))
-        .overlay {
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(receiver.isTrusted ? PicooPalette.highlight.opacity(0.45) : PicooPalette.border)
-        }
+        .frame(minHeight: PicooIconSize.touchTarget)
+        .padding(.horizontal, PicooSpace.md)
+        .padding(.vertical, PicooSpace.sm)
     }
 }
 
@@ -263,61 +232,60 @@ private struct PairingView: View {
     let model: SenderAppModel
 
     var body: some View {
-        VStack(spacing: 22) {
-            Spacer()
+        ScrollView {
+            VStack(spacing: PicooSpace.lg) {
+                ReiconIcon(icon: .secureConnection)
+                .frame(width: PicooIconSize.hero, height: PicooIconSize.hero)
+                .foregroundStyle(PicooColor.actionHighlight)
 
-            ReiconIcon(name: "reicon_lock")
-                .frame(width: 34, height: 34)
-                .foregroundStyle(PicooPalette.highlight)
-                .padding(18)
-                .background(PicooPalette.highlight.opacity(0.12), in: Circle())
+                VStack(spacing: PicooSpace.xs) {
+                    Text(model.receiverName)
+                        .font(.subheadline)
+                        .foregroundStyle(PicooColor.contentMuted)
+                    Text("核对 6 位配对短码")
+                        .font(.title2.weight(.bold))
+                }
 
-            VStack(spacing: 8) {
-                Text("核对 6 位配对短码")
-                    .font(.title2.weight(.bold))
-                Text("确认手机与 \(model.receiverName) 显示相同数字")
+                Text(model.formattedPairingCode)
+                    .font(.largeTitle.monospaced().weight(.heavy))
+                    .tracking(6)
+                    .foregroundStyle(PicooColor.actionHighlight)
+                    .accessibilityLabel("配对短码 \(model.pairingCode)")
+
+                Text(model.pairingSecondsRemaining > 0
+                     ? "剩余 \(model.pairingSecondsRemaining) 秒"
+                     : "短码已过期")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(model.pairingSecondsRemaining > 0
+                                     ? PicooColor.contentMuted
+                                     : PicooColor.statusDanger)
+
+                Text("确认手机与电脑屏幕上显示相同数字；不一致时请立即取消。")
                     .font(.subheadline)
-                    .foregroundStyle(PicooPalette.muted)
+                    .foregroundStyle(PicooColor.contentMuted)
                     .multilineTextAlignment(.center)
+
+                if let error = model.errorMessage {
+                    InlineNotice(text: error, tone: .danger)
+                }
+
+                if model.pairingSecondsRemaining == 0 {
+                    Button("重新发起连接") { model.retryPairing() }
+                        .buttonStyle(PicooPrimaryButtonStyle())
+                } else {
+                    Button("两端数字一致，确认配对") { model.confirmPairing() }
+                        .buttonStyle(PicooPrimaryButtonStyle())
+                        .disabled(model.pairingCode.isEmpty)
+                }
+
+                Button("取消") { model.cancelConnection() }
+                    .frame(minHeight: PicooIconSize.touchTarget)
+                    .foregroundStyle(PicooColor.contentMuted)
             }
-
-            Text(model.formattedPairingCode)
-                .font(.system(size: 42, weight: .heavy, design: .monospaced))
-                .tracking(8)
-                .foregroundStyle(PicooPalette.highlight)
-                .accessibilityLabel("配对短码 \(model.pairingCode)")
-
-            Text(model.pairingSecondsRemaining > 0
-                 ? "\(model.pairingSecondsRemaining) 秒内有效"
-                 : "短码已过期")
-                .font(.caption.monospaced())
-                .foregroundStyle(model.pairingSecondsRemaining > 0
-                                 ? PicooPalette.muted
-                                 : PicooPalette.danger)
-
-            if let error = model.errorMessage {
-                InlineNotice(text: error, tone: .danger)
-            }
-
-            Button("两端数字一致，确认配对") {
-                model.confirmPairing()
-            }
-            .buttonStyle(PicooPrimaryButtonStyle())
-            .disabled(model.pairingSecondsRemaining == 0 || model.pairingCode.isEmpty)
-
-            if model.pairingSecondsRemaining == 0 {
-                Button("重新发起连接") { model.retryPairing() }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(PicooPalette.highlight)
-            }
-
-            Button("取消") { model.cancelConnection() }
-                .font(.subheadline)
-                .foregroundStyle(PicooPalette.muted)
-
-            Spacer()
+            .frame(maxWidth: 560)
+            .padding(PicooSpace.xl)
+            .frame(maxWidth: .infinity, minHeight: 600)
         }
-        .padding(24)
     }
 }
 
@@ -325,35 +293,80 @@ private struct PairingWaitingView: View {
     let model: SenderAppModel
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: PicooSpace.lg) {
             Spacer()
-            ProgressView()
-                .controlSize(.large)
-                .tint(PicooPalette.highlight)
-            Text("等待电脑确认")
+            waitSymbol
+            Text(waitTitle)
                 .font(.title2.weight(.bold))
-            Text("已确认短码一致，正在等待 \(model.receiverName) 完成配对。")
+            Text(waitDetail)
                 .font(.subheadline)
-                .foregroundStyle(PicooPalette.muted)
+                .foregroundStyle(PicooColor.contentMuted)
                 .multilineTextAlignment(.center)
-            Button("取消连接") { model.cancelConnection() }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(PicooPalette.danger)
-                .padding(.top, 12)
+            if model.pairingWaitOutcome == .pending {
+                Button("取消连接") { model.cancelConnection() }
+                    .frame(minHeight: PicooIconSize.touchTarget)
+                    .foregroundStyle(PicooColor.statusDanger)
+            } else {
+                Button("重新发起连接") { model.retryPairing() }
+                    .buttonStyle(PicooPrimaryButtonStyle())
+                Button("返回设备列表") { model.cancelConnection() }
+                    .frame(minHeight: PicooIconSize.touchTarget)
+                    .foregroundStyle(PicooColor.contentMuted)
+            }
             Spacer()
         }
-        .padding(28)
+        .frame(maxWidth: 560)
+        .padding(PicooSpace.xl)
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var waitSymbol: some View {
+        switch model.pairingWaitOutcome {
+        case .pending:
+            ProgressView()
+                .controlSize(.large)
+                .tint(PicooColor.actionHighlight)
+        case .rejected:
+            ReiconIcon(icon: .rejected)
+                .frame(width: PicooIconSize.hero, height: PicooIconSize.hero)
+                .foregroundStyle(PicooColor.statusDanger)
+        case .expired:
+            ReiconIcon(icon: .expired)
+                .frame(width: PicooIconSize.hero, height: PicooIconSize.hero)
+                .foregroundStyle(PicooColor.statusWarning)
+        }
+    }
+
+    private var waitTitle: String {
+        switch model.pairingWaitOutcome {
+        case .pending: "等待电脑端确认"
+        case .rejected: "电脑端未接受配对"
+        case .expired: "配对确认已超时"
+        }
+    }
+
+    private var waitDetail: String {
+        switch model.pairingWaitOutcome {
+        case .pending:
+            "请在 \(model.receiverName) 的配对提示中确认相同短码。双方确认后会自动开始推流。"
+        case .rejected:
+            "请确认选择了正确的电脑，然后重新核对两端短码。"
+        case .expired:
+            "为保护连接安全，本次短码已失效。请重新发起连接获取新短码。"
+        }
     }
 }
 
 private struct LiveCameraView: View {
     let model: SenderAppModel
     @State private var cameraRotation = 0.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                Color.black.ignoresSafeArea()
+                PicooCameraColor.surface.ignoresSafeArea()
                 cameraSurface
                 safeFrame(width: proxy.size.width - 28)
                 hud
@@ -361,6 +374,7 @@ private struct LiveCameraView: View {
                 controls
             }
         }
+        .preferredColorScheme(.dark)
     }
 
     @ViewBuilder
@@ -388,13 +402,13 @@ private struct LiveCameraView: View {
             HStack {
                 HStack(spacing: 7) {
                     Circle()
-                        .fill(PicooPalette.ready)
+                        .fill(PicooCameraColor.success)
                         .frame(width: 7, height: 7)
                     Text(model.receiverName)
                         .font(.caption.weight(.bold))
                     Text(model.senderStatus == .streaming ? "已连接" : "准备视频")
                         .font(.caption2.monospaced())
-                        .foregroundStyle(PicooPalette.ready)
+                        .foregroundStyle(PicooCameraColor.success)
                 }
                 .padding(.horizontal, 11)
                 .padding(.vertical, 8)
@@ -424,7 +438,24 @@ private struct LiveCameraView: View {
 
     @ViewBuilder
     private var cameraStatus: some View {
-        switch model.camera.state {
+        if model.senderStatus == .reconnecting {
+            VStack(spacing: PicooSpace.md) {
+                CameraOverlay(
+                    title: "网络中断，正在重连…",
+                    detail: reconnectDetail
+                )
+                Button("停止重连并退出") { model.cancelConnection() }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(PicooCameraColor.danger)
+                    .frame(minHeight: PicooIconSize.touchTarget)
+            }
+        } else if model.senderStatus == .networkUnstable {
+            CameraOverlay(
+                title: "网络不稳定，正在优化…",
+                detail: "视频会优先保持低延迟，画质可能暂时降低。"
+            )
+        } else {
+            switch model.camera.state {
         case .requestingPermission:
             CameraOverlay(title: "正在请求相机权限", detail: "只有开始推流时才会访问摄像头。")
         case .starting:
@@ -439,7 +470,7 @@ private struct LiveCameraView: View {
                     UIApplication.shared.open(url)
                 }
                 .font(.subheadline.weight(.bold))
-                .foregroundStyle(PicooPalette.highlight)
+                .foregroundStyle(PicooCameraColor.selected)
             }
         case .unavailable:
             CameraOverlay(title: "当前设备没有可用摄像头", detail: "Simulator 只验证界面与状态；真实预览需要 iPhone。")
@@ -447,7 +478,13 @@ private struct LiveCameraView: View {
             CameraOverlay(title: "摄像头启动失败", detail: message)
         case .idle, .running:
             EmptyView()
+            }
         }
+    }
+
+    private var reconnectDetail: String {
+        let delaySeconds = Double(model.reconnectDelayMs) / 1_000
+        return "第 \(max(1, Int(model.reconnectAttempt))) 次尝试，约 \(delaySeconds.formatted(.number.precision(.fractionLength(1)))) 秒后继续。"
     }
 
     private var controls: some View {
@@ -468,11 +505,20 @@ private struct LiveCameraView: View {
                 } label: {
                     ZStack {
                         Circle()
-                            .stroke(model.stopArmed ? PicooPalette.danger : .white.opacity(0.88), lineWidth: 3.5)
-                            .frame(width: 64, height: 64)
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(PicooPalette.danger)
-                            .frame(width: 22, height: 22)
+                            .stroke(
+                                model.stopArmed ? PicooCameraColor.danger : .white.opacity(0.88),
+                                lineWidth: PicooCameraStopControl.stroke
+                            )
+                            .frame(
+                                width: PicooCameraStopControl.target,
+                                height: PicooCameraStopControl.target
+                            )
+                        ReiconIcon(icon: .stopStream)
+                            .frame(
+                                width: PicooCameraStopControl.icon,
+                                height: PicooCameraStopControl.icon
+                            )
+                            .foregroundStyle(PicooCameraColor.danger)
                     }
                 }
                 .buttonStyle(.plain)
@@ -482,10 +528,13 @@ private struct LiveCameraView: View {
                     cameraRotation += 180
                     Task { await model.switchCamera() }
                 } label: {
-                    ReiconIcon(name: "reicon_camera_rotate")
+                    ReiconIcon(icon: .switchCamera)
                         .frame(width: 23, height: 23)
                         .rotationEffect(.degrees(cameraRotation))
-                        .animation(.smooth(duration: 0.35), value: cameraRotation)
+                        .animation(
+                            reduceMotion ? nil : .smooth(duration: PicooMotion.normal),
+                            value: cameraRotation
+                        )
                         .padding(12)
                         .background(.white.opacity(0.14), in: Circle())
                         .overlay { Circle().stroke(.white.opacity(0.22)) }
@@ -502,7 +551,7 @@ private struct LiveCameraView: View {
             if model.stopArmed {
                 Text("再次点击确认断开")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(PicooPalette.danger)
+                    .foregroundStyle(PicooCameraColor.danger)
                     .padding(.bottom, 8)
             }
         }
@@ -524,7 +573,7 @@ private struct CameraOverlay: View {
         }
         .foregroundStyle(.white)
         .padding(18)
-        .background(.black.opacity(0.68), in: RoundedRectangle(cornerRadius: 16))
+        .background(PicooCameraColor.overlay, in: RoundedRectangle(cornerRadius: PicooRadius.surface))
         .padding(.horizontal, 36)
     }
 }
@@ -534,19 +583,20 @@ private struct ManualConnectSheet: View {
     @FocusState private var endpointFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        ScrollView {
+            VStack(alignment: .leading, spacing: PicooSpace.lg) {
             HStack {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: PicooSpace.xs) {
                     Text("输入电脑局域网地址")
                         .font(.headline)
                     Text("仅在自动发现不可用时使用")
                         .font(.caption)
-                        .foregroundStyle(PicooPalette.muted)
+                        .foregroundStyle(PicooColor.contentMuted)
                 }
                 Spacer()
-                ReiconIcon(name: "reicon_lock")
-                    .frame(width: 21, height: 21)
-                    .foregroundStyle(PicooPalette.highlight)
+                ReiconIcon(icon: .secureConnection)
+                    .frame(width: PicooIconSize.emphasis, height: PicooIconSize.emphasis)
+                    .foregroundStyle(PicooColor.actionHighlight)
             }
 
             TextField("192.168.1.108:4433", text: $model.manualEndpointText)
@@ -555,9 +605,8 @@ private struct ManualConnectSheet: View {
                 .autocorrectionDisabled()
                 .keyboardType(.numbersAndPunctuation)
                 .focused($endpointFocused)
-                .padding(14)
-                .background(PicooPalette.background, in: RoundedRectangle(cornerRadius: 12))
-                .overlay { RoundedRectangle(cornerRadius: 12).stroke(PicooPalette.border) }
+                .textFieldStyle(.roundedBorder)
+                .frame(minHeight: PicooIconSize.touchTarget)
 
             if let error = model.errorMessage {
                 InlineNotice(text: error, tone: .danger)
@@ -570,32 +619,98 @@ private struct ManualConnectSheet: View {
 
             Text("这里只定位 Receiver Endpoint，不会跳过双端短码核对。")
                 .font(.caption)
-                .foregroundStyle(PicooPalette.muted)
+                .foregroundStyle(PicooColor.contentMuted)
+            }
+            .padding(PicooSpace.xl)
         }
-        .padding(22)
+        .scrollDismissesKeyboard(.interactively)
         .onAppear { endpointFocused = true }
     }
 }
 
 private struct SettingsSheet: View {
-    let model: SenderAppModel
+    @Bindable var model: SenderAppModel
+    @State private var pendingRemoval: TrustedReceiverSummary?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("手机端设置")
-                .font(.title3.weight(.bold))
+        NavigationStack {
+            Form {
+                Section("连接") {
+                    Toggle("打开 App 自动直连", isOn: $model.autoConnectEnabled)
+                    Picker("默认初始画质", selection: $model.preferredResolution) {
+                        ForEach(VideoResolution.allCases, id: \.self) { resolution in
+                            Text("\(resolution.rawValue)P · 30 FPS").tag(resolution)
+                        }
+                    }
+                }
 
-            SettingsRow(label: "默认画质", value: "1080P · 30 FPS")
-            SettingsRow(label: "相机权限", value: cameraPermissionLabel)
-            SettingsRow(label: "协议", value: model.protocolVersion)
-            SettingsRow(label: "语言模式", value: "Swift 6")
+                Section("已配对信任电脑") {
+                    if model.trustedReceivers.isEmpty {
+                        Text("还没有已配对电脑")
+                            .foregroundStyle(PicooColor.contentMuted)
+                    } else {
+                        ForEach(model.trustedReceivers) { receiver in
+                            HStack(spacing: PicooSpace.md) {
+                                ReiconIcon(icon: .receiverDevice)
+                                    .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
+                                    .foregroundStyle(PicooColor.actionHighlight)
+                                VStack(alignment: .leading, spacing: PicooSpace.xxs) {
+                                    Text(receiver.name)
+                                    Text(shortFingerprint(receiver.certificateFingerprint))
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(PicooColor.contentMuted)
+                                }
+                                Spacer()
+                                Button("撤销", role: .destructive) {
+                                    pendingRemoval = receiver
+                                }
+                            }
+                        }
+                    }
+                }
 
-            Text("相机权限只会在连接进入直播取景时请求；设备发现和手动连接不会访问摄像头。")
-                .font(.caption)
-                .foregroundStyle(PicooPalette.muted)
-                .padding(.top, 4)
+                Section {
+                    LabeledContent("相机权限", value: cameraPermissionLabel)
+                    Button("打开系统设置") {
+                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                        UIApplication.shared.open(url)
+                    }
+                } header: {
+                    Text("权限")
+                } footer: {
+                    Text("相机权限只会在进入直播取景时请求。")
+                }
+
+                Section("关于") {
+                    LabeledContent("Picoo Camera", value: "v0.1.0")
+                }
+            }
+            .navigationTitle("手机端设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog(
+                "撤销信任？",
+                isPresented: removalConfirmationPresented,
+                titleVisibility: .visible,
+                presenting: pendingRemoval
+            ) { receiver in
+                Button("撤销对 \(receiver.name) 的信任", role: .destructive) {
+                    model.removeTrustedReceiver(receiver)
+                    pendingRemoval = nil
+                }
+                Button("取消", role: .cancel) {
+                    pendingRemoval = nil
+                }
+            } message: { receiver in
+                Text("下次连接 \(receiver.name) 时需要重新核对配对短码。")
+            }
         }
-        .padding(22)
+    }
+
+    private var removalConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { pendingRemoval != nil },
+            set: { if !$0 { pendingRemoval = nil } }
+        )
     }
 
     private var cameraPermissionLabel: String {
@@ -606,24 +721,10 @@ private struct SettingsSheet: View {
         default: "按需请求"
         }
     }
-}
 
-private struct SettingsRow: View {
-    let label: String
-    let value: String
-
-    var body: some View {
-        HStack {
-            Text(label)
-            Spacer()
-            Text(value)
-                .font(.subheadline.monospaced())
-                .foregroundStyle(PicooPalette.highlight)
-        }
-        .font(.subheadline)
-        .padding(14)
-        .background(PicooPalette.background, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(PicooPalette.border) }
+    private func shortFingerprint(_ value: String) -> String {
+        let compact = value.replacingOccurrences(of: ":", with: "")
+        return String(compact.prefix(12))
     }
 }
 
@@ -636,51 +737,23 @@ private struct InlineNotice: View {
     var body: some View {
         Text(text)
             .font(.caption)
-            .foregroundStyle(tone == .danger ? PicooPalette.danger : PicooPalette.muted)
+            .foregroundStyle(tone == .danger ? PicooColor.statusDanger : PicooColor.contentMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(12)
             .background(
-                (tone == .danger ? PicooPalette.danger : PicooPalette.muted).opacity(0.1),
+                (tone == .danger ? PicooColor.statusDanger : PicooColor.contentMuted).opacity(0.1),
                 in: RoundedRectangle(cornerRadius: 11)
             )
     }
 }
 
-private struct PicooPrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.subheadline.weight(.bold))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 14)
-            .foregroundStyle(.white)
-            .background(PicooPalette.primary.opacity(configuration.isPressed ? 0.75 : 1), in: RoundedRectangle(cornerRadius: 13))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-    }
-}
-
-private struct ReiconIcon: View {
-    let name: String
-
-    var body: some View {
-        Image(name)
-            .renderingMode(.template)
-            .resizable()
-            .scaledToFit()
-    }
-}
-
-private enum PicooPalette {
-    static let background = Color(red: 0.043, green: 0.051, blue: 0.067)
-    static let panel = Color(red: 0.078, green: 0.094, blue: 0.129)
-    static let foreground = Color(red: 0.937, green: 0.961, blue: 1)
-    static let muted = Color(red: 0.56, green: 0.60, blue: 0.68)
-    static let border = Color.white.opacity(0.10)
-    static let primary = Color(red: 0.098, green: 0.235, blue: 0.722)
-    static let highlight = Color(red: 0.169, green: 0.498, blue: 1)
-    static let ready = Color(red: 0.243, green: 0.812, blue: 0.557)
-    static let danger = Color(red: 1, green: 0.29, blue: 0.341)
-}
-
-#Preview("Devices") {
+#Preview("Devices · Light") {
     ContentView(model: SenderAppModel(session: nil))
+        .preferredColorScheme(.light)
+}
+
+#Preview("Devices · Dark · Accessibility") {
+    ContentView(model: SenderAppModel(session: nil))
+        .preferredColorScheme(.dark)
+        .environment(\.dynamicTypeSize, .accessibility2)
 }

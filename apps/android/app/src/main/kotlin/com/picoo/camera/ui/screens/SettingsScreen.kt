@@ -1,34 +1,43 @@
 package com.picoo.camera.ui.screens
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
@@ -38,15 +47,13 @@ import com.picoo.camera.ui.components.PicooSheet
 import com.picoo.camera.ui.components.PicooSheetRow
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
-import com.picoo.camera.ui.theme.PicooColors
-import com.picoo.camera.ui.theme.PicooFont
+import com.picoo.camera.ui.theme.PicooTheme
 
-/** REQ-PICOO-UI-003 — 手机端设置，对齐 m-screen-settings。 */
+/** REQ-PICOO-UI-012 / AC-M-SET-01..03 — native grouped settings. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     pairedDeviceCount: Int,
-    pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
-    errorText: String? = null,
     cameraGranted: Boolean,
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
@@ -55,113 +62,296 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onCheckPermissions: () -> Unit,
     onOpenPairedDevices: () -> Unit,
-    onRemovePaired: (PicooNative.TrustedDevice) -> Unit = {},
     onToggleAutoConnect: () -> Unit,
     onSelectDefaultResolution: (String) -> Unit,
     modifier: Modifier = Modifier,
+    pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
+    errorText: String? = null,
+    onRemovePaired: (PicooNative.TrustedDevice) -> Unit = {},
 ) {
-    var showPairedSheet by remember { mutableStateOf(false) }
-    var showResolutionSheet by remember { mutableStateOf(false) }
+    var showPairedSheet by rememberSaveable { mutableStateOf(false) }
+    var showResolutionSheet by rememberSaveable { mutableStateOf(false) }
+    var pendingRemoval by remember { mutableStateOf<PicooNative.TrustedDevice?>(null) }
+    val colors = PicooTheme.colors
+    val dimensions = PicooTheme.dimensions
     val permissionsReady = cameraGranted && nearbyWifiGranted && notificationsGranted
-    Box(modifier = modifier.fillMaxSize()) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(PicooColors.Panel)
-            .verticalScroll(rememberScrollState()),
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 8.dp, end = 18.dp, top = 44.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            PicooIconButton(onClick = onBack) {
-                ReiconIcon(
-                    icon = Reicon.ChevronLeft,
-                    contentDescription = "返回",
-                    tint = PicooColors.Text,
-                    modifier = Modifier.size(22.dp),
-                )
-            }
-            Text(
-                text = "手机端设置",
-                color = PicooColors.Text,
-                fontFamily = PicooFont.Display,
-                fontSize = 21.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
-            Box(modifier = Modifier.size(32.dp))
-        }
 
-        Column(modifier = Modifier.padding(horizontal = 18.dp)) {
-            SettingsToggleRow(
-                title = "打开 App 自动直连",
-                description = "上次连接的电脑在线时，3秒倒计时后自动直连",
-                checked = autoConnectEnabled,
-                onClick = onToggleAutoConnect,
+    Scaffold(
+        modifier = modifier.fillMaxSize(),
+        containerColor = colors.surfacePage,
+        topBar = {
+            TopAppBar(
+                title = { Text("手机端设置", style = MaterialTheme.typography.titleMedium) },
+                navigationIcon = {
+                    PicooIconButton(onClick = onBack) {
+                        ReiconIcon(
+                            icon = Reicon.NavigateBack,
+                            contentDescription = "返回设备列表",
+                            modifier = Modifier.size(dimensions.iconStandard),
+                        )
+                    }
+                },
             )
-            SettingsValueRow(
-                title = "默认初始画质",
-                description = "新连接建立时的起步分辨率档位",
-                value = "$defaultResolutionLabel ›",
-                onClick = { showResolutionSheet = true },
-            )
-            SettingsValueRow(
-                title = "已配对信任电脑",
-                description = "管理已固定的对端公钥（PUC-007）",
-                value = "$pairedDeviceCount 台 ›",
-                onClick = { showPairedSheet = true },
-            )
-            SettingsValueRow(
-                title = "权限就绪状态",
-                description = "相机 / 局域网广播 / 前台保活",
-                value = if (permissionsReady) "全部就绪 ›" else "待检查 ›",
-                valueColor = if (permissionsReady) PicooColors.Ready else PicooColors.Warn,
-                onClick = onCheckPermissions,
-            )
-            if (!permissionsReady) {
-                Spacer(modifier = Modifier.height(8.dp))
-                PermissionHint(
-                    cameraGranted = cameraGranted,
-                    nearbyWifiGranted = nearbyWifiGranted,
-                    notificationsGranted = notificationsGranted,
-                )
+        },
+    ) { innerPadding ->
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = dimensions.maxContentWidth),
+                contentPadding = PaddingValues(
+                    start = dimensions.space16,
+                    end = dimensions.space16,
+                    top = innerPadding.calculateTopPadding() + dimensions.space16,
+                    bottom = innerPadding.calculateBottomPadding() + dimensions.space24,
+                ),
+                verticalArrangement = Arrangement.spacedBy(dimensions.space24),
+            ) {
+                item {
+                    SettingsSection(title = "连接") {
+                        SettingsToggleRow(
+                            title = "打开 App 自动直连",
+                            description = "上次连接的电脑在线时自动连接",
+                            checked = autoConnectEnabled,
+                            onClick = onToggleAutoConnect,
+                        )
+                        SettingsDivider()
+                        SettingsValueRow(
+                            title = "默认初始画质",
+                            description = "新连接建立时的起步分辨率",
+                            value = defaultResolutionLabel,
+                            onClick = { showResolutionSheet = true },
+                        )
+                    }
+                }
+                item {
+                    SettingsSection(title = "设备与权限") {
+                        SettingsValueRow(
+                            title = "已配对信任电脑",
+                            description = "查看公钥指纹与撤销信任",
+                            value = "$pairedDeviceCount 台",
+                            onClick = { showPairedSheet = true },
+                        )
+                        SettingsDivider()
+                        SettingsValueRow(
+                            title = "权限就绪状态",
+                            description = "相机、附近 Wi‑Fi 与通知",
+                            value = if (permissionsReady) "全部就绪" else "待检查",
+                            valueColor = if (permissionsReady) colors.statusSuccess else colors.statusWarning,
+                            onClick = onCheckPermissions,
+                        )
+                        if (!permissionsReady) {
+                            SettingsDivider()
+                            PermissionHint(
+                                cameraGranted = cameraGranted,
+                                nearbyWifiGranted = nearbyWifiGranted,
+                                notificationsGranted = notificationsGranted,
+                            )
+                        }
+                    }
+                }
+                item {
+                    SettingsSection(title = "关于") {
+                        SettingsValueRow(
+                            title = "Picoo Camera",
+                            description = "无线低延迟摄像头",
+                            value = "v0.1.0",
+                            onClick = null,
+                        )
+                    }
+                }
             }
-            SettingsValueRow(
-                title = "关于 Picoo Camera",
-                description = "协议 PCP/2 · Rust Core v1.0.0",
-                value = "v0.1.0",
-                onClick = {},
-            )
-            Spacer(modifier = Modifier.height(24.dp))
         }
     }
-        if (showPairedSheet) {
-            PairedDevicesSheet(
-                devices = pairedDevices,
-                errorText = errorText,
-                onDismiss = { showPairedSheet = false },
-                onRemove = onRemovePaired,
-                onFallback = {
-                    showPairedSheet = false
-                    onOpenPairedDevices()
-                },
-            )
-        }
-        if (showResolutionSheet) {
-            DefaultResolutionSheet(
-                selectedLabel = defaultResolutionLabel,
-                onDismiss = { showResolutionSheet = false },
-                onSelect = { label ->
-                    onSelectDefaultResolution(label)
-                    showResolutionSheet = false
-                },
-            )
+
+    if (showPairedSheet) {
+        PairedDevicesSheet(
+            devices = pairedDevices,
+            errorText = errorText,
+            onDismiss = { showPairedSheet = false },
+            onRemove = { pendingRemoval = it },
+            onFallback = {
+                showPairedSheet = false
+                onOpenPairedDevices()
+            },
+        )
+    }
+    if (showResolutionSheet) {
+        DefaultResolutionSheet(
+            selectedLabel = defaultResolutionLabel,
+            onDismiss = { showResolutionSheet = false },
+            onSelect = { label ->
+                onSelectDefaultResolution(label)
+                showResolutionSheet = false
+            },
+        )
+    }
+    pendingRemoval?.let { device ->
+        TrustedDeviceRemovalDialog(
+            deviceName = device.deviceName,
+            onDismiss = { pendingRemoval = null },
+            onConfirm = {
+                pendingRemoval = null
+                onRemovePaired(device)
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val colors = PicooTheme.colors
+    val dimensions = PicooTheme.dimensions
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(dimensions.space8)) {
+        Text(
+            text = title,
+            color = colors.contentMuted,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = dimensions.space4),
+        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = colors.surfaceGroup,
+            shape = RoundedCornerShape(dimensions.radiusSurface),
+        ) {
+            Column { content() }
         }
     }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    onClick: () -> Unit,
+) {
+    val dimensions = PicooTheme.dimensions
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = { onClick() },
+            )
+            .semantics(mergeDescendants = true) {}
+            .padding(horizontal = dimensions.space16, vertical = dimensions.space12),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingsText(title, description, Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = null)
+    }
+}
+
+@Composable
+private fun SettingsValueRow(
+    title: String,
+    description: String,
+    value: String,
+    onClick: (() -> Unit)?,
+    valueColor: Color = PicooTheme.colors.contentMuted,
+) {
+    val dimensions = PicooTheme.dimensions
+    val rowModifier = if (onClick != null) {
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .semantics { role = Role.Button }
+    } else {
+        Modifier.fillMaxWidth()
+    }
+    Row(
+        modifier = rowModifier.padding(
+            horizontal = dimensions.space16,
+            vertical = dimensions.space12,
+        ),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SettingsText(title, description, Modifier.weight(1f))
+        Text(
+            text = if (onClick == null) value else "$value  ›",
+            color = valueColor,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+internal fun TrustedDeviceRemovalDialog(
+    deviceName: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    val colors = PicooTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("撤销对 $deviceName 的信任？") },
+        text = { Text("下次连接必须重新在手机与电脑上核对 6 位短码。") },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("撤销信任", color = colors.statusDanger)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
+}
+
+@Composable
+private fun SettingsText(title: String, description: String, modifier: Modifier = Modifier) {
+    val colors = PicooTheme.colors
+    Column(modifier = modifier) {
+        Text(text = title, style = MaterialTheme.typography.bodyLarge)
+        Text(
+            text = description,
+            color = colors.contentMuted,
+            style = MaterialTheme.typography.bodyMedium,
+        )
+    }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        modifier = Modifier.padding(start = PicooTheme.dimensions.space16),
+        color = PicooTheme.colors.borderDefault,
+    )
+}
+
+@Composable
+private fun PermissionHint(
+    cameraGranted: Boolean,
+    nearbyWifiGranted: Boolean,
+    notificationsGranted: Boolean,
+) {
+    val dimensions = PicooTheme.dimensions
+    Column(
+        modifier = Modifier.padding(horizontal = dimensions.space16, vertical = dimensions.space12),
+        verticalArrangement = Arrangement.spacedBy(dimensions.space4),
+    ) {
+        PermissionLine("相机", cameraGranted)
+        PermissionLine("附近 Wi‑Fi 设备", nearbyWifiGranted)
+        PermissionLine("通知（前台保活）", notificationsGranted)
+    }
+}
+
+@Composable
+private fun PermissionLine(label: String, granted: Boolean) {
+    val colors = PicooTheme.colors
+    Text(
+        text = if (granted) "已就绪 · $label" else "待授权 · $label",
+        color = if (granted) colors.statusSuccess else colors.statusWarning,
+        style = MaterialTheme.typography.bodyMedium,
+    )
 }
 
 @Composable
@@ -172,6 +362,8 @@ private fun PairedDevicesSheet(
     onRemove: (PicooNative.TrustedDevice) -> Unit,
     onFallback: () -> Unit,
 ) {
+    val colors = PicooTheme.colors
+    val dimensions = PicooTheme.dimensions
     PicooSheet(
         title = "已配对信任电脑",
         description = if (devices.isEmpty()) {
@@ -184,9 +376,9 @@ private fun PairedDevicesSheet(
         errorText?.let { message ->
             Text(
                 text = message,
-                color = PicooColors.Danger,
-                fontSize = 13.sp,
-                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                color = colors.statusDanger,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(dimensions.space8),
             )
         }
         devices.forEach { device ->
@@ -197,14 +389,8 @@ private fun PairedDevicesSheet(
                 onClick = { onRemove(device) },
             )
         }
-        PicooSheetRow(
-            title = "在设备列表中管理",
-            onClick = onFallback,
-        )
-        PicooSheetRow(
-            title = "取消",
-            onClick = onDismiss,
-        )
+        PicooSheetRow(title = "在设备列表中管理", onClick = onFallback)
+        PicooSheetRow(title = "取消", onClick = onDismiss)
     }
 }
 
@@ -217,7 +403,7 @@ private fun DefaultResolutionSheet(
     val selected = StreamResolution.fromLabel(selectedLabel)
     PicooSheet(
         title = "发送画质规格",
-        description = "新连接建立时的起步分辨率。推流中点按画质药丸即可轮换，无需抽屉。",
+        description = "新连接建立时的起步分辨率。推流中仍可即时切换。",
         onDismiss = onDismiss,
     ) {
         ResolutionSheetOptions.all.forEach { option ->
@@ -230,141 +416,4 @@ private fun DefaultResolutionSheet(
         }
         PicooSheetRow(title = "取消", onClick = onDismiss)
     }
-}
-
-@Composable
-private fun SettingsToggleRow(
-    title: String,
-    description: String,
-    checked: Boolean,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(PicooColors.Panel2)
-            .border(1.dp, PicooColors.Line, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(
-                text = title,
-                color = PicooColors.Text,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = description,
-                color = PicooColors.Muted,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        PicooSwitch(checked = checked)
-    }
-}
-
-@Composable
-private fun SettingsValueRow(
-    title: String,
-    description: String,
-    value: String,
-    onClick: () -> Unit,
-    valueColor: androidx.compose.ui.graphics.Color = PicooColors.Muted,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(PicooColors.Panel2)
-            .border(1.dp, PicooColors.Line, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(
-                text = title,
-                color = PicooColors.Text,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = description,
-                color = PicooColors.Muted,
-                fontSize = 12.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        }
-        Text(
-            text = value,
-            color = valueColor,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-@Composable
-private fun PicooSwitch(checked: Boolean) {
-    Box(
-        modifier = Modifier
-            .size(width = 44.dp, height = 26.dp)
-            .clip(RoundedCornerShape(999.dp))
-            .background(if (checked) PicooColors.Accent else PicooColors.Panel3)
-            .border(1.dp, PicooColors.Line, RoundedCornerShape(999.dp))
-            .padding(3.dp),
-        contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(20.dp)
-                .clip(CircleShape)
-                .background(PicooColors.Text),
-        )
-    }
-}
-
-@Composable
-private fun PermissionHint(
-    cameraGranted: Boolean,
-    nearbyWifiGranted: Boolean,
-    notificationsGranted: Boolean,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(PicooColors.Panel2)
-            .padding(14.dp),
-    ) {
-        Text(
-            text = "权限检查清单",
-            color = PicooColors.Muted,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.5.sp,
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        PermissionLine("相机", cameraGranted)
-        PermissionLine("附近 Wi‑Fi 设备", nearbyWifiGranted)
-        PermissionLine("通知（前台保活）", notificationsGranted)
-    }
-}
-
-@Composable
-private fun PermissionLine(label: String, granted: Boolean) {
-    Text(
-        text = if (granted) "✓ $label" else "○ $label — 未授予",
-        color = if (granted) PicooColors.Ready else PicooColors.Warn,
-        fontSize = 13.sp,
-        modifier = Modifier.padding(vertical = 2.dp),
-    )
 }

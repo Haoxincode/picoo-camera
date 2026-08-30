@@ -778,6 +778,28 @@ pub extern "C" fn picoo_sender_attach_trusted_store(
     }
 }
 
+/// Remove a trusted receiver from the sender's attached store.
+/// Returns 1 if removed, 0 if not found, negative on invalid input or storage error.
+#[no_mangle]
+pub extern "C" fn picoo_sender_remove_trusted_device(
+    handle: *mut std::ffi::c_void,
+    device_id: *const std::ffi::c_char,
+) -> i32 {
+    if handle.is_null() || device_id.is_null() {
+        return -1;
+    }
+    let device_id = unsafe { CStr::from_ptr(device_id) }.to_string_lossy();
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    match inner
+        .session
+        .lock_or_recover()
+        .remove_trusted_device(device_id.as_ref())
+    {
+        Ok(removed) => i32::from(removed),
+        Err(_) => -2,
+    }
+}
+
 /// Connected receiver id from ServerHello / pairing state.
 #[no_mangle]
 pub extern "C" fn picoo_sender_connected_receiver_id(
@@ -1351,6 +1373,53 @@ mod tests {
         assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
         assert_eq!(snapshot.status, SenderStatus::Disconnected.as_code());
         assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
+        picoo_sender_destroy(handle);
+    }
+
+    #[test]
+    fn sender_remove_trusted_device_c_abi_validates_and_persists_removal() {
+        use picoo_pairing::TrustedDevice;
+        use std::ffi::CString;
+
+        let missing = CString::new("missing-receiver").unwrap();
+        assert_eq!(
+            picoo_sender_remove_trusted_device(std::ptr::null_mut(), missing.as_ptr()),
+            -1
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let store_path = dir.path().join("trusted.json");
+        let mut seeded_store = TrustedDeviceStore::new();
+        seeded_store.upsert(TrustedDevice {
+            device_id: "paired-receiver".into(),
+            device_name: "Studio Mac".into(),
+            public_key: vec![1, 2, 3],
+            certificate_fingerprint: "test-fingerprint".into(),
+            paired_at_ms: 100,
+            last_connected_at_ms: Some(200),
+        });
+        seeded_store
+            .save_to_path(&store_path)
+            .expect("seed trusted store");
+        let store = CString::new(store_path.to_str().unwrap()).unwrap();
+        let handle = picoo_sender_create();
+        assert!(!handle.is_null());
+        assert_eq!(picoo_sender_attach_trusted_store(handle, store.as_ptr()), 0);
+        assert_eq!(
+            picoo_sender_remove_trusted_device(handle, std::ptr::null()),
+            -1
+        );
+        assert_eq!(
+            picoo_sender_remove_trusted_device(handle, missing.as_ptr()),
+            0
+        );
+        let paired = CString::new("paired-receiver").unwrap();
+        assert_eq!(
+            picoo_sender_remove_trusted_device(handle, paired.as_ptr()),
+            1
+        );
+        let persisted = TrustedDeviceStore::load_from_path(&store_path).expect("reload store");
+        assert!(!persisted.is_paired("paired-receiver"));
         picoo_sender_destroy(handle);
     }
 
