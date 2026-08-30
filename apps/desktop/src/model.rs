@@ -26,6 +26,12 @@ pub enum VirtualCameraStatus {
     Unknown,
     /// The platform component is included with the app but still needs OS activation.
     Bundled,
+    /// The operating system is waiting for explicit user approval.
+    AwaitingApproval,
+    /// The requested activation will become effective after restart.
+    RestartRequired,
+    /// The operating system is removing the platform component.
+    Uninstalling,
     Installed,
     NotInstalled,
     Active,

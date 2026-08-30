@@ -80,6 +80,20 @@ impl PlaceholderModePref {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MacosCameraExtensionIntent {
+    Activate,
+    Deactivate,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingMacosCameraExtension {
+    pub intent: MacosCameraExtensionIntent,
+    /// `kern.boottime` at the point macOS accepted a request that requires reboot.
+    pub boot_session: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopPreferences {
     pub first_launch_completed: bool,
@@ -87,6 +101,9 @@ pub struct DesktopPreferences {
     pub auto_accept_paired: bool,
     pub launch_at_startup: bool,
     pub minimize_to_tray: bool,
+    /// A SystemExtensions request that macOS reported will finish after reboot.
+    #[serde(default)]
+    pub pending_macos_camera_extension: Option<PendingMacosCameraExtension>,
     #[serde(default)]
     pub placeholder_mode: PlaceholderModePref,
     /// Legacy bool; migrated into [`placeholder_mode`] on load when present.
@@ -103,6 +120,7 @@ impl Default for DesktopPreferences {
             auto_accept_paired: true,
             launch_at_startup: false,
             minimize_to_tray: true,
+            pending_macos_camera_extension: None,
             placeholder_mode: PlaceholderModePref::Logo,
             use_default_placeholder: None,
             log_level: LogLevel::Info,
@@ -165,6 +183,33 @@ pub fn save_prefs(prefs: &DesktopPreferences) -> Result<(), String> {
     fs::write(&path, json).map_err(|err| format!("write prefs: {err}"))
 }
 
+#[cfg(target_os = "macos")]
+pub fn current_macos_boot_session() -> Result<String, String> {
+    let mut boot_time = libc::timeval {
+        tv_sec: 0,
+        tv_usec: 0,
+    };
+    let mut size = std::mem::size_of::<libc::timeval>();
+    // SAFETY: `boot_time` and `size` point to writable storage of the exact
+    // type returned by the read-only `kern.boottime` sysctl. No new value is supplied.
+    let result = unsafe {
+        libc::sysctlbyname(
+            c"kern.boottime".as_ptr(),
+            (&mut boot_time as *mut libc::timeval).cast(),
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if result != 0 || size != std::mem::size_of::<libc::timeval>() {
+        return Err(format!(
+            "read kern.boottime: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(format!("{}:{}", boot_time.tv_sec, boot_time.tv_usec))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +222,7 @@ mod tests {
         assert_eq!(parsed.display_name, "Picoo Camera");
         assert!(parsed.auto_accept_paired);
         assert_eq!(parsed.placeholder_mode, PlaceholderModePref::Logo);
+        assert_eq!(parsed.pending_macos_camera_extension, None);
     }
 
     #[test]
@@ -185,5 +231,6 @@ mod tests {
         let mut prefs: DesktopPreferences = serde_json::from_str(raw).unwrap();
         prefs.migrate_placeholder();
         assert_eq!(prefs.placeholder_mode, PlaceholderModePref::Black);
+        assert_eq!(prefs.pending_macos_camera_extension, None);
     }
 }

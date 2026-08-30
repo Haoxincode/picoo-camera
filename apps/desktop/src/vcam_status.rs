@@ -22,6 +22,23 @@ pub fn detect_vcam_status() -> VirtualCameraStatus {
     detect_non_macos_vcam_status()
 }
 
+/// Query macOS' SystemExtensions registry without blocking the GPUI thread.
+#[cfg(target_os = "macos")]
+pub fn query_macos_vcam_status() -> Result<VirtualCameraStatus, String> {
+    use crate::macos_system_extension::InstalledState;
+
+    let state = crate::macos_system_extension::query_installed_state()?;
+    Ok(match state {
+        InstalledState::Active => VirtualCameraStatus::Active,
+        InstalledState::Missing if !macos_camera_extension_present() => {
+            VirtualCameraStatus::NotInstalled
+        }
+        InstalledState::Missing | InstalledState::Bundled => VirtualCameraStatus::Bundled,
+        InstalledState::AwaitingApproval => VirtualCameraStatus::AwaitingApproval,
+        InstalledState::Uninstalling => VirtualCameraStatus::Uninstalling,
+    })
+}
+
 #[cfg(not(target_os = "macos"))]
 fn detect_non_macos_vcam_status() -> VirtualCameraStatus {
     if !vcam_dll_present() {
@@ -106,10 +123,11 @@ pub fn vcam_setup_action_label() -> &'static str {
 }
 
 /// Explain why the current platform adapter cannot complete activation yet.
+#[cfg(not(any(target_os = "macos", all(windows, feature = "windows-vcam"))))]
 pub fn vcam_setup_unavailable_message() -> &'static str {
     match current_platform() {
         VcamPlatform::Macos => {
-            "Camera Extension 已随应用提供，但当前未签名开发包不能完成系统激活。发布版还需要接入系统扩展激活请求、签名，并由你在 macOS 系统设置中批准。"
+            "当前应用无法提交 Camera Extension 系统请求。请确认从完整的 Picoo Camera.app 启动，并使用已签名的发布构建。"
         }
         VcamPlatform::Other => "当前平台构建不提供系统虚拟摄像头激活能力。",
         VcamPlatform::Windows => "请重新运行 Windows 虚拟摄像头修复。",
@@ -139,14 +157,27 @@ fn vcam_repair_hint_for(platform: VcamPlatform, status: VirtualCameraStatus) -> 
             VirtualCameraStatus::Installed | VirtualCameraStatus::Active => {
                 "虚拟摄像头已注册。若会议软件中不可见，请重启会议应用或重新运行安装程序。"
             }
-            VirtualCameraStatus::Bundled | VirtualCameraStatus::NotInstalled => {
+            VirtualCameraStatus::Bundled
+            | VirtualCameraStatus::AwaitingApproval
+            | VirtualCameraStatus::RestartRequired
+            | VirtualCameraStatus::Uninstalling
+            | VirtualCameraStatus::NotInstalled => {
                 "未检测到 Picoo Camera 系统注册。若已安装，请点下方「安装或修复…」并在 Windows 用户账户控制中允许；若组件缺失，请重新运行 PicooCamera.msi。"
             }
             VirtualCameraStatus::Unknown => "正在检测虚拟摄像头状态…",
         },
         VcamPlatform::Macos => match status {
             VirtualCameraStatus::Bundled => {
-                "Camera Extension 已随应用提供，仍需由已签名版本发起激活，并按 macOS 提示在系统设置中批准。"
+                "Camera Extension 已随应用提供。点下方「激活 Camera Extension…」，并按 macOS 提示在系统设置中批准。"
+            }
+            VirtualCameraStatus::AwaitingApproval => {
+                "Camera Extension 正在等待批准。请在系统设置的“登录项与扩展”中允许 Picoo Camera。"
+            }
+            VirtualCameraStatus::RestartRequired => {
+                "Camera Extension 已获批准，将在重新启动 Mac 后生效。"
+            }
+            VirtualCameraStatus::Uninstalling => {
+                "macOS 正在移除 Camera Extension；若系统要求，请重新启动 Mac。"
             }
             VirtualCameraStatus::Installed | VirtualCameraStatus::Active => {
                 "Camera Extension 已激活。若会议软件中不可见，请重启会议应用。"
@@ -158,6 +189,9 @@ fn vcam_repair_hint_for(platform: VcamPlatform, status: VirtualCameraStatus) -> 
         },
         VcamPlatform::Other => match status {
             VirtualCameraStatus::Bundled => "虚拟摄像头组件已随应用提供，但尚未激活。",
+            VirtualCameraStatus::AwaitingApproval => "虚拟摄像头组件正在等待系统批准。",
+            VirtualCameraStatus::RestartRequired => "虚拟摄像头将在系统重启后生效。",
+            VirtualCameraStatus::Uninstalling => "系统正在移除虚拟摄像头组件。",
             VirtualCameraStatus::Installed | VirtualCameraStatus::Active => {
                 "虚拟摄像头已就绪。"
             }
@@ -178,6 +212,9 @@ mod tests {
             status,
             VirtualCameraStatus::Unknown
                 | VirtualCameraStatus::Bundled
+                | VirtualCameraStatus::AwaitingApproval
+                | VirtualCameraStatus::RestartRequired
+                | VirtualCameraStatus::Uninstalling
                 | VirtualCameraStatus::Installed
                 | VirtualCameraStatus::NotInstalled
                 | VirtualCameraStatus::Active
@@ -189,6 +226,9 @@ mod tests {
         for status in [
             VirtualCameraStatus::Unknown,
             VirtualCameraStatus::Bundled,
+            VirtualCameraStatus::AwaitingApproval,
+            VirtualCameraStatus::RestartRequired,
+            VirtualCameraStatus::Uninstalling,
             VirtualCameraStatus::Installed,
             VirtualCameraStatus::NotInstalled,
             VirtualCameraStatus::Active,
@@ -202,10 +242,10 @@ mod tests {
 
     #[test]
     fn bundled_component_is_not_described_as_already_active() {
-        assert!(
-            vcam_repair_hint_for(VcamPlatform::Macos, VirtualCameraStatus::Bundled)
-                .contains("仍需")
-        );
+        let hint = vcam_repair_hint_for(VcamPlatform::Macos, VirtualCameraStatus::Bundled);
+        assert!(hint.contains("已随应用提供"));
+        assert!(hint.contains("激活 Camera Extension"));
+        assert!(!hint.contains("已激活"));
     }
 
     #[test]

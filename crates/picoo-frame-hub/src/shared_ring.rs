@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 #[cfg(target_os = "macos")]
 use memmap2::{MmapMut, MmapOptions};
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSBundle, NSFileManager, NSString};
+use objc2_foundation::{NSBundle, NSFileManager, NSNumber, NSString};
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 use thiserror::Error;
 
@@ -19,6 +19,8 @@ pub const RING_VERSION: u32 = 2;
 pub const PIXEL_FORMAT_NV12: u32 = 1;
 #[cfg(target_os = "macos")]
 pub const MACOS_APP_GROUP_INFO_KEY: &str = "PicooAppGroupIdentifier";
+#[cfg(target_os = "macos")]
+pub const MACOS_UNSIGNED_BUILD_INFO_KEY: &str = "PicooUnsignedDevelopmentBuild";
 
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 1920 * 1080 * 3 / 2;
 
@@ -1089,13 +1091,12 @@ pub fn macos_app_group_ring_path(name: &str) -> Result<PathBuf, SharedRingError>
             "invalid ring name".into(),
         ));
     }
-    let identifier = macos_app_group_identifier()?;
     // An unsigned development bundle has no valid App Group entitlement.
     // Asking LaunchServices for that synthetic container before GPUI starts
     // can block the app's main thread indefinitely. The embedded unsigned
     // extension cannot be activated anyway, so keep host previews functional
     // in a user-owned fallback directory until a real Team ID is injected.
-    if identifier.starts_with("UNSIGNED.") {
+    if macos_is_unsigned_development_bundle() {
         let home = std::env::var_os("HOME").ok_or_else(|| {
             SharedRingError::AppGroupUnavailable(
                 "HOME is unavailable for unsigned macOS fallback".into(),
@@ -1108,6 +1109,7 @@ pub fn macos_app_group_ring_path(name: &str) -> Result<PathBuf, SharedRingError>
             .join("SharedFrameRing")
             .join(format!("{name}.ring")));
     }
+    let identifier = macos_app_group_identifier()?;
     let manager = NSFileManager::defaultManager();
     let group = NSString::from_str(&identifier);
     let container = manager
@@ -1117,6 +1119,15 @@ pub fn macos_app_group_ring_path(name: &str) -> Result<PathBuf, SharedRingError>
         SharedRingError::AppGroupUnavailable("container URL has no file path".into())
     })?;
     Ok(PathBuf::from(path.to_string()).join(format!("{name}.ring")))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_is_unsigned_development_bundle() -> bool {
+    let key = NSString::from_str(MACOS_UNSIGNED_BUILD_INFO_KEY);
+    NSBundle::mainBundle()
+        .objectForInfoDictionaryKey(&key)
+        .and_then(|value| value.downcast::<NSNumber>().ok())
+        .is_some_and(|value| value.as_bool())
 }
 
 #[cfg(target_os = "macos")]
@@ -1304,6 +1315,7 @@ mod tests {
         let entitlements = include_str!(
             "../../../extensions/macos-camera-extension/PicooCameraExtension.entitlements"
         );
+        let info = include_str!("../../../extensions/macos-camera-extension/Info.plist");
 
         for expected in [
             format!("PICOO_RING_VERSION = {RING_VERSION}"),
@@ -1315,7 +1327,8 @@ mod tests {
             assert!(c_source.contains(&expected), "C ABI drift: {expected}");
         }
         assert!(swift_source.contains(MACOS_APP_GROUP_INFO_KEY));
-        assert!(entitlements.contains("$(TeamIdentifierPrefix)com.haoxincode.picoo-camera"));
+        assert!(entitlements.contains("@PICOO_APP_GROUP_IDENTIFIER@"));
+        assert!(info.contains("group.com.haoxincode.picoo-camera"));
     }
 
     #[test]

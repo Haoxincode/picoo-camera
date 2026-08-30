@@ -196,7 +196,7 @@
 				GCC_C_LANGUAGE_STANDARD = c17;
 				INFOPLIST_FILE = Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.haoxincode.picoo-camera.camera-extension";
 				PRODUCT_NAME = "com.haoxincode.picoo-camera.camera-extension";
 				REGISTER_APP_GROUPS = YES;
@@ -226,7 +226,7 @@
 				GCC_C_LANGUAGE_STANDARD = c17;
 				INFOPLIST_FILE = Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 0.1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.haoxincode.picoo-camera.camera-extension";
 				PRODUCT_NAME = "com.haoxincode.picoo-camera.camera-extension";
 				REGISTER_APP_GROUPS = YES;

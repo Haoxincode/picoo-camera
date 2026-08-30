@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>@PICOO_MARKETING_VERSION@</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>@PICOO_BUILD_NUMBER@</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.video</string>
     <key>LSMinimumSystemVersion</key>
@@ -36,5 +36,7 @@
     <string>Picoo Camera 需要启用摄像头扩展，才能在会议软件中提供手机画面。</string>
     <key>PicooAppGroupIdentifier</key>
     <string>@PICOO_APP_GROUP_IDENTIFIER@</string>
+    <key>PicooUnsignedDevelopmentBuild</key>
+    @PICOO_UNSIGNED_DEVELOPMENT_BUILD@
 </dict>
 </plist>

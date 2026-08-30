@@ -23,11 +23,18 @@ use picoo_session::ReceiverStatus;
 
 use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::model::VirtualCameraStatus;
-use crate::prefs::{load_prefs, save_prefs, DesktopPreferences, LogLevel};
-use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot};
-use crate::vcam_status::{
-    detect_vcam_status, vcam_repair_hint, vcam_setup_action_label, vcam_setup_unavailable_message,
+#[cfg(target_os = "macos")]
+use crate::prefs::current_macos_boot_session;
+use crate::prefs::{
+    load_prefs, save_prefs, DesktopPreferences, LogLevel, MacosCameraExtensionIntent,
+    PendingMacosCameraExtension,
 };
+use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot};
+#[cfg(target_os = "macos")]
+use crate::vcam_status::query_macos_vcam_status;
+#[cfg(not(any(target_os = "macos", all(windows, feature = "windows-vcam"))))]
+use crate::vcam_status::vcam_setup_unavailable_message;
+use crate::vcam_status::{detect_vcam_status, vcam_repair_hint, vcam_setup_action_label};
 use crate::video_surface::VideoSurface;
 
 const DEVICE_FRAME_ASSETS: [(&str, &[u8]); 3] = [
@@ -136,23 +143,78 @@ impl DesktopSection {
 #[derive(Clone, PartialEq, Eq)]
 enum VcamSetupState {
     Idle,
-    #[cfg(all(windows, feature = "windows-vcam"))]
-    Running,
-    #[cfg(all(windows, feature = "windows-vcam"))]
+    Running(VcamSetupOperation),
     Succeeded(String),
     Failed(String),
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum VcamSetupOperation {
+    Activate,
+    Deactivate,
+    Detect,
+}
+
 impl VcamSetupState {
     fn is_running(&self) -> bool {
-        #[cfg(all(windows, feature = "windows-vcam"))]
+        matches!(self, Self::Running(_))
+    }
+}
+
+fn macos_activation_action_visible(status: VirtualCameraStatus) -> bool {
+    status == VirtualCameraStatus::Bundled
+}
+
+fn macos_deactivation_action_visible(status: VirtualCameraStatus) -> bool {
+    matches!(
+        status,
+        VirtualCameraStatus::Installed | VirtualCameraStatus::Active
+    )
+}
+
+fn resolve_pending_macos_vcam_status(
+    status: VirtualCameraStatus,
+    pending: Option<&PendingMacosCameraExtension>,
+    current_boot_session: Option<&str>,
+) -> (VirtualCameraStatus, bool, bool) {
+    match pending {
+        Some(pending)
+            if pending.intent == MacosCameraExtensionIntent::Activate
+                && status == VirtualCameraStatus::Active =>
         {
-            matches!(self, Self::Running)
+            (status, true, false)
         }
-        #[cfg(not(all(windows, feature = "windows-vcam")))]
+        Some(pending)
+            if pending.intent == MacosCameraExtensionIntent::Deactivate
+                && matches!(
+                    status,
+                    VirtualCameraStatus::Bundled | VirtualCameraStatus::NotInstalled
+                ) =>
         {
-            false
+            (status, true, false)
         }
+        Some(pending) if current_boot_session.is_some_and(|boot| boot != pending.boot_session) => {
+            // macOS promised completion after reboot, but the queried system
+            // state still did not converge. Clear the stale lock so the user
+            // can retry the actual lifecycle action.
+            (status, true, true)
+        }
+        Some(pending) if pending.intent == MacosCameraExtensionIntent::Activate => {
+            (VirtualCameraStatus::RestartRequired, false, false)
+        }
+        Some(_) => (VirtualCameraStatus::Uninstalling, false, false),
+        None => (status, false, false),
+    }
+}
+
+fn pending_macos_vcam_display_status(
+    pending: Option<&PendingMacosCameraExtension>,
+    fallback: VirtualCameraStatus,
+) -> VirtualCameraStatus {
+    match pending.map(|pending| pending.intent) {
+        Some(MacosCameraExtensionIntent::Activate) => VirtualCameraStatus::RestartRequired,
+        Some(MacosCameraExtensionIntent::Deactivate) => VirtualCameraStatus::Uninstalling,
+        None => fallback,
     }
 }
 
@@ -246,6 +308,19 @@ impl PicooDesktopApp {
         save_prefs(&self.prefs)
     }
 
+    #[cfg(target_os = "macos")]
+    fn persist_pending_macos_vcam(
+        &mut self,
+        intent: MacosCameraExtensionIntent,
+    ) -> Result<(), String> {
+        let boot_session = current_macos_boot_session()?;
+        self.prefs.pending_macos_camera_extension = Some(PendingMacosCameraExtension {
+            intent,
+            boot_session,
+        });
+        self.persist_prefs()
+    }
+
     fn apply_log_level(&self) {
         let filter = self.prefs.log_level.env_filter();
         std::env::set_var("RUST_LOG", filter);
@@ -261,35 +336,126 @@ impl PicooDesktopApp {
         cx.notify();
     }
 
-    fn refresh_vcam_status(&mut self) {
-        let status = detect_vcam_status();
-        self.vcam_status = status;
-        self.runtime.set_virtual_camera_status(status);
-        self.vcam_setup_state = VcamSetupState::Idle;
+    fn refresh_vcam_status(&mut self, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        {
+            if self.vcam_setup_state.is_running() {
+                return;
+            }
+            self.vcam_status = VirtualCameraStatus::Unknown;
+            self.runtime
+                .set_virtual_camera_status(VirtualCameraStatus::Unknown);
+            self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Detect);
+            cx.notify();
+
+            let query = cx.background_executor().spawn_dedicated(|_| async move {
+                (query_macos_vcam_status(), current_macos_boot_session())
+            });
+            cx.spawn(async move |this, cx| {
+                let (result, boot_session) = query.await;
+                let _ = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(status) => {
+                            let (status, clear_pending, failed_after_reboot) =
+                                resolve_pending_macos_vcam_status(
+                                    status,
+                                    this.prefs.pending_macos_camera_extension.as_ref(),
+                                    boot_session.as_deref().ok(),
+                                );
+                            let persistence_error = if clear_pending {
+                                this.prefs.pending_macos_camera_extension = None;
+                                if let Err(err) = this.persist_prefs() {
+                                    tracing::warn!(
+                                        "clear Camera Extension pending state failed: {err}"
+                                    );
+                                    Some(err)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+                            this.vcam_status = status;
+                            this.runtime.set_virtual_camera_status(status);
+                            if failed_after_reboot {
+                                this.vcam_setup_state = VcamSetupState::Failed(
+                                    "Mac 已重新启动，但 Camera Extension 未完成系统变更。请重试。"
+                                        .into(),
+                                );
+                            } else if let Some(err) = persistence_error {
+                                this.vcam_setup_state = VcamSetupState::Failed(format!(
+                                    "无法保存 Camera Extension 状态：{err}"
+                                ));
+                            } else {
+                                this.vcam_setup_state = VcamSetupState::Idle;
+                            }
+                        }
+                        Err(err) => {
+                            tracing::warn!("Camera Extension status query failed: {err}");
+                            let bundled = detect_vcam_status();
+                            let status = pending_macos_vcam_display_status(
+                                this.prefs.pending_macos_camera_extension.as_ref(),
+                                bundled,
+                            );
+                            this.vcam_status = status;
+                            this.runtime.set_virtual_camera_status(status);
+                            this.vcam_setup_state = VcamSetupState::Failed(format!(
+                                "无法读取 Camera Extension 系统状态：{err}"
+                            ));
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            let status = detect_vcam_status();
+            self.vcam_status = status;
+            self.runtime.set_virtual_camera_status(status);
+            self.vcam_setup_state = VcamSetupState::Idle;
+        }
     }
 
     fn vcam_setup_button_label(&self) -> &'static str {
-        if self.vcam_setup_state.is_running() {
-            "正在等待管理员授权…"
-        } else {
-            vcam_setup_action_label()
+        match self.vcam_setup_state {
+            VcamSetupState::Running(VcamSetupOperation::Activate) => {
+                if cfg!(target_os = "macos") {
+                    "正在等待系统批准…"
+                } else {
+                    "正在等待管理员授权…"
+                }
+            }
+            VcamSetupState::Running(VcamSetupOperation::Detect) => "正在检测…",
+            VcamSetupState::Running(VcamSetupOperation::Deactivate) => "正在停用…",
+            _ => vcam_setup_action_label(),
         }
     }
 
     fn render_vcam_setup_feedback(&self, cx: &Context<Self>) -> Option<AnyElement> {
         match &self.vcam_setup_state {
             VcamSetupState::Idle => None,
-            #[cfg(all(windows, feature = "windows-vcam"))]
-            VcamSetupState::Running => Some(
+            VcamSetupState::Running(VcamSetupOperation::Activate) => Some(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(
-                        "请在 Windows 用户账户控制中允许 Picoo Camera 修改设备，然后返回此窗口。",
-                    )
+                    .child(if cfg!(target_os = "macos") {
+                        "若 macOS 要求批准，请打开系统设置中的“登录项与扩展”，允许 Picoo Camera，然后返回此窗口。"
+                    } else {
+                        "请在 Windows 用户账户控制中允许 Picoo Camera 修改设备，然后返回此窗口。"
+                    })
                     .into_any_element(),
             ),
-            #[cfg(all(windows, feature = "windows-vcam"))]
+            VcamSetupState::Running(VcamSetupOperation::Deactivate) => Some(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("正在请求 macOS 停用并移除 Camera Extension…")
+                    .into_any_element(),
+            ),
+            VcamSetupState::Running(VcamSetupOperation::Detect) => None,
             VcamSetupState::Succeeded(message) => Some(
                 div()
                     .text_sm()
@@ -314,7 +480,7 @@ impl PicooDesktopApp {
 
         #[cfg(all(windows, feature = "windows-vcam"))]
         {
-            self.vcam_setup_state = VcamSetupState::Running;
+            self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Activate);
             cx.notify();
 
             let repair = cx.background_executor().spawn_dedicated(|_| async move {
@@ -334,7 +500,9 @@ impl PicooDesktopApp {
                         }
                         Err(err) => {
                             tracing::warn!("Install or repair Virtual Camera failed: {err}");
-                            this.refresh_vcam_status();
+                            let status = detect_vcam_status();
+                            this.vcam_status = status;
+                            this.runtime.set_virtual_camera_status(status);
                             this.vcam_setup_state = VcamSetupState::Failed(err);
                         }
                     }
@@ -345,16 +513,132 @@ impl PicooDesktopApp {
         }
         #[cfg(target_os = "macos")]
         {
-            self.refresh_vcam_status();
-            self.vcam_setup_state = VcamSetupState::Failed(vcam_setup_unavailable_message().into());
+            if detect_vcam_status() == VirtualCameraStatus::NotInstalled {
+                self.vcam_setup_state = VcamSetupState::Failed(
+                    "当前应用包未包含 Camera Extension，请安装完整的 Picoo Camera.app。".into(),
+                );
+                cx.notify();
+                return;
+            }
+            self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Activate);
             cx.notify();
+
+            let activation = cx
+                .background_executor()
+                .spawn_dedicated(|_| async move { crate::macos_system_extension::activate() });
+            cx.spawn(async move |this, cx| {
+                let result = activation.await;
+                let _ = this.update(cx, |this, cx| {
+                    match result {
+                        Ok(crate::macos_system_extension::LifecycleOutcome::Completed) => {
+                            this.prefs.pending_macos_camera_extension = None;
+                            let _ = this.persist_prefs();
+                            this.vcam_status = VirtualCameraStatus::Active;
+                            this.runtime
+                                .set_virtual_camera_status(VirtualCameraStatus::Active);
+                            this.vcam_setup_state = VcamSetupState::Succeeded(
+                                "Camera Extension 已激活。请重启已打开的会议应用。".into(),
+                            );
+                        }
+                        Ok(crate::macos_system_extension::LifecycleOutcome::RestartRequired) => {
+                            this.vcam_status = VirtualCameraStatus::RestartRequired;
+                            this.runtime
+                                .set_virtual_camera_status(VirtualCameraStatus::RestartRequired);
+                            this.vcam_setup_state = match this
+                                .persist_pending_macos_vcam(MacosCameraExtensionIntent::Activate)
+                            {
+                                Ok(()) => VcamSetupState::Succeeded(
+                                    "Camera Extension 将在重新启动 Mac 后激活。".into(),
+                                ),
+                                Err(err) => {
+                                    tracing::warn!(
+                                        "persist Camera Extension activation intent failed: {err}"
+                                    );
+                                    VcamSetupState::Failed(format!(
+                                        "系统要求重新启动，但无法保存待处理状态：{err}"
+                                    ))
+                                }
+                            };
+                        }
+                        Err(err) => {
+                            tracing::warn!("Camera Extension activation failed: {err}");
+                            let status = detect_vcam_status();
+                            this.vcam_status = status;
+                            this.runtime.set_virtual_camera_status(status);
+                            this.vcam_setup_state =
+                                VcamSetupState::Failed(format!("无法激活 Camera Extension：{err}"));
+                        }
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
         }
         #[cfg(not(any(target_os = "macos", all(windows, feature = "windows-vcam"))))]
         {
-            self.refresh_vcam_status();
+            let status = detect_vcam_status();
+            self.vcam_status = status;
+            self.runtime.set_virtual_camera_status(status);
             self.vcam_setup_state = VcamSetupState::Failed(vcam_setup_unavailable_message().into());
             cx.notify();
         }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn deactivate_vcam(&mut self, cx: &mut Context<Self>) {
+        if self.vcam_setup_state.is_running() {
+            return;
+        }
+        self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Deactivate);
+        cx.notify();
+
+        let deactivation = cx
+            .background_executor()
+            .spawn_dedicated(|_| async move { crate::macos_system_extension::deactivate() });
+        cx.spawn(async move |this, cx| {
+            let result = deactivation.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(crate::macos_system_extension::LifecycleOutcome::Completed) => {
+                        this.prefs.pending_macos_camera_extension = None;
+                        let _ = this.persist_prefs();
+                        this.vcam_status = VirtualCameraStatus::Bundled;
+                        this.runtime
+                            .set_virtual_camera_status(VirtualCameraStatus::Bundled);
+                        this.vcam_setup_state = VcamSetupState::Succeeded(
+                            "Camera Extension 已停用并从系统移除，可随时重新激活。".into(),
+                        );
+                    }
+                    Ok(crate::macos_system_extension::LifecycleOutcome::RestartRequired) => {
+                        this.vcam_status = VirtualCameraStatus::Uninstalling;
+                        this.runtime
+                            .set_virtual_camera_status(VirtualCameraStatus::Uninstalling);
+                        this.vcam_setup_state = match this
+                            .persist_pending_macos_vcam(MacosCameraExtensionIntent::Deactivate)
+                        {
+                            Ok(()) => VcamSetupState::Succeeded(
+                                "Camera Extension 将在重新启动 Mac 后完成移除。".into(),
+                            ),
+                            Err(err) => {
+                                tracing::warn!(
+                                    "persist Camera Extension deactivation intent failed: {err}"
+                                );
+                                VcamSetupState::Failed(format!(
+                                    "系统要求重新启动，但无法保存待处理状态：{err}"
+                                ))
+                            }
+                        };
+                    }
+                    Err(err) => {
+                        tracing::warn!("Camera Extension deactivation failed: {err}");
+                        this.vcam_setup_state =
+                            VcamSetupState::Failed(format!("无法停用 Camera Extension：{err}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn save_display_name(&mut self, cx: &mut Context<Self>) {
@@ -437,7 +721,7 @@ impl PicooDesktopApp {
                         .receiver()
                         .latest_frame()
                         .is_some_and(|slot| this.video_surface.update_from_slot(slot));
-                    let mut snapshot = this.runtime.snapshot();
+                    let snapshot = this.runtime.snapshot();
                     let previous_page = this.page;
                     // REQ-PICOO-UI-008: Windows tray message/tip pump.
                     #[cfg(all(windows, feature = "windows-vcam"))]
@@ -473,13 +757,6 @@ impl PicooDesktopApp {
                     {
                         this.page = DesktopPage::Waiting;
                     }
-                    if matches!(snapshot.status, ReceiverStatus::Streaming) {
-                        this.vcam_status = VirtualCameraStatus::Active;
-                        this.runtime
-                            .set_virtual_camera_status(VirtualCameraStatus::Active);
-                        snapshot.virtual_camera = VirtualCameraStatus::Active;
-                    }
-
                     let pairing_request = snapshot.pairing_short_code.as_ref().and_then(|code| {
                         if !matches!(snapshot.status, ReceiverStatus::Pairing)
                             || this.pairing_dialog_code.as_ref() == Some(code)
@@ -917,18 +1194,24 @@ impl PicooDesktopApp {
             .child(
                 Button::new("refresh-vcam")
                     .label("重新检测虚拟摄像头")
+                    .disabled(self.vcam_setup_state.is_running())
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.refresh_vcam_status();
-                        cx.notify();
+                        this.refresh_vcam_status(cx);
                     })),
             )
-            .child(
-                Button::new("install-vcam")
-                    .label(self.vcam_setup_button_label())
-                    .loading(self.vcam_setup_state.is_running())
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.try_register_vcam(cx);
-                    })),
+            .when(
+                !cfg!(target_os = "macos") || macos_activation_action_visible(self.vcam_status),
+                |this| {
+                    this.child(
+                        Button::new("install-vcam")
+                            .label(self.vcam_setup_button_label())
+                            .loading(self.vcam_setup_state.is_running())
+                            .disabled(self.vcam_setup_state.is_running())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.try_register_vcam(cx);
+                            })),
+                    )
+                },
             )
             .children(self.render_vcam_setup_feedback(cx))
             .children(self.diagnostics_message.as_ref().map(|msg| {
@@ -2035,19 +2318,42 @@ impl PicooDesktopApp {
                                 Button::new("refresh-vcam-page")
                                     .outline()
                                     .label("重新检测")
+                                    .disabled(self.vcam_setup_state.is_running())
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.refresh_vcam_status();
-                                        cx.notify();
+                                        this.refresh_vcam_status(cx);
                                     })),
                             )
-                            .child(
-                                Button::new("repair-vcam-page")
-                                    .label(self.vcam_setup_button_label())
-                                    .loading(self.vcam_setup_state.is_running())
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.try_register_vcam(cx);
-                                    })),
+                            .when(
+                                !cfg!(target_os = "macos")
+                                    || macos_activation_action_visible(snapshot.virtual_camera),
+                                |this| {
+                                    this.child(
+                                        Button::new("repair-vcam-page")
+                                            .label(self.vcam_setup_button_label())
+                                            .loading(self.vcam_setup_state.is_running())
+                                            .disabled(self.vcam_setup_state.is_running())
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.try_register_vcam(cx);
+                                            })),
+                                    )
+                                },
                             ),
+                    )
+                    .when(
+                        cfg!(target_os = "macos")
+                            && macos_deactivation_action_visible(snapshot.virtual_camera),
+                        |this| {
+                            this.child(
+                                Button::new("deactivate-vcam-page")
+                                    .outline()
+                                    .label("停用 Camera Extension")
+                                    .disabled(self.vcam_setup_state.is_running())
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        #[cfg(target_os = "macos")]
+                                        this.deactivate_vcam(cx);
+                                    })),
+                            )
+                        },
                     )
                     .children(self.render_vcam_setup_feedback(cx)),
             )
@@ -2521,6 +2827,9 @@ fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
     match status {
         VirtualCameraStatus::Unknown => "检测中",
         VirtualCameraStatus::Bundled => "已随附 · 待激活",
+        VirtualCameraStatus::AwaitingApproval => "等待系统批准",
+        VirtualCameraStatus::RestartRequired => "重启后生效",
+        VirtualCameraStatus::Uninstalling => "正在移除",
         VirtualCameraStatus::Installed => "就绪 (Ready)",
         VirtualCameraStatus::NotInstalled => "未安装 (Not Installed)",
         VirtualCameraStatus::Active => "就绪 (Active)",
@@ -3283,6 +3592,8 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 // Start frame/tray pump after the view exists — not inside Render.
                 view.update(cx, |this, cx| {
                     this.ensure_pump_loop(cx);
+                    #[cfg(target_os = "macos")]
+                    this.refresh_vcam_status(cx);
                 });
                 // REQ-PICOO-UI-008: Windows closes to tray when enabled; macOS
                 // keeps the app in Dock/background without a fake tray icon.
@@ -3328,10 +3639,12 @@ fn should_auto_start_vcam(status: VirtualCameraStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        should_auto_start_vcam, PicooAssets, SidebarWidthTransition, SIDEBAR_COLLAPSED_WIDTH,
-        SIDEBAR_EXPANDED_WIDTH,
+        macos_activation_action_visible, macos_deactivation_action_visible,
+        resolve_pending_macos_vcam_status, should_auto_start_vcam, PicooAssets,
+        SidebarWidthTransition, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_EXPANDED_WIDTH,
     };
     use crate::model::VirtualCameraStatus;
+    use crate::prefs::{MacosCameraExtensionIntent, PendingMacosCameraExtension};
     use gpui::AssetSource;
 
     #[test]
@@ -3340,7 +3653,104 @@ mod tests {
         assert!(should_auto_start_vcam(VirtualCameraStatus::Active));
         assert!(!should_auto_start_vcam(VirtualCameraStatus::NotInstalled));
         assert!(!should_auto_start_vcam(VirtualCameraStatus::Bundled));
+        assert!(!should_auto_start_vcam(
+            VirtualCameraStatus::AwaitingApproval
+        ));
+        assert!(!should_auto_start_vcam(
+            VirtualCameraStatus::RestartRequired
+        ));
+        assert!(!should_auto_start_vcam(VirtualCameraStatus::Uninstalling));
         assert!(!should_auto_start_vcam(VirtualCameraStatus::Unknown));
+    }
+
+    #[test]
+    fn macos_camera_extension_actions_follow_lifecycle_state() {
+        for status in [
+            VirtualCameraStatus::Unknown,
+            VirtualCameraStatus::AwaitingApproval,
+            VirtualCameraStatus::RestartRequired,
+            VirtualCameraStatus::Uninstalling,
+            VirtualCameraStatus::Installed,
+            VirtualCameraStatus::NotInstalled,
+            VirtualCameraStatus::Active,
+        ] {
+            assert!(!macos_activation_action_visible(status));
+        }
+        assert!(macos_activation_action_visible(
+            VirtualCameraStatus::Bundled
+        ));
+        assert!(macos_deactivation_action_visible(
+            VirtualCameraStatus::Installed
+        ));
+        assert!(macos_deactivation_action_visible(
+            VirtualCameraStatus::Active
+        ));
+        assert!(!macos_deactivation_action_visible(
+            VirtualCameraStatus::RestartRequired
+        ));
+        assert!(!macos_deactivation_action_visible(
+            VirtualCameraStatus::Uninstalling
+        ));
+    }
+
+    #[test]
+    fn macos_reboot_pending_intent_survives_until_system_state_converges() {
+        let activation = PendingMacosCameraExtension {
+            intent: MacosCameraExtensionIntent::Activate,
+            boot_session: "boot-a".into(),
+        };
+        let deactivation = PendingMacosCameraExtension {
+            intent: MacosCameraExtensionIntent::Deactivate,
+            boot_session: "boot-a".into(),
+        };
+        assert_eq!(
+            resolve_pending_macos_vcam_status(
+                VirtualCameraStatus::Bundled,
+                Some(&activation),
+                Some("boot-a")
+            ),
+            (VirtualCameraStatus::RestartRequired, false, false)
+        );
+        assert_eq!(
+            resolve_pending_macos_vcam_status(
+                VirtualCameraStatus::Active,
+                Some(&activation),
+                Some("boot-a")
+            ),
+            (VirtualCameraStatus::Active, true, false)
+        );
+        assert_eq!(
+            resolve_pending_macos_vcam_status(
+                VirtualCameraStatus::Active,
+                Some(&deactivation),
+                Some("boot-a")
+            ),
+            (VirtualCameraStatus::Uninstalling, false, false)
+        );
+        assert_eq!(
+            resolve_pending_macos_vcam_status(
+                VirtualCameraStatus::Bundled,
+                Some(&deactivation),
+                Some("boot-a")
+            ),
+            (VirtualCameraStatus::Bundled, true, false)
+        );
+    }
+
+    #[test]
+    fn macos_reboot_pending_intent_unlocks_retry_when_system_did_not_converge() {
+        let activation = PendingMacosCameraExtension {
+            intent: MacosCameraExtensionIntent::Activate,
+            boot_session: "boot-a".into(),
+        };
+        assert_eq!(
+            resolve_pending_macos_vcam_status(
+                VirtualCameraStatus::Bundled,
+                Some(&activation),
+                Some("boot-b")
+            ),
+            (VirtualCameraStatus::Bundled, true, true)
+        );
     }
 
     #[test]

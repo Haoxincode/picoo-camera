@@ -24,6 +24,11 @@ enum Command {
         #[arg(value_enum)]
         platform: PackagePlatform,
     },
+    /// Produce a signed and notarized release artifact.
+    Release {
+        #[arg(value_enum)]
+        platform: ReleasePlatform,
+    },
     Test {
         #[arg(value_enum)]
         suite: TestSuite,
@@ -54,6 +59,11 @@ enum PackagePlatform {
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
+enum ReleasePlatform {
+    Macos,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
 enum TestSuite {
     /// Swift/C ABI integration on an installed ARM64 iPhone Simulator runtime.
     Ios,
@@ -76,9 +86,57 @@ fn main() -> Result<()> {
     match cli.command {
         Command::Build { platform } => build(platform),
         Command::Package { platform } => package(platform),
+        Command::Release { platform } => release(platform),
         Command::Test { suite } => test_suite(suite),
         Command::Generate { artifact, check } => generate(artifact, check),
     }
+}
+
+fn release(platform: ReleasePlatform) -> Result<()> {
+    match platform {
+        ReleasePlatform::Macos => {
+            validate_macos_release_environment()?;
+            build(BuildPlatform::Macos)?;
+            let sh = Shell::new()?;
+            package_macos(&sh, MacosPackageMode::Release)?;
+            sign_and_notarize_macos(&sh)
+        }
+    }
+}
+
+fn validate_macos_release_environment() -> Result<()> {
+    for name in [
+        "PICOO_APPLE_TEAM_ID",
+        "PICOO_RELEASE_VERSION",
+        "PICOO_RELEASE_BUILD_NUMBER",
+        "PICOO_MACOS_SIGNING_IDENTITY",
+        "PICOO_NOTARY_KEY_PATH",
+        "PICOO_NOTARY_KEY_ID",
+        "PICOO_NOTARY_ISSUER_ID",
+        "PICOO_MACOS_HOST_PROFILE_PATH",
+        "PICOO_MACOS_EXTENSION_PROFILE_PATH",
+    ] {
+        required_env(name)?;
+    }
+    let team_id = required_env("PICOO_APPLE_TEAM_ID")?;
+    macos_team_identifier_prefix_for(&team_id)?;
+    validate_macos_marketing_version(&required_env("PICOO_RELEASE_VERSION")?)?;
+    validate_macos_build_number(&required_env("PICOO_RELEASE_BUILD_NUMBER")?)?;
+    let identity = required_env("PICOO_MACOS_SIGNING_IDENTITY")?;
+    if !identity.starts_with("Developer ID Application:") {
+        bail!("PICOO_MACOS_SIGNING_IDENTITY must name a Developer ID Application identity");
+    }
+    for name in [
+        "PICOO_NOTARY_KEY_PATH",
+        "PICOO_MACOS_HOST_PROFILE_PATH",
+        "PICOO_MACOS_EXTENSION_PROFILE_PATH",
+    ] {
+        let path = PathBuf::from(required_env(name)?);
+        if !path.is_file() {
+            bail!("macOS release input is missing {}", path.display());
+        }
+    }
+    Ok(())
 }
 
 fn generate(artifact: GeneratedArtifact, check: bool) -> Result<()> {
@@ -241,7 +299,7 @@ fn package(platform: PackagePlatform) -> Result<()> {
         PackagePlatform::Macos => {
             build(BuildPlatform::Macos)?;
             let sh = Shell::new()?;
-            package_macos(&sh)
+            package_macos(&sh, MacosPackageMode::Unsigned)
         }
     }
 }
@@ -250,8 +308,13 @@ const MACOS_APP_BUNDLE_ID: &str = "com.haoxincode.picoo-camera";
 const MACOS_EXTENSION_BUNDLE_ID: &str = "com.haoxincode.picoo-camera.camera-extension";
 const MACOS_EXTENSION_BUNDLE_NAME: &str =
     "com.haoxincode.picoo-camera.camera-extension.systemextension";
-const MACOS_APP_GROUP_SUFFIX: &str = "com.haoxincode.picoo-camera";
+const MACOS_APP_GROUP_ID: &str = "group.com.haoxincode.picoo-camera";
 const MACOS_APP_GROUP_PLACEHOLDER: &str = "@PICOO_APP_GROUP_IDENTIFIER@";
+const MACOS_TEAM_IDENTIFIER_PLACEHOLDER: &str = "@PICOO_TEAM_IDENTIFIER@";
+const MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER: &str = "@PICOO_APPLICATION_IDENTIFIER@";
+const MACOS_MARKETING_VERSION_PLACEHOLDER: &str = "@PICOO_MARKETING_VERSION@";
+const MACOS_BUILD_NUMBER_PLACEHOLDER: &str = "@PICOO_BUILD_NUMBER@";
+const MACOS_UNSIGNED_BUILD_PLACEHOLDER: &str = "@PICOO_UNSIGNED_DEVELOPMENT_BUILD@";
 const MACOS_UNSIGNED_TEAM_PREFIX: &str = "UNSIGNED.";
 
 fn build_ios(sh: &Shell) -> Result<()> {
@@ -377,13 +440,14 @@ fn build_macos(sh: &Shell) -> Result<()> {
     let object_dir = apple_dir.join("macos-obj");
     let products_dir = apple_dir.join("macos-products");
     let team_prefix = macos_team_identifier_prefix()?;
+    let (marketing_version, build_number) = macos_bundle_versions()?;
     if extension_dir.exists() {
         std::fs::remove_dir_all(&extension_dir)?;
     }
     std::fs::create_dir_all(&extension_dir)?;
     cmd!(
         sh,
-        "xcodebuild -project {project} -target PicooCameraExtension -configuration Release -sdk macosx -arch arm64 CODE_SIGNING_ALLOWED=NO TeamIdentifierPrefix={team_prefix} CONFIGURATION_BUILD_DIR={extension_dir} OBJROOT={object_dir} SYMROOT={products_dir} build"
+        "xcodebuild -project {project} -target PicooCameraExtension -configuration Release -sdk macosx -arch arm64 CODE_SIGNING_ALLOWED=NO TeamIdentifierPrefix={team_prefix} MARKETING_VERSION={marketing_version} CURRENT_PROJECT_VERSION={build_number} CONFIGURATION_BUILD_DIR={extension_dir} OBJROOT={object_dir} SYMROOT={products_dir} build"
     )
     .run()?;
 
@@ -395,7 +459,13 @@ fn build_macos(sh: &Shell) -> Result<()> {
     Ok(())
 }
 
-fn package_macos(sh: &Shell) -> Result<()> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MacosPackageMode {
+    Unsigned,
+    Release,
+}
+
+fn package_macos(sh: &Shell, mode: MacosPackageMode) -> Result<()> {
     if !cfg!(target_os = "macos") {
         bail!("macOS app must be packaged on a macOS host");
     }
@@ -411,13 +481,17 @@ fn package_macos(sh: &Shell) -> Result<()> {
     let receiver = cargo_target_dir(sh)?.join("release/picoo-desktop");
     let info_template = root.join("installers/macos/Info.plist");
     let entitlements_template = root.join("installers/macos/PicooCamera.entitlements");
+    let extension_entitlements_template =
+        root.join("extensions/macos-camera-extension/PicooCameraExtension.entitlements");
     let rendered_entitlements = apple_dir.join("PicooCamera-macOS.entitlements");
+    let rendered_extension_entitlements = apple_dir.join("PicooCameraExtension-macOS.entitlements");
 
     for required in [
         &receiver,
         &built_extension,
         &info_template,
         &entitlements_template,
+        &extension_entitlements_template,
     ] {
         if !required.exists() {
             bail!("macOS package input is missing {}", required.display());
@@ -437,38 +511,488 @@ fn package_macos(sh: &Shell) -> Result<()> {
     cmd!(sh, "ditto {built_extension} {embedded_extension}").run()?;
 
     let extension_group = macos_extension_app_group(sh, &embedded_extension)?;
-    let expected_group = format!(
-        "{}{MACOS_APP_GROUP_SUFFIX}",
-        macos_team_identifier_prefix()?
-    );
-    if extension_group != expected_group {
+    if extension_group != MACOS_APP_GROUP_ID {
         bail!(
-            "macOS Camera Extension App Group `{extension_group}` does not match `{expected_group}`"
+            "macOS Camera Extension App Group `{extension_group}` does not match `{MACOS_APP_GROUP_ID}`"
         );
     }
-    let info = render_macos_host_info(&std::fs::read_to_string(&info_template)?, &extension_group)?;
+    let (marketing_version, build_number) = macos_bundle_versions()?;
+    let (signing_team_id, signing_team_prefix) = macos_signing_identifiers()?;
+    // Packaging mode, not the presence of a Team ID, owns this runtime
+    // behavior. `package macos` is always unsigned; only `release macos`
+    // clears the marker immediately before codesigning the same bundle.
+    let unsigned_build = mode == MacosPackageMode::Unsigned;
+    let info = render_macos_host_info(
+        &std::fs::read_to_string(&info_template)?,
+        &extension_group,
+        &marketing_version,
+        &build_number,
+        unsigned_build,
+    )?;
     std::fs::write(app.join("Contents/Info.plist"), info)?;
-    let entitlements = render_macos_host_entitlements(
+    let entitlements = render_macos_entitlements(
         &std::fs::read_to_string(&entitlements_template)?,
         &extension_group,
+        &signing_team_id,
+        &signing_team_prefix,
+        MACOS_APP_BUNDLE_ID,
+        "Host entitlements",
     )?;
     std::fs::write(&rendered_entitlements, entitlements)?;
+    let extension_entitlements = render_macos_entitlements(
+        &std::fs::read_to_string(&extension_entitlements_template)?,
+        &extension_group,
+        &signing_team_id,
+        &signing_team_prefix,
+        MACOS_EXTENSION_BUNDLE_ID,
+        "Extension entitlements",
+    )?;
+    std::fs::write(&rendered_extension_entitlements, extension_entitlements)?;
 
-    validate_macos_host_app(sh, &app, &rendered_entitlements)?;
-    let archive = apple_dir.join("PicooCamera-macOS-unsigned.zip");
-    archive_apple_bundle(sh, &app, &archive)?;
-
-    eprintln!("macOS app (unsigned): {}", app.display());
-    eprintln!("macOS app artifact: {}", archive.display());
+    validate_macos_host_app(
+        sh,
+        &app,
+        &rendered_entitlements,
+        &rendered_extension_entitlements,
+        unsigned_build,
+    )?;
+    let unsigned_archive = apple_dir.join("PicooCamera-macOS-unsigned.zip");
+    if mode == MacosPackageMode::Unsigned {
+        archive_apple_bundle(sh, &app, &unsigned_archive)?;
+        eprintln!("macOS app (unsigned): {}", app.display());
+        eprintln!("macOS app artifact: {}", unsigned_archive.display());
+    } else {
+        // A release staging bundle has marker=false but is not safe to launch
+        // until the immediately following signing step. Never persist it as
+        // an unsigned distributable, and remove a stale package artifact.
+        if unsigned_archive.exists() {
+            std::fs::remove_file(&unsigned_archive)?;
+        }
+        eprintln!("macOS release app staging: {}", app.display());
+    }
     Ok(())
 }
 
-fn render_macos_host_info(template: &str, app_group: &str) -> Result<String> {
-    render_macos_app_group_template(template, app_group, "Host Info.plist")
+fn sign_and_notarize_macos(sh: &Shell) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        bail!("macOS release must be signed and notarized on a macOS host");
+    }
+
+    let team_id = required_env("PICOO_APPLE_TEAM_ID")?;
+    macos_team_identifier_prefix_for(&team_id)?;
+    let identity = required_env("PICOO_MACOS_SIGNING_IDENTITY")?;
+    if !identity.starts_with("Developer ID Application:") {
+        bail!("PICOO_MACOS_SIGNING_IDENTITY must name a Developer ID Application identity");
+    }
+    let identity_fingerprint = validate_macos_signing_identity(sh, &identity, &team_id)?;
+    let notary_key = PathBuf::from(required_env("PICOO_NOTARY_KEY_PATH")?);
+    let notary_key_id = required_env("PICOO_NOTARY_KEY_ID")?;
+    let notary_issuer_id = required_env("PICOO_NOTARY_ISSUER_ID")?;
+    let host_profile = PathBuf::from(required_env("PICOO_MACOS_HOST_PROFILE_PATH")?);
+    let extension_profile = PathBuf::from(required_env("PICOO_MACOS_EXTENSION_PROFILE_PATH")?);
+    for secret_file in [&notary_key, &host_profile, &extension_profile] {
+        if !secret_file.is_file() {
+            bail!("macOS release input is missing {}", secret_file.display());
+        }
+    }
+
+    let root = std::env::current_dir()?;
+    let apple_dir = root.join("target/apple");
+    let app = apple_dir.join("macos/Picoo Camera.app");
+    let extension = app
+        .join("Contents/Library/SystemExtensions")
+        .join(MACOS_EXTENSION_BUNDLE_NAME);
+    let host_entitlements = apple_dir.join("PicooCamera-macOS.entitlements");
+    let extension_entitlements = apple_dir.join("PicooCameraExtension-macOS.entitlements");
+    for input in [
+        &app,
+        &extension,
+        &host_entitlements,
+        &extension_entitlements,
+    ] {
+        if !input.exists() {
+            bail!("macOS release package input is missing {}", input.display());
+        }
+    }
+
+    let app_group = MACOS_APP_GROUP_ID;
+    embed_and_validate_profile(
+        sh,
+        &host_profile,
+        &app.join("Contents/embedded.provisionprofile"),
+        &host_profile.with_extension("decoded.plist"),
+        &team_id,
+        &identity_fingerprint,
+        MACOS_APP_BUNDLE_ID,
+        app_group,
+        true,
+    )?;
+    embed_and_validate_profile(
+        sh,
+        &extension_profile,
+        &extension.join("Contents/embedded.provisionprofile"),
+        &extension_profile.with_extension("decoded.plist"),
+        &team_id,
+        &identity_fingerprint,
+        MACOS_EXTENSION_BUNDLE_ID,
+        app_group,
+        false,
+    )?;
+
+    // Sign nested code first. Apple requires the host and System Extension to
+    // share the same Team ID; hardened runtime and secure timestamp are part
+    // of the notarization contract.
+    cmd!(
+        sh,
+        "codesign --force --timestamp --options runtime --sign {identity_fingerprint} --entitlements {extension_entitlements} {extension}"
+    )
+    .run()?;
+    cmd!(
+        sh,
+        "codesign --force --timestamp --options runtime --sign {identity_fingerprint} --entitlements {host_entitlements} {app}"
+    )
+    .run()?;
+    validate_signed_macos_bundle(
+        sh,
+        &extension,
+        &team_id,
+        MACOS_EXTENSION_BUNDLE_ID,
+        false,
+        &apple_dir.join("signed-extension-entitlements.plist"),
+    )?;
+    validate_signed_macos_bundle(
+        sh,
+        &app,
+        &team_id,
+        MACOS_APP_BUNDLE_ID,
+        true,
+        &apple_dir.join("signed-host-entitlements.plist"),
+    )?;
+    cmd!(sh, "codesign --verify --deep --strict --verbose=4 {app}").run()?;
+
+    let notary_upload = apple_dir.join("PicooCamera-macOS-notary-upload.zip");
+    archive_apple_bundle(sh, &app, &notary_upload)?;
+    cmd!(
+        sh,
+        "xcrun notarytool submit {notary_upload} --key {notary_key} --key-id {notary_key_id} --issuer {notary_issuer_id} --wait"
+    )
+    .run()?;
+    cmd!(sh, "xcrun stapler staple {app}").run()?;
+    cmd!(sh, "xcrun stapler validate {app}").run()?;
+    cmd!(sh, "spctl --assess --type execute --verbose=4 {app}").run()?;
+
+    let release_archive = apple_dir.join("PicooCamera-macOS.zip");
+    archive_apple_bundle(sh, &app, &release_archive)?;
+    eprintln!("macOS signed and notarized app: {}", app.display());
+    eprintln!("macOS release artifact: {}", release_archive.display());
+    Ok(())
 }
 
-fn render_macos_host_entitlements(template: &str, app_group: &str) -> Result<String> {
-    render_macos_app_group_template(template, app_group, "Host entitlements")
+#[allow(clippy::too_many_arguments)]
+fn embed_and_validate_profile(
+    sh: &Shell,
+    source: &Path,
+    destination: &Path,
+    decoded: &Path,
+    team_id: &str,
+    signing_fingerprint: &str,
+    bundle_id: &str,
+    app_group: &str,
+    requires_system_extension_install: bool,
+) -> Result<()> {
+    std::fs::copy(source, destination)?;
+    cmd!(sh, "security cms -D -i {source} -o {decoded}").run()?;
+    let json = cmd!(sh, "plutil -convert json -o - {decoded}").read()?;
+    let profile: serde_json::Value = serde_json::from_str(&json)?;
+    let entitlements = profile
+        .get("Entitlements")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| anyhow::anyhow!("provisioning profile has no Entitlements dictionary"))?;
+    let expected_application_identifier = format!("{team_id}.{bundle_id}");
+    let team_matches = profile
+        .get("TeamIdentifier")
+        .and_then(|value| value.as_array())
+        .is_some_and(|ids| ids.iter().any(|id| id == team_id));
+    let application_matches = entitlements
+        .get("com.apple.application-identifier")
+        .or_else(|| entitlements.get("application-identifier"))
+        .and_then(|value| value.as_str())
+        == Some(expected_application_identifier.as_str());
+    let entitlement_team_matches = entitlements
+        .get("com.apple.developer.team-identifier")
+        .and_then(|value| value.as_str())
+        == Some(team_id);
+    let app_group_matches = entitlements
+        .get("com.apple.security.application-groups")
+        .and_then(|value| value.as_array())
+        .is_some_and(|groups| groups.iter().any(|group| group == app_group));
+    let install_matches = !requires_system_extension_install
+        || entitlements
+            .get("com.apple.developer.system-extension.install")
+            .and_then(|value| value.as_bool())
+            == Some(true);
+    let distribution_matches = profile
+        .get("ProvisionsAllDevices")
+        .and_then(|value| value.as_bool())
+        == Some(true)
+        && profile
+            .get("Platform")
+            .and_then(|value| value.as_array())
+            .is_some_and(|platforms| platforms.iter().any(|platform| platform == "OSX"));
+    let expiration_matches = profile_expiration_is_future(sh, &profile)?;
+    let certificate_matches =
+        profile_authorizes_certificate(sh, &profile, decoded, signing_fingerprint)?;
+    if !team_matches
+        || !application_matches
+        || !entitlement_team_matches
+        || !app_group_matches
+        || !install_matches
+        || !distribution_matches
+        || !expiration_matches
+        || !certificate_matches
+    {
+        bail!(
+            "Developer ID profile for `{bundle_id}` is expired, has the wrong distribution type, does not authorize the signing certificate, or has mismatched Team/Bundle/App Group/System Extension entitlements"
+        );
+    }
+    Ok(())
+}
+
+fn validate_macos_signing_identity(sh: &Shell, identity: &str, team_id: &str) -> Result<String> {
+    if !identity.ends_with(&format!(" ({team_id})")) {
+        bail!("macOS signing identity does not belong to PICOO_APPLE_TEAM_ID");
+    }
+    let identities = cmd!(sh, "security find-identity -v -p codesigning").read()?;
+    let quoted_identity = format!("\"{identity}\"");
+    let line = identities
+        .lines()
+        .find(|line| line.contains(&quoted_identity))
+        .ok_or_else(|| anyhow::anyhow!("configured Developer ID identity is not available"))?;
+    let fingerprint = line
+        .split_whitespace()
+        .nth(1)
+        .filter(|value| value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .ok_or_else(|| anyhow::anyhow!("could not read Developer ID certificate fingerprint"))?;
+    Ok(fingerprint.to_ascii_uppercase())
+}
+
+fn profile_expiration_is_future(sh: &Shell, profile: &serde_json::Value) -> Result<bool> {
+    let expiration = profile
+        .get("ExpirationDate")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| anyhow::anyhow!("provisioning profile has no ExpirationDate"))?;
+    let normalized = expiration
+        .split_once('.')
+        .map(|(prefix, _)| format!("{prefix}Z"))
+        .unwrap_or_else(|| expiration.to_owned());
+    let epoch = cmd!(sh, "date -j -f %Y-%m-%dT%H:%M:%SZ {normalized} +%s")
+        .read()?
+        .parse::<u64>()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs();
+    Ok(epoch > now)
+}
+
+fn profile_authorizes_certificate(
+    sh: &Shell,
+    profile: &serde_json::Value,
+    decoded_profile: &Path,
+    signing_fingerprint: &str,
+) -> Result<bool> {
+    let certificates = profile
+        .get("DeveloperCertificates")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow::anyhow!("provisioning profile has no DeveloperCertificates"))?;
+    for (index, certificate) in certificates.iter().enumerate() {
+        let encoded = certificate
+            .as_str()
+            .ok_or_else(|| anyhow::anyhow!("profile certificate is not base64 data"))?;
+        let encoded_path = decoded_profile.with_extension(format!("cert-{index}.b64"));
+        let der_path = decoded_profile.with_extension(format!("cert-{index}.der"));
+        std::fs::write(&encoded_path, encoded)?;
+        let decode_result = cmd!(
+            sh,
+            "openssl base64 -d -A -in {encoded_path} -out {der_path}"
+        )
+        .run();
+        let fingerprint_result = decode_result.and_then(|_| {
+            cmd!(
+                sh,
+                "openssl x509 -inform DER -in {der_path} -noout -fingerprint -sha1"
+            )
+            .read()
+        });
+        let _ = std::fs::remove_file(&encoded_path);
+        let _ = std::fs::remove_file(&der_path);
+        let fingerprint = fingerprint_result?
+            .split_once('=')
+            .map(|(_, value)| value.replace(':', "").to_ascii_uppercase())
+            .ok_or_else(|| anyhow::anyhow!("could not read profile certificate fingerprint"))?;
+        if fingerprint == signing_fingerprint {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn validate_signed_macos_bundle(
+    sh: &Shell,
+    bundle: &Path,
+    team_id: &str,
+    bundle_id: &str,
+    requires_system_extension_install: bool,
+    extracted_entitlements: &Path,
+) -> Result<()> {
+    let details = cmd!(sh, "codesign -dvv --verbose=4 {bundle}").read_stderr()?;
+    if !details
+        .lines()
+        .any(|line| line == format!("TeamIdentifier={team_id}"))
+        || !details
+            .lines()
+            .any(|line| line.starts_with("Authority=Developer ID Application:"))
+    {
+        bail!("signed `{bundle_id}` has the wrong Team ID or signing authority");
+    }
+
+    let entitlement_xml = cmd!(sh, "codesign -d --entitlements - --xml {bundle}").read()?;
+    std::fs::write(extracted_entitlements, entitlement_xml)?;
+    let entitlement_json = cmd!(sh, "plutil -convert json -o - {extracted_entitlements}").read()?;
+    let entitlements: serde_json::Value = serde_json::from_str(&entitlement_json)?;
+    let application_identifier = format!("{team_id}.{bundle_id}");
+    let team_matches = entitlements
+        .get("com.apple.developer.team-identifier")
+        .and_then(|value| value.as_str())
+        == Some(team_id);
+    let application_matches = entitlements
+        .get("com.apple.application-identifier")
+        .or_else(|| entitlements.get("application-identifier"))
+        .and_then(|value| value.as_str())
+        == Some(application_identifier.as_str());
+    let app_group_matches = entitlements
+        .get("com.apple.security.application-groups")
+        .and_then(|value| value.as_array())
+        .is_some_and(|groups| groups.iter().any(|group| group == MACOS_APP_GROUP_ID));
+    let install_matches = !requires_system_extension_install
+        || entitlements
+            .get("com.apple.developer.system-extension.install")
+            .and_then(|value| value.as_bool())
+            == Some(true);
+    if !team_matches || !application_matches || !app_group_matches || !install_matches {
+        bail!("signed `{bundle_id}` has mismatched effective entitlements");
+    }
+    Ok(())
+}
+
+fn required_env(name: &str) -> Result<String> {
+    std::env::var(name)
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("{name} is required"))
+}
+
+fn render_macos_host_info(
+    template: &str,
+    app_group: &str,
+    marketing_version: &str,
+    build_number: &str,
+    unsigned_build: bool,
+) -> Result<String> {
+    validate_macos_marketing_version(marketing_version)?;
+    validate_macos_build_number(build_number)?;
+    let rendered = render_macos_app_group_template(template, app_group, "Host Info.plist")?;
+    let rendered = render_exact_placeholder(
+        &render_exact_placeholder(
+            &rendered,
+            MACOS_MARKETING_VERSION_PLACEHOLDER,
+            marketing_version,
+            "Host marketing version",
+        )?,
+        MACOS_BUILD_NUMBER_PLACEHOLDER,
+        build_number,
+        "Host build number",
+    )?;
+    render_exact_placeholder(
+        &rendered,
+        MACOS_UNSIGNED_BUILD_PLACEHOLDER,
+        if unsigned_build {
+            "<true/>"
+        } else {
+            "<false/>"
+        },
+        "Host unsigned development marker",
+    )
+}
+
+fn render_macos_entitlements(
+    template: &str,
+    app_group: &str,
+    team_id: &str,
+    team_prefix: &str,
+    bundle_id: &str,
+    template_name: &str,
+) -> Result<String> {
+    let rendered = render_macos_app_group_template(template, app_group, template_name)?;
+    let rendered = render_exact_placeholder(
+        &rendered,
+        MACOS_TEAM_IDENTIFIER_PLACEHOLDER,
+        team_id,
+        template_name,
+    )?;
+    render_exact_placeholder(
+        &rendered,
+        MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER,
+        &format!("{team_prefix}{bundle_id}"),
+        template_name,
+    )
+}
+
+fn render_exact_placeholder(
+    template: &str,
+    placeholder: &str,
+    value: &str,
+    name: &str,
+) -> Result<String> {
+    if template.matches(placeholder).count() != 1 {
+        bail!("macOS {name} template must contain exactly one {placeholder} token");
+    }
+    Ok(template.replace(placeholder, value))
+}
+
+fn macos_bundle_versions() -> Result<(String, String)> {
+    let marketing_version =
+        std::env::var("PICOO_RELEASE_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into());
+    let build_number = std::env::var("PICOO_RELEASE_BUILD_NUMBER").unwrap_or_else(|_| "1".into());
+    validate_macos_marketing_version(&marketing_version)?;
+    validate_macos_build_number(&build_number)?;
+    Ok((marketing_version, build_number))
+}
+
+fn validate_macos_marketing_version(version: &str) -> Result<()> {
+    let components = version.split('.').collect::<Vec<_>>();
+    if components.is_empty()
+        || components.len() > 3
+        || components.iter().any(|component| {
+            component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    {
+        bail!("PICOO_RELEASE_VERSION must contain one to three dot-separated integers");
+    }
+    Ok(())
+}
+
+fn validate_macos_build_number(version: &str) -> Result<()> {
+    if version.is_empty()
+        || !version.bytes().all(|byte| byte.is_ascii_digit())
+        || version
+            .parse::<u64>()
+            .ok()
+            .filter(|value| *value > 0)
+            .is_none()
+    {
+        bail!("PICOO_RELEASE_BUILD_NUMBER must be a positive integer");
+    }
+    Ok(())
 }
 
 fn render_macos_app_group_template(
@@ -484,7 +1008,7 @@ fn render_macos_app_group_template(
         || !app_group
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
-        || !app_group.ends_with(MACOS_APP_GROUP_SUFFIX)
+        || app_group != MACOS_APP_GROUP_ID
     {
         bail!("invalid Picoo Camera App Group identifier `{app_group}`");
     }
@@ -496,6 +1020,16 @@ fn macos_team_identifier_prefix() -> Result<String> {
         return Ok(MACOS_UNSIGNED_TEAM_PREFIX.into());
     };
     macos_team_identifier_prefix_for(&team_id)
+}
+
+fn macos_signing_identifiers() -> Result<(String, String)> {
+    match std::env::var("PICOO_APPLE_TEAM_ID") {
+        Ok(team_id) => {
+            let prefix = macos_team_identifier_prefix_for(&team_id)?;
+            Ok((team_id, prefix))
+        }
+        Err(_) => Ok(("UNSIGNED".into(), MACOS_UNSIGNED_TEAM_PREFIX.into())),
+    }
 }
 
 fn macos_team_identifier_prefix_for(team_id: &str) -> Result<String> {
@@ -521,7 +1055,13 @@ fn macos_extension_app_group(sh: &Shell, extension: &Path) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("macOS Camera Extension has no App Group identity"))
 }
 
-fn validate_macos_host_app(sh: &Shell, app: &Path, entitlements: &Path) -> Result<()> {
+fn validate_macos_host_app(
+    sh: &Shell,
+    app: &Path,
+    entitlements: &Path,
+    extension_entitlements: &Path,
+    expected_unsigned_build: bool,
+) -> Result<()> {
     let info_plist = app.join("Contents/Info.plist");
     let executable = app.join("Contents/MacOS/picoo-desktop");
     let embedded_extension = app
@@ -535,6 +1075,12 @@ fn validate_macos_host_app(sh: &Shell, app: &Path, entitlements: &Path) -> Resul
     let plist: serde_json::Value = serde_json::from_str(&plist_json)?;
     let host_group = plist
         .get("PicooAppGroupIdentifier")
+        .and_then(|value| value.as_str());
+    let host_marketing_version = plist
+        .get("CFBundleShortVersionString")
+        .and_then(|value| value.as_str());
+    let host_build_number = plist
+        .get("CFBundleVersion")
         .and_then(|value| value.as_str());
     if plist
         .get("CFBundleIdentifier")
@@ -564,6 +1110,10 @@ fn validate_macos_host_app(sh: &Shell, app: &Path, entitlements: &Path) -> Resul
             .get("NSBonjourServices")
             .and_then(|value| value.as_array())
             .is_some_and(|services| services.iter().any(|service| service == "_picoocam._udp"))
+        || plist
+            .get("PicooUnsignedDevelopmentBuild")
+            .and_then(|value| value.as_bool())
+            != Some(expected_unsigned_build)
     {
         bail!("macOS Host Info.plist is missing its product or System Extension identity");
     }
@@ -582,6 +1132,19 @@ fn validate_macos_host_app(sh: &Shell, app: &Path, entitlements: &Path) -> Resul
         != Some(MACOS_EXTENSION_BUNDLE_ID)
     {
         bail!("embedded macOS Camera Extension has the wrong bundle identifier");
+    }
+    if extension_plist
+        .get("CFBundleShortVersionString")
+        .and_then(|value| value.as_str())
+        != host_marketing_version
+        || extension_plist
+            .get("CFBundleVersion")
+            .and_then(|value| value.as_str())
+            != host_build_number
+        || host_marketing_version.is_none_or(str::is_empty)
+        || host_build_number.is_none_or(str::is_empty)
+    {
+        bail!("macOS Host and Camera Extension must use the same non-empty bundle versions");
     }
 
     let entitlements_json = cmd!(sh, "plutil -convert json -o - {entitlements}").read()?;
@@ -611,6 +1174,26 @@ fn validate_macos_host_app(sh: &Shell, app: &Path, entitlements: &Path) -> Resul
         bail!(
             "macOS Host signing input is missing sandbox, network, System Extension, or App Group capability"
         );
+    }
+
+    let extension_entitlements_json =
+        cmd!(sh, "plutil -convert json -o - {extension_entitlements}").read()?;
+    let extension_entitlements: serde_json::Value =
+        serde_json::from_str(&extension_entitlements_json)?;
+    if !extension_entitlements
+        .get("com.apple.security.application-groups")
+        .and_then(|value| value.as_array())
+        .is_some_and(|groups| groups.iter().any(|group| group == MACOS_APP_GROUP_ID))
+        || extension_entitlements
+            .get("com.apple.developer.team-identifier")
+            .and_then(|value| value.as_str())
+            .is_none_or(str::is_empty)
+        || !extension_entitlements
+            .get("com.apple.application-identifier")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| value.ends_with(MACOS_EXTENSION_BUNDLE_ID))
+    {
+        bail!("macOS Extension signing input has mismatched effective identities");
     }
 
     let binary = cmd!(sh, "file {executable}").read()?;
@@ -671,23 +1254,34 @@ fn validate_macos_camera_extension(sh: &Shell, extension: &Path) -> Result<()> {
     {
         bail!("macOS Camera Extension Info.plist is missing the CMIO product identity");
     }
-    if !mach_service.is_some_and(|service| {
-        app_group.is_some_and(|group| service.starts_with(&format!("{group}.")))
-    }) {
-        bail!("macOS Camera Extension Mach service must be namespaced under its App Group");
+    if app_group != Some(MACOS_APP_GROUP_ID)
+        || !mach_service.is_some_and(|service| {
+            service.ends_with(MACOS_EXTENSION_BUNDLE_ID)
+                && service.len() > MACOS_EXTENSION_BUNDLE_ID.len()
+        })
+    {
+        bail!("macOS Camera Extension has an invalid App Group or Mach service identity");
     }
 
     let entitlements =
         Path::new("extensions/macos-camera-extension/PicooCameraExtension.entitlements");
     let entitlements_json = cmd!(sh, "plutil -convert json -o - {entitlements}").read()?;
     let entitlements: serde_json::Value = serde_json::from_str(&entitlements_json)?;
-    let expected_group = "$(TeamIdentifierPrefix)com.haoxincode.picoo-camera";
+    let expected_group = MACOS_APP_GROUP_PLACEHOLDER;
     if !entitlements
         .get("com.apple.security.application-groups")
         .and_then(|value| value.as_array())
         .is_some_and(|groups| groups.iter().any(|group| group == expected_group))
     {
         bail!("macOS Camera Extension entitlement is missing `{expected_group}`");
+    }
+    for placeholder in [
+        MACOS_TEAM_IDENTIFIER_PLACEHOLDER,
+        MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER,
+    ] {
+        if !entitlements.to_string().contains(placeholder) {
+            bail!("macOS Camera Extension entitlement is missing `{placeholder}`");
+        }
     }
 
     let binary = cmd!(sh, "file {executable}").read()?;
@@ -1080,8 +1674,12 @@ fn ios_runtime_version(identifier: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ios_runtime_version, macos_team_identifier_prefix_for, render_macos_host_entitlements,
-        render_macos_host_info, MACOS_APP_GROUP_PLACEHOLDER,
+        ios_runtime_version, macos_team_identifier_prefix_for, render_macos_entitlements,
+        render_macos_host_info, validate_macos_build_number, validate_macos_marketing_version,
+        MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER, MACOS_APP_BUNDLE_ID, MACOS_APP_GROUP_ID,
+        MACOS_APP_GROUP_PLACEHOLDER, MACOS_BUILD_NUMBER_PLACEHOLDER,
+        MACOS_MARKETING_VERSION_PLACEHOLDER, MACOS_TEAM_IDENTIFIER_PLACEHOLDER,
+        MACOS_UNSIGNED_BUILD_PLACEHOLDER,
     };
 
     #[test]
@@ -1095,31 +1693,80 @@ mod tests {
     #[test]
     fn macos_host_info_resolves_the_extension_app_group() {
         let template = format!(
-            "<key>PicooAppGroupIdentifier</key><string>{MACOS_APP_GROUP_PLACEHOLDER}</string>"
+            "<key>PicooAppGroupIdentifier</key><string>{MACOS_APP_GROUP_PLACEHOLDER}</string><string>{MACOS_MARKETING_VERSION_PLACEHOLDER}</string><string>{MACOS_BUILD_NUMBER_PLACEHOLDER}</string>{MACOS_UNSIGNED_BUILD_PLACEHOLDER}"
         );
-        let rendered = render_macos_host_info(&template, "TEAM.com.haoxincode.picoo-camera")
+        let rendered = render_macos_host_info(&template, MACOS_APP_GROUP_ID, "2.3.4", "42", true)
             .expect("render host Info.plist");
-        assert!(rendered.contains("TEAM.com.haoxincode.picoo-camera"));
+        assert!(rendered.contains(MACOS_APP_GROUP_ID));
+        assert!(rendered.contains("2.3.4"));
+        assert!(rendered.contains("42"));
+        assert!(rendered.contains("<true/>"));
         assert!(!rendered.contains(MACOS_APP_GROUP_PLACEHOLDER));
     }
 
     #[test]
     fn macos_host_info_rejects_a_different_app_group() {
-        assert!(
-            render_macos_host_info(MACOS_APP_GROUP_PLACEHOLDER, "TEAM.com.example.other").is_err()
-        );
+        assert!(render_macos_host_info(
+            MACOS_APP_GROUP_PLACEHOLDER,
+            "group.com.example.other",
+            "1.0.0",
+            "1",
+            false
+        )
+        .is_err());
     }
 
     #[test]
     fn macos_host_entitlements_resolve_the_extension_app_group() {
         let template = format!(
-            "<key>com.apple.security.application-groups</key><array><string>{MACOS_APP_GROUP_PLACEHOLDER}</string></array>"
+            "<string>{MACOS_APP_GROUP_PLACEHOLDER}</string><string>{MACOS_TEAM_IDENTIFIER_PLACEHOLDER}</string><string>{MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER}</string>"
         );
-        let rendered =
-            render_macos_host_entitlements(&template, "ABCDEFGHIJ.com.haoxincode.picoo-camera")
-                .expect("render host entitlements");
+        let rendered = render_macos_entitlements(
+            &template,
+            MACOS_APP_GROUP_ID,
+            "ABCDEFGHIJ",
+            "ABCDEFGHIJ.",
+            MACOS_APP_BUNDLE_ID,
+            "test entitlements",
+        )
+        .expect("render host entitlements");
+        assert!(rendered.contains(MACOS_APP_GROUP_ID));
         assert!(rendered.contains("ABCDEFGHIJ.com.haoxincode.picoo-camera"));
         assert!(!rendered.contains(MACOS_APP_GROUP_PLACEHOLDER));
+    }
+
+    #[test]
+    fn macos_extension_entitlements_use_explicit_registered_app_group() {
+        let template = format!(
+            "<string>{MACOS_APP_GROUP_PLACEHOLDER}</string><string>{MACOS_TEAM_IDENTIFIER_PLACEHOLDER}</string><string>{MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER}</string>"
+        );
+        let rendered = render_macos_entitlements(
+            &template,
+            MACOS_APP_GROUP_ID,
+            "ABCDEFGHIJ",
+            "ABCDEFGHIJ.",
+            super::MACOS_EXTENSION_BUNDLE_ID,
+            "test extension entitlements",
+        )
+        .expect("render extension entitlements");
+        assert!(rendered.contains(MACOS_APP_GROUP_ID));
+        assert!(!rendered.contains("$(TeamIdentifierPrefix)"));
+    }
+
+    #[test]
+    fn macos_release_versions_follow_apple_bundle_shapes() {
+        for version in ["1", "1.2", "1.2.3", "26.0.1"] {
+            validate_macos_marketing_version(version).expect("valid marketing version");
+        }
+        for invalid in ["", "v1.2.3", "1.2.3.4", "1.2-beta"] {
+            assert!(validate_macos_marketing_version(invalid).is_err());
+        }
+        for build in ["1", "42", "10001"] {
+            validate_macos_build_number(build).expect("valid build number");
+        }
+        for invalid in ["", "0", "1.2", "run-1"] {
+            assert!(validate_macos_build_number(invalid).is_err());
+        }
     }
 
     #[test]

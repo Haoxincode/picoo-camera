@@ -130,6 +130,7 @@ jobs:
           path: |
             target/apple/PicooCamera-macOS-unsigned.zip
             target/apple/PicooCamera-macOS.entitlements
+            target/apple/PicooCameraExtension-macOS.entitlements
           if-no-files-found: error
 
   ios:

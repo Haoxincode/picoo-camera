@@ -29,7 +29,7 @@ Cloud Agent（Linux）
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
 ├── windows-latest  → GPUI 桌面、MF 解码、Virtual Camera DLL、安装包
-└── macos-26 ARM64 → GPUI 桌面、CMIO Camera Extension、iOS Rust XCFramework 与 SwiftUI App；签名、公证和 Apple 真机链路另行验收
+└── macos-26 ARM64 → GPUI 桌面、CMIO Camera Extension、iOS Rust XCFramework 与 SwiftUI App；release workflow 负责 macOS 签名/公证，Apple 真机链路另行验收
 ```
 
 ## GitHub Actions Runner 矩阵
@@ -41,8 +41,9 @@ GitHub Actions
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
-| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos`；签名、公证与激活另行验收 |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
+| `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 | 递增 Host/Extension 版本；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
 
 ### 依赖关系
 
@@ -105,7 +106,7 @@ jobs:
 
 Apple 基线保持三个独立 artifact：
 
-- `macos-app-unsigned`：`PicooCamera-macOS-unsigned.zip` 包含 ARM64 `Picoo Camera.app`，Camera Extension 已嵌入标准目录；同一 artifact 还包含已展开的 `PicooCamera-macOS.entitlements` 签名输入 scaffold。无签名构建使用 `UNSIGNED.` Team 前缀，不能完成系统激活。
+- `macos-app-unsigned`：`PicooCamera-macOS-unsigned.zip` 包含 ARM64 `Picoo Camera.app`，Camera Extension 已嵌入标准目录；同一 artifact 还包含已展开的 Host 与 Extension entitlements 签名输入 scaffold。无签名构建使用 `UNSIGNED.` Team 前缀和独立 Host Info.plist marker，Shared Ring 降级到 Application Support，不能完成系统激活。
 - `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
 - `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 
@@ -142,7 +143,12 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 | --- | --- | --- |
 | `ANDROID_KEYSTORE` / 相关 signing 配置 | Android Release 签名 | 发布 AAB 前 |
 | `WINDOWS_CERTIFICATE` | Windows 安装包代码签名 | 可选，发布前建议 |
-| `APPLE_CERTIFICATE` / `APPLE_NOTARIZATION` | macOS 公证与 iOS 分发 | macOS/iOS 阶段 |
+| `APPLE_DEVELOPER_ID_P12_BASE64` / `APPLE_DEVELOPER_ID_P12_PASSWORD` / `APPLE_KEYCHAIN_PASSWORD` | 导入临时 Developer ID Application identity | macOS 发布 |
+| `APPLE_TEAM_ID` / `APPLE_MACOS_SIGNING_IDENTITY` | 校验并选择 Host/Extension 共用签名团队与 identity | macOS 发布 |
+| `APPLE_MACOS_HOST_PROFILE_BASE64` / `APPLE_MACOS_EXTENSION_PROFILE_BASE64` | 授权 Host 与 Camera Extension 的 Bundle ID、App Group 和 System Extension capability | macOS 发布 |
+| `APPLE_NOTARY_KEY_BASE64` / `APPLE_NOTARY_KEY_ID` / `APPLE_NOTARY_ISSUER_ID` | `notarytool` App Store Connect API Key | macOS 发布 |
+
+Apple Release 手动触发时还必须填写一至三段数字的 marketing version 与严格递增的正整数 build number；tag `vX.Y.Z` 触发时从 tag 取得 marketing version，并使用单调递增的 GitHub run number 作为 build number。两者分别注入 `PICOO_RELEASE_VERSION` 与 `PICOO_RELEASE_BUILD_NUMBER`，不是 secret。
 
 未配置签名 secret 时，CI 仍应能产出 **未签名** 的 debug/CI 构建供功能验证。
 

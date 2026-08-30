@@ -17,6 +17,7 @@ pub use placeholder::{
 #[cfg(target_os = "macos")]
 pub use shared_ring::{
     macos_app_group_identifier, macos_app_group_ring_path, MACOS_APP_GROUP_INFO_KEY,
+    MACOS_UNSIGNED_BUILD_INFO_KEY,
 };
 pub use shared_ring::{
     SharedFrameRingConsumer, SharedFrameRingProducer, SharedFrameView, SharedRingError,

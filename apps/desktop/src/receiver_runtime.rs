@@ -258,13 +258,16 @@ impl ReceiverRuntime {
         self.virtual_camera = status;
         // REQ-PICOO-SESSION-001 / PUC-004: mirror VCam install into session status when idle.
         match status {
-            crate::model::VirtualCameraStatus::Bundled
+            crate::model::VirtualCameraStatus::Unknown
+            | crate::model::VirtualCameraStatus::Bundled
+            | crate::model::VirtualCameraStatus::AwaitingApproval
+            | crate::model::VirtualCameraStatus::RestartRequired
+            | crate::model::VirtualCameraStatus::Uninstalling
             | crate::model::VirtualCameraStatus::NotInstalled => {
                 self.receiver.mark_virtual_camera_unavailable();
             }
             crate::model::VirtualCameraStatus::Installed
-            | crate::model::VirtualCameraStatus::Active
-            | crate::model::VirtualCameraStatus::Unknown => {
+            | crate::model::VirtualCameraStatus::Active => {
                 self.receiver.clear_virtual_camera_unavailable();
             }
         }

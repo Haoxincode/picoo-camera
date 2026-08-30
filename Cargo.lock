@@ -4748,6 +4748,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "objc2-system-extensions"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a00ca10e1fd778a1dd13d579afb37168422ef4bbb36b6723179c2228f6b8372c"
+dependencies = [
+ "dispatch2",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+]
+
+[[package]]
 name = "objc2-user-notifications"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5105,11 +5116,16 @@ checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 name = "picoo-desktop"
 version = "0.1.0"
 dependencies = [
+ "dispatch2",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
  "gpui_platform",
  "image",
+ "libc",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
+ "objc2-system-extensions",
  "picoo-diagnostics",
  "picoo-discovery",
  "picoo-frame-hub",

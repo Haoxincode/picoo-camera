@@ -17,9 +17,9 @@
     <key>CFBundlePackageType</key>
     <string>SYSX</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$(CURRENT_PROJECT_VERSION)</string>
     <key>CMIOExtension</key>
     <dict>
         <key>CMIOExtensionMachServiceName</key>
@@ -30,6 +30,6 @@
     <key>NSSystemExtensionUsageDescription</key>
     <string>Picoo Camera uses a camera extension to provide video to meeting apps.</string>
     <key>PicooAppGroupIdentifier</key>
-    <string>$(TeamIdentifierPrefix)com.haoxincode.picoo-camera</string>
+    <string>group.com.haoxincode.picoo-camera</string>
 </dict>
 </plist>

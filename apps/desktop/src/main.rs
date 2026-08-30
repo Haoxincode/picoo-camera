@@ -16,6 +16,8 @@ mod tray;
 
 #[cfg(feature = "gpui-ui")]
 mod gpui_app;
+#[cfg(all(feature = "gpui-ui", target_os = "macos"))]
+mod macos_system_extension;
 #[cfg(feature = "gpui-ui")]
 mod picoo_theme;
 #[cfg(all(windows, feature = "windows-vcam"))]
