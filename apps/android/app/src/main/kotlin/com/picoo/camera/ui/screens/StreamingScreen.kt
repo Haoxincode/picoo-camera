@@ -45,7 +45,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
@@ -58,8 +57,6 @@ import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import com.picoo.camera.media.LensFacing
@@ -72,7 +69,9 @@ import com.picoo.camera.ui.components.PicooVisualContext
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
 import com.picoo.camera.ui.ReconnectBackoffFormat
-import com.picoo.camera.ui.theme.PicooColors
+import com.picoo.camera.ui.theme.PicooCameraColors
+import com.picoo.camera.ui.theme.PicooCameraDimensions
+import com.picoo.camera.ui.theme.PicooCameraTypography
 import com.picoo.camera.ui.theme.PicooFont
 import com.picoo.camera.ui.theme.PicooTheme
 
@@ -169,7 +168,7 @@ fun StreamingScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(PicooColors.LiveBg),
+            .background(PicooCameraColors.Surface),
     ) {
         if (cameraGranted) {
             CameraPreviewSurface(
@@ -195,28 +194,28 @@ fun StreamingScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .blur(14.dp)
-                        .background(Color(0x66000000)),
+                        .blur(PicooCameraDimensions.FlipBlur)
+                        .background(PicooCameraColors.TransitionScrim),
                 )
             }
         } else {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(PicooColors.Panel),
+                    .background(PicooCameraColors.SurfaceRaised),
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = "需要相机权限才能预览与推流",
-                        color = PicooColors.Muted,
-                        fontSize = 14.sp,
+                        color = PicooCameraColors.ContentMuted,
+                        style = PicooCameraTypography.Status,
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(dimensions.space12))
                     PicooPrimaryButton(
                         text = "启用相机",
                         onClick = onRequestCamera,
-                        modifier = Modifier.padding(horizontal = 32.dp),
+                        modifier = Modifier.padding(horizontal = dimensions.space32),
                         context = PicooVisualContext.Camera,
                     )
                 }
@@ -252,40 +251,47 @@ fun StreamingScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                    .padding(
+                        start = dimensions.space12,
+                        end = dimensions.space12,
+                        top = dimensions.space8,
+                    ),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 HudBadge {
                     Box(
                         modifier = Modifier
-                            .size(6.dp)
-                            .background(PicooColors.Ready, CircleShape),
+                            .size(PicooCameraDimensions.StatusDot)
+                            .background(PicooCameraColors.Success, CircleShape),
                     )
                     Text(
                         text = receiverName.ifBlank { "电脑" },
-                        color = PicooColors.Text,
-                        fontSize = 12.sp,
+                        color = PicooCameraColors.Content,
+                        style = PicooCameraTypography.Caption,
                         fontWeight = FontWeight.SemiBold,
                     )
                     val latency = linkQualityChip.substringAfter(" · ", "")
                     if (latency.isNotEmpty()) {
                         Text(
                             text = latency,
-                            color = PicooColors.Ready,
-                            fontSize = 11.sp,
-                            fontFamily = PicooFont.Mono,
+                            color = PicooCameraColors.Success,
+                            style = PicooCameraTypography.Label.copy(fontFamily = PicooFont.Mono),
                         )
                     }
                 }
 
                 Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color(0x8C0A0C10))
-                        .border(1.dp, Color(0x1FFFFFFF), RoundedCornerShape(999.dp))
-                        .padding(horizontal = 4.dp, vertical = 3.dp),
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        .clip(RoundedCornerShape(PicooCameraDimensions.PillRadius))
+                        .background(PicooCameraColors.ToolbarOverlay)
+                        .border(
+                            PicooCameraDimensions.Border,
+                            PicooCameraColors.ControlBorderMuted,
+                            RoundedCornerShape(PicooCameraDimensions.PillRadius),
+                        )
+                        .padding(horizontal = dimensions.space4, vertical = dimensions.space2),
+                    horizontalArrangement = Arrangement.spacedBy(dimensions.space2),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     CamToolButton(
@@ -297,8 +303,8 @@ fun StreamingScreen(
                         ReiconIcon(
                             icon = Reicon.Exposure,
                             contentDescription = null,
-                            tint = if (showEvPanel) PicooColors.Accent2 else PicooColors.Muted,
-                            modifier = Modifier.size(20.dp),
+                            tint = if (showEvPanel) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
+                            modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
                         )
                     }
                     CamToolButton(
@@ -309,8 +315,8 @@ fun StreamingScreen(
                         ReiconIcon(
                             icon = Reicon.Mirror,
                             contentDescription = null,
-                            tint = if (localPreviewMirrored) PicooColors.Accent2 else PicooColors.Muted,
-                            modifier = Modifier.size(20.dp),
+                            tint = if (localPreviewMirrored) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
+                            modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
                         )
                     }
                     CamToolButton(
@@ -321,8 +327,8 @@ fun StreamingScreen(
                         ReiconIcon(
                             icon = if (uiLocked) Reicon.InteractionLock else Reicon.InteractionUnlock,
                             contentDescription = null,
-                            tint = if (uiLocked) PicooColors.Accent2 else PicooColors.Muted,
-                            modifier = Modifier.size(20.dp),
+                            tint = if (uiLocked) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
+                            modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
                         )
                     }
                 }
@@ -350,28 +356,40 @@ fun StreamingScreen(
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color(0xF2030406)),
+                            colors = listOf(
+                                PicooCameraColors.Surface.copy(alpha = 0f),
+                                PicooCameraColors.BottomScrim,
+                            ),
                         ),
                     )
                     .navigationBarsPadding()
-                    .padding(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 24.dp),
+                    .padding(
+                        start = dimensions.space16,
+                        end = dimensions.space16,
+                        top = dimensions.space8,
+                        bottom = dimensions.space24,
+                    ),
             ) {
                 if (thermalForced720) {
                     ThermalBanner()
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(dimensions.space8))
                 } else if (powerHint.isNotEmpty()) {
                     Text(
                         text = powerHint,
-                        color = PicooColors.Warn,
-                        fontSize = 13.sp,
+                        color = PicooCameraColors.Warning,
+                        style = PicooCameraTypography.Status,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x24F0C14A))
-                            .border(1.dp, Color(0x47F0C14A), RoundedCornerShape(12.dp))
-                            .padding(10.dp),
+                            .clip(RoundedCornerShape(dimensions.radiusControl))
+                            .background(PicooCameraColors.WarningSurface)
+                            .border(
+                                PicooCameraDimensions.Border,
+                                PicooCameraColors.WarningBorder,
+                                RoundedCornerShape(dimensions.radiusControl),
+                            )
+                            .padding(dimensions.space8),
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(dimensions.space8))
                 }
 
                 if (showEvPanel && evSupported) {
@@ -381,7 +399,7 @@ fun StreamingScreen(
                         onEvPlus = onEvPlus,
                         onEvReset = onEvReset,
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(dimensions.space8))
                 }
 
                 Row(
@@ -409,10 +427,10 @@ fun StreamingScreen(
                                 .clip(CircleShape)
                                 .border(
                                     width = dimensions.cameraStopStroke,
-                                    color = if (shutterArmed) PicooColors.Danger else Color.White.copy(alpha = 0.85f),
+                                    color = if (shutterArmed) PicooCameraColors.Danger else PicooCameraColors.StopBorder,
                                     shape = CircleShape,
                                 )
-                                .background(Color(0x4D000000))
+                                .background(PicooCameraColors.StopSurface)
                                 .semantics {
                                     contentDescription = "断开连接"
                                     stateDescription = if (shutterArmed) "等待再次确认" else "未确认"
@@ -430,25 +448,29 @@ fun StreamingScreen(
                             ReiconIcon(
                                 icon = Reicon.StopStream,
                                 contentDescription = null,
-                                tint = if (shutterArmed) Color(0xFFFF2D46) else PicooColors.Danger,
-                                modifier = Modifier.size(24.dp),
+                                tint = if (shutterArmed) PicooCameraColors.DangerEmphasis else PicooCameraColors.Danger,
+                                modifier = Modifier.size(dimensions.iconEmphasis),
                             )
                         }
-                        Spacer(modifier = Modifier.height(4.dp))
+                        Spacer(modifier = Modifier.height(dimensions.space4))
                         Text(
                             text = if (shutterArmed) "再次点击确认断开" else "断开连接",
-                            color = if (shutterArmed) PicooColors.DangerText else PicooColors.Muted,
-                            fontSize = 11.sp,
+                            color = if (shutterArmed) PicooCameraColors.DangerContent else PicooCameraColors.ContentMuted,
+                            style = PicooCameraTypography.Label,
                             fontWeight = if (shutterArmed) FontWeight.Bold else FontWeight.SemiBold,
                         )
                     }
 
                     Box(
                         modifier = Modifier
-                            .size(48.dp)
+                            .size(dimensions.touchTarget)
                             .clip(CircleShape)
-                            .border(1.dp, Color(0x2FFFFFFF), CircleShape)
-                            .background(Color(0x14FFFFFF))
+                            .border(
+                                PicooCameraDimensions.Border,
+                                PicooCameraColors.ControlBorder,
+                                CircleShape,
+                            )
+                            .background(PicooCameraColors.ControlSurfaceSubtle)
                             .semantics {
                                 contentDescription = "切换前后摄像头"
                                 role = Role.Button
@@ -463,9 +485,9 @@ fun StreamingScreen(
                         ReiconIcon(
                             icon = Reicon.SwitchCamera,
                             contentDescription = null,
-                            tint = Color.White,
+                            tint = PicooCameraColors.Content,
                             modifier = Modifier
-                                .size(24.dp)
+                                .size(dimensions.iconEmphasis)
                                 .rotate(flipRotation),
                         )
                     }
@@ -476,15 +498,19 @@ fun StreamingScreen(
         if (thermalToast) {
             Text(
                 text = "设备偏热保护中，1080P 暂不可选",
-                color = Color(0xFFFFE6A4),
-                fontSize = 13.sp,
+                color = PicooCameraColors.WarningContent,
+                style = PicooCameraTypography.Status,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .padding(top = 96.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xE6242B3B))
-                    .border(1.dp, Color(0x47F0C14A), RoundedCornerShape(12.dp))
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(top = PicooCameraDimensions.ToastTopInset)
+                    .clip(RoundedCornerShape(dimensions.radiusControl))
+                    .background(PicooCameraColors.WarningToastSurface)
+                    .border(
+                        PicooCameraDimensions.Border,
+                        PicooCameraColors.WarningBorder,
+                        RoundedCornerShape(dimensions.radiusControl),
+                    )
+                    .padding(horizontal = dimensions.space12, vertical = dimensions.space8),
             )
         }
 
@@ -501,12 +527,13 @@ fun StreamingScreen(
 
 @Composable
 private fun FocusRing(center: Offset) {
+    val dimensions = PicooTheme.dimensions
     val shrink by animateFloatAsState(
         targetValue = 0.82f,
         animationSpec = tween(durationMillis = PicooTheme.motion.fastMillis),
         label = "focusShrink",
     )
-    val halfPx = with(LocalDensity.current) { 28.dp.toPx() }
+    val halfPx = with(LocalDensity.current) { PicooCameraDimensions.FocusRingSize.toPx() / 2f }
     Box(
         modifier = Modifier
             .offset {
@@ -515,36 +542,40 @@ private fun FocusRing(center: Offset) {
                     (center.y - halfPx).roundToInt(),
                 )
             }
-            .size(56.dp)
+            .size(PicooCameraDimensions.FocusRingSize)
             .scale(shrink)
-            .border(1.5.dp, Color(0xFFFFDC52), RoundedCornerShape(8.dp)),
+            .border(
+                PicooCameraDimensions.BorderEmphasis,
+                PicooCameraColors.Focus,
+                RoundedCornerShape(dimensions.radiusControl),
+            ),
     )
 }
 
 @Composable
 private fun SafeFrameOverlay() {
+    val dimensions = PicooTheme.dimensions
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val frameWidth = maxWidth * 0.9f
-        val frameHeight = frameWidth * 9f / 16f
+        val frameWidth = maxWidth * PicooCameraDimensions.SafeFrameWidthFraction
+        val frameHeight = frameWidth / PicooCameraDimensions.VideoAspectRatio
         Box(
             modifier = Modifier
                 .width(frameWidth)
                 .height(frameHeight)
                 .align(Alignment.Center)
                 .border(
-                    width = 1.5.dp,
-                    color = Color(0x59FFFFFF),
-                    shape = RoundedCornerShape(8.dp),
+                    width = PicooCameraDimensions.BorderEmphasis,
+                    color = PicooCameraColors.SafeFrame,
+                    shape = RoundedCornerShape(dimensions.radiusControl),
                 ),
         )
         Text(
             text = "电脑端画面 16:9 裁切框",
-            color = Color(0x8CFFFFFF),
-            fontSize = 10.sp,
-            letterSpacing = 0.5.sp,
+            color = PicooCameraColors.ContentSubtle,
+            style = PicooCameraTypography.Micro,
             modifier = Modifier
                 .align(Alignment.Center)
-                .offset(y = (-frameHeight / 2) - 12.dp),
+                .offset(y = (-frameHeight / 2) - dimensions.space12),
         )
     }
 }
@@ -556,6 +587,7 @@ private fun ReconnectOverlay(
     reconnectDelayMs: Long,
     onStopReconnect: () -> Unit,
 ) {
+    val dimensions = PicooTheme.dimensions
     val title = if (networkUnstable) "网络不稳定，正在优化…" else "网络中断，正在重连…"
     val detail = if (networkUnstable) {
         "链路丢包较高，保持推流并等待恢复\n连接恢复后将自动请求 IDR 关键帧"
@@ -565,35 +597,32 @@ private fun ReconnectOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xD9050608)),
+            .background(PicooCameraColors.ReconnectScrim),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(24.dp),
+            modifier = Modifier.padding(dimensions.space24),
         ) {
             CircularProgressIndicator(
-                color = PicooColors.Accent,
-                strokeWidth = 3.dp,
-                modifier = Modifier.size(40.dp),
+                color = PicooCameraColors.Selected,
+                strokeWidth = PicooCameraDimensions.ProgressStroke,
+                modifier = Modifier.size(PicooCameraDimensions.ProgressSize),
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(dimensions.space16))
             Text(
                 text = title,
-                color = PicooColors.Text,
-                fontFamily = PicooFont.Display,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold,
+                color = PicooCameraColors.Content,
+                style = PicooCameraTypography.OverlayTitle,
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(dimensions.space8))
             Text(
                 text = detail,
-                color = PicooColors.Muted,
-                fontSize = 13.sp,
-                lineHeight = 20.sp,
+                color = PicooCameraColors.ContentMuted,
+                style = PicooCameraTypography.Status,
                 textAlign = TextAlign.Center,
             )
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(dimensions.space16))
             PicooGhostButton(
                 text = "停止重连并退出",
                 onClick = onStopReconnect,
@@ -611,6 +640,7 @@ private fun EvPanel(
     onEvPlus: () -> Unit,
     onEvReset: () -> Unit,
 ) {
+    val dimensions = PicooTheme.dimensions
     val label = when (exposureEv) {
         0 -> "自动"
         1 -> "提亮 +1"
@@ -622,10 +652,14 @@ private fun EvPanel(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0x660A0C10))
-            .border(1.dp, PicooColors.Line, RoundedCornerShape(12.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .clip(RoundedCornerShape(dimensions.radiusControl))
+            .background(PicooCameraColors.PanelOverlay)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.ControlBorder,
+                RoundedCornerShape(dimensions.radiusControl),
+            )
+            .padding(horizontal = dimensions.space12, vertical = dimensions.space8),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -634,35 +668,34 @@ private fun EvPanel(
             contentDescription = "降低曝光",
             context = PicooVisualContext.Camera,
         ) {
-            Text(text = "−", color = PicooColors.Text, fontSize = 18.sp)
+            Text(text = "−", color = PicooCameraColors.Content, style = PicooCameraTypography.Action)
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
         ) {
             ReiconIcon(
                 icon = Reicon.Exposure,
                 contentDescription = null,
-                tint = PicooColors.Accent2,
-                modifier = Modifier.size(16.dp),
+                tint = PicooCameraColors.Selected,
+                modifier = Modifier.size(dimensions.iconCompact),
             )
             Text(
                 text = label,
-                color = PicooColors.Text,
-                fontSize = 13.sp,
-                fontFamily = PicooFont.Mono,
+                color = PicooCameraColors.Content,
+                style = PicooCameraTypography.Status.copy(fontFamily = PicooFont.Mono),
             )
         }
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
         ) {
             PicooIconButton(
                 onClick = onEvPlus,
                 contentDescription = "提高曝光",
                 context = PicooVisualContext.Camera,
             ) {
-                Text(text = "＋", color = PicooColors.Text, fontSize = 18.sp)
+                Text(text = "＋", color = PicooCameraColors.Content, style = PicooCameraTypography.Action)
             }
             PicooIconButton(
                 onClick = onEvReset,
@@ -672,8 +705,8 @@ private fun EvPanel(
                 ReiconIcon(
                     icon = Reicon.ResetExposure,
                     contentDescription = null,
-                    tint = if (exposureEv == 0) PicooColors.Muted else PicooColors.Accent2,
-                    modifier = Modifier.size(20.dp),
+                    tint = if (exposureEv == 0) PicooCameraColors.ContentMuted else PicooCameraColors.Selected,
+                    modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
                 )
             }
         }
@@ -682,13 +715,18 @@ private fun EvPanel(
 
 @Composable
 private fun HudBadge(content: @Composable RowScope.() -> Unit) {
+    val dimensions = PicooTheme.dimensions
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(Color(0xA60A0C10))
-            .border(1.dp, Color(0x24FFFFFF), RoundedCornerShape(999.dp))
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+            .clip(RoundedCornerShape(PicooCameraDimensions.PillRadius))
+            .background(PicooCameraColors.HudOverlay)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.HudBorder,
+                RoundedCornerShape(PicooCameraDimensions.PillRadius),
+            )
+            .padding(horizontal = dimensions.space8, vertical = dimensions.space4),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
     )
@@ -706,7 +744,10 @@ private fun CamToolButton(
         modifier = Modifier
             .size(PicooTheme.dimensions.touchTarget)
             .clip(CircleShape)
-            .background(if (active) PicooColors.Accent2.copy(alpha = 0.20f) else Color.Transparent)
+            .background(
+                if (active) PicooCameraColors.SelectedSurface
+                else PicooCameraColors.Surface.copy(alpha = 0f),
+            )
             .semantics {
                 this.contentDescription = contentDescription
                 selected = active
@@ -722,81 +763,97 @@ private fun CamToolButton(
 
 @Composable
 private fun ResPill(text: String, throttled: Boolean, onClick: () -> Unit) {
+    val dimensions = PicooTheme.dimensions
     // AC-M-LIVE-02: thermal warn styling (no emoji — anti-pattern §5).
-    val border = if (throttled) Color(0x80F0C14A) else Color(0x38FFFFFF)
-    val bg = if (throttled) Color(0x33F0C14A) else Color(0xB30A0C10)
-    val fg = if (throttled) PicooColors.Warn else Color.White
+    val border = if (throttled) PicooCameraColors.WarningBorderStrong else PicooCameraColors.ControlBorder
+    val bg = if (throttled) PicooCameraColors.WarningSurfaceStrong else PicooCameraColors.Overlay
+    val fg = if (throttled) PicooCameraColors.Warning else PicooCameraColors.Content
     val label = if (throttled) "热降档 · $text" else text
     Row(
         modifier = Modifier
             .defaultMinSize(minHeight = PicooTheme.dimensions.touchTarget)
-            .clip(RoundedCornerShape(999.dp))
+            .clip(RoundedCornerShape(PicooCameraDimensions.PillRadius))
             .background(bg)
-            .border(1.dp, border, RoundedCornerShape(999.dp))
+            .border(
+                PicooCameraDimensions.Border,
+                border,
+                RoundedCornerShape(PicooCameraDimensions.PillRadius),
+            )
             .semantics {
                 contentDescription = "切换画质，当前 $label"
                 role = Role.Button
             }
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
+            .padding(horizontal = dimensions.space8, vertical = dimensions.space4),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
     ) {
         if (throttled) {
             ReiconIcon(
                 icon = Reicon.Overheat,
                 contentDescription = "过热降档",
-                tint = PicooColors.Warn,
-                modifier = Modifier.size(12.dp),
+                tint = PicooCameraColors.Warning,
+                modifier = Modifier.size(PicooCameraDimensions.ThermalIcon),
             )
         }
         Text(
             text = label,
             color = fg,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = PicooFont.Mono,
+            style = PicooCameraTypography.Label.copy(
+                fontFamily = PicooFont.Mono,
+                fontWeight = FontWeight.Bold,
+            ),
         )
     }
 }
 
 @Composable
 private fun StatPill(bitrate: String, packetLossLabel: String) {
+    val dimensions = PicooTheme.dimensions
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0x0FFFFFFF))
-            .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(12.dp))
-            .padding(horizontal = 10.dp, vertical = 6.dp),
+            .clip(RoundedCornerShape(dimensions.radiusControl))
+            .background(PicooCameraColors.StatSurface)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.ControlBorderSubtle,
+                RoundedCornerShape(dimensions.radiusControl),
+            )
+            .padding(horizontal = dimensions.space8, vertical = dimensions.space4),
         horizontalAlignment = Alignment.Start,
     ) {
         Text(
             text = bitrate,
-            color = Color.White,
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = PicooFont.Mono,
+            color = PicooCameraColors.Content,
+            style = PicooCameraTypography.Status.copy(
+                fontFamily = PicooFont.Mono,
+                fontWeight = FontWeight.Bold,
+            ),
         )
         Text(
             text = "30 FPS · $packetLossLabel",
-            color = PicooColors.Ready,
-            fontSize = 10.sp,
-            fontFamily = PicooFont.Mono,
+            color = PicooCameraColors.Success,
+            style = PicooCameraTypography.Micro.copy(fontFamily = PicooFont.Mono),
         )
     }
 }
 
 @Composable
 private fun ThermalBanner() {
+    val dimensions = PicooTheme.dimensions
     Text(
         text = "设备偏热保护：已自动降至 720P 稳住帧率，1080P 暂不可选",
-        color = Color(0xFFFFE6A4),
-        fontSize = 13.sp,
+        color = PicooCameraColors.WarningContent,
+        style = PicooCameraTypography.Status,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0x24F0C14A))
-            .border(1.dp, Color(0x47F0C14A), RoundedCornerShape(12.dp))
-            .padding(10.dp),
+            .clip(RoundedCornerShape(dimensions.radiusControl))
+            .background(PicooCameraColors.WarningSurface)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.WarningBorder,
+                RoundedCornerShape(dimensions.radiusControl),
+            )
+            .padding(dimensions.space8),
     )
 }

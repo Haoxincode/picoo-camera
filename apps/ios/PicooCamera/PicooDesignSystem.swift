@@ -18,14 +18,35 @@ enum PicooColor {
 enum PicooCameraColor {
     static let surface = Color(red: 0.016, green: 0.020, blue: 0.027)
     static let overlay = Color.black.opacity(0.70)
+    static let hudOverlay = Color.black.opacity(0.62)
     static let control = Color.white.opacity(0.16)
     static let controlBorder = Color.white.opacity(0.22)
     static let content = Color.white
     static let contentMuted = Color.white.opacity(0.64)
+    static let contentSubtle = Color.white.opacity(0.58)
+    static let overlayDetail = Color.white.opacity(0.66)
+    static let safeFrame = Color.white.opacity(0.30)
+    static let safeFrameLabel = Color.white.opacity(0.55)
+    static let stopBorder = Color.white.opacity(0.88)
     static let selected = Color(red: 0.169, green: 0.498, blue: 1)
     static let success = Color(red: 0, green: 0.737, blue: 0.490)
     static let warning = Color(red: 0.941, green: 0.757, blue: 0.290)
     static let danger = Color(red: 1, green: 0.392, blue: 0.404)
+}
+
+enum PicooCameraLayout {
+    static let safeHorizontalInset: CGFloat = 14
+    static let safeFrameRadius: CGFloat = 8
+    static let safeFrameStroke: CGFloat = 1
+    static let safeFrameDash: [CGFloat] = [6, 5]
+    static let videoAspectRatio: CGFloat = 16 / 9
+    static let statusDot: CGFloat = 7
+    static let hudItemSpacing: CGFloat = 7
+    static let hudHorizontalPadding: CGFloat = 11
+    static let hudVerticalPadding: CGFloat = 8
+    static let controlIcon: CGFloat = 23
+    static let controlPadding: CGFloat = 12
+    static let overlayHorizontalInset: CGFloat = 36
 }
 
 enum PicooSpace {

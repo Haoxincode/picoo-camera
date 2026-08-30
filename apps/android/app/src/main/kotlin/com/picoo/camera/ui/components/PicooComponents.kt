@@ -262,12 +262,6 @@ fun DiscoveryPulseDot(searching: Boolean) {
     )
 }
 
-/** @deprecated use [DeviceBadge] */
-@Composable
-fun ReadinessBadge(label: String, paired: Boolean, offline: Boolean = false) {
-    DeviceBadge(label = label, paired = paired, offline = offline)
-}
-
 /** Native Material bottom sheet for AC-M-DISC-03 / AC-M-SET-02. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

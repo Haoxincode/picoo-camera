@@ -142,41 +142,92 @@ object PicooTheme {
 /** Camera context is deliberately dark and independent from the system appearance. */
 object PicooCameraColors {
     val Surface = Color(0xFF040507)
+    val SurfaceRaised = Color(0xFF14171F)
     val Overlay = Color(0xB30A0A0A)
+    val HudOverlay = Color(0xA60A0C10)
+    val ToolbarOverlay = Color(0x8C0A0C10)
+    val PanelOverlay = Color(0x660A0C10)
+    val ReconnectScrim = Color(0xD9050608)
+    val BottomScrim = Color(0xF2030406)
+    val TransitionScrim = Color(0x66000000)
     val Control = Color(0x29FFFFFF)
     val ControlBorder = Color(0x38FFFFFF)
+    val ControlBorderMuted = Color(0x1FFFFFFF)
+    val ControlBorderSubtle = Color(0x1AFFFFFF)
+    val HudBorder = Color(0x24FFFFFF)
+    val ControlSurfaceSubtle = Color(0x14FFFFFF)
+    val StatSurface = Color(0x0FFFFFFF)
+    val StopSurface = Color(0x4D000000)
     val Content = Color.White
     val ContentMuted = Color(0xA6FFFFFF)
+    val ContentSubtle = Color(0x8CFFFFFF)
     val Selected = Color(0xFF2B7FFF)
+    val SelectedSurface = Color(0x332B7FFF)
     val Success = Color(0xFF00BC7D)
     val Warning = Color(0xFFF0C14A)
+    val WarningSurface = Color(0x24F0C14A)
+    val WarningSurfaceStrong = Color(0x33F0C14A)
+    val WarningBorder = Color(0x47F0C14A)
+    val WarningBorderStrong = Color(0x80F0C14A)
+    val WarningContent = Color(0xFFFFE6A4)
+    val WarningToastSurface = Color(0xE6242B3B)
     val Danger = Color(0xFFFF6467)
+    val DangerEmphasis = Color(0xFFFF2D46)
+    val DangerContent = Color(0xFFFFB0B8)
+    val Focus = Color(0xFFFFDC52)
+    val SafeFrame = Color(0x59FFFFFF)
+    val StopBorder = Color(0xD9FFFFFF)
 }
 
-/**
- * Temporary Camera-context compatibility aliases. Control screens must consume [PicooTheme].
- * Removing this object is tracked by REQ-PICOO-UI-012 after StreamingScreen is fully tokenized.
- */
-object PicooColors {
-    val Ink = PicooCameraColors.Surface
-    val Panel = Color(0xFF14171F)
-    val Panel2 = Color(0xFF1B202C)
-    val Panel3 = Color(0xFF242B3B)
-    val Line = PicooCameraColors.ControlBorder
-    val LineSubtle = Color(0x0AFFFFFF)
-    val LineBold = Color(0x29FFFFFF)
-    val Text = PicooCameraColors.Content
-    val Muted = Color(0xFF959DAE)
-    val MutedDark = Color(0xFF656D7D)
-    val Accent = Color(0xFF193CB8)
-    val AccentHover = Color(0xFF155DFC)
-    val Accent2 = PicooCameraColors.Selected
-    val Ready = PicooCameraColors.Success
-    val Warn = PicooCameraColors.Warning
-    val Danger = PicooCameraColors.Danger
-    val DangerBg = PicooCameraColors.Danger.copy(alpha = 0.14f)
-    val DangerText = Color(0xFFFFB0B8)
-    val LiveBg = PicooCameraColors.Surface
+object PicooCameraDimensions {
+    val Border = 1.dp
+    val BorderEmphasis = 1.5.dp
+    val ProgressStroke = 3.dp
+    val PillRadius = 999.dp
+    val FocusRingSize = 56.dp
+    val ProgressSize = 40.dp
+    val StatusDot = 6.dp
+    val ToolIcon = 20.dp
+    val ThermalIcon = 12.dp
+    val FlipBlur = 14.dp
+    val ToastTopInset = 96.dp
+    const val SafeFrameWidthFraction = 0.9f
+    const val VideoAspectRatio = 16f / 9f
+}
+
+object PicooCameraTypography {
+    val Micro = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 10.sp,
+        lineHeight = 14.sp,
+    )
+    val Label = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
+    val Caption = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+    )
+    val Status = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
+    )
+    val Action = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
+    )
+    val OverlayTitle = TextStyle(
+        fontFamily = PicooFont.Display,
+        fontSize = 18.sp,
+        lineHeight = 24.sp,
+        fontWeight = FontWeight.Bold,
+    )
 }
 
 object PicooFont {

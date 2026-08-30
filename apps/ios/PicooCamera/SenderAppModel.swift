@@ -85,6 +85,7 @@ final class SenderAppModel {
     @ObservationIgnored private var committedEncoderState: CommittedEncoderState?
     @ObservationIgnored private var encoderRecoveryTask: Task<Void, Never>?
     @ObservationIgnored private var lastAutoConnectReceiverID = ""
+    @ObservationIgnored private var lastHandledSessionError = ""
 
     private static let autoConnectPreferenceKey = "sender.autoConnectEnabled"
     private static let resolutionPreferenceKey = "sender.preferredResolution"
@@ -95,14 +96,15 @@ final class SenderAppModel {
         autoConnectEnabled = defaults.object(forKey: Self.autoConnectPreferenceKey) == nil
             ? true
             : defaults.bool(forKey: Self.autoConnectPreferenceKey)
-        preferredResolution = VideoResolution(
+        let storedPreferredResolution = VideoResolution(
             rawValue: defaults.integer(forKey: Self.resolutionPreferenceKey)
         ) ?? .p1080
+        preferredResolution = storedPreferredResolution
         let snapshotBitrate = session?.snapshot.currentBitrateBps ?? 0
         let initialBitrate = snapshotBitrate > 0
             ? snapshotBitrate
             : PicooSenderSession.initialBitrate(
-                forHeight: UInt32(preferredResolution.rawValue)
+                forHeight: UInt32(storedPreferredResolution.rawValue)
             )
         let initialEpoch = session?.snapshot.streamEpoch
             ?? PicooSenderSession.initialStreamEpoch
@@ -362,6 +364,7 @@ final class SenderAppModel {
         pairingSecondsRemaining = 60
         isConnecting = true
         errorMessage = nil
+        lastHandledSessionError = ""
 
         do {
             activeBitrateBps = PicooSenderSession.initialBitrate(
@@ -424,6 +427,16 @@ final class SenderAppModel {
         }
         updatePairingCountdown()
 
+        let sessionError = session.lastSessionError
+        if sessionError != lastHandledSessionError {
+            lastHandledSessionError = sessionError
+            if sessionError == "PAIRING_REJECTED" {
+                pairingWaitOutcome = .rejected
+                screen = .waiting
+                errorMessage = nil
+            }
+        }
+
         if phoneConfirmedPairing, screen == .waiting {
             if pairingSecondsRemaining == 0,
                senderStatus != .streaming,
@@ -431,10 +444,6 @@ final class SenderAppModel {
                senderStatus != .networkUnstable
             {
                 pairingWaitOutcome = .expired
-            } else if senderStatus == .disconnected,
-                      previousSenderStatus != .disconnected
-            {
-                pairingWaitOutcome = .rejected
             }
         }
 
@@ -605,6 +614,7 @@ final class SenderAppModel {
         pairingCode = ""
         pairingDeadline = nil
         pairingSecondsRemaining = 60
+        lastHandledSessionError = ""
         isConnecting = false
         errorMessage = nil
         mediaControlTask?.cancel()

@@ -364,6 +364,11 @@ impl ReceiverRuntime {
     }
 
     #[allow(dead_code)]
+    pub fn reject_pairing(&mut self) -> Result<(), ReceiverError> {
+        self.receiver.reject_pairing_locally()
+    }
+
+    #[allow(dead_code)]
     pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, ReceiverError> {
         let removed = self.receiver.remove_trusted_device(device_id)?;
         if removed {

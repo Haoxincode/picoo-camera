@@ -813,9 +813,12 @@ impl<T: PicooTransport> SenderSession<T> {
                 return;
             }
         }
-        // Known SessionError codes before ServerHello — both use string field 1.
+        // Known SessionError codes before ServerHello — all use string field 1.
         if let Ok(err) = SessionError::decode(msg.as_ref()) {
-            if matches!(err.code.as_str(), "UNPAIRED" | "PUBLIC_KEY_CHANGED") {
+            if matches!(
+                err.code.as_str(),
+                "UNPAIRED" | "PUBLIC_KEY_CHANGED" | "PAIRING_REJECTED"
+            ) {
                 self.last_session_error = Some(err.code);
                 return;
             }
@@ -1181,6 +1184,7 @@ impl<T: PicooTransport> SenderSession<T> {
         protocol_version: &str,
     ) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
+        self.last_session_error = None;
         let hello = ClientHello {
             sender_id: sender_id.into(),
             device_name: device_name.into(),

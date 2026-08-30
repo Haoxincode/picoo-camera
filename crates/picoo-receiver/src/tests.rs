@@ -292,6 +292,56 @@ fn pairing_challenge_expires_clears_short_code() {
 }
 
 #[test]
+fn desktop_reject_sends_explicit_pairing_rejected() {
+    // REQ-PICOO-PAIRING-001 / AC-M-PAIR-03: an explicit desktop reject is
+    // distinguishable from an unrelated disconnect on the mobile side.
+    let mut receiver = ReceiverSession::new();
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(100));
+
+    sender
+        .send_client_hello("reject-phone", "Reject Phone", &[7, 7, 7])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(receiver.is_awaiting_pairing_confirm());
+
+    receiver
+        .reject_pairing_locally()
+        .expect("desktop reject pairing");
+    for _ in 0..100 {
+        sender.pump().expect("sender pump");
+        if sender.last_session_error() == Some("PAIRING_REJECTED") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(sender.last_session_error(), Some("PAIRING_REJECTED"));
+    assert!(!receiver.is_awaiting_pairing_confirm());
+    assert!(receiver.pairing_short_code().is_none());
+    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+}
+
+#[test]
 fn default_placeholder_toggle_switches_waiting_frame() {
     // PRD §16: "默认占位画面" — branded waiting vs solid black.
     let mut receiver = ReceiverSession::new();

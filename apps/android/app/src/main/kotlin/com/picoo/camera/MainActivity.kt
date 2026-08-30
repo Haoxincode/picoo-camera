@@ -238,7 +238,6 @@ private fun SenderHomeScreen(
     var pairingExpired by uiState::pairingExpired
     var pairingStartedAtMs by uiState::pairingStartedAtMs
     var waitOutcome by uiState::waitOutcome
-    var waitUserCancelled by uiState::waitUserCancelled
     var reconnectAttempt by uiState::reconnectAttempt
     var reconnectDelayMs by uiState::reconnectDelayMs
     var lastShownSessionError by uiState::lastShownSessionError
@@ -313,7 +312,6 @@ private fun SenderHomeScreen(
         if (!phonePairingConfirmed || senderTab != SenderTab.Wait) {
             return@LaunchedEffect
         }
-        waitUserCancelled = false
         waitOutcome = WaitOutcome.Pending
         val waitStartedAt = System.currentTimeMillis()
         while (senderTab == SenderTab.Wait && waitOutcome == WaitOutcome.Pending) {
@@ -378,6 +376,7 @@ private fun SenderHomeScreen(
         applyStreamConfigToSender()
         val rc = PicooNative.connect(senderHandle, host.trim(), port)
         if (rc == 0) {
+            lastShownSessionError = ""
             selectedReceiverId = receiverId
             PicooNative.sendClientHello(
                 senderHandle,
@@ -408,7 +407,6 @@ private fun SenderHomeScreen(
         pairingExpired = false
         pairingRemainingSeconds = 60
         waitOutcome = WaitOutcome.Pending
-        waitUserCancelled = false
         errorText = null
     }
 
@@ -665,11 +663,12 @@ private fun SenderHomeScreen(
                 if (PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                     encoder.requestKeyFrame()
                 }
-                // PUC-007 / PAIRING-004: surface PUBLIC_KEY_CHANGED / UNPAIRED to the user.
+                // PAIRING-001/004: only an explicit receiver signal is a rejection.
                 val sessionErr = PicooNative.lastSessionError(senderHandle)
                 if (sessionErr.isNotEmpty() && sessionErr != lastShownSessionError) {
                     lastShownSessionError = sessionErr
                     val msg = when (sessionErr) {
+                        "PAIRING_REJECTED" -> "电脑端拒绝了连接"
                         "PUBLIC_KEY_CHANGED" ->
                             "电脑端检测到公钥变化，已拒绝自动连接。请删除配对后重新核对短码。"
                         "UNPAIRED" ->
@@ -677,7 +676,12 @@ private fun SenderHomeScreen(
                         else -> "会话错误：$sessionErr"
                     }
                     errorText = msg
-                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    if (sessionErr == "PAIRING_REJECTED") {
+                        waitOutcome = WaitOutcome.Rejected
+                        senderTab = SenderTab.Wait
+                    } else {
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                    }
                     if (sessionErr == "PUBLIC_KEY_CHANGED") {
                         senderTab = SenderTab.Devices
                     }
@@ -772,14 +776,6 @@ private fun SenderHomeScreen(
                         encoder.startPreview()
                         streamConfigDirty.set(true)
                     }
-                }
-                if (senderTab == SenderTab.Wait &&
-                    phonePairingConfirmed &&
-                    !waitUserCancelled &&
-                    senderStatus == PicooNative.STATUS_DISCONNECTED &&
-                    previousStatus != PicooNative.STATUS_DISCONNECTED
-                ) {
-                    waitOutcome = WaitOutcome.Rejected
                 }
                 if (phonePairingConfirmed &&
                     senderStatus == PicooNative.STATUS_STREAMING &&
@@ -950,14 +946,12 @@ private fun SenderHomeScreen(
                 receiverName = pairingDisplayName,
                 outcome = waitOutcome,
                 onCancel = {
-                    waitUserCancelled = true
                     PicooNative.disconnect(senderHandle)
                     phonePairingConfirmed = false
                     suppressAutoConnect = true
                     resetToDevices()
                 },
                 onBackToDevices = {
-                    waitUserCancelled = true
                     PicooNative.disconnect(senderHandle)
                     phonePairingConfirmed = false
                     suppressAutoConnect = true

@@ -25,5 +25,7 @@ class WifiNetworkInfoTest {
     @Test
     fun pillText_formatsPrefix() {
         assertEquals("Wi‑Fi · Office", WifiNetworkInfo.formatPill("Office"))
+        assertEquals("Wi‑Fi", WifiNetworkInfo.formatPill("Wi‑Fi"))
+        assertEquals("局域网", WifiNetworkInfo.formatPill("局域网"))
     }
 }

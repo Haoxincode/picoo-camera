@@ -19,7 +19,10 @@ object WifiNetworkInfo {
     fun fallbackLabel(hasWifiTransport: Boolean): String =
         if (hasWifiTransport) "Wi‑Fi" else "局域网"
 
-    fun formatPill(ssidOrFallback: String): String = "Wi‑Fi · $ssidOrFallback"
+    fun formatPill(ssidOrFallback: String): String = when (ssidOrFallback) {
+        "Wi‑Fi", "局域网" -> ssidOrFallback
+        else -> "Wi‑Fi · $ssidOrFallback"
+    }
 
     fun ssidLabel(context: Context): String {
         val app = context.applicationContext

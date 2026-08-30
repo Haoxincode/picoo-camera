@@ -498,6 +498,33 @@ impl ReceiverSession {
         self.advance_pairing()
     }
 
+    /// User explicitly rejected the active short-code challenge on desktop.
+    ///
+    /// The reliable SessionError lets mobile distinguish an intentional reject
+    /// from an unrelated transport interruption (REQ-PICOO-PAIRING-001 /
+    /// AC-M-PAIR-03).
+    pub fn reject_pairing_locally(&mut self) -> Result<(), ReceiverError> {
+        self.expire_pending_pairing_if_needed();
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return Ok(());
+        };
+        let session = pending.session;
+        let error = SessionError {
+            code: "PAIRING_REJECTED".into(),
+            message: "desktop user rejected the pairing challenge".into(),
+        };
+        self.send_control_message(session, &error)?;
+        self.transport.close(session, CloseReason::LocalClose);
+        self.active_sender = None;
+        self.pending_pairing = None;
+        self.status = if self.bind_addr().is_some() {
+            ReceiverStatus::Discovering
+        } else {
+            ReceiverStatus::Disconnected
+        };
+        Ok(())
+    }
+
     pub fn is_awaiting_pairing_confirm(&self) -> bool {
         self.pending_pairing.is_some()
     }

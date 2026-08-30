@@ -100,10 +100,10 @@ private struct DevicesView: View {
                 .foregroundStyle(model.isDiscovering ? PicooColor.actionHighlight : PicooColor.statusSuccess)
 
             VStack(alignment: .leading, spacing: PicooSpace.xxs) {
-                Text(model.isDiscovering ? "正在发现附近电脑…" : "局域网设备 · 持续监听中")
+                Text(model.isDiscovering ? "正在搜索同一 Wi‑Fi 下的电脑…" : "可以连接同一 Wi‑Fi 下的电脑")
                     .font(.subheadline.weight(.semibold))
-                Text("Bonjour · _picoocam._udp")
-                    .font(.caption.monospaced())
+                Text("保持电脑端 Picoo Camera 已打开")
+                    .font(.caption)
                     .foregroundStyle(PicooColor.contentMuted)
             }
 
@@ -156,7 +156,7 @@ private struct DevicesView: View {
                 .foregroundStyle(PicooColor.contentMuted)
             Text("还没有发现电脑")
                 .font(.headline)
-            Text("确认电脑端已启动，且手机与电脑连接同一个 Wi-Fi；企业网络可能屏蔽 mDNS。")
+            Text("确认电脑端 Picoo Camera 已打开，并与手机连接同一 Wi‑Fi。仍未找到时，可输入电脑端显示的 IP 地址直连。")
                 .font(.subheadline)
                 .foregroundStyle(PicooColor.contentMuted)
                 .multilineTextAlignment(.center)
@@ -341,7 +341,7 @@ private struct PairingWaitingView: View {
     private var waitTitle: String {
         switch model.pairingWaitOutcome {
         case .pending: "等待电脑端确认"
-        case .rejected: "电脑端未接受配对"
+        case .rejected: "电脑端拒绝了连接"
         case .expired: "配对确认已超时"
         }
     }
@@ -368,7 +368,7 @@ private struct LiveCameraView: View {
             ZStack {
                 PicooCameraColor.surface.ignoresSafeArea()
                 cameraSurface
-                safeFrame(width: proxy.size.width - 28)
+                safeFrame(width: proxy.size.width - PicooCameraLayout.safeHorizontalInset * 2)
                 hud
                 cameraStatus
                 controls
@@ -386,33 +386,42 @@ private struct LiveCameraView: View {
     }
 
     private func safeFrame(width: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 8)
-            .stroke(.white.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
-            .frame(width: width, height: width * 9 / 16)
+        RoundedRectangle(cornerRadius: PicooCameraLayout.safeFrameRadius)
+            .stroke(
+                PicooCameraColor.safeFrame,
+                style: StrokeStyle(
+                    lineWidth: PicooCameraLayout.safeFrameStroke,
+                    dash: PicooCameraLayout.safeFrameDash
+                )
+            )
+            .frame(width: width, height: width / PicooCameraLayout.videoAspectRatio)
             .overlay(alignment: .topLeading) {
                 Text("16:9 PC 裁切框")
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.white.opacity(0.55))
-                    .padding(8)
+                    .foregroundStyle(PicooCameraColor.safeFrameLabel)
+                    .padding(PicooSpace.sm)
             }
     }
 
     private var hud: some View {
         VStack {
             HStack {
-                HStack(spacing: 7) {
+                HStack(spacing: PicooCameraLayout.hudItemSpacing) {
                     Circle()
                         .fill(PicooCameraColor.success)
-                        .frame(width: 7, height: 7)
+                        .frame(
+                            width: PicooCameraLayout.statusDot,
+                            height: PicooCameraLayout.statusDot
+                        )
                     Text(model.receiverName)
                         .font(.caption.weight(.bold))
                     Text(model.senderStatus == .streaming ? "已连接" : "准备视频")
                         .font(.caption2.monospaced())
                         .foregroundStyle(PicooCameraColor.success)
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 8)
-                .background(.black.opacity(0.62), in: Capsule())
+                .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
+                .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
+                .background(PicooCameraColor.hudOverlay, in: Capsule())
 
                 Spacer()
 
@@ -421,17 +430,17 @@ private struct LiveCameraView: View {
                 } label: {
                     Text(model.resolutionLabel)
                         .font(.caption.weight(.bold).monospaced())
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 8)
-                        .background(.black.opacity(0.62), in: Capsule())
+                        .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
+                        .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
+                        .background(PicooCameraColor.hudOverlay, in: Capsule())
                 }
                 .buttonStyle(.plain)
                 .disabled(model.camera.state != .running)
                 .accessibilityLabel("切换视频分辨率")
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 14)
-            .padding(.top, 8)
+            .foregroundStyle(PicooCameraColor.content)
+            .padding(.horizontal, PicooCameraLayout.safeHorizontalInset)
+            .padding(.top, PicooSpace.sm)
             Spacer()
         }
     }
@@ -463,7 +472,7 @@ private struct LiveCameraView: View {
         case .stopping:
             CameraOverlay(title: "正在停止摄像头", detail: "释放本机采集资源。")
         case .denied:
-            VStack(spacing: 14) {
+            VStack(spacing: PicooCameraLayout.safeHorizontalInset) {
                 CameraOverlay(title: "需要相机权限", detail: "请在系统设置中允许 Picoo Camera 使用摄像头。")
                 Button("打开系统设置") {
                     guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
@@ -491,12 +500,12 @@ private struct LiveCameraView: View {
         VStack {
             Spacer()
             HStack {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: PicooSpace.xxs) {
                     Text("预览就绪")
                         .font(.caption.weight(.bold))
                     Text("H.264 · \(model.activeBitrateBps / 1_000_000) Mbps")
                         .font(.caption2)
-                        .foregroundStyle(.white.opacity(0.58))
+                        .foregroundStyle(PicooCameraColor.contentSubtle)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -506,7 +515,7 @@ private struct LiveCameraView: View {
                     ZStack {
                         Circle()
                             .stroke(
-                                model.stopArmed ? PicooCameraColor.danger : .white.opacity(0.88),
+                                model.stopArmed ? PicooCameraColor.danger : PicooCameraColor.stopBorder,
                                 lineWidth: PicooCameraStopControl.stroke
                             )
                             .frame(
@@ -529,30 +538,33 @@ private struct LiveCameraView: View {
                     Task { await model.switchCamera() }
                 } label: {
                     ReiconIcon(icon: .switchCamera)
-                        .frame(width: 23, height: 23)
+                        .frame(
+                            width: PicooCameraLayout.controlIcon,
+                            height: PicooCameraLayout.controlIcon
+                        )
                         .rotationEffect(.degrees(cameraRotation))
                         .animation(
                             reduceMotion ? nil : .smooth(duration: PicooMotion.normal),
                             value: cameraRotation
                         )
-                        .padding(12)
-                        .background(.white.opacity(0.14), in: Circle())
-                        .overlay { Circle().stroke(.white.opacity(0.22)) }
+                        .padding(PicooCameraLayout.controlPadding)
+                        .background(PicooCameraColor.control, in: Circle())
+                        .overlay { Circle().stroke(PicooCameraColor.controlBorder) }
                 }
                 .buttonStyle(.plain)
                 .disabled(model.camera.state != .running)
                 .accessibilityLabel("切换前后摄像头")
                 .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 18)
-            .padding(.bottom, 24)
+            .foregroundStyle(PicooCameraColor.content)
+            .padding(.horizontal, PicooSpace.lg)
+            .padding(.bottom, PicooSpace.xl)
 
             if model.stopArmed {
                 Text("再次点击确认断开")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(PicooCameraColor.danger)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, PicooSpace.sm)
             }
         }
     }
@@ -563,18 +575,18 @@ private struct CameraOverlay: View {
     let detail: String
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: PicooSpace.sm) {
             Text(title)
                 .font(.headline)
             Text(detail)
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.66))
+                .foregroundStyle(PicooCameraColor.overlayDetail)
                 .multilineTextAlignment(.center)
         }
-        .foregroundStyle(.white)
-        .padding(18)
+        .foregroundStyle(PicooCameraColor.content)
+        .padding(PicooSpace.lg)
         .background(PicooCameraColor.overlay, in: RoundedRectangle(cornerRadius: PicooRadius.surface))
-        .padding(.horizontal, 36)
+        .padding(.horizontal, PicooCameraLayout.overlayHorizontalInset)
     }
 }
 

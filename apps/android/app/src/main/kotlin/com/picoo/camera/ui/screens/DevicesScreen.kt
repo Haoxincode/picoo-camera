@@ -202,9 +202,9 @@ fun DevicesScreen(
                         )
                         Text(
                             text = when {
-                                empty -> "发现完成 · 未找到可用电脑"
-                                searching -> "正在发现附近电脑…"
-                                else -> "局域网设备 · 持续监听中"
+                                empty -> "暂未找到可连接的电脑"
+                                searching -> "正在搜索同一 Wi‑Fi 下的电脑…"
+                                else -> "已找到可连接的电脑"
                             },
                             color = colors.contentMuted,
                             style = MaterialTheme.typography.bodyMedium,
@@ -488,7 +488,7 @@ private fun EmptyDiscoveryHint(modifier: Modifier = Modifier) {
         )
         Text(text = "未发现附近电脑", style = MaterialTheme.typography.titleMedium)
         Text(
-            text = "确认电脑端已启动，且两端连接同一 Wi‑Fi；企业网络可能屏蔽 mDNS。",
+            text = "确认电脑端 Picoo Camera 已打开，并与手机连接同一 Wi‑Fi。仍未找到时，可输入电脑端显示的 IP 地址直连。",
             color = colors.contentMuted,
             style = MaterialTheme.typography.bodyMedium,
         )

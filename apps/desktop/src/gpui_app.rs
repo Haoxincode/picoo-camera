@@ -2111,12 +2111,23 @@ impl PicooDesktopApp {
                 })
                 .on_cancel({
                     let cancel_app = cancel_app.clone();
-                    move |_, _, cx| {
-                        let _ = cancel_app.update(cx, |this, cx| {
-                            this.runtime.disconnect();
+                    move |_, window, cx| {
+                        let outcome = cancel_app.update(cx, |this, cx| {
+                            let outcome = this
+                                .runtime
+                                .reject_pairing()
+                                .map_err(|error| format!("拒绝配对失败：{error}"));
                             cx.notify();
+                            outcome
                         });
-                        true
+                        match outcome {
+                            Ok(Ok(())) => true,
+                            Ok(Err(message)) => {
+                                window.push_notification((NotificationType::Error, message), cx);
+                                false
+                            }
+                            Err(_) => false,
+                        }
                     }
                 })
                 .on_close({

@@ -145,6 +145,12 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         }
     }
 
+    var lastSessionError: String {
+        readCString(maxLength: 64) { buffer, length in
+            picoo_sender_last_session_error(sender, buffer, length)
+        }
+    }
+
     func connect(to endpoint: ReceiverEndpoint) throws {
         let connectCode = endpoint.host.withCString { host in
             picoo_sender_connect(sender, host, endpoint.port)
