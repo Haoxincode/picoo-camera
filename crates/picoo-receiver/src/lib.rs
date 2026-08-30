@@ -13,9 +13,9 @@ use picoo_frame_hub::{
     FrameHub, FrameSlot, PlaceholderMode, SharedFrameRingProducer, PLACEHOLDER_HEIGHT,
     PLACEHOLDER_WIDTH,
 };
-use picoo_jitter::{Frame as JitterFrame, JitterBuffer};
+use picoo_jitter::{Frame as JitterFrame, JitterBuffer, PushOutcome};
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError};
-use picoo_packet::ReassemblyMap;
+use picoo_packet::{ReassemblyError, ReassemblyMap};
 use picoo_pairing::{
     new_pairing_challenge, random_challenge_nonce, trusted_device_from_pairing,
     verify_pairing_confirm, PairingError, PairingHandshakeError, StoreError, TrustedDeviceStore,
@@ -25,7 +25,7 @@ use picoo_protocol::control::{
     PairingChallenge as PairingChallengeMsg, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
     Resolution, ServerHello, SessionError, StartStream, StopStream, StreamConfig,
 };
-use picoo_protocol::ALPN;
+use picoo_protocol::{ALPN, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT};
 use picoo_session::ReceiverStatus;
 use picoo_transport::{
     CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportError, TransportEvent,
@@ -135,6 +135,7 @@ struct PendingPairing {
 
 /// Pairing short-code / challenge lifetime (matches Android PairingScreen TTL).
 pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);
+const REASSEMBLY_MAX_AGE: Duration = Duration::from_millis(120);
 
 pub struct ReceiverSession {
     transport: QuicReceiverTransport,
@@ -184,7 +185,7 @@ impl ReceiverSession {
     pub fn new() -> Self {
         Self {
             transport: QuicReceiverTransport::new(),
-            reassembly: ReassemblyMap::new(8, 16),
+            reassembly: ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT),
             frame_hub: FrameHub::new(),
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),
@@ -516,6 +517,7 @@ impl ReceiverSession {
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
         self.expire_pending_pairing_if_needed();
+        self.expire_reassembly_deadline()?;
 
         while let Some(event) = self.transport.poll_event() {
             match event {
@@ -528,6 +530,9 @@ impl ReceiverSession {
                     self.handle_control(session, msg)?;
                 }
                 TransportEvent::VideoPacket(session, packet) => {
+                    // Enforce the wall-clock deadline before a queued late tail
+                    // gets a chance to complete an already-expired AU.
+                    self.expire_reassembly_deadline()?;
                     self.ingress.packets_received += 1;
                     if !self.video_allowed() {
                         self.ingress.packets_dropped_unpaired += 1;
@@ -551,16 +556,32 @@ impl ReceiverSession {
                         continue;
                     }
                     self.stats_reporter.record_packet(packet.payload.len());
-                    if let Some(access_unit) = self.reassembly.ingest(packet).ok().flatten() {
-                        if self.jitter_timeline.is_none() {
-                            // Anchor media clock to this AU's PTS at wall arrival.
-                            self.jitter_timeline = Some((Instant::now(), access_unit.pts_us));
+                    match self.reassembly.ingest(packet) {
+                        Ok(Some(access_unit)) => {
+                            let pts_us = access_unit.pts_us;
+                            let outcome = self.jitter.push(JitterFrame {
+                                pts_us: access_unit.pts_us,
+                                data: access_unit.data,
+                                keyframe: access_unit.keyframe,
+                            });
+                            match outcome {
+                                PushOutcome::Accepted if self.jitter_timeline.is_none() => {
+                                    // Anchor media clock to this AU's PTS at wall arrival.
+                                    self.jitter_timeline = Some((Instant::now(), pts_us));
+                                }
+                                PushOutcome::DroppedLate { keyframe: true } => {
+                                    self.send_request_keyframe(session)?;
+                                }
+                                PushOutcome::Accepted
+                                | PushOutcome::DroppedLate { keyframe: false } => {}
+                            }
                         }
-                        self.jitter.push(JitterFrame {
-                            pts_us: access_unit.pts_us,
-                            data: access_unit.data,
-                            keyframe: access_unit.keyframe,
-                        });
+                        Ok(None) => {}
+                        // Reassembly owns drop/keyframe-loss accounting. Keep
+                        // protocol rejects out of the decoder and continue the session.
+                        Err(ReassemblyError::TooManyFragments)
+                        | Err(ReassemblyError::DuplicateFragment)
+                        | Err(ReassemblyError::EpochMismatch) => {}
                     }
                     if self.reassembly.take_keyframe_loss() {
                         self.send_request_keyframe(session)?;
@@ -569,10 +590,26 @@ impl ReceiverSession {
             }
         }
 
+        // QUIC Datagram may reorder fragments across access units. A newer AU
+        // is therefore not proof that an older partial AU was lost; only the
+        // bounded real-time deadline makes that decision.
+        self.expire_reassembly_deadline()?;
+
         self.drain_jitter()?;
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
 
+        Ok(())
+    }
+
+    fn expire_reassembly_deadline(&mut self) -> Result<(), ReceiverError> {
+        self.reassembly
+            .expire_incomplete_older_than(Instant::now(), REASSEMBLY_MAX_AGE);
+        if self.reassembly.take_keyframe_loss() {
+            if let Some(session) = self.transport.active_session() {
+                self.send_request_keyframe(session)?;
+            }
+        }
         Ok(())
     }
 
@@ -614,7 +651,7 @@ impl ReceiverSession {
         self.active_sender = None;
         self.pending_pairing = None;
         self.local_pairing_confirmed = false;
-        self.reassembly = ReassemblyMap::new(8, 16);
+        self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
         self.jitter.clear();
         self.jitter_timeline = None;
         self.last_stats = None;
@@ -848,7 +885,7 @@ impl ReceiverSession {
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
         self.receiver_capabilities_sent = None;
-        self.reassembly = ReassemblyMap::new(8, 16);
+        self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
         self.jitter.clear();
         self.jitter_timeline = None;
         self.placeholder_after = None;
@@ -924,7 +961,7 @@ impl ReceiverSession {
             if epoch_bumped {
                 self.jitter.clear();
                 self.jitter_timeline = None;
-                self.reassembly = ReassemblyMap::new(8, 16);
+                self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
                 self.decoder.flush()?;
             }
             self.send_request_keyframe(session)?;

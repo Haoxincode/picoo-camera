@@ -3741,8 +3741,8 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
     use picoo_transport::{Endpoint, QuicSenderTransport};
     use std::time::Instant;
 
-    let (au1, sps1, pps1) = openh264_au(160, 120, 3);
-    let (au2, sps2, pps2) = openh264_au(160, 120, 9);
+    let (au1, sps1, pps1) = openh264_au(854, 480, 3);
+    let (au2, sps2, pps2) = openh264_au(854, 480, 9);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -3789,8 +3789,8 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 854,
+        height: 480,
         fps: 30,
         bitrate_bps: 500_000,
         stream_epoch: 1,
@@ -3811,7 +3811,7 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.width == 160) {
+        if receiver.latest_frame().is_some_and(|f| f.width == 854) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -3821,17 +3821,20 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
 
     // Camera switch: epoch bump + new IDR.
     let t0 = Instant::now();
+    let next_epoch = sender.begin_stream_reconfiguration();
+    assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 854,
+        height: 480,
         fps: 30,
         bitrate_bps: 500_000,
-        stream_epoch: 2,
+        stream_epoch: next_epoch,
         mirrored: false,
         rotation: 0,
         sps: sps2,
         pps: pps2,
     });
+    assert!(sender.report_encoder_height(480, next_epoch));
     for _ in 0..40 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -3860,8 +3863,8 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
         sender.pump().ok();
         if receiver.stats().access_units > before_au
             && receiver.latest_frame().is_some_and(|f| {
-                f.width == 160
-                    && f.pixel_data.len() == nv12_byte_size(160, 120)
+                f.width == 854
+                    && f.pixel_data.len() == nv12_byte_size(854, 480)
                     && f.pixel_data.iter().any(|b| *b != 16 && *b != 128)
             })
         {
@@ -3882,7 +3885,7 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn midstream_resolution_change_openh264_updates_framehub() {
-    // REQ-PICOO-MEDIA-002/010: mid-stream 160x120 → 320x240 with new SPS/PPS.
+    // REQ-PICOO-MEDIA-002/010: mid-stream 480p → 720p with new SPS/PPS.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
@@ -3890,8 +3893,8 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     use picoo_transport::{Endpoint, QuicSenderTransport};
     use std::time::Instant;
 
-    let (au_lo, sps_lo, pps_lo) = openh264_au(160, 120, 5);
-    let (au_hi, sps_hi, pps_hi) = openh264_au(320, 240, 11);
+    let (au_lo, sps_lo, pps_lo) = openh264_au(854, 480, 5);
+    let (au_hi, sps_hi, pps_hi) = openh264_au(1280, 720, 11);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -3937,8 +3940,8 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     }
 
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 854,
+        height: 480,
         fps: 30,
         bitrate_bps: 400_000,
         stream_epoch: 1,
@@ -3959,25 +3962,28 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.width == 160) {
+        if receiver.latest_frame().is_some_and(|f| f.width == 854) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(receiver.latest_frame().map(|f| f.width), Some(160));
+    assert_eq!(receiver.latest_frame().map(|f| f.width), Some(854));
 
     let t0 = Instant::now();
+    let next_epoch = sender.begin_stream_reconfiguration();
+    assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
-        width: 320,
-        height: 240,
+        width: 1280,
+        height: 720,
         fps: 30,
         bitrate_bps: 1_200_000,
-        stream_epoch: 2,
+        stream_epoch: next_epoch,
         mirrored: false,
         rotation: 0,
         sps: sps_hi,
         pps: pps_hi,
     });
+    assert!(sender.report_encoder_height(720, next_epoch));
     for _ in 0..40 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -3992,8 +3998,8 @@ fn midstream_resolution_change_openh264_updates_framehub() {
         receiver.pump().expect("rx");
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == 320 && frame.height == 240 {
-                assert_eq!(frame.pixel_data.len(), nv12_byte_size(320, 240));
+            if frame.width == 1280 && frame.height == 720 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(1280, 720));
                 ok = true;
                 break;
             }
@@ -4002,7 +4008,7 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     }
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
     eprintln!("resolution_switch recovery_ms={elapsed_ms:.2} ok={ok}");
-    assert!(ok, "FrameHub did not update to 320x240");
+    assert!(ok, "FrameHub did not update to 1280x720");
     assert!(
         elapsed_ms < 3_000.0,
         "resolution switch {elapsed_ms}ms exceeds 3s budget"
@@ -4053,8 +4059,8 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         }
     }
     let recovery_yuv = YUVBuffer::from_vec(recovery_planes, width, height);
-    // A new epoch resets platform decoder reference state, so recovery must
-    // start with a true IDR rather than the next P-frame from the old encoder.
+    // The requested recovery frame must be a fresh IDR, not another P-frame
+    // whose references may include the discarded incomplete access unit.
     let mut recovery_encoder = Encoder::new().expect("recovery OpenH264 encoder");
     let recovery_au = recovery_encoder
         .encode(&recovery_yuv)
@@ -4064,7 +4070,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         picoo_packet::split_annex_b_nals(&recovery_au)
             .iter()
             .any(|nal| nal.first().is_some_and(|byte| byte & 0x1f == 5)),
-        "epoch recovery fixture must contain an IDR"
+        "same-epoch recovery fixture must contain an IDR"
     );
 
     let mut receiver = ReceiverSession::new();
@@ -4160,14 +4166,13 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         "expected keyframe tail drop"
     );
 
-    // Epoch bump clears pending incomplete keyframe and sets keyframe_loss (SESSION-003).
-    let tiny = [0u8, 0, 0, 1, 0x01, 0x42];
-    let _ = sender.ingest_and_flush(&tiny, false, 3, 2);
-
+    // A newer AU cannot prove loss because QUIC Datagram may reorder across
+    // frames. The bounded 120 ms reassembly deadline discards the partial IDR
+    // and reports the loss exactly once.
     let mut keyed = false;
-    for _ in 0..80 {
-        receiver.pump().ok();
-        sender.pump().ok();
+    for _ in 0..160 {
+        receiver.pump().expect("rx reassembly deadline");
+        sender.pump().expect("tx reassembly deadline");
         if sender.take_keyframe_request() {
             keyed = true;
             break;
@@ -4178,30 +4183,27 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         keyed,
         "incomplete keyframe must produce EncoderCommand::RequestKeyframe"
     );
+    assert_eq!(
+        receiver.latest_frame().map(|frame| frame.sequence),
+        Some(before_seq),
+        "an incomplete IDR must not publish another FrameHub frame"
+    );
 
-    // Fresh IDR recovers FrameHub (stay on epoch 2 after the bump above).
-    sender.set_stream_config(StreamConfigParams {
-        stream_epoch: 2,
-        ..stream_config
-    });
-    for _ in 0..50 {
-        receiver.pump().expect("rx config");
-        sender.pump().expect("tx config");
-        if sender.stream_config_sent() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    // A fresh IDR on the current epoch recovers FrameHub.
+    let before_recovery_seq = receiver
+        .latest_frame()
+        .map(|frame| frame.sequence)
+        .unwrap_or(0);
     sender.transport_mut().disarm();
     sender
-        .ingest_and_flush(&recovery_au, true, 100, 2)
+        .ingest_and_flush(&recovery_au, true, 100, 1)
         .expect("recovery idr");
     let mut recovered = false;
     for _ in 0..400 {
         receiver.pump().expect("rx");
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.sequence > before_seq
+            if frame.sequence > before_recovery_seq
                 && frame.width == width as u32
                 && frame.pixel_data.len() == nv12_byte_size(width as u32, height as u32)
                 && frame.pixel_data.iter().any(|b| *b != 16 && *b != 128)

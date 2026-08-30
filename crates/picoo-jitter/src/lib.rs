@@ -19,6 +19,13 @@ pub struct JitterBuffer {
     target_ms: u64,
     max_ms: u64,
     frames: VecDeque<Frame>,
+    last_emitted_pts_us: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PushOutcome {
+    Accepted,
+    DroppedLate { keyframe: bool },
 }
 
 impl JitterBuffer {
@@ -27,6 +34,7 @@ impl JitterBuffer {
             target_ms,
             max_ms,
             frames: VecDeque::new(),
+            last_emitted_pts_us: None,
         }
     }
 
@@ -38,15 +46,34 @@ impl JitterBuffer {
         self.target_ms = target_ms.min(self.max_ms);
     }
 
-    pub fn push(&mut self, frame: Frame) {
-        self.frames.push_back(frame);
+    pub fn push(&mut self, frame: Frame) -> PushOutcome {
+        if self
+            .last_emitted_pts_us
+            .is_some_and(|emitted| frame.pts_us <= emitted)
+        {
+            return PushOutcome::DroppedLate {
+                keyframe: frame.keyframe,
+            };
+        }
+        // Complete AUs can themselves arrive out of order because their
+        // fragments use QUIC Datagram. Keep media order inside the playout
+        // window instead of preserving completion order.
+        let index = self
+            .frames
+            .iter()
+            .position(|buffered| buffered.pts_us > frame.pts_us)
+            .unwrap_or(self.frames.len());
+        self.frames.insert(index, frame);
         self.enforce_limits();
+        PushOutcome::Accepted
     }
 
     pub fn pop_ready(&mut self, now_us: u64) -> Option<Frame> {
         let front = self.frames.front()?;
         if self.target_ms == 0 || now_us.saturating_sub(front.pts_us) / 1_000 >= self.target_ms {
-            return self.frames.pop_front();
+            let frame = self.frames.pop_front()?;
+            self.last_emitted_pts_us = Some(frame.pts_us);
+            return Some(frame);
         }
         None
     }
@@ -77,6 +104,7 @@ impl JitterBuffer {
 
     pub fn clear(&mut self) {
         self.frames.clear();
+        self.last_emitted_pts_us = None;
     }
 
     fn enforce_limits(&mut self) {
@@ -147,5 +175,45 @@ mod tests {
             keyframe: false,
         });
         assert!((buf.depth_ms() - 20.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn orders_cross_access_unit_reassembly_by_pts() {
+        let mut buf = JitterBuffer::new(50, 120);
+        buf.push(Frame {
+            pts_us: 34_000,
+            data: Bytes::from_static(b"newer"),
+            keyframe: false,
+        });
+        buf.push(Frame {
+            pts_us: 1_000,
+            data: Bytes::from_static(b"older"),
+            keyframe: true,
+        });
+        assert_eq!(buf.pop_ready(100_000).unwrap().data, b"older"[..]);
+        assert_eq!(buf.pop_ready(100_000).unwrap().data, b"newer"[..]);
+    }
+
+    #[test]
+    fn drops_an_older_au_that_completes_after_newer_playout() {
+        let mut buf = JitterBuffer::new(50, 120);
+        assert_eq!(
+            buf.push(Frame {
+                pts_us: 34_000,
+                data: Bytes::from_static(b"newer"),
+                keyframe: false,
+            }),
+            PushOutcome::Accepted
+        );
+        assert_eq!(buf.pop_ready(100_000).unwrap().data, b"newer"[..]);
+        assert_eq!(
+            buf.push(Frame {
+                pts_us: 1_000,
+                data: Bytes::from_static(b"late-key"),
+                keyframe: true,
+            }),
+            PushOutcome::DroppedLate { keyframe: true }
+        );
+        assert!(buf.pop_ready(100_000).is_none());
     }
 }

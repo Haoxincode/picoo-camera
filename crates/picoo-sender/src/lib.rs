@@ -8,7 +8,8 @@ mod stream_config;
 use bytes::Bytes;
 use picoo_pairing::{PairingError, StoreError};
 use picoo_protocol::{
-    VideoPacket, VideoPacketError, VideoPacketFlags, MAX_DATAGRAM_SIZE, VIDEO_PACKET_HEADER_SIZE,
+    VideoPacket, VideoPacketError, VideoPacketFlags, MAX_DATAGRAM_SIZE,
+    MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT, VIDEO_PACKET_HEADER_SIZE,
 };
 use picoo_transport::TransportError;
 use thiserror::Error;
@@ -98,8 +99,12 @@ impl SenderPipeline {
             .checked_add(1)
             .ok_or(SenderError::FrameIdExhausted)?;
         let frame_id = self.frame_id;
-        let fragment_count = u16::try_from(data.len().div_ceil(MAX_FRAGMENT_PAYLOAD))
-            .map_err(|_| SenderError::AccessUnitTooLarge)?;
+        let fragment_count = data.len().div_ceil(MAX_FRAGMENT_PAYLOAD);
+        if fragment_count > usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT) {
+            return Err(SenderError::AccessUnitTooLarge);
+        }
+        let fragment_count =
+            u16::try_from(fragment_count).expect("bounded fragment count always fits the wire u16");
         let mut created = 0usize;
 
         for fragment_index in 0..fragment_count {
@@ -191,5 +196,17 @@ mod tests {
             }
         }
         assert_eq!(assembled.as_deref(), Some(payload.as_slice()));
+    }
+
+    #[test]
+    fn access_unit_over_reassembly_budget_is_rejected_before_queueing() {
+        let payload =
+            vec![0u8; MAX_FRAGMENT_PAYLOAD * usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT) + 1];
+        let mut sender = SenderPipeline::default();
+        assert!(matches!(
+            sender.ingest_access_unit(&payload, true, 0, 1),
+            Err(SenderError::AccessUnitTooLarge)
+        ));
+        assert!(sender.pending_packets().is_empty());
     }
 }

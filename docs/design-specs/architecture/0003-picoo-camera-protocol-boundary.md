@@ -49,6 +49,10 @@ Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DIS
 
 单个载荷约 **1150 字节**，控制在路径 MTU 内，避免 IP 分片。
 
+单个 Access Unit 最多 1024 个 Datagram，即当前头部与 MTU 下约 1.1 MiB。Sender 在
+入队前拒绝更大的 AU；Receiver 最多并行保留 8 个不完整 AU，因此真实 480p/720p/1080p
+IDR 不会被早期 16 片测试上限误丢弃，同时异常 `fragment_count` 仍有明确内存边界。
+
 ### StreamConfig 与 stream_epoch
 
 `StreamConfig` 携带 `codec`、`profile`、`level`、`width`、`height`、`fps`、`bitrate`、`rotation`、`mirrored`、`color_range`、`sps`、`pps`、`stream_epoch`。
