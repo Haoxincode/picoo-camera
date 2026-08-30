@@ -41,7 +41,7 @@ GitHub Actions
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
-| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Swift 6 CMIO Camera Extension 无签名编译 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask build macos`；`.app` 嵌入、签名与公证仍待 `package macos` |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 无签名编译 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask build macos`；`.app` 嵌入、签名与公证仍待 `package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 
 ### 依赖关系
@@ -99,7 +99,7 @@ jobs:
           path: target/release/bundle/
 ```
 
-已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及 720p→480p ABR/epoch/FrameHub 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。`xtask build macos` 还以 Swift 6 严格并发和 C17 编译 ARM64 CMIO Camera Extension，检查 CMIO 身份、架构 slice 以及扩展不链接 QUIC/Decoder。静态样本让该验收不依赖 CMake 或外部编码器。这些证据都不替代 `.app` 内嵌激活、签名、公证、会议软件枚举或 iPhone→macOS 真机媒体链路验收。
+已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及 720p→480p ABR/epoch/FrameHub 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。该命令还会直接编译 Camera Extension 使用的生产 Swift 6 Reader 与 C17 原子边界，在独立进程中验证 Rust Writer 并发覆盖、NV12 完整性、Reader/Producer 异常退出后的租约恢复和单 Producer 生命周期锁。`xtask build macos` 还编译 ARM64 CMIO Camera Extension，检查 CMIO 身份、架构 slice 以及扩展不链接 QUIC/Decoder。静态样本与跨进程 harness 让该验收不依赖 CMake 或外部编码器。这些证据都不替代签名 App Group 读写、`.app` 内嵌激活、公证、会议软件枚举或 iPhone→macOS 真机媒体链路验收。
 
 ### Apple 无签名构建基线
 

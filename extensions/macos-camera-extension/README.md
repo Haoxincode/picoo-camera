@@ -1,6 +1,6 @@
 # Picoo Camera macOS Camera Extension
 
-状态：原生可编译基线已实现。`cargo xtask build macos` 会同时构建共享 GPUI Receiver 和 ARM64 Camera Extension，并在 CI 中归档未签名 `.systemextension`。扩展尚未嵌入 `.app`，也未进入激活、签名或公证验收。
+状态：原生可编译与跨进程共享环基线已实现。`cargo xtask test macos` 会直接编译生产 Swift/C Reader，验证 Rust Writer 并发读写和 Reader/Producer 异常退出恢复；`cargo xtask build macos` 会同时构建共享 GPUI Receiver 和 ARM64 Camera Extension，并在 CI 中归档未签名 `.systemextension`。扩展尚未嵌入 `.app`，也未进入 App Group 签名读写、激活或公证验收。
 
 产品基线为 macOS 15+ ARM64（Apple Silicon），不构建或发布 Intel slice。
 
