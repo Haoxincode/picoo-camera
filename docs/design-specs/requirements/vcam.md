@@ -7,5 +7,5 @@
 | REQ-PICOO-VCAM-003 | implemented | PUC-004 | VCam 进程只读 Shared Frame Ring，不持有 QUIC/解码器 | Rust VCam Source 只依赖 `picoo-frame-hub` 与 Windows 系统 API；直接复用共享环与占位帧实现 |
 | REQ-PICOO-VCAM-004 | implemented | PUC-001 | 安装器注册 COM/MF 组件与卸载清理 | WiX 声明式 COM 注册表 + FirewallException QUIC(4433) + 安装/卸载时 WixQuietExec 调用 `--register-vcam --no-wait` / `--unregister-vcam`；CLSID 三方同步；`validate_wix_scaffold.sh`；CI 钉扎 WiX 5.0.2；MSI 真机仍待 |
 | REQ-PICOO-VCAM-005 | proposed | PUC-004 | Zoom/Teams/腾讯会议/OBS/浏览器可选用 | [会议软件验收清单](../verification/vcam-meeting-apps.md)（需 Win11） |
-| REQ-PICOO-VCAM-006 | planned | ARCH-PICOO-VCAM-001 | macOS 使用 Core Media I/O Camera Extension 注册 `Picoo Camera` | Desktop.app 内嵌 `.systemextension`；App Group mmap 消费 `REQ-PICOO-FRAME-006`；扩展不持有 QUIC/Decoder；用户批准、重启枚举、卸载清理与会议软件验收 |
-| REQ-PICOO-VCAM-007 | planned | ARCH-PICOO-VCAM-001 / ci-and-build.md | macOS 发布产物满足 Hardened Runtime、Developer ID 签名与公证 | 无签名 CI 可编译主应用与扩展；发布 workflow 仅通过 GitHub Secrets 注入证书和公证凭据 |
+| REQ-PICOO-VCAM-006 | planned | ARCH-PICOO-VCAM-001 | macOS 使用 Core Media I/O Camera Extension 注册 `Picoo Camera` | Swift 6 CMIO 扩展与 App Group mmap 消费边界已可编译；仍需 Desktop.app 内嵌、用户批准、重启枚举、卸载清理与会议软件真机验收；扩展不持有 QUIC/Decoder |
+| REQ-PICOO-VCAM-007 | planned | ARCH-PICOO-VCAM-001 / ci-and-build.md | macOS 发布产物满足 Hardened Runtime、Developer ID 签名与公证 | CI 已配置为无签名编译并归档 ARM64 主程序和扩展；仍需 Actions 跑绿及发布 workflow 通过 GitHub Secrets 注入证书和公证凭据 |

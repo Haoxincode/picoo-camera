@@ -86,10 +86,8 @@ jobs:
           wix --version
           wix extension add WixToolset.Firewall.wixext/5.0.2
           wix extension add WixToolset.Util.wixext/5.0.2
-      - name: Check Rust Media Foundation source
-        run: |
-          cargo clippy -p picoo-windows-vcam-source --all-targets -- -D warnings
-          cargo test -p picoo-windows-vcam-source
+      - name: Test Windows Shared Frame Ring and Media Foundation source
+        run: cargo run -p xtask -- test windows
       - run: cargo run -p xtask -- build windows
       - name: Package Windows + MSI
         env:
@@ -121,14 +119,16 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
       - name: Clippy macOS GPUI Receiver
         run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
-      - name: Test macOS VideoToolbox receiver
+      - name: Test macOS VideoToolbox receiver and shared ring
         run: cargo run -p xtask -- test macos
-      - name: Build macOS GPUI Receiver
+      - name: Build macOS GPUI Receiver and Camera Extension
         run: cargo run -p xtask -- build macos
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-receiver-unsigned
-          path: target/release/picoo-desktop
+          name: macos-receiver-camera-extension-unsigned
+          path: |
+            target/release/picoo-desktop
+            target/apple/PicooCameraExtension.systemextension.zip
           if-no-files-found: error
 
   ios:

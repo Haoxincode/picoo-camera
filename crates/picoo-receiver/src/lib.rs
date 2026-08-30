@@ -219,6 +219,17 @@ impl ReceiverSession {
 
     /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
     pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
+        #[cfg(target_os = "macos")]
+        let ring = if name == DEFAULT_SHARED_RING_NAME {
+            let path = picoo_frame_hub::macos_app_group_ring_path(name)?;
+            SharedFrameRingProducer::open_or_create_file(
+                path,
+                picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+            )?
+        } else {
+            SharedFrameRingProducer::open_or_create(name, picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES)?
+        };
+        #[cfg(not(target_os = "macos"))]
         let ring = SharedFrameRingProducer::open_or_create(
             name,
             picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,

@@ -9,6 +9,7 @@ crates/picoo-ffi/picoo_camera.h
 apps/android/.gradle/
 apps/android/**/build/
 apps/android/local.properties
+extensions/macos-camera-extension/build/
 *.apk
 *.aab
 

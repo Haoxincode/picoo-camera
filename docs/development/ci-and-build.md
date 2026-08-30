@@ -29,7 +29,7 @@ Cloud Agent（Linux）
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
 ├── windows-latest  → GPUI 桌面、MF 解码、Virtual Camera DLL、安装包
-└── macos-26 ARM64 → GPUI 桌面、iOS Rust XCFramework；已配置 SwiftUI App 壳与 C ABI 单测，后续承载媒体链路、Camera Extension 与公证
+└── macos-26 ARM64 → GPUI 桌面、CMIO Camera Extension、iOS Rust XCFramework 与 SwiftUI App；签名、公证和 Apple 真机链路另行验收
 ```
 
 ## GitHub Actions Runner 矩阵
@@ -41,7 +41,7 @@ GitHub Actions
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
-| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码；Camera Extension 接入后扩展为 app bundle | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask build macos`；`package macos` 待扩展实现后启用 |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Swift 6 CMIO Camera Extension 无签名编译 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask build macos`；`.app` 嵌入、签名与公证仍待 `package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 
 ### 依赖关系
@@ -99,13 +99,13 @@ jobs:
           path: target/release/bundle/
 ```
 
-已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及 720p→480p ABR/epoch/FrameHub 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。静态样本让该验收不依赖 CMake 或外部编码器。这些证据都不替代 Camera Extension、签名、公证或 iPhone→macOS 真机媒体链路验收。
+已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及 720p→480p ABR/epoch/FrameHub 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。`xtask build macos` 还以 Swift 6 严格并发和 C17 编译 ARM64 CMIO Camera Extension，检查 CMIO 身份、架构 slice 以及扩展不链接 QUIC/Decoder。静态样本让该验收不依赖 CMake 或外部编码器。这些证据都不替代 `.app` 内嵌激活、签名、公证、会议软件枚举或 iPhone→macOS 真机媒体链路验收。
 
 ### Apple 无签名构建基线
 
 Apple 基线保持三个独立 artifact：
 
-- `macos-receiver-unsigned`：当前 host 架构的 `picoo-desktop` GPUI 可执行文件，不是可发布 `.app`。
+- `macos-receiver-camera-extension-unsigned`：ARM64 `picoo-desktop` GPUI 可执行文件和 `PicooCameraExtension.systemextension.zip`；两者未组成可发布 `.app`，也未签名或公证。
 - `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
 - `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 

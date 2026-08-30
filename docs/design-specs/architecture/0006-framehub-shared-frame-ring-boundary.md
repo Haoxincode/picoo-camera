@@ -24,17 +24,16 @@ Decoded Frame (NV12)
 
 三槽环形缓冲每个 Slot 包含：
 
-`sequence`、`timestamp`、`width`、`height`、`stride`、`pixel_format`、`rotation`、`data_length`、`ready_state`、`pixel_data`
+`sequence`、`timestamp`、`width`、`height`、`stride`、`pixel_format`、`rotation`、`data_length`、`ready_state`、`reader_count`、`pixel_data`
 
 写入流程：
 
-1. 选择非活动槽；
-2. 写入帧信息和像素；
-3. 内存屏障；
-4. 更新序列号；
-5. 标记 Ready。
+1. 在未被读取的槽上原子取得独占写租约；
+2. 标记 Writing，写入帧信息和像素；
+3. 更新序列号并通过 Release 屏障标记 Ready；
+4. 释放写租约并发布最新序列号。
 
-读取者总是选择最新完整序列。消费者处理速度不足时，**丢弃旧帧并提供最新完整帧**。
+读取者总是选择最新完整序列，并在读取期间持有原子租约；Writer 不覆盖仍被读取的槽。消费者处理速度不足时，**丢弃旧帧并提供最新完整帧**；三个槽都被占用时 Producer 保留上一完整帧而不阻塞。
 
 ### Shared Frame Ring
 
@@ -44,6 +43,10 @@ Decoded Frame (NV12)
 | --- | --- |
 | Windows | Named Shared Memory |
 | macOS | App Group Container 中的 mmap Shared File |
+
+Windows 与 macOS 都在原子租约外为每个槽增加独立的内核文件锁：Windows Named Shared Memory 使用 `LockFileEx` byte-range sidecar，macOS mmap 使用 `flock` sidecar。锁在进程退出时由内核释放，下一方取得锁后才能安全清理由异常退出遗留的原子租约；每槽独立设计保留槽间并行能力。
+
+macOS 的 App Group 后缀为 `com.haoxincode.picoo-camera`，签名时由 Xcode 添加 Team Identifier 前缀，主应用与扩展从各自 Info.plist 读取同一个展开后的值。Rust Receiver 与 Swift Camera Extension 共享 ABI v2：64-byte RingMeta、三个 64-byte SlotMeta，以及固定容量 NV12 payload。Swift 通过小型 C17 原子边界获取/释放槽租约，不在 Swift 中模拟跨进程原子操作。
 
 虚拟摄像头扩展只理解 NV12 帧；不持有 QUIC、解码器或网络会话。
 
@@ -92,4 +95,4 @@ Decoded Frame (NV12)
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICOO-FRAME-*`
+- [REQ-PICOO-FRAME-001..006](../requirements/frame.md)

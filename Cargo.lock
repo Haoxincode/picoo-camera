@@ -5171,9 +5171,13 @@ name = "picoo-frame-hub"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "libc",
+ "memmap2",
+ "objc2-foundation 0.3.2",
  "proptest",
  "shared_memory",
  "thiserror 2.0.20",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

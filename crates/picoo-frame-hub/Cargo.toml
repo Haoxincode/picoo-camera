@@ -10,5 +10,23 @@ bytes.workspace = true
 shared_memory = "0.12"
 thiserror.workspace = true
 
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+memmap2 = "0.9.11"
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "NSBundle",
+    "std",
+    "NSFileManager",
+    "NSString",
+    "NSURL",
+] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
 [dev-dependencies]
 proptest = "=1.6.0"

@@ -50,6 +50,8 @@ Picoo Camera Desktop.app
 
 Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用户批准。扩展是独立进程边界；主应用不得把网络会话逻辑放入扩展。
 
+当前原生基线使用 Swift 6、Core Media I/O 和 C17 原子共享环读取边界，提供 480p/720p/1080p、30 fps、NV12 输出。`xtask build macos` 在 ARM64 macOS runner 上无签名编译并验证 `.systemextension`；嵌入 Desktop.app、激活授权、签名、公证和会议软件枚举仍属于后续真机验收，因此本 Architecture 仍保持 `planned`。
+
 ### 数据流
 
 ```text
@@ -105,4 +107,4 @@ Rust Receiver Core
 
 ## 相关 Requirements
 
-- 待分解：`REQ-PICOO-VCAM-*`
+- [REQ-PICOO-VCAM-001..007](../requirements/vcam.md)

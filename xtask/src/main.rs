@@ -47,8 +47,10 @@ enum PackagePlatform {
 enum TestSuite {
     /// Swift/C ABI integration on an installed ARM64 iPhone Simulator runtime.
     Ios,
-    /// Native VideoToolbox decode and Apple product dependency boundary.
+    /// VideoToolbox, Shared Frame Ring, and Apple product dependency boundaries.
     Macos,
+    /// Windows Shared Frame Ring and Media Foundation source boundaries.
+    Windows,
     Protocol,
     /// Linux-hostable product gates (WiX scaffold, VCam format, TXT sync, soak smoke).
     Linux,
@@ -78,17 +80,7 @@ fn build(platform: BuildPlatform) -> Result<()> {
             }
         }
         BuildPlatform::Ios => build_ios(&sh)?,
-        BuildPlatform::Macos => {
-            if !cfg!(target_os = "macos") {
-                bail!("macOS Receiver must be built on a macOS host");
-            }
-            let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
-            cmd!(
-                sh,
-                "cargo build -p picoo-desktop --release --features gpui-ui"
-            )
-            .run()?;
-        }
+        BuildPlatform::Macos => build_macos(&sh)?,
         BuildPlatform::Windows => {
             cmd!(
                 sh,
@@ -241,6 +233,118 @@ fn build_ios(sh: &Shell) -> Result<()> {
     Ok(())
 }
 
+fn build_macos(sh: &Shell) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        bail!("macOS Receiver and Camera Extension must be built on a macOS host");
+    }
+
+    let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
+    cmd!(
+        sh,
+        "cargo build -p picoo-desktop --release --features gpui-ui"
+    )
+    .run()?;
+
+    let project = Path::new("extensions/macos-camera-extension/PicooCameraExtension.xcodeproj");
+    if !project.is_dir() {
+        bail!(
+            "macOS Camera Extension Xcode project is missing {}",
+            project.display()
+        );
+    }
+
+    let apple_dir = std::env::current_dir()?.join("target/apple");
+    let extension_dir = apple_dir.join("macos");
+    let object_dir = apple_dir.join("macos-obj");
+    let products_dir = apple_dir.join("macos-products");
+    std::fs::create_dir_all(&extension_dir)?;
+    cmd!(
+        sh,
+        "xcodebuild -project {project} -target PicooCameraExtension -configuration Release -sdk macosx -arch arm64 CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR={extension_dir} OBJROOT={object_dir} SYMROOT={products_dir} build"
+    )
+    .run()?;
+
+    let extension = extension_dir.join("PicooCameraExtension.systemextension");
+    validate_macos_camera_extension(sh, &extension)?;
+    let archive = apple_dir.join("PicooCameraExtension.systemextension.zip");
+    archive_apple_bundle(sh, &extension, &archive)?;
+
+    eprintln!("macOS receiver: target/release/picoo-desktop");
+    eprintln!("macOS Camera Extension (unsigned): {}", extension.display());
+    eprintln!("macOS Camera Extension artifact: {}", archive.display());
+    Ok(())
+}
+
+fn validate_macos_camera_extension(sh: &Shell, extension: &Path) -> Result<()> {
+    let info_plist = extension.join("Contents/Info.plist");
+    let executable = extension.join("Contents/MacOS/PicooCameraExtension");
+    if !info_plist.is_file() || !executable.is_file() {
+        bail!(
+            "incomplete macOS Camera Extension bundle: {}",
+            extension.display()
+        );
+    }
+
+    let plist_json = cmd!(sh, "plutil -convert json -o - {info_plist}").read()?;
+    let plist: serde_json::Value = serde_json::from_str(&plist_json)?;
+    let app_group = plist
+        .get("PicooAppGroupIdentifier")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty());
+    let mach_service = plist
+        .pointer("/CMIOExtension/CMIOExtensionMachServiceName")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty());
+    if plist
+        .get("CFBundleDisplayName")
+        .and_then(|value| value.as_str())
+        != Some("Picoo Camera")
+        || plist
+            .get("CFBundlePackageType")
+            .and_then(|value| value.as_str())
+            != Some("SYSX")
+        || plist
+            .get("NSSystemExtensionUsageDescription")
+            .and_then(|value| value.as_str())
+            .is_none_or(str::is_empty)
+        || app_group.is_none()
+        || mach_service.is_none()
+    {
+        bail!("macOS Camera Extension Info.plist is missing the CMIO product identity");
+    }
+    if !mach_service.is_some_and(|service| {
+        app_group.is_some_and(|group| service.starts_with(&format!("{group}.")))
+    }) {
+        bail!("macOS Camera Extension Mach service must be namespaced under its App Group");
+    }
+
+    let entitlements =
+        Path::new("extensions/macos-camera-extension/PicooCameraExtension.entitlements");
+    let entitlements_json = cmd!(sh, "plutil -convert json -o - {entitlements}").read()?;
+    let entitlements: serde_json::Value = serde_json::from_str(&entitlements_json)?;
+    let expected_group = "$(TeamIdentifierPrefix)com.haoxincode.picoo-camera";
+    if !entitlements
+        .get("com.apple.security.application-groups")
+        .and_then(|value| value.as_array())
+        .is_some_and(|groups| groups.iter().any(|group| group == expected_group))
+    {
+        bail!("macOS Camera Extension entitlement is missing `{expected_group}`");
+    }
+
+    let binary = cmd!(sh, "file {executable}").read()?;
+    if !binary.contains("arm64") || binary.contains("x86_64") {
+        bail!("macOS Camera Extension must be ARM64-only: {binary}");
+    }
+
+    let linked = cmd!(sh, "otool -L {executable}").read()?;
+    for forbidden in ["Network.framework", "VideoToolbox.framework", "libpicoo"] {
+        if linked.contains(forbidden) {
+            bail!("macOS Camera Extension links forbidden product dependency `{forbidden}`");
+        }
+    }
+    Ok(())
+}
+
 fn validate_ios_xcframework(sh: &Shell, xcframework: &Path) -> Result<()> {
     let info_plist = xcframework.join("Info.plist");
     if !info_plist.is_file() {
@@ -330,6 +434,21 @@ fn test_suite(suite: TestSuite) -> Result<()> {
     match suite {
         TestSuite::Ios => test_ios(&sh)?,
         TestSuite::Macos => test_macos(&sh)?,
+        TestSuite::Windows => {
+            if !cfg!(target_os = "windows") {
+                bail!("Windows tests must run on a Windows host");
+            }
+            cmd!(
+                sh,
+                "cargo clippy -p picoo-frame-hub -p picoo-windows-vcam-source --all-targets -- -D warnings"
+            )
+            .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-frame-hub -p picoo-windows-vcam-source"
+            )
+            .run()?;
+        }
         TestSuite::Protocol => {
             cmd!(
                 sh,
@@ -438,6 +557,7 @@ fn test_macos(sh: &Shell) -> Result<()> {
     }
 
     let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
+    cmd!(sh, "cargo test -p picoo-frame-hub --lib").run()?;
     cmd!(sh, "cargo test -p picoo-media-decode").run()?;
     cmd!(
         sh,
