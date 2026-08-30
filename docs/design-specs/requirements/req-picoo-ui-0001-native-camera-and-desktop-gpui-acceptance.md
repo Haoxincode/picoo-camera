@@ -200,12 +200,12 @@
   - 一级导航图标必须与页面职责直接对应：`连接`使用同时表达手机与电脑的 `monitor-phone`，`虚拟摄像头`使用同时表达显示器与摄像头输出的 `monitor-camera`，不得继续使用泛化的 `home` 或 `monitor`；
   - 最小化、最大化、关闭等平台窗口装饰由 `gpui-component::TitleBar` 统一提供；Sidebar 折叠控制使用 Reicon Filled `sidebar-left` / `sidebar-right`，与导航图标保持同一图标体系。
 - [ ] **AC-D-NAV-03（可折叠图标 Sidebar）**：
-  - 原生窗口标题栏与工作区分层：标题栏只保留平台窗口装饰与拖拽行为；其下方使用一个内嵌圆角边框共同包住 Sidebar 与主内容区，Sidebar 只拥有与主内容相邻的分割线；
+  - 桌面窗口使用贴边的单层工作区，不展示独立品牌标题栏，不保留工作区外侧留白，也不使用第二层圆角边框包裹 Sidebar 与主内容区；Sidebar 只拥有与主内容相邻的分割线；
   - Sidebar 默认展开并保持 HTML 原型的 `204px` 宽度，用户可通过主内容区顶部工具行的面板方向按钮在展开态与 `48px` 图标态之间切换；折叠按钮位于 Sidebar 分割线后的内容侧，不得独占 Sidebar 导航行；
   - 导航区域遵循官方 Sidebar 的紧凑密度：常规导航行高为 `32px`、功能图标为 `16px`，图标与文案使用 `8px` 语义间距；导航功能图标继续使用 Reicon；
   - 折叠按钮遵循 `gpui-component::SidebarToggleButton` 的紧凑 `ghost + small` 几何与状态语义，展开态显示 Reicon Filled `sidebar-left`，折叠态显示 Reicon Filled `sidebar-right`；应用层继续提供稳定控件 ID、中文悬浮提示与无障碍名称；
   - 展开与折叠必须复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 裁剪宽度过渡：导航内容先按目标态排版，外层宽度连续插值，主内容与折叠按钮随 Sidebar 边界平滑移动，不得瞬间跳变或逐帧挤压导航文案；
-  - macOS 标题栏不重复展示应用图标与 `Picoo Camera` 文案；折叠按钮始终位于标题栏下方、内嵌工作区的主内容工具行，不与系统窗口控制区竞争空间。Windows 标题栏保留品牌图标与标题；两端均由 `gpui-component::TitleBar` 保留平台窗口装饰与拖拽行为；
+  - `gpui-component::TitleBar` 仅作为主内容顶部工具行的窗口行为容器，不形成独立视觉层；折叠按钮、当前页面与平台窗口装饰位于同一水平线。Windows 的最小化、最大化与关闭按钮位于该行最右侧；macOS 交通灯保留在左上 Sidebar 安全区，工具行使用平台安全间距；两端均不重复展示应用图标与 `Picoo Camera` 文案；
   - 折叠态仅显示导航、主题与展开控制图标，隐藏文案但保留选中态、稳定控件 ID、可聚焦按钮、无障碍名称与悬浮提示；
   - 折叠后释放的宽度由主内容区自动接管，主内容继续保持 `flex_1 + min_w_0` 与单一纵向滚动容器；折叠状态只属于当前桌面进程，不写入跨设备偏好。
   - 桌面应用首次启动默认使用 Picoo Light；Sidebar 主题按钮继续允许在 Picoo Light 与 Picoo Dark 之间切换。

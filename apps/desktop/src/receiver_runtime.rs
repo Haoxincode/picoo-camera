@@ -89,6 +89,7 @@ pub struct ReceiverRuntime {
     /// Unicast IPv4 advertised in mDNS (never 0.0.0.0 / 127.0.0.1).
     advertise_host: String,
     display_name: String,
+    advertised_trusted_count: usize,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
     shared_ring_error: Option<String>,
@@ -164,6 +165,7 @@ impl ReceiverRuntime {
             bind_addr: Some(bind),
             advertise_host,
             display_name: config.identity.display_name,
+            advertised_trusted_count: trusted_count,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
             shared_ring_error,
         })
@@ -291,7 +293,13 @@ impl ReceiverRuntime {
     }
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
-        self.receiver.pump()
+        self.receiver.pump()?;
+        let trusted_count = self.receiver.trusted_devices().list().count();
+        if trusted_count != self.advertised_trusted_count {
+            self.refresh_mdns_advertisement();
+            self.advertised_trusted_count = trusted_count;
+        }
+        Ok(())
     }
 
     pub fn snapshot(&self) -> ReceiverSnapshot {
@@ -350,10 +358,9 @@ impl ReceiverRuntime {
     }
 
     #[allow(dead_code)]
-    pub fn confirm_pairing(&mut self) {
-        self.receiver.confirm_pairing_locally();
-        // Trust store may have grown — refresh TXT (REQ-PICOO-DISCOVERY-001).
-        self.refresh_mdns_advertisement();
+    pub fn confirm_pairing(&mut self) -> Result<(), ReceiverError> {
+        self.receiver.confirm_pairing_locally()?;
+        Ok(())
     }
 
     #[allow(dead_code)]

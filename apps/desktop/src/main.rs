@@ -308,10 +308,10 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
         return;
     }
     match line {
-        "confirm" | "confirm-pairing" => {
-            receiver.confirm_pairing_locally();
-            println!("Desktop confirmed pairing locally.");
-        }
+        "confirm" | "confirm-pairing" => match receiver.confirm_pairing_locally() {
+            Ok(()) => println!("Desktop confirmed pairing locally."),
+            Err(error) => eprintln!("Desktop pairing confirmation failed: {error}"),
+        },
         "list" | "list-paired" => {
             for device in receiver.trusted_devices().list() {
                 println!(

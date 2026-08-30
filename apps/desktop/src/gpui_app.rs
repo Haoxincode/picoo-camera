@@ -12,6 +12,7 @@ use gpui_component::animation::{ease_in_out_cubic, EffectTransition};
 use gpui_component::button::*;
 use gpui_component::dialog::DialogButtonProps;
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::notification::NotificationType;
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::switch::*;
 use gpui_component::*;
@@ -148,6 +149,29 @@ enum VcamSetupState {
     Failed(String),
 }
 
+#[derive(Default)]
+struct DiagnosticsExportState {
+    path: Option<PathBuf>,
+}
+
+impl DiagnosticsExportState {
+    fn succeeded(&mut self, path: PathBuf) {
+        self.path = Some(path);
+    }
+
+    fn failed(&mut self) {
+        self.path = None;
+    }
+
+    fn can_reveal(&self) -> bool {
+        self.path.is_some()
+    }
+
+    fn path(&self) -> Option<&std::path::Path> {
+        self.path.as_deref()
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum VcamSetupOperation {
     Activate,
@@ -234,6 +258,7 @@ pub struct PicooDesktopApp {
     vcam_setup_state: VcamSetupState,
     diagnostics_message: Option<String>,
     diagnostics_error: Option<String>,
+    diagnostics_export: DiagnosticsExportState,
     window_handle: AnyWindowHandle,
     pairing_dialog_code: Option<String>,
     pairing_dialog_visible: bool,
@@ -287,6 +312,7 @@ impl PicooDesktopApp {
             vcam_setup_state: VcamSetupState::Idle,
             diagnostics_message: None,
             diagnostics_error: None,
+            diagnostics_export: DiagnosticsExportState::default(),
             window_handle,
             pairing_dialog_code: None,
             pairing_dialog_visible: false,
@@ -675,15 +701,22 @@ impl PicooDesktopApp {
             &hosts,
         ) {
             Ok(result) => {
+                let exported_path = result
+                    .path
+                    .as_deref()
+                    .map(PathBuf::from)
+                    .unwrap_or(out_path);
                 self.diagnostics_error = None;
                 self.diagnostics_message = Some(format!(
                     "已导出至 {}（已脱敏，不含视频）",
-                    result.path.as_deref().unwrap_or("(未知路径)")
+                    exported_path.display()
                 ));
+                self.diagnostics_export.succeeded(exported_path);
             }
             Err(err) => {
                 self.diagnostics_message = None;
                 self.diagnostics_error = Some(format!("导出失败：{err}"));
+                self.diagnostics_export.failed();
             }
         }
         cx.notify();
@@ -852,7 +885,19 @@ impl Render for PicooDesktopApp {
         // re-entrant Entity updates / RefCell panics during render.
         let snapshot = self.snapshot();
         let content = if self.page == DesktopPage::FirstLaunch {
-            self.render_first_launch(cx).into_any_element()
+            div()
+                .v_flex()
+                .size_full()
+                .child(self.render_first_launch_title_bar(cx))
+                .child(
+                    div()
+                        .v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .child(self.render_first_launch(cx)),
+                )
+                .into_any_element()
         } else {
             div()
                 .h_flex()
@@ -860,79 +905,33 @@ impl Render for PicooDesktopApp {
                 .min_w_0()
                 .min_h_0()
                 .overflow_hidden()
-                .rounded(cx.theme().radius_lg)
-                .border_1()
-                .border_color(cx.theme().border)
                 .child(self.render_sidebar(window, cx))
-                .child(self.render_section(&snapshot, cx))
+                .child(
+                    div()
+                        .v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .min_h_0()
+                        .child(self.render_workspace_title_bar(cx))
+                        .child(self.render_section(&snapshot, cx)),
+                )
                 .into_any_element()
         };
 
         div()
-            .v_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(self.render_header(cx))
-            .child(
-                div()
-                    .v_flex()
-                    .w_full()
-                    .flex_1()
-                    .min_w_0()
-                    .min_h_0()
-                    .relative()
-                    .when(self.page != DesktopPage::FirstLaunch, |this| this.p_5())
-                    .child(content),
-            )
+            .child(content)
     }
 }
 
 impl PicooDesktopApp {
-    fn render_header(&self, cx: &Context<Self>) -> impl IntoElement {
-        let is_macos = cfg!(target_os = "macos");
-
+    fn render_first_launch_title_bar(&self, cx: &Context<Self>) -> impl IntoElement {
         TitleBar::new()
             .h_12()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().sidebar)
-            .child(
-                div()
-                    .h_flex()
-                    .h_full()
-                    .w_full()
-                    .items_center()
-                    .when(!is_macos, |this| {
-                        this.child(self.render_header_brand(true, cx))
-                    })
-                    .child(div().flex_1()),
-            )
-    }
-
-    fn render_header_brand(&self, show_title: bool, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .h_flex()
-            .items_center()
-            .gap_3()
-            .child(
-                div().size_6().flex().items_center().justify_center().child(
-                    reicon_svg(
-                        include_bytes!("../../../assets/icons/reicon/camera.svg"),
-                        cx.theme().primary,
-                    )
-                    .size_5(),
-                ),
-            )
-            .when(show_title, |this| {
-                this.child(
-                    div()
-                        .text_sm()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().sidebar_foreground)
-                        .child("Picoo Camera"),
-                )
-            })
+            .border_b_0()
+            .bg(cx.theme().background)
     }
 
     fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -942,18 +941,14 @@ impl PicooDesktopApp {
         } else {
             SIDEBAR_EXPANDED_WIDTH
         };
-        let sidebar = div()
+        let navigation = div()
             .v_flex()
-            .w(target_width)
-            .h_full()
-            .flex_shrink_0()
+            .flex_1()
+            .min_h_0()
             .justify_between()
             .when(collapsed, |this| this.px_2())
             .when(!collapsed, |this| this.px_3())
             .py_3()
-            .border_r_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().sidebar)
             .child(
                 div()
                     .v_flex()
@@ -979,6 +974,23 @@ impl PicooDesktopApp {
                     .child(self.nav_button("关于", DesktopSection::About, "info", cx))
                     .child(self.theme_button(cx)),
             );
+        let sidebar = div()
+            .v_flex()
+            .w(target_width)
+            .h_full()
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().sidebar)
+            .child(
+                div()
+                    .h_12()
+                    .w_full()
+                    .flex_shrink_0()
+                    .border_b_1()
+                    .border_color(cx.theme().border),
+            )
+            .child(navigation);
 
         let transition = window.use_keyed_state("picoo-sidebar-width-transition", cx, |_, _| {
             SidebarWidthTransition::new(target_width)
@@ -1147,27 +1159,38 @@ impl PicooDesktopApp {
                     .min_h_full()
                     .gap_4()
                     .p_4()
-                    .child(self.render_workspace_toolbar(cx))
                     .child(page),
             )
             .into_any_element()
     }
 
-    fn render_workspace_toolbar(&self, cx: &Context<Self>) -> impl IntoElement {
-        div()
-            .h_flex()
-            .items_center()
-            .gap_3()
-            .flex_shrink_0()
-            .child(self.sidebar_toggle_button(cx))
-            .child(div().h_4().border_l_1().border_color(cx.theme().border))
+    fn render_workspace_title_bar(&self, cx: &Context<Self>) -> impl IntoElement {
+        TitleBar::new()
+            .h_12()
+            .pl_0()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().background)
             .child(
                 div()
+                    .h_flex()
+                    .h_full()
+                    .flex_1()
                     .min_w_0()
-                    .text_sm()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(cx.theme().muted_foreground)
-                    .child(self.section.label()),
+                    .items_center()
+                    .gap_3()
+                    .when(cfg!(target_os = "macos"), |this| this.pl_8())
+                    .when(!cfg!(target_os = "macos"), |this| this.pl_3())
+                    .child(self.sidebar_toggle_button(cx))
+                    .child(div().h_4().border_l_1().border_color(cx.theme().border))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(cx.theme().muted_foreground)
+                            .child(self.section.label()),
+                    ),
             )
     }
 
@@ -2028,12 +2051,23 @@ impl PicooDesktopApp {
                 )
                 .on_ok({
                     let confirm_app = confirm_app.clone();
-                    move |_, _, cx| {
-                        let _ = confirm_app.update(cx, |this, cx| {
-                            this.runtime.confirm_pairing();
+                    move |_, window, cx| {
+                        let outcome = confirm_app.update(cx, |this, cx| {
+                            let outcome = this
+                                .runtime
+                                .confirm_pairing()
+                                .map_err(|error| format!("配对确认失败：{error}"));
                             cx.notify();
+                            outcome
                         });
-                        true
+                        match outcome {
+                            Ok(Ok(())) => true,
+                            Ok(Err(message)) => {
+                                window.push_notification((NotificationType::Error, message), cx);
+                                false
+                            }
+                            Err(_) => false,
+                        }
                     }
                 })
                 .on_cancel({
@@ -2638,12 +2672,31 @@ impl PicooDesktopApp {
                                     ),
                             )
                             .child(
-                                Button::new("export-diagnostics")
-                                    .outline()
-                                    .label("导出")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.export_diagnostics(cx);
-                                    })),
+                                div()
+                                    .h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("export-diagnostics")
+                                            .outline()
+                                            .label("导出")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.export_diagnostics(cx);
+                                            })),
+                                    )
+                                    .when(self.diagnostics_export.can_reveal(), |actions| {
+                                        actions.child(
+                                            Button::new("reveal-diagnostics")
+                                                .outline()
+                                                .label("打开所在文件夹")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    if let Some(path) =
+                                                        this.diagnostics_export.path()
+                                                    {
+                                                        cx.reveal_path(path);
+                                                    }
+                                                })),
+                                        )
+                                    }),
                             ),
                     )
                     .children(
@@ -3642,12 +3695,29 @@ fn should_auto_start_vcam(status: VirtualCameraStatus) -> bool {
 mod tests {
     use super::{
         macos_activation_action_visible, macos_deactivation_action_visible,
-        resolve_pending_macos_vcam_status, should_auto_start_vcam, PicooAssets,
-        SidebarWidthTransition, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_EXPANDED_WIDTH,
+        resolve_pending_macos_vcam_status, should_auto_start_vcam, DiagnosticsExportState,
+        PicooAssets, SidebarWidthTransition, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_EXPANDED_WIDTH,
     };
     use crate::model::VirtualCameraStatus;
     use crate::prefs::{MacosCameraExtensionIntent, PendingMacosCameraExtension};
     use gpui::AssetSource;
+    use std::path::PathBuf;
+
+    #[test]
+    fn diagnostics_reveal_action_tracks_last_successful_export() {
+        let mut state = DiagnosticsExportState::default();
+        assert!(!state.can_reveal());
+        assert!(state.path().is_none());
+
+        let path = PathBuf::from("diagnostics").join("picoo-diagnostics.json");
+        state.succeeded(path.clone());
+        assert!(state.can_reveal());
+        assert_eq!(state.path(), Some(path.as_path()));
+
+        state.failed();
+        assert!(!state.can_reveal());
+        assert!(state.path().is_none());
+    }
 
     #[test]
     fn only_an_installed_virtual_camera_is_started_automatically() {

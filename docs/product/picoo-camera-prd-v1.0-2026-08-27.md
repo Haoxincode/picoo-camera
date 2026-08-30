@@ -282,7 +282,7 @@ IP:QUIC_PORT
 
 Sender 通过 mDNS 或手动 `IP:端口` 确定 Receiver Endpoint 并建立 QUIC/TLS 连接。对于未配对 Sender，Receiver 为本次连接生成随机挑战及由双方设备 ID 派生的六位配对短码，并通过加密的可靠控制 Stream 发给 Sender；手机与电脑必须显示相同数字。
 
-用户必须在手机端和桌面端分别确认数字一致。任一端拒绝、连接中断或 60 秒到期后，本次挑战与短码立即失效；短码不由用户输入，也不能跨连接复用。双向确认完成后，系统保存对方公钥。
+用户必须在手机端和桌面端分别确认数字一致，确认顺序不影响结果。任一端拒绝、连接中断或 60 秒到期后，本次挑战与短码立即失效；短码不由用户输入，也不能跨连接复用。双向确认完成后，系统保存对方公钥并开始视频协商；在此之前 Sender 不得开始推流。
 
 **FR-PAIR-002 密钥固定**
 
@@ -876,9 +876,9 @@ FFI 边界只允许：
 
 协议暂定名称：**Picoo Camera Protocol**
 
-协议版本：**PCP/1**
+协议版本：**PCP/2**
 
-QUIC ALPN：**picoocam/1**
+QUIC ALPN：**picoocam/2**
 
 ### 12.1 连接角色
 
@@ -929,6 +929,9 @@ QUIC Connection
 - Capabilities
 - PairingChallenge
 - PairingConfirm
+- PairingApproval
+- PairingCommit
+- PairingComplete
 - StartStream
 - StopStream
 - StreamConfig
@@ -1222,7 +1225,7 @@ Virtual Camera: Ready
 - 默认占位画面；
 - 日志级别；
 - 已配对设备管理；
-- 导出诊断信息。
+- 导出诊断信息；桌面端导出成功后可直接打开文件所在文件夹。
 
 Windows 产品进程必须使用 GUI subsystem，从资源管理器或开机启动进入桌面 UI 时不得附带控制台窗口，也不得通过 `reg.exe` 等控制台子进程检测状态。普通启动只能以只读方式检测并启动已安装的虚拟摄像头；系统级 COM/Media Foundation 注册修复只能由安装器或用户明确触发的“虚拟摄像头修复”操作执行。
 用户在“虚拟摄像头”页明确点击“安装或修复…”后，应用通过 Windows UAC 启动独立维护进程；主界面必须保持响应，并在原操作位置显示等待、成功或失败结果。若安装包组件缺失，应明确要求重新运行 `PicooCamera.msi`，不能提示前往不存在的“设置页”。
