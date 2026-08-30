@@ -25,6 +25,8 @@ class SenderHomeState {
     var errorText by mutableStateOf<String?>(null)
     var hostText by mutableStateOf("127.0.0.1")
     var portText by mutableStateOf("4433")
+    var manualEndpointText by mutableStateOf("")
+    var connectionStartedAtMs by mutableLongStateOf(0L)
     var senderStatus by mutableIntStateOf(PicooNative.STATUS_DISCONNECTED)
     var pairingCode by mutableStateOf("")
     val discoveredReceivers = mutableStateOf<List<PicooNative.DiscoveredReceiver>>(emptyList())

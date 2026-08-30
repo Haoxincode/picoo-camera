@@ -28,6 +28,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             ?.let(StreamResolution::fromLabel)
             ?.label
             ?: StreamResolution.P1080.label
+        manualEndpointText = preferences.getString(KEY_LAST_MANUAL_ENDPOINT, "").orEmpty()
     }
     val parameterSetsRef = AtomicReference<Pair<ByteArray, ByteArray>?>(null)
     val streamConfigDirty = AtomicBoolean(false)
@@ -66,6 +67,13 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         preferences.edit().putString(KEY_PREFERRED_RESOLUTION, resolution.label).apply()
     }
 
+    /** Persist only the endpoint locator; pairing trust remains Rust-owned. */
+    fun rememberManualEndpoint(host: String, port: Int) {
+        val endpoint = "$host:$port"
+        uiState.manualEndpointText = endpoint
+        preferences.edit().putString(KEY_LAST_MANUAL_ENDPOINT, endpoint).apply()
+    }
+
     override fun onCleared() {
         encoder.close()
         runtime.close()
@@ -75,5 +83,6 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         const val PREFERENCES_NAME = "sender_settings"
         const val KEY_AUTO_CONNECT = "auto_connect_enabled"
         const val KEY_PREFERRED_RESOLUTION = "preferred_resolution"
+        const val KEY_LAST_MANUAL_ENDPOINT = "last_manual_endpoint"
     }
 }

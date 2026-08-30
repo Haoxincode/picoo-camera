@@ -46,6 +46,14 @@ struct SenderPairing {
     trust_committed: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ClientHelloParams {
+    sender_id: String,
+    device_name: String,
+    public_key: Vec<u8>,
+    protocol_version: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionStats {
     pub pipeline: SenderStats,
@@ -76,7 +84,7 @@ pub struct SenderSession<T: PicooTransport> {
     sent_datagrams: u64,
     pairing: Option<SenderPairing>,
     sender_id: Option<String>,
-    hello_params: Option<(String, String, Vec<u8>)>,
+    hello_params: Option<ClientHelloParams>,
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
     status: SenderStatus,
@@ -660,11 +668,8 @@ impl<T: PicooTransport> SenderSession<T> {
         self.reconnect_backoff.reset();
         self.reconnect_after = None;
         self.status = SenderStatus::Connecting;
-        if let Some((sender_id, device_name, public_key)) = self.hello_params.clone() {
-            if self
-                .send_client_hello(&sender_id, &device_name, &public_key)
-                .is_ok()
-            {
+        if let Some(params) = self.hello_params.clone() {
+            if self.emit_client_hello(&params).is_ok() {
                 self.status = SenderStatus::Negotiating;
             }
         }
@@ -1183,20 +1188,44 @@ impl<T: PicooTransport> SenderSession<T> {
         public_key: &[u8],
         protocol_version: &str,
     ) -> Result<(), SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let connection_pending = matches!(
+            self.status,
+            SenderStatus::Connecting | SenderStatus::Reconnecting
+        );
+        if self.session.is_none() && !connection_pending {
+            return Err(SenderError::NotConnected);
+        }
+
         self.last_session_error = None;
-        let hello = ClientHello {
-            sender_id: sender_id.into(),
-            device_name: device_name.into(),
-            protocol_version: protocol_version.into(),
-            public_key: public_key.to_vec(),
-        };
         self.sender_id = Some(sender_id.into());
-        self.hello_params = Some((
-            sender_id.to_string(),
-            device_name.to_string(),
-            public_key.to_vec(),
-        ));
+        let params = ClientHelloParams {
+            sender_id: sender_id.to_string(),
+            device_name: device_name.to_string(),
+            public_key: public_key.to_vec(),
+            protocol_version: protocol_version.to_string(),
+        };
+        self.hello_params = Some(params.clone());
+
+        // QUIC connect is asynchronous on mobile. Treat ClientHello as the desired
+        // first control message and let `on_connected` emit it once a session exists.
+        // This preserves the Android call order: connect() -> sendClientHello().
+        if self.session.is_none() {
+            return Ok(());
+        }
+
+        self.emit_client_hello(&params)?;
+        self.drain_events();
+        Ok(())
+    }
+
+    fn emit_client_hello(&mut self, params: &ClientHelloParams) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let hello = ClientHello {
+            sender_id: params.sender_id.clone(),
+            device_name: params.device_name.clone(),
+            protocol_version: params.protocol_version.clone(),
+            public_key: params.public_key.clone(),
+        };
         let mut buf = Vec::new();
         hello
             .encode(&mut buf)
@@ -1204,7 +1233,6 @@ impl<T: PicooTransport> SenderSession<T> {
         self.transport
             .send_control(session, bytes::Bytes::from(buf))
             .map_err(SenderError::Transport)?;
-        self.drain_events();
         Ok(())
     }
 
@@ -1287,18 +1315,113 @@ impl<T: PicooTransport> SenderSession<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
     use std::time::Duration;
 
+    use bytes::Bytes;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_protocol::control::{Capabilities, PairingChallenge, Resolution, ServerHello};
+    use picoo_protocol::VideoPacket;
     use picoo_protocol::ALPN;
     use picoo_rate_control::BitrateAction;
     use picoo_session::SenderStatus;
     use picoo_testkit::MemoryTransport;
-    use picoo_transport::{CloseReason, Endpoint};
+    use picoo_transport::{
+        CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent,
+    };
     use prost::Message;
 
     use super::*;
+
+    struct DeferredConnectTransport {
+        session: SessionId,
+        connected: bool,
+        events: VecDeque<TransportEvent>,
+        sent_control: Vec<Bytes>,
+    }
+
+    impl DeferredConnectTransport {
+        fn new() -> Self {
+            Self {
+                session: SessionId(1),
+                connected: false,
+                events: VecDeque::new(),
+                sent_control: Vec::new(),
+            }
+        }
+
+        fn complete_connect(&mut self) {
+            self.connected = true;
+            self.events
+                .push_back(TransportEvent::Connected(self.session));
+        }
+    }
+
+    impl PicooTransport for DeferredConnectTransport {
+        fn connect(&mut self, _endpoint: Endpoint) -> Result<SessionId, TransportError> {
+            Ok(self.session)
+        }
+
+        fn send_control(
+            &mut self,
+            session: SessionId,
+            message: Bytes,
+        ) -> Result<(), TransportError> {
+            if !self.connected || session != self.session {
+                return Err(TransportError::NotConnected);
+            }
+            self.sent_control.push(message);
+            Ok(())
+        }
+
+        fn send_video(
+            &mut self,
+            _session: SessionId,
+            _packet: VideoPacket,
+        ) -> Result<(), TransportError> {
+            Ok(())
+        }
+
+        fn poll_event(&mut self) -> Option<TransportEvent> {
+            self.events.pop_front()
+        }
+
+        fn close(&mut self, session: SessionId, reason: CloseReason) {
+            self.connected = false;
+            self.events
+                .push_back(TransportEvent::Disconnected(session, reason));
+        }
+    }
+
+    #[test]
+    fn client_hello_queued_before_async_connect_is_sent_when_connected() {
+        // REQ-PICOO-DISCOVERY-007: mirrors Android connect() -> sendClientHello().
+        let mut sender = SenderSession::new(DeferredConnectTransport::new());
+        sender
+            .connect(Endpoint {
+                host: "192.168.8.101".into(),
+                port: 4433,
+            })
+            .expect("queue connect");
+
+        sender
+            .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
+            .expect("queue hello before QUIC handshake completes");
+        assert!(sender.transport().sent_control.is_empty());
+
+        sender.transport_mut().complete_connect();
+        sender.pump().expect("process connected event");
+
+        assert_eq!(sender.status(), SenderStatus::Negotiating);
+        let encoded = sender
+            .transport()
+            .sent_control
+            .first()
+            .expect("ClientHello emitted after connect");
+        let hello = ClientHello::decode(encoded.as_ref()).expect("decode ClientHello");
+        assert_eq!(hello.sender_id, "android-sender");
+        assert_eq!(hello.protocol_version, ALPN);
+    }
 
     #[test]
     fn memory_transport_flush_pending() {

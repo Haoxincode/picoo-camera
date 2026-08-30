@@ -78,8 +78,11 @@ fun DevicesScreen(
     discoveryComplete: Boolean,
     wifiPillText: String,
     errorText: String?,
+    manualEndpointText: String,
+    manualConnecting: Boolean,
     onSelectReceiver: (PicooNative.DiscoveredReceiver) -> Unit,
-    onManualConnect: (host: String, port: Int) -> Boolean,
+    onManualConnect: (host: String, port: Int) -> Unit,
+    onManualEndpointChange: (String) -> Unit,
     onCheckPermissions: () -> Unit,
     onRemovePaired: (PicooNative.TrustedDevice) -> Unit,
     onOfflinePairedClick: (PicooNative.TrustedDevice) -> Unit,
@@ -303,13 +306,14 @@ fun DevicesScreen(
 
     if (manualSheetOpen) {
         ManualConnectSheet(
+            endpoint = manualEndpointText,
+            connecting = manualConnecting,
             errorText = errorText,
             onDismiss = { manualSheetOpen = false },
             onConnect = { host, port ->
-                if (onManualConnect(host, port)) {
-                    manualSheetOpen = false
-                }
+                onManualConnect(host, port)
             },
+            onEndpointChange = onManualEndpointChange,
         )
     }
 
@@ -415,11 +419,13 @@ private fun DeviceRow(
 
 @Composable
 private fun ManualConnectSheet(
+    endpoint: String,
+    connecting: Boolean,
     errorText: String?,
     onDismiss: () -> Unit,
     onConnect: (host: String, port: Int) -> Unit,
+    onEndpointChange: (String) -> Unit,
 ) {
-    var endpoint by rememberSaveable { mutableStateOf("") }
     var validationError by rememberSaveable { mutableStateOf<String?>(null) }
     val colors = PicooTheme.colors
     val dimensions = PicooTheme.dimensions
@@ -431,7 +437,7 @@ private fun ManualConnectSheet(
         OutlinedTextField(
             value = endpoint,
             onValueChange = {
-                endpoint = it
+                onEndpointChange(it)
                 validationError = null
             },
             modifier = Modifier.fillMaxWidth(),
@@ -450,7 +456,7 @@ private fun ManualConnectSheet(
         }
         Spacer(modifier = Modifier.height(dimensions.space16))
         PicooPrimaryButton(
-            text = "连接电脑",
+            text = if (connecting) "正在连接…" else "连接电脑",
             onClick = {
                 val parts = endpoint.trim().split(":", limit = 2)
                 val host = parts.firstOrNull()?.trim().orEmpty()
@@ -465,6 +471,7 @@ private fun ManualConnectSheet(
                 }
             },
             modifier = Modifier.fillMaxWidth(),
+            enabled = !connecting,
         )
     }
 }

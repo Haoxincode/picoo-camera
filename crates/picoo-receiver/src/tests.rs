@@ -3677,17 +3677,10 @@ fn manual_endpoint_connects_to_streaming() {
             port: bind.port(),
         })
         .expect("connect from manual endpoint");
-    for _ in 0..200 {
-        receiver.pump().ok();
-        sender.pump().ok();
-        if sender.is_connected() && receiver.is_connected() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    // Android submits its stable identity immediately; QUIC is still connecting here.
     sender
         .send_client_hello("manual-phone", "Manual", &[4, 4, 4])
-        .expect("hello");
+        .expect("queue hello while connecting");
     for _ in 0..200 {
         receiver.pump().ok();
         sender.pump().ok();

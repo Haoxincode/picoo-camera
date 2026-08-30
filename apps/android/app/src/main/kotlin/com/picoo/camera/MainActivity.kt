@@ -209,6 +209,8 @@ private fun SenderHomeScreen(
     var errorText by uiState::errorText
     var hostText by uiState::hostText
     var portText by uiState::portText
+    var manualEndpointText by uiState::manualEndpointText
+    var connectionStartedAtMs by uiState::connectionStartedAtMs
     var senderStatus by uiState::senderStatus
     var pairingCode by uiState::pairingCode
     val discoveredListState = uiState.discoveredReceivers
@@ -367,6 +369,7 @@ private fun SenderHomeScreen(
 
     fun connectToReceiver(host: String, port: Int, receiverId: String): Boolean {
         suppressAutoConnect = false
+        connectionStartedAtMs = 0L
         val preferredResolution = StreamResolution.fromLabel(preferredResolutionLabel)
         resolutionLabel = preferredResolution.label
         val preferredBitrate = PicooNative.bitrateInitialForHeight(preferredResolution.height)
@@ -378,17 +381,41 @@ private fun SenderHomeScreen(
         if (rc == 0) {
             lastShownSessionError = ""
             selectedReceiverId = receiverId
-            PicooNative.sendClientHello(
+            connectionStartedAtMs = System.currentTimeMillis()
+            val helloRc = PicooNative.sendClientHello(
                 senderHandle,
                 senderId = senderDeviceId,
                 deviceName = senderDeviceName,
                 publicKey = senderPublicKey,
             )
+            if (helloRc != 0) {
+                PicooNative.disconnect(senderHandle)
+                connectionStartedAtMs = 0L
+                errorText = "无法开始安全连接 ($helloRc)"
+                return false
+            }
             errorText = null
             return true
         } else {
             errorText = "连接失败 ($rc)"
             return false
+        }
+    }
+
+    LaunchedEffect(connectionStartedAtMs) {
+        val startedAt = connectionStartedAtMs
+        if (startedAt == 0L) return@LaunchedEffect
+        delay(10_000)
+        if (connectionStartedAtMs == startedAt &&
+            senderStatus in setOf(
+                PicooNative.STATUS_CONNECTING,
+                PicooNative.STATUS_NEGOTIATING,
+                PicooNative.STATUS_RECONNECTING,
+            )
+        ) {
+            PicooNative.disconnect(senderHandle)
+            connectionStartedAtMs = 0L
+            errorText = "无法连接到 $hostText:$portText，请确认电脑端已打开且位于同一局域网"
         }
     }
 
@@ -580,6 +607,12 @@ private fun SenderHomeScreen(
                 PicooNative.pump(senderHandle)
                 var senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                 senderStatus = senderSnapshot.status
+                if (senderStatus == PicooNative.STATUS_PAIRING ||
+                    senderStatus == PicooNative.STATUS_STREAMING ||
+                    senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE
+                ) {
+                    connectionStartedAtMs = 0L
+                }
                 if (senderStatus == PicooNative.STATUS_RECONNECTING) {
                     reconnectAttempt = senderSnapshot.reconnectAttempt
                     reconnectDelayMs = senderSnapshot.reconnectDelayMs
@@ -806,8 +839,6 @@ private fun SenderHomeScreen(
         when {
             senderTab == SenderTab.Settings -> Unit
             senderStatus == PicooNative.STATUS_STREAMING ||
-                senderStatus == PicooNative.STATUS_NEGOTIATING ||
-                senderStatus == PicooNative.STATUS_RECONNECTING ||
                 senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE ||
                 senderStatus == PicooNative.STATUS_PERMISSION_REQUIRED -> {
                 phonePairingConfirmed = false
@@ -838,6 +869,13 @@ private fun SenderHomeScreen(
                 discoveryComplete = discoveryComplete,
                 wifiPillText = wifiPillText,
                 errorText = errorText,
+                manualEndpointText = manualEndpointText,
+                manualConnecting = selectedReceiverId.startsWith("manual-") &&
+                    senderStatus in setOf(
+                        PicooNative.STATUS_CONNECTING,
+                        PicooNative.STATUS_NEGOTIATING,
+                        PicooNative.STATUS_RECONNECTING,
+                    ),
                 onSelectReceiver = { receiver ->
                     selectedReceiverName = receiver.displayName
                     hostText = receiver.host
@@ -846,12 +884,14 @@ private fun SenderHomeScreen(
                     connectToReceiver(receiver.host, receiver.quicPort, receiver.receiverId)
                 },
                 onManualConnect = { host, port ->
+                    sessionModel.rememberManualEndpoint(host, port)
                     hostText = host
                     portText = port.toString()
                     selectedReceiverId = "manual-$host"
                     selectedReceiverName = host
                     connectToReceiver(host, port, selectedReceiverId)
                 },
+                onManualEndpointChange = { manualEndpointText = it },
                 onCheckPermissions = {
                     onRequestNearbyWifi()
                     onRequestNotifications()
