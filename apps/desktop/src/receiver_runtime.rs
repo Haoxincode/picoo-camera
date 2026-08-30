@@ -258,7 +258,8 @@ impl ReceiverRuntime {
         self.virtual_camera = status;
         // REQ-PICOO-SESSION-001 / PUC-004: mirror VCam install into session status when idle.
         match status {
-            crate::model::VirtualCameraStatus::NotInstalled => {
+            crate::model::VirtualCameraStatus::Bundled
+            | crate::model::VirtualCameraStatus::NotInstalled => {
                 self.receiver.mark_virtual_camera_unavailable();
             }
             crate::model::VirtualCameraStatus::Installed
@@ -361,7 +362,7 @@ impl ReceiverRuntime {
         Ok(removed)
     }
 
-    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+    #[allow(dead_code)]
     pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
         let removed = self.receiver.clear_trusted_devices()?;
         if removed > 0 {

@@ -68,6 +68,9 @@
 | **服务发现/雷达** | `reicon::radio` | `Reicon.Radio` | `Image("reicon_radio")` | `svg().path("reicon/radio.svg")` |
 | **过热降档** | `reicon::flame` | `Reicon.Flame` | `Image("reicon_flame")` | `svg().path("assets/icons/reicon/flame.svg")` |
 | **网络状态** | `reicon::wifi` | `Reicon.Wifi` | `Image("reicon_wifi")` | `svg().path("assets/icons/reicon/wifi.svg")` |
+| **桌面接收端 / 虚拟摄像头** | `reicon::monitor` | `Reicon.Monitor` | `Image("reicon_monitor")` | `svg().path("assets/icons/reicon/monitor.svg")` |
+| **帮助** | `reicon::help-circle` | `Reicon.HelpCircle` | `Image("reicon_help_circle")` | `svg().path("assets/icons/reicon/help_circle.svg")` |
+| **深色模式入口** | `reicon::moon` | `Reicon.Moon` | `Image("reicon_moon")` | `svg().path("assets/icons/reicon/moon.svg")` |
 | **更多操作** | `reicon::more-h` | `Reicon.MoreHorizontal` | `Image("reicon_more_horizontal")` | `svg().path("assets/icons/reicon/more_horizontal.svg")` |
 | **导航返回** | `reicon::chevron-left` | `Reicon.ChevronLeft` | `Image("reicon_chevron_left")` | `svg().path("assets/icons/reicon/chevron_left.svg")` |
 | **拒绝/关闭** | `reicon::xmark` | `Reicon.Xmark` | `Image("reicon_xmark")` | `svg().path("assets/icons/reicon/xmark.svg")` |
@@ -142,7 +145,8 @@
   - 间距、字号、图标和普通布局尺寸必须映射为 GPUI 的 `rem` scale helper 或 `gpui-component` 语义尺寸，产品颜色、圆角与阴影必须集中映射到 Picoo 语义主题，禁止在页面调用点散落原始色值和普通布局 `px(...)`；
   - Button、Switch、AlertDialog、滚动条等交互必须保留 `gpui-component` 的跨平台键盘、焦点、禁用态和 dismissal 契约；HTML 仅负责外观与信息架构，不能以像素复刻为由降级这些行为；
   - 允许且必须保留经产品确认的原型覆盖项：默认窗口为 1920×1080、最小窗口为 1180×720、连接页使用可用宽度而不保留 HTML 的 1160px 上限、实时预览严格保持 16:9；窗口边界属于平台物理尺寸，可使用 `px(...)`。
-- [ ] **AC-D-TECH-04（Windows 产品进程）**：从资源管理器或开机启动打开桌面端时不得附带命令行窗口，状态检测也不得启动 `reg.exe` 等控制台子进程；普通权限启动只通过无注册表写入能力的 API 检测并启动已安装的虚拟摄像头，不得自动尝试写系统级 COM 注册表。修复注册只由 MSI 或用户明确触发的修复动作承担。
+- [ ] **AC-D-TECH-04（Windows 产品进程）**：从资源管理器或开机启动打开桌面端时不得附带命令行窗口，状态检测也不得启动 `reg.exe` 等控制台子进程；普通权限启动只通过无注册表写入能力的 API 检测并启动已安装的虚拟摄像头，不得自动尝试写系统级 COM 注册表。修复注册只由 MSI 或用户明确触发的修复动作承担；显式修复必须触发 Windows UAC、避免阻塞 GPUI 线程和重复提交，并在当前虚拟摄像头界面内显示等待、成功或失败结果。
+- [ ] **AC-D-TECH-05（macOS 图标启动）**：从 Finder、Dock 或 `open` 启动打包后的 `Picoo Camera.app` 必须及时显示主窗口；Shared Frame Ring 文件访问不得阻塞主线程启动，暂不可用时应降级为页面内状态而不是留下无窗口进程。
 
 ### 4.2 待机与连接主页（Desktop Connect View - 左右 58% : 42% 黄金分栏）
 - [ ] **AC-D-LAYOUT-01（左右 58%:42% 黄金分栏）**：
@@ -152,14 +156,21 @@
 - [ ] **AC-D-HOST-02（主机识别卡片）**：
   - 顶部展示纯粹设备名 `Studio PC`（彻底移除生硬的 `（本机）` 括号文字）；
   - 搭配绿色状态徽标 `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 接收端已就绪`；
+  - 设备名下方不显示说明副标题；左侧标题分割线必须与右侧「设备与连接」标题分割线水平对齐；
   - 未收到配对请求时显示 `等待请求`；收到未配对 Sender 请求后，居中呈现本次握手的大号等宽 6 位配对短码（`482 917`）与局域网 IP 直连胶囊（`192.168.1.108:4433`，带一键复制）。
+- [ ] **AC-D-SETTINGS-04（设置页面归属）**：
+  - 通用页只显示电脑名称与桌面生命周期偏好，不得混入虚拟摄像头占位画面、可信设备管理或诊断选项；
+  - 无视频流占位画面归属虚拟摄像头页，自动接受与可信设备管理归属连接页“设备与连接”卡片，日志级别与脱敏诊断导出归属帮助页诊断区。
 - [ ] **AC-D-ONBOARDING-03（开始使用与硬件拓扑）**：
-  - 左卡片底部包含清晰的开始使用 3 步指南（1. 打开手机 App → 2. 选择自动发现的电脑或输入 IP → 3. 核对两端短码并开始推流）；
-  - 包含真机硬件互联拓扑图（手机 ➔ 无线波纹 ➔ 电脑）与 3 项轻量系统状态（虚拟摄像头、自动发现、连接方式）。
+  - 左卡片底部包含与 HTML 原型一致的开始使用 3 步指南（1. 打开 Picoo Camera → 2. 选择此电脑 → 3. 核对短码并确认）；
+  - “开始使用”与“设备与连接”使用相同标题字号和字重；真机拓扑卡片的上边界与“开始使用”标题对齐，下边界与第 3 步对齐；
+  - 包含真机硬件互联拓扑图（手机 ➔ 无线波纹 ➔ 电脑），iPhone 必须保留原型中的左右金属边框、侧键与高光；拓扑卡片只呈现硬件连接 SVG，下方不附加状态文案；
+  - “自动接受可信设备”使用设置行的次级字号，不得与卡片标题争夺层级。
 
 ### 4.3 右侧卡片：设备连接状态机与极简网络状态
 - [ ] **AC-D-DEVICE-01（已信任与最近连接设备列表）**：
   - Receiver 不主动发现或连接 Sender。待机时 Box 1 只呈现本机可信设备存储中的已信任/最近连接设备，显示名称、平台、最近连接时间和等待/离线状态，不提供伪造的 `[ 连接 ]` 动作；
+  - 卡片标题与设备条目必须使用同一固定版本 Reicon 的手机设备语义图标；不得退化为纯文字列表或平台 Emoji；
   - 列表拥有独立纵向滚动区域并填充右侧可用高度；空列表显示首次连接指引。
 - [ ] **AC-D-DEVICE-02（推流状态无缝切换）**：
   - Sender 建立推流后，设备列表自动收起；
@@ -167,6 +178,8 @@
   - 展开真实视频规格参数（H.264、720p30/1080p30、码率/电量）与 3 组已实现的镜头画面控制。
 - [ ] **AC-D-NET-03（极简网络状态卡片）**：
   - Box 2 保持极简 4 行原生指标（网络: 局域网可用 / 发现服务: 在线 / 延迟: 低 / 安全: 已保护）。
+  - 标题使用活动/指标图标；四行分别使用 Wi-Fi、服务、活动、安全语义 Reicon，值末尾使用完成或异常状态图标，不得只依赖颜色圆点表达状态。
+  - 待机主卡底栏同时展示局域网监听状态与 `shield-check` 安全直连提示。
 
 ### 4.4 直播接收监视器与镜头控制面板
 - [ ] **AC-D-LIVE-01**：推流时左侧大卡片自动切换为实时大屏视频流监视器（16:9 画幅、Canvas 动态推流渲染、左上角实时规格水印、右上角虚拟摄像头输出状态）。
@@ -185,9 +198,14 @@
 - [ ] **AC-D-NAV-02（100% Reicon 矢量图标标准化）**：
   - 所有产品功能图标严格采用 `dqev/reicon` 官方 24×24 像素网格矢量标准，严禁在功能交互中使用系统 emoji；
   - 一级导航图标必须与页面职责直接对应：`连接`使用同时表达手机与电脑的 `monitor-phone`，`虚拟摄像头`使用同时表达显示器与摄像头输出的 `monitor-camera`，不得继续使用泛化的 `home` 或 `monitor`；
-  - 最小化、最大化、关闭等平台窗口装饰由 `gpui-component::TitleBar` 统一提供，以保留 Windows/macOS 的原生控制区域与窗口拖拽契约，不视为产品功能图标。
+  - 最小化、最大化、关闭等平台窗口装饰由 `gpui-component::TitleBar` 统一提供；Sidebar 折叠控制沿用 `gpui-component::SidebarToggleButton` 的面板方向图标。两者属于桌面 Shell 控制，不视为产品功能图标；业务导航与页面功能仍统一使用 Reicon。
 - [ ] **AC-D-NAV-03（可折叠图标 Sidebar）**：
-  - Sidebar 默认展开并保持 HTML 原型的 `204px` 宽度，用户可通过顶部 `sidebar` Reicon 按钮在展开态与 `48px` 图标态之间切换；
+  - 原生窗口标题栏与工作区分层：标题栏只保留平台窗口装饰与拖拽行为；其下方使用一个内嵌圆角边框共同包住 Sidebar 与主内容区，Sidebar 只拥有与主内容相邻的分割线；
+  - Sidebar 默认展开并保持 HTML 原型的 `204px` 宽度，用户可通过主内容区顶部工具行的面板方向按钮在展开态与 `48px` 图标态之间切换；折叠按钮位于 Sidebar 分割线后的内容侧，不得独占 Sidebar 导航行；
+  - 导航区域遵循官方 Sidebar 的紧凑密度：常规导航行高为 `32px`、功能图标为 `16px`，图标与文案使用 `8px` 语义间距；导航功能图标继续使用 Reicon；
+  - 折叠按钮遵循 `gpui-component::SidebarToggleButton` 的紧凑 `ghost + small` 几何与状态语义，展开态显示关闭左侧面板图标，折叠态显示打开左侧面板图标；应用层继续提供稳定控件 ID、中文悬浮提示与无障碍名称；
+  - 展开与折叠必须复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 裁剪宽度过渡：导航内容先按目标态排版，外层宽度连续插值，主内容与折叠按钮随 Sidebar 边界平滑移动，不得瞬间跳变或逐帧挤压导航文案；
+  - macOS 标题栏不重复展示应用图标与 `Picoo Camera` 文案；折叠按钮始终位于标题栏下方、内嵌工作区的主内容工具行，不与系统窗口控制区竞争空间。Windows 标题栏保留品牌图标与标题；两端均由 `gpui-component::TitleBar` 保留平台窗口装饰与拖拽行为；
   - 折叠态仅显示导航、主题与展开控制图标，隐藏文案但保留选中态、稳定控件 ID、可聚焦按钮、无障碍名称与悬浮提示；
   - 折叠后释放的宽度由主内容区自动接管，主内容继续保持 `flex_1 + min_w_0` 与单一纵向滚动容器；折叠状态只属于当前桌面进程，不写入跨设备偏好。
 

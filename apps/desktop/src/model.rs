@@ -24,6 +24,8 @@ pub struct SessionSummary {
 pub enum VirtualCameraStatus {
     #[default]
     Unknown,
+    /// The platform component is included with the app but still needs OS activation.
+    Bundled,
     Installed,
     NotInstalled,
     Active,

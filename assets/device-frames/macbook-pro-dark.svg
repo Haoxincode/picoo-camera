@@ -1,0 +1,53 @@
+<svg width="600" height="360" viewBox="0 0 600 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="mbp_outer_stroke_d" x1="300" y1="12" x2="300" y2="330" gradientUnits="userSpaceOnUse">
+<stop stop-color="#64748B" stop-opacity="0.7"/>
+<stop offset="0.5" stop-color="#334155" stop-opacity="0.5"/>
+<stop offset="1" stop-color="#1E293B" stop-opacity="0.9"/>
+</linearGradient>
+<linearGradient id="mbp_outer_fill_d" x1="300" y1="12" x2="300" y2="330" gradientUnits="userSpaceOnUse">
+<stop stop-color="#1E293B"/>
+<stop offset="0.7" stop-color="#0F172A"/>
+<stop offset="1" stop-color="#090D16"/>
+</linearGradient>
+<linearGradient id="mbp_base_deck_d" x1="300" y1="328" x2="300" y2="346" gradientUnits="userSpaceOnUse">
+<stop stop-color="#334155"/>
+<stop offset="0.3" stop-color="#1E293B"/>
+<stop offset="1" stop-color="#0F172A"/>
+</linearGradient>
+<linearGradient id="mbp_base_stroke_d" x1="0" y1="328" x2="600" y2="328" gradientUnits="userSpaceOnUse">
+<stop stop-color="#64748B" stop-opacity="0"/>
+<stop offset="0.2" stop-color="#94A3B8" stop-opacity="0.8"/>
+<stop offset="0.5" stop-color="#CBD5E1" stop-opacity="0.9"/>
+<stop offset="0.8" stop-color="#94A3B8" stop-opacity="0.8"/>
+<stop offset="1" stop-color="#64748B" stop-opacity="0"/>
+</linearGradient>
+<linearGradient id="mbp_front_lip_d" x1="300" y1="344" x2="300" y2="350" gradientUnits="userSpaceOnUse">
+<stop stop-color="#1E293B"/>
+<stop offset="1" stop-color="#0A0E17"/>
+</linearGradient>
+<radialGradient id="mbp_shadow_d" cx="0.5" cy="0.5" r="0.5" fx="0.5" fy="0.5">
+<stop offset="0" stop-color="#000000" stop-opacity="0.6"/>
+<stop offset="0.6" stop-color="#000000" stop-opacity="0.3"/>
+<stop offset="1" stop-color="#000000" stop-opacity="0"/>
+</radialGradient>
+<filter id="mbp_blur_d" x="-20%" y="-50%" width="140%" height="200%">
+<feGaussianBlur stdDeviation="3.5"/>
+</filter>
+</defs>
+<ellipse cx="300" cy="354" rx="270" ry="5.5" fill="url(#mbp_shadow_d)" filter="url(#mbp_blur_d)"/>
+<rect x="42" y="12" width="516" height="318" rx="14" fill="url(#mbp_outer_fill_d)" stroke="url(#mbp_outer_stroke_d)" stroke-width="1.5"/>
+<rect x="48" y="18" width="504" height="306" rx="8" fill="#07090e"/>
+<rect x="54" y="24" width="492" height="294" rx="4" fill="#020408"/>
+<line x1="56" y1="13" x2="544" y2="13" stroke="#FFFFFF" stroke-opacity="0.25" stroke-width="1"/>
+<rect x="286" y="18" width="28" height="8" rx="4" fill="#000000"/>
+<circle cx="300" cy="22" r="2.2" fill="#0d111a"/>
+<circle cx="299.4" cy="21.4" r="0.7" fill="#60a5fa" opacity="0.6"/>
+<circle cx="306" cy="22" r="0.75" fill="#10b981" opacity="0.75"/>
+<rect x="230" y="324" width="140" height="5" rx="2" fill="#0b0e14"/>
+<path d="M 12 328 L 588 328 C 594 328 598 331 596 335 L 582 344 C 580 345.5 577 346 573 346 L 27 346 C 23 346 20 345.5 18 344 L 4 335 C 2 331 6 328 12 328 Z" fill="url(#mbp_base_deck_d)"/>
+<path d="M 10 328.5 L 590 328.5" stroke="url(#mbp_base_stroke_d)" stroke-width="1"/>
+<path d="M 264 328 C 264 331.5 267 333.5 270 333.5 L 330 333.5 C 333 333.5 336 331.5 336 328 Z" fill="#090c13"/>
+<path d="M 268 333.5 L 332 333.5" stroke="#475569" stroke-width="0.8" stroke-opacity="0.6"/>
+<path d="M 18 344 L 27 348 C 30 350 570 350 573 348 L 582 344 Z" fill="url(#mbp_front_lip_d)"/>
+</svg>

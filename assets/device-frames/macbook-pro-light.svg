@@ -1,0 +1,54 @@
+<svg width="600" height="360" viewBox="0 0 600 360" fill="none" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<linearGradient id="mbp_outer_stroke_l" x1="300" y1="12" x2="300" y2="330" gradientUnits="userSpaceOnUse">
+<stop stop-color="#94A3B8"/>
+<stop offset="0.5" stop-color="#CBD5E1"/>
+<stop offset="1" stop-color="#64748B"/>
+</linearGradient>
+<linearGradient id="mbp_outer_fill_l" x1="300" y1="12" x2="300" y2="330" gradientUnits="userSpaceOnUse">
+<stop stop-color="#E2E8F0"/>
+<stop offset="0.4" stop-color="#F8FAFC"/>
+<stop offset="0.8" stop-color="#CBD5E1"/>
+<stop offset="1" stop-color="#94A3B8"/>
+</linearGradient>
+<linearGradient id="mbp_base_deck_l" x1="300" y1="328" x2="300" y2="346" gradientUnits="userSpaceOnUse">
+<stop stop-color="#F8FAFC"/>
+<stop offset="0.3" stop-color="#E2E8F0"/>
+<stop offset="1" stop-color="#CBD5E1"/>
+</linearGradient>
+<linearGradient id="mbp_base_stroke_l" x1="0" y1="328" x2="600" y2="328" gradientUnits="userSpaceOnUse">
+<stop stop-color="#94A3B8" stop-opacity="0"/>
+<stop offset="0.2" stop-color="#FFFFFF" stop-opacity="0.9"/>
+<stop offset="0.5" stop-color="#FFFFFF" stop-opacity="1"/>
+<stop offset="0.8" stop-color="#FFFFFF" stop-opacity="0.9"/>
+<stop offset="1" stop-color="#94A3B8" stop-opacity="0"/>
+</linearGradient>
+<linearGradient id="mbp_front_lip_l" x1="300" y1="344" x2="300" y2="350" gradientUnits="userSpaceOnUse">
+<stop stop-color="#CBD5E1"/>
+<stop offset="1" stop-color="#94A3B8"/>
+</linearGradient>
+<radialGradient id="mbp_shadow_l" cx="0.5" cy="0.5" r="0.5" fx="0.5" fy="0.5">
+<stop offset="0" stop-color="#000000" stop-opacity="0.18"/>
+<stop offset="0.6" stop-color="#000000" stop-opacity="0.08"/>
+<stop offset="1" stop-color="#000000" stop-opacity="0"/>
+</radialGradient>
+<filter id="mbp_blur_l" x="-20%" y="-50%" width="140%" height="200%">
+<feGaussianBlur stdDeviation="3.5"/>
+</filter>
+</defs>
+<ellipse cx="300" cy="354" rx="270" ry="5.5" fill="url(#mbp_shadow_l)" filter="url(#mbp_blur_l)"/>
+<rect x="42" y="12" width="516" height="318" rx="14" fill="url(#mbp_outer_fill_l)" stroke="url(#mbp_outer_stroke_l)" stroke-width="1.5"/>
+<rect x="48" y="18" width="504" height="306" rx="8" fill="#CBD5E1" stroke="#94A3B8" stroke-width="0.5"/>
+<rect x="54" y="24" width="492" height="294" rx="4" fill="#FFFFFF"/>
+<line x1="56" y1="13" x2="544" y2="13" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="1"/>
+<rect x="286" y="18" width="28" height="7" rx="3.5" fill="#94A3B8" fill-opacity="0.4"/>
+<circle cx="300" cy="21.5" r="2" fill="#475569"/>
+<circle cx="299.4" cy="21" r="0.7" fill="#60a5fa"/>
+<circle cx="306" cy="21.5" r="0.75" fill="#10b981"/>
+<rect x="230" y="324" width="140" height="5" rx="2" fill="#94A3B8"/>
+<path d="M 12 328 L 588 328 C 594 328 598 331 596 335 L 582 344 C 580 345.5 577 346 573 346 L 27 346 C 23 346 20 345.5 18 344 L 4 335 C 2 331 6 328 12 328 Z" fill="url(#mbp_base_deck_l)"/>
+<path d="M 10 328.5 L 590 328.5" stroke="url(#mbp_base_stroke_l)" stroke-width="1"/>
+<path d="M 264 328 C 264 331.5 267 333.5 270 333.5 L 330 333.5 C 333 333.5 336 331.5 336 328 Z" fill="#94A3B8"/>
+<path d="M 268 333.5 L 332 333.5" stroke="#FFFFFF" stroke-width="0.8" stroke-opacity="0.9"/>
+<path d="M 18 344 L 27 348 C 30 350 570 350 573 348 L 582 344 Z" fill="url(#mbp_front_lip_l)"/>
+</svg>

@@ -1,4 +1,4 @@
-//! Runtime-reloadable log filter — REQ-PICOO-UI-002 / PRD §16 Settings.
+//! Runtime-reloadable log filter — REQ-PICOO-UI-002 / PRD §16 General.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -24,7 +24,7 @@ pub fn init_logging(default_filter: &str) {
         .try_init();
 }
 
-/// Reload the EnvFilter without restarting the process (Settings → 日志级别).
+/// Reload the EnvFilter without restarting the process (通用 → 日志级别).
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub fn reload_filter(filter: &str) -> Result<(), String> {
     let handle = FILTER_RELOAD

@@ -65,7 +65,7 @@ impl PlaceholderModePref {
 
     pub fn label(self) -> &'static str {
         match self {
-            PlaceholderModePref::Logo => "Picoo Camera Logo",
+            PlaceholderModePref::Logo => "品牌画面",
             PlaceholderModePref::Black => "纯黑画面",
             PlaceholderModePref::Bars => "测试彩条",
         }
