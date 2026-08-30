@@ -3,7 +3,7 @@
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-UI-001 | implemented | ARCH-PICOO-UI-001 | GPUI View 不直接持有 QUIC/Decoder/Frame Buffer | `ReceiverRuntime` + `ReceiverSnapshot`；View 只观察 |
-| REQ-PICOO-UI-002 | implemented | PRD §16 | 桌面首次启动/等待连接/直播/设置；等待页显示手动连接地址；Windows 产品启动不附带控制台，普通启动不触发需管理员权限的 VCam 修复；日志级别运行时可 reload | `DesktopPage`；主内容区具备完整 flex/scroll 尺寸链；Windows GUI PE subsystem 门禁；VCam 检测不启动外部控制台进程，普通启动只调用无注册表写入能力的 `start_registered`；`render_manual_endpoint_card`；改名→mDNS；`logging.rs` EnvFilter reload |
+| REQ-PICOO-UI-002 | implemented | PRD §16 / REQ-PICOO-UI-0001 AC-D-NAV-02、AC-D-NAV-03 | 桌面首次启动/等待连接/直播/设置；Sidebar 可在 204px 文案态与 48px 图标态之间切换，连接与虚拟摄像头分别使用 `monitor-phone` / `monitor-camera` Reicon；等待页显示手动连接地址；Windows 产品启动不附带控制台，普通启动不触发需管理员权限的 VCam 修复；日志级别运行时可 reload | `DesktopPage`；`sidebar_collapsed` 进程内视图状态；折叠按钮及图标按钮具备稳定 ID、tooltip 与 accessibility label；主内容区具备完整 flex/scroll 尺寸链；Windows GUI PE subsystem 门禁；VCam 检测不启动外部控制台进程，普通启动只调用无注册表写入能力的 `start_registered`；`render_manual_endpoint_card`；改名→mDNS；`logging.rs` EnvFilter reload |
 | REQ-PICOO-UI-003 | implemented | PRD §17 / PUC-008 | 手机设备列表、手动 IP 直连、配对、传输页 | Devices `Windows · Ready/Paired`；`ManualConnectScreen`；Pairing/Streaming 显示 Receiver 名；Cancel 取消配对 |
 | REQ-PICOO-UI-004 | implemented | ARCH-PICOO-UI-001 | VideoSurface 只渲染纹理，不拥有解码器；Live 显示 Network Quality | `video_surface.rs`；`network_quality.rs` 与 Android `LinkQuality` 阈值对齐 |
 | REQ-PICOO-UI-005 | implemented | PUC-005 | Sender 前台、防锁屏、深色低亮度、过热/低电量提示；API33+ 通知权限 | FGS + `POST_NOTIFICATIONS` + `FLAG_KEEP_SCREEN_ON` + Streaming `screenBrightness` 调暗 + `PowerHints`；`ManifestPermissionsTest`（真机验证仍待） |

@@ -27,6 +27,9 @@ use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot, TrustedDeviceSu
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint};
 use crate::video_surface::VideoSurface;
 
+const SIDEBAR_EXPANDED_WIDTH: Rems = rems(12.75);
+const SIDEBAR_COLLAPSED_WIDTH: Rems = rems(3.0);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DesktopPage {
     FirstLaunch,
@@ -50,6 +53,7 @@ pub struct PicooDesktopApp {
     tray_policy: crate::tray::TrayPolicy,
     page: DesktopPage,
     section: DesktopSection,
+    sidebar_collapsed: bool,
     pump_started: bool,
     last_presented_snapshot: ReceiverSnapshot,
     video_surface: VideoSurface,
@@ -85,6 +89,7 @@ impl PicooDesktopApp {
             tray_policy: crate::tray::TrayPolicy::for_current_platform(prefs.minimize_to_tray),
             page,
             section: DesktopSection::Connect,
+            sidebar_collapsed: false,
             pump_started: false,
             last_presented_snapshot,
             video_surface: VideoSurface::default(),
@@ -443,13 +448,19 @@ impl PicooDesktopApp {
     }
 
     fn render_sidebar(&self, cx: &Context<Self>) -> impl IntoElement {
+        let collapsed = self.sidebar_collapsed;
         div()
             .v_flex()
-            .w(rems(12.75))
+            .w(if collapsed {
+                SIDEBAR_COLLAPSED_WIDTH
+            } else {
+                SIDEBAR_EXPANDED_WIDTH
+            })
             .h_full()
             .flex_shrink_0()
             .justify_between()
-            .px_3()
+            .when(collapsed, |this| this.px_1())
+            .when(!collapsed, |this| this.px_3())
             .py_4()
             .border_r_1()
             .border_color(cx.theme().border)
@@ -458,11 +469,12 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .gap_1p5()
-                    .child(self.nav_button("连接", DesktopSection::Connect, "home", cx))
+                    .child(self.sidebar_toggle_button(cx))
+                    .child(self.nav_button("连接", DesktopSection::Connect, "monitor-phone", cx))
                     .child(self.nav_button(
                         "虚拟摄像头",
                         DesktopSection::VirtualCamera,
-                        "desktop",
+                        "monitor-camera",
                         cx,
                     ))
                     .child(self.nav_button("网络", DesktopSection::Network, "wifi", cx))
@@ -481,13 +493,51 @@ impl PicooDesktopApp {
             )
     }
 
+    fn sidebar_toggle_button(&self, cx: &Context<Self>) -> impl IntoElement {
+        let collapsed = self.sidebar_collapsed;
+        let label = if collapsed {
+            "展开侧边栏"
+        } else {
+            "折叠侧边栏"
+        };
+
+        Button::new("toggle-sidebar")
+            .ghost()
+            .w_full()
+            .h_10()
+            .px_0()
+            .tooltip(label)
+            .accessibility_label(label)
+            .toggled(collapsed)
+            .child(
+                div()
+                    .h_flex()
+                    .w_full()
+                    .when(collapsed, |this| this.justify_center())
+                    .when(!collapsed, |this| this.justify_end().pr_2p5())
+                    .child(reicon_named("sidebar", cx.theme().muted_foreground).size(rems(1.125))),
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.sidebar_collapsed = !this.sidebar_collapsed;
+                cx.notify();
+            }))
+    }
+
     fn theme_button(&self, cx: &Context<Self>) -> impl IntoElement {
         let is_dark = cx.theme().is_dark();
         Button::new("toggle-theme")
             .ghost()
             .w_full()
             .h_10()
-            .px_3p5()
+            .when(self.sidebar_collapsed, |this| this.px_0())
+            .when(!self.sidebar_collapsed, |this| this.px_3p5())
+            .when(self.sidebar_collapsed, |this| {
+                this.tooltip(if is_dark {
+                    "浅色模式"
+                } else {
+                    "深色模式"
+                })
+            })
             .accessibility_label(if is_dark {
                 "浅色模式"
             } else {
@@ -497,12 +547,15 @@ impl PicooDesktopApp {
                 div()
                     .h_flex()
                     .w_full()
-                    .gap_3()
+                    .when(self.sidebar_collapsed, |this| this.justify_center())
+                    .when(!self.sidebar_collapsed, |this| this.gap_3())
                     .child(reicon_named("sun", cx.theme().muted_foreground).size(rems(1.125)))
-                    .child(if is_dark {
-                        "浅色模式"
-                    } else {
-                        "深色模式"
+                    .when(!self.sidebar_collapsed, |this| {
+                        this.child(if is_dark {
+                            "浅色模式"
+                        } else {
+                            "深色模式"
+                        })
                     }),
             )
             .on_click(cx.listener(move |_, _, window, cx| {
@@ -524,20 +577,27 @@ impl PicooDesktopApp {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let active = self.section == section;
+        let icon_color = if active {
+            cx.theme().primary
+        } else {
+            cx.theme().muted_foreground
+        };
         Button::new(format!("nav-{icon}"))
             .ghost()
             .w_full()
             .h_10()
-            .px_3p5()
+            .when(self.sidebar_collapsed, |this| this.px_0().tooltip(label))
+            .when(!self.sidebar_collapsed, |this| this.px_3p5())
             .selected(active)
             .accessibility_label(label)
             .child(
                 div()
                     .h_flex()
                     .w_full()
-                    .gap_3()
-                    .child(reicon_named(icon, cx.theme().muted_foreground).size(rems(1.125)))
-                    .child(label),
+                    .when(self.sidebar_collapsed, |this| this.justify_center())
+                    .when(!self.sidebar_collapsed, |this| this.gap_3())
+                    .child(reicon_named(icon, icon_color).size(rems(1.125)))
+                    .when(!self.sidebar_collapsed, |this| this.child(label)),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.section = section;
@@ -2064,8 +2124,13 @@ fn reicon_named(name: &str, color: Hsla) -> Svg {
         "home" => include_bytes!("../../../assets/icons/reicon/home.svg"),
         "info" => include_bytes!("../../../assets/icons/reicon/info.svg"),
         "flip-horizontal" => include_bytes!("../../../assets/icons/reicon/flip_horizontal.svg"),
+        "monitor-camera" => {
+            include_bytes!("../../../assets/icons/reicon/monitor_camera.svg")
+        }
+        "monitor-phone" => include_bytes!("../../../assets/icons/reicon/monitor_phone.svg"),
         "refresh" => include_bytes!("../../../assets/icons/reicon/refresh.svg"),
         "settings" => include_bytes!("../../../assets/icons/reicon/settings.svg"),
+        "sidebar" => include_bytes!("../../../assets/icons/reicon/sidebar.svg"),
         "sun" => include_bytes!("../../../assets/icons/reicon/sun.svg"),
         "wifi" => include_bytes!("../../../assets/icons/reicon/wifi.svg"),
         "xmark" => include_bytes!("../../../assets/icons/reicon/xmark.svg"),
