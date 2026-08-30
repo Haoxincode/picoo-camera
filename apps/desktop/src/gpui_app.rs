@@ -3059,27 +3059,9 @@ fn hardware_topology(cx: &Context<PicooDesktopApp>) -> impl IntoElement {
                         .right(rems(0.085))
                         .bottom(rems(0.067))
                         .left(rems(0.085))
-                        .v_flex()
-                        .items_center()
-                        .justify_center()
-                        .gap_0p5()
                         .overflow_hidden()
                         .rounded(rems(0.36))
-                        .bg(cx.theme().group_box)
-                        .text_color(cx.theme().foreground)
-                        .child(
-                            div()
-                                .text_size(rems(0.56))
-                                .font_weight(FontWeight::EXTRA_BOLD)
-                                .text_color(cx.theme().primary)
-                                .child("?"),
-                        )
-                        .child(
-                            div()
-                                .text_size(rems(0.42))
-                                .font_weight(FontWeight::BOLD)
-                                .child("PICO"),
-                        ),
+                        .bg(cx.theme().group_box),
                 )
                 .child(
                     img("device-frames/iphone-16-max.svg")
