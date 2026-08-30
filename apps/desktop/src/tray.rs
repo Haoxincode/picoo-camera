@@ -201,7 +201,6 @@ impl NotifyIconController {
     #[cfg(all(windows, feature = "windows-vcam"))]
     fn resolve_hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
         use windows::core::w;
-        use windows::Win32::Foundation::HWND;
         use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
         if let Some(host) = tray_message_hwnd() {
@@ -214,8 +213,8 @@ impl NotifyIconController {
     fn apply_shell_notify_icon(&self, op: NotifyIconOp) {
         use std::mem::size_of;
         use windows::Win32::UI::Shell::{
-            Shell_NotifyIconW, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-            NOTIFYICONDATAW,
+            Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+            NIM_SETVERSION, NOTIFYICONDATAW, NOTIFYICON_VERSION_4,
         };
 
         let Some(hwnd) = self.resolve_hwnd() else {
@@ -231,12 +230,32 @@ impl NotifyIconController {
         for (i, c) in self.tip.encode_utf16().take(127).enumerate() {
             tip_buf[i] = c;
         }
+        let tray_icon = if op == NotifyIconOp::Delete {
+            None
+        } else {
+            match load_tray_icon() {
+                Ok(icon) => Some(icon),
+                Err(error) => {
+                    tracing::warn!(
+                        target: "picoo_tray",
+                        %error,
+                        "embedded tray icon could not be loaded"
+                    );
+                    return;
+                }
+            }
+        };
+        let mut flags = NIF_MESSAGE | NIF_TIP;
+        if tray_icon.is_some() {
+            flags |= NIF_ICON;
+        }
         let mut data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: TRAY_ICON_ID,
-            uFlags: NIF_MESSAGE | NIF_TIP,
+            uFlags: flags,
             uCallbackMessage: TRAY_CALLBACK_MSG,
+            hIcon: tray_icon.unwrap_or_default(),
             ..Default::default()
         };
         data.szTip = tip_buf;
@@ -246,6 +265,13 @@ impl NotifyIconController {
             NotifyIconOp::Delete => NIM_DELETE,
         };
         let ok = unsafe { Shell_NotifyIconW(msg, &data) }.as_bool();
+        if op == NotifyIconOp::Add && ok {
+            data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+            let _ = unsafe { Shell_NotifyIconW(NIM_SETVERSION, &data) };
+        }
+        if let Some(icon) = tray_icon {
+            let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyIcon(icon) };
+        }
         if !ok {
             tracing::warn!(target: "picoo_tray", ?op, "Shell_NotifyIconW returned false");
         }
@@ -272,6 +298,27 @@ static PENDING_MENU_ACTION: Mutex<Option<TrayMenuAction>> = Mutex::new(None);
 const TRAY_ICON_ID: u32 = 1;
 #[cfg(all(windows, feature = "windows-vcam"))]
 const TRAY_CALLBACK_MSG: u32 = windows::Win32::UI::WindowsAndMessaging::WM_APP + 40;
+#[cfg(all(windows, feature = "windows-vcam"))]
+// winresource build.rs embeds the compact REQ-PICOO-UI-013 icon with resource ID 2.
+const TRAY_ICON_RESOURCE_ID: usize = 2;
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn load_tray_icon() -> windows::core::Result<windows::Win32::UI::WindowsAndMessaging::HICON> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HINSTANCE;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Controls::{LoadIconMetric, LIM_SMALL};
+
+    let module = unsafe { GetModuleHandleW(None)? };
+    let instance = HINSTANCE(module.0);
+    unsafe {
+        LoadIconMetric(
+            Some(instance),
+            PCWSTR(TRAY_ICON_RESOURCE_ID as *const u16),
+            LIM_SMALL,
+        )
+    }
+}
 
 #[cfg(all(windows, feature = "windows-vcam"))]
 static TRAY_HOST_HWND: Mutex<Option<isize>> = Mutex::new(None);
@@ -348,7 +395,8 @@ unsafe extern "system" fn tray_wnd_proc(
     };
 
     if msg == TRAY_CALLBACK_MSG {
-        let mouse = lparam.0 as u32;
+        // NOTIFYICON_VERSION_4 stores the event in LOWORD(lParam).
+        let mouse = (lparam.0 as u32) & 0xffff;
         if mouse == WM_RBUTTONUP || mouse == WM_CONTEXTMENU {
             show_tray_context_menu(hwnd);
             return LRESULT(0);

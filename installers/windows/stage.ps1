@@ -27,6 +27,13 @@ foreach ($name in $Artifacts) {
     Write-Host "Staged $name"
 }
 
+$ProductIcon = Join-Path $Root "assets/brand/windows/PicooCamera.ico"
+if (-not (Test-Path $ProductIcon)) {
+    Write-Error "Missing Windows product icon: $ProductIcon"
+}
+Copy-Item -Force $ProductIcon (Join-Path $Bundle "PicooCamera.ico")
+Write-Host "Staged PicooCamera.ico"
+
 $VcamCandidates = @(
     (Join-Path $Release "picoo_virtual_camera_source.dll"),
     (Join-Path $Release "PicooVirtualCameraSource.dll")

@@ -65,6 +65,7 @@ Picoo Camera.app/
 └── Contents/
     ├── Info.plist
     ├── MacOS/picoo-desktop
+    ├── Resources/PicooCamera.icns
     └── Library/SystemExtensions/
         └── com.haoxincode.picoo-camera.camera-extension.systemextension/
 ```
@@ -78,13 +79,19 @@ Picoo Camera.app/
 ```text
 windows-bundle/
 ├── picoo-desktop.exe              # GPUI Receiver；松散运行仅用于 smoke
+├── PicooCamera.ico                 # WiX 已安装应用图标输入
 ├── picoo-vcam-ring-reader.exe     # Shared Frame Ring 诊断
 ├── PicooVirtualCameraSource.dll   # MF IMFMediaSource（UTF-16「Picoo Camera」已嵌入）
 └── msi/
     └── PicooCamera.msi            # 与 windows-msi artifact 相同
 ```
 
-CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 存在、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 含 CLSID、`InprocServer32` 与 `--register-vcam --no-wait`，同时禁止自注册 CustomAction 与 `DllRegisterServer`（REQ-VCAM-004）。松散 bundle 仅用于编译、导出与加载 smoke，不能写系统 COM 注册；**不**在 CI 上执行 `msiexec /i`（perMachine 需 Win11 管理员真机验收）。
+CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 与产品 `.ico` 存在、
+EXE 可提取应用图标、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 含
+`PicooProductIcon`、CLSID、`InprocServer32` 与 `--register-vcam --no-wait`，同时禁止自注册
+CustomAction 与 `DllRegisterServer`（REQ-VCAM-004 / REQ-PICOO-UI-013）。松散 bundle 仅用于
+编译、导出与加载 smoke，不能写系统 COM 注册；**不**在 CI 上执行 `msiexec /i`（perMachine
+需 Win11 管理员真机验收）。
 
 ### `android-release` 解压后布局
 

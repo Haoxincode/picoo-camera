@@ -7,6 +7,7 @@ Picoo Camera.app/
 └── Contents/
     ├── Info.plist
     ├── MacOS/picoo-desktop
+    ├── Resources/PicooCamera.icns
     └── Library/SystemExtensions/
         └── com.haoxincode.picoo-camera.camera-extension.systemextension/
 ```

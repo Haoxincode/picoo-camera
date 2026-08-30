@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Picoo Camera</title>
+  <desc id="desc">一台电脑与一部手机共享一个摄像头镜头</desc>
+  <defs>
+    <linearGradient id="background" x1="142" y1="104" x2="874" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4F6EF7"/>
+      <stop offset="1" stop-color="#263DA8"/>
+    </linearGradient>
+    <linearGradient id="highlight" x1="268" y1="176" x2="736" y2="850" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="56" y="56" width="912" height="912" rx="222" fill="url(#background)"/>
+  <path d="M172 300C172 244.772 216.772 200 272 200H752C807.228 200 852 244.772 852 300V724C852 779.228 807.228 824 752 824H272C216.772 824 172 779.228 172 724V300Z" fill="url(#highlight)"/>
+
+  <rect x="154" y="282" width="606" height="430" rx="88" fill="#F7F9FF"/>
+  <rect x="214" y="342" width="486" height="310" rx="42" fill="#3149BA"/>
+  <path d="M382 712H532V774H382C364.879 774 351 760.121 351 743C351 725.879 364.879 712 382 712Z" fill="#F7F9FF"/>
+
+  <rect x="604" y="176" width="266" height="672" rx="78" fill="#F7F9FF"/>
+  <rect x="650" y="248" width="174" height="518" rx="38" fill="#3149BA"/>
+  <rect x="690" y="210" width="94" height="18" rx="9" fill="#3149BA"/>
+  <circle cx="737" cy="807" r="17" fill="#3149BA"/>
+
+  <circle cx="612" cy="500" r="132" fill="#F7F9FF"/>
+  <circle cx="612" cy="500" r="78" fill="#3149BA"/>
+  <circle cx="584" cy="472" r="24" fill="#AFC0FF"/>
+</svg>

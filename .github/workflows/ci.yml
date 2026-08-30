@@ -120,6 +120,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Select Xcode 26.6
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Verify generated brand icons
+        run: cargo run -p xtask -- generate brand-icons --check
       - name: Clippy macOS GPUI Receiver
         run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
       - name: Test macOS VideoToolbox receiver and shared ring

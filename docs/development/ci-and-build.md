@@ -106,7 +106,7 @@ jobs:
 
 Apple 基线保持三个独立 artifact：
 
-- `macos-app-unsigned`：`PicooCamera-macOS-unsigned.zip` 包含 ARM64 `Picoo Camera.app`，Camera Extension 已嵌入标准目录；同一 artifact 还包含已展开的 Host 与 Extension entitlements 签名输入 scaffold。无签名构建使用 `UNSIGNED.` Team 前缀和独立 Host Info.plist marker，Shared Ring 降级到 Application Support，不能完成系统激活。
+- `macos-app-unsigned`：`PicooCamera-macOS-unsigned.zip` 包含 ARM64 `Picoo Camera.app`，Camera Extension 已嵌入标准目录，品牌 `PicooCamera.icns` 位于 Host `Contents/Resources/` 并由 `CFBundleIconFile` 引用；同一 artifact 还包含已展开的 Host 与 Extension entitlements 签名输入 scaffold。无签名构建使用 `UNSIGNED.` Team 前缀和独立 Host Info.plist marker，Shared Ring 降级到 Application Support，不能完成系统激活。
 - `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
 - `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 

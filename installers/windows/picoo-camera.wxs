@@ -11,6 +11,8 @@
       Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Picoo Camera is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <Icon Id="PicooProductIcon" SourceFile="!(bindpath.Bundle)\PicooCamera.ico" />
+    <Property Id="ARPPRODUCTICON" Value="PicooProductIcon" />
 
     <Feature Id="ProductFeature" Title="Picoo Camera" Level="1">
       <ComponentGroupRef Id="ProductComponents" />

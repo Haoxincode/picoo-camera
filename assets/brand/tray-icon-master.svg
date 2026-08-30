@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Picoo Camera 托盘图标</title>
+  <desc id="desc">电脑、手机和共享镜头的紧凑轮廓</desc>
+  <rect x="5" y="15" width="39" height="31" rx="7" fill="#3151D3" stroke="#FFFFFF" stroke-width="4"/>
+  <rect x="36" y="7" width="23" height="50" rx="7" fill="#3151D3" stroke="#FFFFFF" stroke-width="4"/>
+  <circle cx="39" cy="31" r="11" fill="#FFFFFF"/>
+  <circle cx="39" cy="31" r="6" fill="#3151D3"/>
+</svg>

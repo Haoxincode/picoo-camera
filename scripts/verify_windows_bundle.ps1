@@ -8,12 +8,13 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Bundle = Join-Path $Root "target/release/bundle"
 $Dll = Join-Path $Bundle "PicooVirtualCameraSource.dll"
 $Exe = Join-Path $Bundle "picoo-desktop.exe"
+$ProductIcon = Join-Path $Bundle "PicooCamera.ico"
 $Msi = Join-Path $Bundle "msi/PicooCamera.msi"
 
 Write-Host "Repo root: $Root"
 Write-Host "Bundle:    $Bundle"
 
-foreach ($path in @($Exe, $Dll)) {
+foreach ($path in @($Exe, $Dll, $ProductIcon)) {
     if (-not (Test-Path $path)) {
         Write-Error "Missing required bundle file: $path"
     }
@@ -48,6 +49,16 @@ if ($subsystem -ne 2) {
     Write-Error "picoo-desktop.exe must use the Windows GUI subsystem (2), got $subsystem"
 }
 Write-Host "ok: picoo-desktop.exe uses Windows GUI subsystem"
+
+# REQ-PICOO-UI-013: the PE must expose the application icon used by Explorer,
+# Start, taskbar, Alt-Tab, and the non-advertised Start Menu shortcut.
+Add-Type -AssemblyName System.Drawing
+$associatedIcon = [System.Drawing.Icon]::ExtractAssociatedIcon($Exe)
+if ($null -eq $associatedIcon -or $associatedIcon.Width -lt 16 -or $associatedIcon.Height -lt 16) {
+    Write-Error "picoo-desktop.exe does not expose an embedded application icon"
+}
+$associatedIcon.Dispose()
+Write-Host "ok: picoo-desktop.exe exposes an embedded application icon"
 
 if (-not (Test-Path $Msi)) {
     Write-Error "Missing MSI: $Msi (set PICOO_REQUIRE_MSI=1)"
@@ -114,7 +125,12 @@ foreach ($needle in $forbidden) {
     }
     Write-Host "ok: MSI lacks '$needle'"
 }
-$required = @('--register-vcam --no-wait', 'WixQuietExec', 'RegisterVcamOnInstall')
+$required = @(
+    '--register-vcam --no-wait',
+    'WixQuietExec',
+    'RegisterVcamOnInstall',
+    'PicooProductIcon'
+)
 foreach ($needle in $required) {
     if (-not ($msiAscii.Contains($needle) -or $msiUnicode.Contains($needle))) {
         Write-Error "MSI missing required install hook '$needle'"
