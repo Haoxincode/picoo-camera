@@ -46,6 +46,8 @@ Decoded Frame (NV12)
 
 Windows 与 macOS 都在原子租约外为每个槽增加独立的内核文件锁：Windows Named Shared Memory 使用 `LockFileEx` byte-range sidecar，macOS mmap 使用 `flock` sidecar。锁在进程退出时由内核释放，下一方取得锁后才能安全清理由异常退出遗留的原子租约；每槽独立设计保留槽间并行能力。
 
+Windows flink 中的 OS mapping ID 是 Producer 代际定位器，不是长期固定的映射身份。Producer 在整个生命周期持有独占内核锁；只有取得该锁的一方可以创建、打开或修复定位器，从而保证单 Writer。Consumer 周期性比较当前定位器与自身 mapping ID；定位器缺失或变化时释放旧映射并重新附着，因此 Receiver 正常重启、异常退出或重建损坏映射后，VCam 不会永久停留在旧代际。代际切换后帧序列可以从 1 重新开始，Consumer 必须重置去重状态。
+
 macOS 的 App Group 后缀为 `com.haoxincode.picoo-camera`，签名时由 Xcode 添加 Team Identifier 前缀，主应用与扩展从各自 Info.plist 读取同一个展开后的值。Rust Receiver 与 Swift Camera Extension 共享 ABI v2：64-byte RingMeta、三个 64-byte SlotMeta，以及固定容量 NV12 payload。Swift 通过小型 C17 原子边界获取/释放槽租约，不在 Swift 中模拟跨进程原子操作。
 
 虚拟摄像头扩展只理解 NV12 帧；不持有 QUIC、解码器或网络会话。
@@ -95,4 +97,4 @@ macOS 的 App Group 后缀为 `com.haoxincode.picoo-camera`，签名时由 Xcode
 
 ## 相关 Requirements
 
-- [REQ-PICOO-FRAME-001..006](../requirements/frame.md)
+- [REQ-PICOO-FRAME-001..007](../requirements/frame.md)

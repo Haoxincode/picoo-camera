@@ -13,7 +13,7 @@ Independent IMFMediaSource DLL (`PicooVirtualCameraSource.dll`) consuming Shared
 ## Requirement mapping
 
 - REQ-PICOO-VCAM-001..005
-- REQ-PICOO-FRAME-003, REQ-PICOO-FRAME-004
+- REQ-PICOO-FRAME-003, REQ-PICOO-FRAME-004, REQ-PICOO-FRAME-007
 
 ## Local test (Linux / Windows)
 
@@ -30,6 +30,8 @@ decode, live frames appear at negotiated resolution (see
 `picoo-windows-vcam-source` 由 Cargo 在 `windows-latest` 构建为
 `picoo_virtual_camera_source.dll`，打包时重命名为 `PicooVirtualCameraSource.dll`。
 COM/MF 接口通过 `windows-rs` 实现；仓库不维护 CMake、VCXPROJ 或等价 C++ Source。
+Frame Provider 每 250 ms 检查 Shared Frame Ring 的 Producer 代际；Receiver 重启或重建
+损坏映射后会自动重新附着，并允许新代际从 sequence 1 重新开始。
 详见 [ci-and-build.md](../../docs/development/ci-and-build.md)。
 
 ### Windows registration (Win11)

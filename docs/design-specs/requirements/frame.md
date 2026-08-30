@@ -8,3 +8,4 @@
 | REQ-PICOO-FRAME-004 | implemented | PUC-004 | 无连接时输出占位画面（黑底+标志+Waiting for phone...） | placeholder 测试 |
 | REQ-PICOO-FRAME-005 | implemented | PUC-006 | 中断时最多短暂重复最后一帧，随后重连占位 | `reconnecting_placeholder` + `disconnect_holds_last_frame_then_shows_placeholder` |
 | REQ-PICOO-FRAME-006 | planned | ARCH-PICOO-FRAME-001 / ARCH-PICOO-VCAM-001 | macOS 主应用与 Camera Extension 通过 App Group mmap 共享 NV12 帧环 | ABI v2、file roundtrip、内核锁+原子租约防覆盖、快速覆盖与进程重启基线已实现；仍需 Rust Writer→Swift/C Reader 跨进程压测、实际 App Group 签名读写与异常终止恢复验收 |
+| REQ-PICOO-FRAME-007 | planned | ARCH-PICOO-FRAME-001 / PUC-004 | Windows Shared Frame Ring 在 Receiver 正常重启、异常退出或定位器损坏后恢复，VCam Consumer 自动切换到新 Producer 代际 | 单 Producer 生命周期锁；损坏 flink 恢复；Consumer 代际检测；VCam 同序列新代际重连测试；Windows 子进程异常退出测试 |

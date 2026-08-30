@@ -65,6 +65,8 @@ pub enum SharedRingError {
     FileMapping { path: PathBuf, message: String },
     #[error("macOS App Group container is unavailable: {0}")]
     AppGroupUnavailable(String),
+    #[error("a Shared Frame Ring producer is already active for {0}")]
+    ProducerAlreadyRunning(PathBuf),
     #[error("invalid layout")]
     InvalidLayout,
     #[error("frame too large: {0} > max {1}")]
@@ -95,6 +97,8 @@ impl Drop for SharedFrameView<'_> {
 pub struct SharedFrameRingProducer {
     mapping: ProducerMapping,
     max_frame_bytes: usize,
+    #[cfg(target_os = "windows")]
+    _producer_lock: KernelLockGuard,
 }
 
 pub struct SharedFrameRingConsumer {
@@ -116,19 +120,21 @@ enum ConsumerMapping {
 
 struct SharedMapping {
     mapping: Shmem,
-    #[cfg(target_os = "windows")]
-    lock_root: PathBuf,
+    flink_path: PathBuf,
 }
 
 impl SharedMapping {
-    fn new(mapping: Shmem, lock_root: PathBuf) -> Self {
-        #[cfg(not(target_os = "windows"))]
-        let _ = lock_root;
+    fn new(mapping: Shmem, flink_path: PathBuf) -> Self {
         Self {
             mapping,
-            #[cfg(target_os = "windows")]
-            lock_root,
+            flink_path,
         }
+    }
+
+    fn is_current_generation(&self) -> bool {
+        std::fs::read_to_string(&self.flink_path)
+            .map(|mapping_id| mapping_id == self.mapping.get_os_id())
+            .unwrap_or(false)
     }
 }
 
@@ -210,45 +216,52 @@ impl FileMapping {
 }
 
 #[cfg(target_os = "windows")]
+fn try_windows_file_lock(
+    lock_path: &Path,
+    exclusive: bool,
+) -> Result<Option<KernelLockGuard>, SharedRingError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION;
+    use windows_sys::Win32::Storage::FileSystem::{
+        LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
+    };
+    use windows_sys::Win32::System::IO::OVERLAPPED;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .map_err(|error| map_file_err(lock_path, error))?;
+    let flags = LOCKFILE_FAIL_IMMEDIATELY
+        | if exclusive {
+            LOCKFILE_EXCLUSIVE_LOCK
+        } else {
+            0
+        };
+    let mut overlapped = OVERLAPPED::default();
+    // SAFETY: The descriptor is live and remains owned by the returned
+    // guard for exactly one slot lease. Every lease locks byte zero only.
+    let result = unsafe { LockFileEx(file.as_raw_handle(), flags, 0, 1, 0, &mut overlapped) };
+    if result != 0 {
+        return Ok(Some(KernelLockGuard { file }));
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
+        return Ok(None);
+    }
+    Err(map_file_err(lock_path, error))
+}
+
+#[cfg(target_os = "windows")]
 impl SharedMapping {
     fn try_slot_lock(
         &self,
         index: usize,
         exclusive: bool,
     ) -> Result<Option<KernelLockGuard>, SharedRingError> {
-        use std::os::windows::io::AsRawHandle;
-        use windows_sys::Win32::Foundation::ERROR_LOCK_VIOLATION;
-        use windows_sys::Win32::Storage::FileSystem::{
-            LockFileEx, LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY,
-        };
-        use windows_sys::Win32::System::IO::OVERLAPPED;
-
-        let lock_path = slot_lock_path(&self.lock_root, index);
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|error| map_file_err(&lock_path, error))?;
-        let flags = LOCKFILE_FAIL_IMMEDIATELY
-            | if exclusive {
-                LOCKFILE_EXCLUSIVE_LOCK
-            } else {
-                0
-            };
-        let mut overlapped = OVERLAPPED::default();
-        // SAFETY: The descriptor is live and remains owned by the returned
-        // guard for exactly one slot lease. Every lease locks byte zero only.
-        let result = unsafe { LockFileEx(file.as_raw_handle(), flags, 0, 1, 0, &mut overlapped) };
-        if result != 0 {
-            return Ok(Some(KernelLockGuard { file }));
-        }
-        let error = std::io::Error::last_os_error();
-        if error.raw_os_error() == Some(ERROR_LOCK_VIOLATION as i32) {
-            return Ok(None);
-        }
-        Err(map_file_err(&lock_path, error))
+        try_windows_file_lock(&slot_lock_path(&self.flink_path, index), exclusive)
     }
 }
 
@@ -338,6 +351,33 @@ fn slot_lock_path(ring_path: &Path, index: usize) -> PathBuf {
     PathBuf::from(path)
 }
 
+#[cfg(target_os = "windows")]
+fn producer_lock_path(ring_path: &Path) -> PathBuf {
+    let mut path = ring_path.as_os_str().to_os_string();
+    path.push(".producer.lock");
+    PathBuf::from(path)
+}
+
+#[cfg(target_os = "windows")]
+fn acquire_producer_lock(ring_path: &Path) -> Result<KernelLockGuard, SharedRingError> {
+    let lock_path = producer_lock_path(ring_path);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        if let Some(lock) = try_windows_file_lock(&lock_path, true)? {
+            return Ok(lock);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(SharedRingError::ProducerAlreadyRunning(
+                ring_path.to_path_buf(),
+            ));
+        }
+        // Windows may release byte-range locks slightly after the owning
+        // process exits. Retry only this lifecycle boundary; per-slot frame
+        // locks stay non-blocking.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 fn layout_size(max_frame_bytes: usize) -> usize {
     RING_META_SIZE + SLOT_COUNT * (RING_SLOT_META_SIZE + max_frame_bytes)
 }
@@ -366,6 +406,22 @@ unsafe fn const_slot_meta_at(
     (base.add(slot_offset(max_frame_bytes, index))).cast::<SlotMeta>()
 }
 
+fn validate_ring_header(base: *const u8, max_frame_bytes: usize) -> Result<(), SharedRingError> {
+    // SAFETY: Every caller has already opened a mapping large enough for the
+    // requested ring layout.
+    let meta = unsafe { &*const_meta_at(base) };
+    if meta.magic != RING_MAGIC
+        || meta.version != RING_VERSION
+        || meta.slot_count != SLOT_COUNT as u32
+    {
+        return Err(SharedRingError::InvalidHeader);
+    }
+    if meta.max_frame_bytes as usize != max_frame_bytes {
+        return Err(SharedRingError::InvalidLayout);
+    }
+    Ok(())
+}
+
 unsafe fn slot_pixels_at<'a>(base: *mut u8, max_frame_bytes: usize, index: usize) -> &'a mut [u8] {
     let start = slot_offset(max_frame_bytes, index) + RING_SLOT_META_SIZE;
     std::slice::from_raw_parts_mut(base.add(start), max_frame_bytes)
@@ -381,18 +437,42 @@ unsafe fn const_slot_pixels_at<'a>(
 }
 
 impl SharedFrameRingProducer {
+    #[cfg(target_os = "windows")]
+    fn from_named_mapping(
+        shmem: Shmem,
+        flink: PathBuf,
+        max_frame_bytes: usize,
+        producer_lock: KernelLockGuard,
+    ) -> Self {
+        Self {
+            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
+            max_frame_bytes,
+            _producer_lock: producer_lock,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn from_named_mapping(shmem: Shmem, flink: PathBuf, max_frame_bytes: usize) -> Self {
+        Self {
+            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
+            max_frame_bytes,
+        }
+    }
+
     pub fn create(name: &str, max_frame_bytes: usize) -> Result<Self, SharedRingError> {
         let flink = ring_flink_path(name);
+        #[cfg(target_os = "windows")]
+        let producer_lock = acquire_producer_lock(&flink)?;
         let size = layout_size(max_frame_bytes);
         let shmem = ShmemConf::new()
             .size(size)
             .flink(&flink)
             .create()
             .map_err(map_shmem_err)?;
-        let mut producer = Self {
-            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
-            max_frame_bytes,
-        };
+        #[cfg(target_os = "windows")]
+        let mut producer = Self::from_named_mapping(shmem, flink, max_frame_bytes, producer_lock);
+        #[cfg(not(target_os = "windows"))]
+        let mut producer = Self::from_named_mapping(shmem, flink, max_frame_bytes);
         producer.init_header();
         Ok(producer)
     }
@@ -400,12 +480,76 @@ impl SharedFrameRingProducer {
     pub fn open_or_create(name: &str, max_frame_bytes: usize) -> Result<Self, SharedRingError> {
         let flink = ring_flink_path(name);
         let size = layout_size(max_frame_bytes);
+
+        #[cfg(target_os = "windows")]
+        {
+            let producer_lock = acquire_producer_lock(&flink)?;
+            match ShmemConf::new().size(size).flink(&flink).create() {
+                Ok(shmem) => {
+                    let mut producer =
+                        Self::from_named_mapping(shmem, flink, max_frame_bytes, producer_lock);
+                    producer.init_header();
+                    Ok(producer)
+                }
+                Err(ShmemError::LinkExists) => {
+                    match ShmemConf::new().size(size).flink(&flink).open() {
+                        Ok(mut shmem) => {
+                            // The lifecycle lock proves the former Producer is
+                            // gone. Adopt cleanup ownership for this generation.
+                            shmem.set_owner(true);
+                            if validate_ring_header(shmem.as_ptr(), max_frame_bytes).is_ok() {
+                                Ok(Self::from_named_mapping(
+                                    shmem,
+                                    flink,
+                                    max_frame_bytes,
+                                    producer_lock,
+                                ))
+                            } else {
+                                // Drop the adopted invalid generation before
+                                // creating its replacement. Otherwise its owner
+                                // cleanup could unlink the replacement's flink.
+                                drop(shmem);
+                                let replacement = ShmemConf::new()
+                                    .size(size)
+                                    .flink(&flink)
+                                    .create()
+                                    .map_err(map_shmem_err)?;
+                                let mut producer = Self::from_named_mapping(
+                                    replacement,
+                                    flink,
+                                    max_frame_bytes,
+                                    producer_lock,
+                                );
+                                producer.init_header();
+                                Ok(producer)
+                            }
+                        }
+                        Err(_) => {
+                            let replacement = ShmemConf::new()
+                                .size(size)
+                                .flink(&flink)
+                                .force_create_flink()
+                                .create()
+                                .map_err(map_shmem_err)?;
+                            let mut producer = Self::from_named_mapping(
+                                replacement,
+                                flink,
+                                max_frame_bytes,
+                                producer_lock,
+                            );
+                            producer.init_header();
+                            Ok(producer)
+                        }
+                    }
+                }
+                Err(error) => Err(map_shmem_err(error)),
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
         match ShmemConf::new().size(size).flink(&flink).create() {
             Ok(shmem) => {
-                let mut producer = Self {
-                    mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
-                    max_frame_bytes,
-                };
+                let mut producer = Self::from_named_mapping(shmem, flink, max_frame_bytes);
                 producer.init_header();
                 Ok(producer)
             }
@@ -416,16 +560,24 @@ impl SharedFrameRingProducer {
 
     pub fn open(name: &str, max_frame_bytes: usize) -> Result<Self, SharedRingError> {
         let flink = ring_flink_path(name);
+        #[cfg(target_os = "windows")]
+        let producer_lock = acquire_producer_lock(&flink)?;
         let size = layout_size(max_frame_bytes);
         let shmem = ShmemConf::new()
             .size(size)
             .flink(&flink)
             .open()
             .map_err(map_shmem_err)?;
-        let producer = Self {
-            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
-            max_frame_bytes,
+        #[cfg(target_os = "windows")]
+        let shmem = {
+            let mut shmem = shmem;
+            shmem.set_owner(true);
+            shmem
         };
+        #[cfg(target_os = "windows")]
+        let producer = Self::from_named_mapping(shmem, flink, max_frame_bytes, producer_lock);
+        #[cfg(not(target_os = "windows"))]
+        let producer = Self::from_named_mapping(shmem, flink, max_frame_bytes);
         producer.validate_header()?;
         Ok(producer)
     }
@@ -450,20 +602,7 @@ impl SharedFrameRingProducer {
     }
 
     fn validate_header(&self) -> Result<(), SharedRingError> {
-        let base = self.mapping.as_ptr();
-        unsafe {
-            let meta = &*meta_at(base);
-            if meta.magic != RING_MAGIC
-                || meta.version != RING_VERSION
-                || meta.slot_count != SLOT_COUNT as u32
-            {
-                return Err(SharedRingError::InvalidHeader);
-            }
-            if meta.max_frame_bytes as usize != self.max_frame_bytes {
-                return Err(SharedRingError::InvalidLayout);
-            }
-        }
-        Ok(())
+        validate_ring_header(self.mapping.as_ptr(), self.max_frame_bytes)
     }
 
     pub fn publish_nv12(
@@ -651,14 +790,18 @@ impl SharedFrameRingProducer {
 
 impl SharedFrameRingConsumer {
     pub fn open(name: &str, max_frame_bytes: usize) -> Result<Self, SharedRingError> {
-        SharedFrameRingProducer::open(name, max_frame_bytes).map(|producer| Self {
-            mapping: match producer.mapping {
-                ProducerMapping::Shared(mapping) => ConsumerMapping::Shared(mapping),
-                #[cfg(target_os = "macos")]
-                ProducerMapping::File(_) => unreachable!("named open never creates a file mapping"),
-            },
-            max_frame_bytes: producer.max_frame_bytes,
-        })
+        let flink = ring_flink_path(name);
+        let shmem = ShmemConf::new()
+            .size(layout_size(max_frame_bytes))
+            .flink(&flink)
+            .open()
+            .map_err(map_shmem_err)?;
+        let consumer = Self {
+            mapping: ConsumerMapping::Shared(SharedMapping::new(shmem, flink)),
+            max_frame_bytes,
+        };
+        consumer.validate_header()?;
+        Ok(consumer)
     }
 
     #[cfg(target_os = "macos")]
@@ -689,22 +832,19 @@ impl SharedFrameRingConsumer {
         Ok(consumer)
     }
 
-    #[cfg(target_os = "macos")]
     fn validate_header(&self) -> Result<(), SharedRingError> {
-        let base = self.mapping.as_ptr();
-        // SAFETY: Both mapping backends cover at least RingMeta after their
-        // constructors validate the complete layout size.
-        let meta = unsafe { &*const_meta_at(base) };
-        if meta.magic != RING_MAGIC
-            || meta.version != RING_VERSION
-            || meta.slot_count != SLOT_COUNT as u32
-        {
-            return Err(SharedRingError::InvalidHeader);
+        validate_ring_header(self.mapping.as_ptr(), self.max_frame_bytes)
+    }
+
+    /// Returns false when a named ring's flink no longer points at this
+    /// consumer's OS mapping. The caller must drop and reopen the consumer;
+    /// file-backed macOS rings use their own inode-reconnect boundary.
+    pub fn is_current_generation(&self) -> bool {
+        match &self.mapping {
+            ConsumerMapping::Shared(mapping) => mapping.is_current_generation(),
+            #[cfg(target_os = "macos")]
+            ConsumerMapping::File(_) => true,
         }
-        if meta.max_frame_bytes as usize != self.max_frame_bytes {
-            return Err(SharedRingError::InvalidLayout);
-        }
-        Ok(())
     }
 
     pub fn latest_frame(&self) -> Option<SharedFrameView<'_>> {
@@ -930,8 +1070,11 @@ mod tests {
         let path = SharedFrameRingProducer::flink_path(name);
         let _ = std::fs::remove_file(&path);
         #[cfg(target_os = "windows")]
-        for index in 0..SLOT_COUNT {
-            let _ = std::fs::remove_file(slot_lock_path(&path, index));
+        {
+            for index in 0..SLOT_COUNT {
+                let _ = std::fs::remove_file(slot_lock_path(&path, index));
+            }
+            let _ = std::fs::remove_file(producer_lock_path(&path));
         }
     }
 
@@ -979,6 +1122,25 @@ mod tests {
             .publish_nv12(64, 64, 64, 0, 9, &frame)
             .expect("publish");
         assert_eq!(consumer.latest_frame().expect("view").timestamp_us, 9);
+        cleanup(&name);
+    }
+
+    #[test]
+    fn consumer_detects_replaced_named_mapping_generation() {
+        let name = test_ring_name();
+        let max = nv12_byte_size(64, 64);
+        let first_producer = SharedFrameRingProducer::create(&name, max).expect("first producer");
+        let consumer = SharedFrameRingConsumer::open(&name, max).expect("consumer");
+        assert!(consumer.is_current_generation());
+
+        drop(first_producer);
+        assert!(!consumer.is_current_generation());
+        let second_producer = SharedFrameRingProducer::create(&name, max).expect("second producer");
+        assert!(!consumer.is_current_generation());
+        let reattached = SharedFrameRingConsumer::open(&name, max).expect("reattached consumer");
+        assert!(reattached.is_current_generation());
+
+        drop((reattached, consumer, second_producer));
         cleanup(&name);
     }
 
@@ -1101,6 +1263,140 @@ mod tests {
 
         drop(recovered);
         drop(producer);
+        cleanup(&name);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_lifecycle_lock_rejects_a_second_producer() {
+        let name = test_ring_name();
+        let max = nv12_byte_size(64, 64);
+        let producer = SharedFrameRingProducer::create(&name, max).expect("producer");
+        let error = match SharedFrameRingProducer::open_or_create(&name, max) {
+            Ok(_) => panic!("second producer must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            SharedRingError::ProducerAlreadyRunning(path)
+                if path == SharedFrameRingProducer::flink_path(&name)
+        ));
+
+        drop(producer);
+        cleanup(&name);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_open_or_create_repairs_a_broken_generation_locator() {
+        let name = test_ring_name();
+        let max = nv12_byte_size(64, 64);
+        let flink = SharedFrameRingProducer::flink_path(&name);
+        std::fs::write(&flink, "/picoo-missing-mapping").expect("broken flink fixture");
+
+        let mut producer =
+            SharedFrameRingProducer::open_or_create(&name, max).expect("recovered producer");
+        let frame = nv12_black(64, 64);
+        producer
+            .publish_nv12(64, 64, 64, 0, 7, &frame)
+            .expect("publish");
+        let consumer = SharedFrameRingConsumer::open(&name, max).expect("consumer");
+        assert_eq!(consumer.latest_frame().expect("frame").timestamp_us, 7);
+
+        drop((consumer, producer));
+        cleanup(&name);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_open_or_create_replaces_an_invalid_persisted_generation() {
+        let name = test_ring_name();
+        let max = nv12_byte_size(64, 64);
+        let mut invalid = SharedFrameRingProducer::create(&name, max).expect("invalid producer");
+        unsafe {
+            (&mut *meta_at(invalid.mapping.as_ptr())).magic = 0;
+        }
+        let ProducerMapping::Shared(mapping) = &mut invalid.mapping;
+        mapping.mapping.set_owner(false);
+        drop(invalid);
+
+        let mut recovered =
+            SharedFrameRingProducer::open_or_create(&name, max).expect("replacement producer");
+        let frame = nv12_black(64, 64);
+        recovered
+            .publish_nv12(64, 64, 64, 0, 8, &frame)
+            .expect("publish");
+        let consumer = SharedFrameRingConsumer::open(&name, max).expect("consumer");
+        assert!(consumer.is_current_generation());
+        assert_eq!(consumer.latest_frame().expect("frame").timestamp_us, 8);
+
+        drop(consumer);
+        drop(recovered);
+        assert!(!SharedFrameRingProducer::flink_path(&name).exists());
+        cleanup(&name);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "helper process for windows_recovers_after_producer_process_termination"]
+    fn windows_crash_producer_helper() {
+        let Ok(name) = std::env::var("PICOO_TEST_CRASH_RING_NAME") else {
+            return;
+        };
+        let max = nv12_byte_size(64, 64);
+        let frame = nv12_black(64, 64);
+        let mut producer = SharedFrameRingProducer::create(&name, max).expect("crash producer");
+        producer
+            .publish_nv12(64, 64, 64, 0, 1, &frame)
+            .expect("crash frame");
+        std::process::exit(0);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_recovers_after_producer_process_termination() {
+        let name = test_ring_name();
+        let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "shared_ring::tests::windows_crash_producer_helper",
+                "--nocapture",
+            ])
+            .env("PICOO_TEST_CRASH_RING_NAME", &name)
+            .status()
+            .expect("crash helper");
+        assert!(status.success());
+
+        let max = nv12_byte_size(64, 64);
+        let frame = nv12_black(64, 64);
+        let mut recovered =
+            SharedFrameRingProducer::open_or_create(&name, max).expect("recovered producer");
+        let consumer = SharedFrameRingConsumer::open(&name, max).expect("consumer");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            recovered
+                .publish_nv12(64, 64, 64, 0, 2, &frame)
+                .expect("post-crash frame");
+            if consumer
+                .latest_frame()
+                .is_some_and(|view| view.timestamp_us == 2)
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "post-crash slot locks were not released within one second"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        drop(consumer);
+        drop(recovered);
+        assert!(
+            !SharedFrameRingProducer::flink_path(&name).exists(),
+            "recovered Producer must adopt generation cleanup ownership"
+        );
         cleanup(&name);
     }
 
