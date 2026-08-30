@@ -1385,7 +1385,7 @@ picoo-camera/
 - Android ARM64 APK / AAB
 - iOS ARM64 App
 - Windows x86_64 Installer
-- macOS Universal App
+- macOS ARM64 App（Apple Silicon，不提供 Intel slice）
 
 ### 19.2 构建工具
 
