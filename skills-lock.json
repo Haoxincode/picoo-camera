@@ -1,6 +1,12 @@
 {
   "version": 1,
   "skills": {
+    "adaptive": {
+      "source": "android/skills",
+      "sourceType": "github",
+      "skillPath": "jetpack-compose/adaptive/SKILL.md",
+      "computedHash": "c4891734dce5839b6516ad24cc9632c926853bb7bdd5d3ee8130ec25ab5d2d6f"
+    },
     "compose-animations": {
       "source": "chrisbanes/skills",
       "sourceType": "github",
@@ -25,6 +31,12 @@
       "skillPath": "skills/compose-ui-testing-patterns/SKILL.md",
       "computedHash": "0a15f484b5ab04a5abf50afd19906d05d8c5eaa6d11a664c48f190db18815313"
     },
+    "edge-to-edge": {
+      "source": "android/skills",
+      "sourceType": "github",
+      "skillPath": "system/edge-to-edge/SKILL.md",
+      "computedHash": "12e71605ddb1d7a237edaf26184b795561c9b78b8fd925604fb21c250604bd1c"
+    },
     "gpui": {
       "source": "longbridge/gpui-component",
       "sourceType": "github",
@@ -36,6 +48,18 @@
       "sourceType": "github",
       "skillPath": "skills/gpui-component/SKILL.md",
       "computedHash": "9a1eac4f97da5ad22cdccb4b6fd6c4f18b8a3943018ef698978e06907bb92e0a"
+    },
+    "styles": {
+      "source": "android/skills",
+      "sourceType": "github",
+      "skillPath": "jetpack-compose/theming/styles/SKILL.md",
+      "computedHash": "9e526140ad6b2d61e3b6e752be725c4fddbb777aa537539ced6418b74b07ea4d"
+    },
+    "testing-setup": {
+      "source": "android/skills",
+      "sourceType": "github",
+      "skillPath": "testing/testing-setup/SKILL.md",
+      "computedHash": "9dfd8446372ff667a290faccaa19297920212fa6c66c54621f44207ba9d6a940"
     }
   }
 }

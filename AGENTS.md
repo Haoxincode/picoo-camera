@@ -24,8 +24,15 @@
 | Compose 组件 API | [compose-component-design](.agents/skills/compose-component-design/SKILL.md) | 同上 |
 | Compose 动效 | [compose-animations](.agents/skills/compose-animations/SKILL.md) | 同上 |
 | Compose UI 测试 | [compose-ui-testing-patterns](.agents/skills/compose-ui-testing-patterns/SKILL.md) | 同上 |
+| Compose 自适应布局 | [adaptive](.agents/skills/adaptive/SKILL.md) | [android/skills](https://github.com/android/skills) |
+| Compose 自定义 Styles（实验性） | [styles](.agents/skills/styles/SKILL.md) | 同上 |
+| Android edge-to-edge | [edge-to-edge](.agents/skills/edge-to-edge/SKILL.md) | 同上 |
+| Android 测试基础设施 | [testing-setup](.agents/skills/testing-setup/SKILL.md) | 同上 |
+| 跨端 token 驱动 UI 代码 | [design-code](.agents/skills/design-code/SKILL.md) | [plugin87/ux-ui-agent-skills](https://github.com/plugin87/ux-ui-agent-skills) |
 
-更新：`npx skills update`（锁文件 `skills-lock.json`）。
+更新：常规 Skill 使用 `npx skills update`（锁文件 `skills-lock.json`）。`design-code` 的原始
+Skill 与依赖闭包保存在 `.agents/vendor/ux-ui-agent-skills/`，入口仅处理 Codex 兼容路径；更新时按
+`VENDOR.json` 替换完整上游快照，不要修改 vendor 内容。
 
 ## Design Specs 上下文
 

@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/plugin87/ux-ui-agent-skills.git",
+  "revision": "2ffb677aa02b225c8a3da1b7f31d9ebb7c38f1dd",
+  "upstreamVersion": "2.5.1",
+  "vendoredPaths": [
+    ".claude/skills/design-code/SKILL.md",
+    "accessibility",
+    "components",
+    "frameworks",
+    "scripts",
+    "taste",
+    "tokens",
+    "workflows"
+  ]
+}
