@@ -27,5 +27,5 @@ picoo-sender.workspace = true
 picoo-testkit.workspace = true
 tempfile = "3.14"
 
-[target.'cfg(not(windows))'.dev-dependencies]
+[target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dev-dependencies]
 openh264 = { version = "0.9", default-features = true }

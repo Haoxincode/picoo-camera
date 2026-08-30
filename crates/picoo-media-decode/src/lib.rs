@@ -1,7 +1,8 @@
-//! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006.
+//! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006/012.
 //!
 //! Receiver decodes once; output NV12 feeds FrameHub and Shared Frame Ring.
 //! - Windows: Media Foundation (`windows-mf`)
+//! - macOS: VideoToolbox through pure Rust Apple framework bindings
 //! - Linux/CI: Cisco OpenH264 soft decode, with StubDecoder fallback for fixtures
 
 mod stub;
@@ -9,7 +10,10 @@ mod stub;
 #[cfg(all(windows, feature = "windows-mf"))]
 mod mf;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod videotoolbox;
+
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 mod openh264_dec;
 
 use bytes::Bytes;
@@ -53,33 +57,54 @@ pub trait AccessUnitDecoder: Send {
     }
 }
 
-/// Platform decoder selection — OpenH264 on Linux; MF when `windows-mf` is enabled.
+/// Select the native production decoder for desktop targets.
 pub fn create_platform_decoder() -> Box<dyn AccessUnitDecoder> {
-    #[cfg(all(windows, feature = "windows-mf"))]
-    {
-        match mf::MfH264Decoder::new() {
-            Ok(decoder) => {
-                tracing::info!("Using Media Foundation H.264 decoder");
-                return Box::new(decoder);
-            }
-            Err(err) => {
-                tracing::warn!("MF decoder unavailable, falling back to stub: {err}");
-            }
+    create_platform_decoder_impl()
+}
+
+#[cfg(target_os = "macos")]
+fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
+    tracing::info!("Using VideoToolbox H.264 decoder");
+    Box::new(videotoolbox::VideoToolboxDecoder::new())
+}
+
+#[cfg(all(windows, feature = "windows-mf"))]
+fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
+    match mf::MfH264Decoder::new() {
+        Ok(decoder) => {
+            tracing::info!("Using Media Foundation H.264 decoder");
+            Box::new(decoder)
+        }
+        Err(err) => {
+            tracing::warn!("MF decoder unavailable, falling back to stub: {err}");
+            Box::new(StubDecoder::new())
         }
     }
-    #[cfg(not(windows))]
-    {
-        match openh264_dec::OpenH264Decoder::new() {
-            Ok(decoder) => {
-                tracing::info!("Using OpenH264 software H.264 decoder");
-                return Box::new(decoder);
-            }
-            Err(err) => {
-                tracing::warn!("OpenH264 unavailable, falling back to stub: {err}");
-            }
-        }
-    }
+}
+
+#[cfg(all(windows, not(feature = "windows-mf")))]
+fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
     Box::new(StubDecoder::new())
+}
+
+#[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
+fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
+    // Sender-only Apple targets do not own a Receiver decoder.
+    Box::new(StubDecoder::new())
+}
+
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
+fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
+    match openh264_dec::OpenH264Decoder::new() {
+        Ok(decoder) => {
+            tracing::info!("Using OpenH264 software H.264 decoder");
+            Box::new(decoder)
+        }
+        Err(err) => {
+            tracing::warn!("OpenH264 unavailable, falling back to stub: {err}");
+            Box::new(StubDecoder::new())
+        }
+    }
 }
 
 pub fn now_timestamp_us() -> u64 {
@@ -106,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_vendor = "apple")))]
     fn openh264_roundtrip_produces_nv12() {
         use openh264::encoder::Encoder;
         use openh264::formats::YUVBuffer;
@@ -148,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_vendor = "apple")))]
     fn openh264_falls_back_to_stub_for_tiny_fixture() {
         let mut decoder = create_platform_decoder();
         let frame = decoder
@@ -160,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_vendor = "apple")))]
     fn openh264_decodes_length_prefixed_au() {
         use openh264::encoder::Encoder;
         use openh264::formats::YUVBuffer;

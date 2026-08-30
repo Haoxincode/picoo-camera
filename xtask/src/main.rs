@@ -47,6 +47,8 @@ enum PackagePlatform {
 enum TestSuite {
     /// Swift/C ABI integration on an installed ARM64 iPhone Simulator runtime.
     Ios,
+    /// Native VideoToolbox decode and Apple product dependency boundary.
+    Macos,
     Protocol,
     /// Linux-hostable product gates (WiX scaffold, VCam format, TXT sync, soak smoke).
     Linux,
@@ -327,6 +329,7 @@ fn test_suite(suite: TestSuite) -> Result<()> {
     let sh = Shell::new()?;
     match suite {
         TestSuite::Ios => test_ios(&sh)?,
+        TestSuite::Macos => test_macos(&sh)?,
         TestSuite::Protocol => {
             cmd!(
                 sh,
@@ -424,6 +427,54 @@ fn test_suite(suite: TestSuite) -> Result<()> {
                 "cargo test -p picoo-ffi --lib export_diagnostics_with_session_includes_redacted_host"
             )
             .run()?;
+        }
+    }
+    Ok(())
+}
+
+fn test_macos(sh: &Shell) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        bail!("macOS tests must run on a macOS host");
+    }
+
+    let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
+    cmd!(sh, "cargo test -p picoo-media-decode").run()?;
+    cmd!(
+        sh,
+        "cargo test -p picoo-receiver --lib paired_avcc_length_prefixed_au_reaches_frame_hub"
+    )
+    .run()?;
+    cmd!(
+        sh,
+        "cargo test -p picoo-receiver --lib macos_videotoolbox_abr_epoch_resolution_recovery"
+    )
+    .run()?;
+
+    // REQ-PICOO-MEDIA-012 / STACK-001: the Apple product must not regain
+    // OpenH264's native build chain after moving decode to VideoToolbox.
+    let dependency_trees = [
+        (
+            "product",
+            cmd!(
+                sh,
+                "cargo tree -p picoo-desktop --target aarch64-apple-darwin --features gpui-ui"
+            )
+            .read()?,
+        ),
+        (
+            "test",
+            cmd!(
+                sh,
+                "cargo tree -p picoo-receiver --target aarch64-apple-darwin --edges normal,build,dev"
+            )
+            .read()?,
+        ),
+    ];
+    for (tree_name, tree) in dependency_trees {
+        for forbidden in ["openh264 v", "openh264-sys", "cmake v"] {
+            if tree.contains(forbidden) {
+                bail!("macOS {tree_name} dependency tree contains forbidden `{forbidden}`");
+            }
         }
     }
     Ok(())

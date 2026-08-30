@@ -10,6 +10,55 @@ use crate::{
     PAIRING_CHALLENGE_TTL,
 };
 
+fn use_stub_decoder(receiver: &mut ReceiverSession) {
+    receiver.set_decoder_for_test(Box::new(picoo_media_decode::StubDecoder::new()));
+}
+
+#[test]
+fn decoder_is_flushed_at_every_session_teardown_boundary() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct FlushCounter(Arc<AtomicUsize>);
+
+    impl picoo_media_decode::AccessUnitDecoder for FlushCounter {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
+        {
+            Ok(None)
+        }
+
+        fn flush(
+            &mut self,
+        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
+        {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+    }
+
+    let flushes = Arc::new(AtomicUsize::new(0));
+    let mut receiver = ReceiverSession::new();
+    receiver.set_decoder_for_test(Box::new(FlushCounter(Arc::clone(&flushes))));
+
+    receiver
+        .inject_peer_disconnect_for_test()
+        .expect("peer disconnect flush");
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
+
+    receiver.set_permit_unpaired_video(true);
+    receiver
+        .handle_stop_stream(picoo_transport::SessionId(1))
+        .expect("StopStream flush");
+    assert_eq!(flushes.load(Ordering::SeqCst), 2);
+
+    receiver.close();
+    assert_eq!(flushes.load(Ordering::SeqCst), 3);
+}
+
 fn pump_pair_for(
     receiver: &mut ReceiverSession,
     sender: &mut SenderSession<QuicSenderTransport>,
@@ -62,6 +111,7 @@ fn single_decode_per_access_unit_into_frame_hub() {
     // REQ-PICOO-MEDIA-006: one decode invocation per reassembled AU (hub fans out).
     let payload = b"single-decode-au";
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     receiver.set_permit_unpaired_video(true);
     let bind = receiver
@@ -751,6 +801,7 @@ fn unpaired_video_keeps_shared_ring_on_placeholder() {
 #[test]
 fn paired_sender_enters_streaming_after_client_hello() {
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "android-sender".into(),
         device_name: "Pixel".into(),
@@ -1016,6 +1067,7 @@ fn pairing_confirm_before_desktop_confirm_is_ignored() {
 fn first_time_pairing_flow_enables_video() {
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    use_stub_decoder(&mut receiver);
 
     let bind = receiver
         .listen(Endpoint {
@@ -1097,6 +1149,7 @@ fn receiver_sends_stats_to_paired_sender() {
     use picoo_session::ReceiverStatus;
 
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "android-sender".into(),
         device_name: "Pixel".into(),
@@ -1387,6 +1440,7 @@ fn remote_mirrored_flips_framehub_nv12() {
     pattern[3] = 40;
 
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "android-sender".into(),
@@ -1477,6 +1531,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     let pattern = vec![42u8; nv12_byte_size(width, height)];
 
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "rot-phone".into(),
@@ -1690,6 +1745,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
 
     let identity = ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    use_stub_decoder(&mut receiver);
     receiver.set_last_frame_hold_for_test(Duration::from_millis(60));
     let bind = receiver
         .listen(Endpoint {
@@ -1754,7 +1810,9 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     let live_ts = receiver.latest_frame().expect("live frame").timestamp_us;
     assert!(live_ts > 0);
 
-    receiver.inject_peer_disconnect_for_test();
+    receiver
+        .inject_peer_disconnect_for_test()
+        .expect("disconnect reset");
     assert_eq!(receiver.status(), ReceiverStatus::Reconnecting);
     assert_eq!(
         receiver.latest_frame().expect("held frame").timestamp_us,
@@ -1775,6 +1833,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
 fn default_jitter_holds_au_until_target_delay() {
     // REQ-PICOO-SESSION-002: default 50ms target delays decode until media clock catches up.
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "android-sender".into(),
         device_name: "Pixel".into(),
@@ -1849,6 +1908,8 @@ fn default_jitter_holds_au_until_target_delay() {
 fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    #[cfg(target_vendor = "apple")]
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     let bind = receiver
         .listen(Endpoint {
@@ -1901,7 +1962,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     // Prefer real H.264 on Linux so soak stresses OpenH264→FrameHub (REQ-PICOO-SESSION-005).
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_vendor = "apple")))]
     let soak_au: Vec<u8> = {
         use openh264::encoder::Encoder;
         use openh264::formats::YUVBuffer;
@@ -1941,7 +2002,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         }
         annex
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_vendor = "apple"))]
     let soak_au: Vec<u8> = b"soak-frame-stub".to_vec();
 
     let deadline = std::time::Instant::now() + Duration::from_secs(soak_secs);
@@ -2020,6 +2081,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         .unwrap_or(0.05);
 
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "lossy-phone".into(),
@@ -2183,6 +2245,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
     use std::time::Instant;
 
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "lat-phone".into(),
@@ -2268,7 +2331,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
     assert!(p95 < 250.0, "P95 {p95}ms exceeds 250ms budget");
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn paired_openh264_remains_usable_under_five_percent_loss() {
     // SESSION-006 with real H.264 → FrameHub (not stub AUs).
@@ -2382,7 +2445,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn paired_openh264_e2e_latency_p50_under_budget() {
     // SESSION-007: OpenH264 ingest→FrameHub P50/P95.
@@ -2653,7 +2716,7 @@ fn linux_vm_rss_kb() -> Option<u64> {
     None
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn paired_openh264_access_unit_reaches_frame_hub() {
     // REQ-PICOO-MEDIA-005/006: real Annex-B H.264 through QUIC → decode → FrameHub.
@@ -2781,9 +2844,8 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
 #[cfg(not(windows))]
 #[test]
 fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
-    // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU → Annex-B normalize → OpenH264.
-    use openh264::encoder::Encoder;
-    use openh264::formats::YUVBuffer;
+    // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU reaches the
+    // platform decoder. The encoded fixture avoids a test-only native codec.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_packet::{
         annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
@@ -2791,21 +2853,13 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
+    use picoo_testkit::H264_64X64_RED_IDR;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 160usize;
-    let height = 120usize;
-    let mut planes = vec![128u8; width * height * 3 / 2];
-    for y in 0..height {
-        for x in 0..width {
-            planes[y * width + x] = ((x * 7 + y * 11) % 200 + 20) as u8;
-        }
-    }
-    let yuv = YUVBuffer::from_vec(planes, width, height);
-    let mut encoder = Encoder::new().expect("encoder");
-    let annex = encoder.encode(&yuv).expect("encode").to_vec();
-    let (sps, pps) = extract_sps_pps(&annex).expect("sps/pps");
-    let avcc = annex_b_to_length_prefixed(&annex).expect("avcc wrap");
+    let width = 64usize;
+    let height = 64usize;
+    let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).expect("sps/pps");
+    let avcc = annex_b_to_length_prefixed(H264_64X64_RED_IDR).expect("avcc wrap");
     assert!(is_length_prefixed_access_unit(&avcc));
 
     let mut receiver = ReceiverSession::new();
@@ -2894,6 +2948,167 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
     );
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_videotoolbox_abr_epoch_resolution_recovery() {
+    // REQ-PICOO-MEDIA-003/010/012: ABR epoch changes flow through QUIC and
+    // rebuild VideoToolbox with the dimensions advertised by StreamConfig.
+    use picoo_frame_hub::nv12_byte_size;
+    use picoo_packet::extract_sps_pps;
+    use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
+    use picoo_sender::StreamConfigParams;
+    use picoo_testkit::{H264_1280X720_RED_IDR, H264_854X480_RED_IDR};
+    use prost::Message;
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_jitter_target_ms(0);
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "macos-abr-phone".into(),
+        device_name: "macOS ABR".into(),
+        public_key: vec![4, 8, 0],
+        certificate_fingerprint: "fp".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..500 {
+        receiver.pump().expect("receiver connect");
+        sender.pump().expect("sender connect");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .send_client_hello("macos-abr-phone", "macOS ABR", &[4, 8, 0])
+        .expect("hello");
+    for _ in 0..200 {
+        receiver.pump().expect("receiver hello");
+        sender.pump().expect("sender hello");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+
+    let inject_congestion = |sender: &mut SenderSession<QuicSenderTransport>| {
+        for _ in 0..40 {
+            let stats = ReceiverStatsMsg {
+                packet_loss: 0.05,
+                frame_age_ms: 250.0,
+                ..Default::default()
+            };
+            let mut bytes = Vec::new();
+            stats.encode(&mut bytes).expect("encode stats");
+            sender
+                .inject_control_for_test(bytes::Bytes::from(bytes))
+                .expect("inject stats");
+            if sender.take_resolution_downshift() {
+                return;
+            }
+        }
+        panic!("ABR did not request a resolution downshift");
+    };
+
+    inject_congestion(&mut sender);
+    assert_eq!(sender.bitrate_active_height(), 720);
+    let (sps_720, pps_720) = extract_sps_pps(H264_1280X720_RED_IDR).expect("720p parameter sets");
+    sender.set_stream_config(StreamConfigParams {
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 2,
+        sps: sps_720,
+        pps: pps_720,
+        ..Default::default()
+    });
+    for _ in 0..80 {
+        receiver.pump().expect("receiver 720p config");
+        sender.pump().expect("sender 720p config");
+        if receiver
+            .stream_config()
+            .is_some_and(|config| config.stream_epoch == 2)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .ingest_and_flush(H264_1280X720_RED_IDR, true, 2, 2)
+        .expect("send 720p IDR");
+    for _ in 0..300 {
+        receiver.pump().expect("receiver 720p frame");
+        sender.pump().ok();
+        if receiver
+            .latest_frame()
+            .is_some_and(|frame| (frame.width, frame.height) == (1280, 720))
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let frame_720 = receiver.latest_frame().expect("720p frame");
+    assert_eq!((frame_720.width, frame_720.height), (1280, 720));
+    assert_eq!(frame_720.pixel_data.len(), nv12_byte_size(1280, 720));
+    let sequence_720 = frame_720.sequence;
+
+    inject_congestion(&mut sender);
+    assert_eq!(sender.bitrate_active_height(), 480);
+    let (sps_480, pps_480) = extract_sps_pps(H264_854X480_RED_IDR).expect("480p parameter sets");
+    sender.set_stream_config(StreamConfigParams {
+        width: 854,
+        height: 480,
+        fps: 30,
+        bitrate_bps: 1_800_000,
+        stream_epoch: 3,
+        sps: sps_480,
+        pps: pps_480,
+        ..Default::default()
+    });
+    for _ in 0..80 {
+        receiver.pump().expect("receiver 480p config");
+        sender.pump().expect("sender 480p config");
+        if receiver
+            .stream_config()
+            .is_some_and(|config| config.stream_epoch == 3)
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender
+        .ingest_and_flush(H264_854X480_RED_IDR, true, 3, 3)
+        .expect("send 480p IDR");
+    for _ in 0..300 {
+        receiver.pump().expect("receiver 480p frame");
+        sender.pump().ok();
+        if receiver.latest_frame().is_some_and(|frame| {
+            frame.sequence > sequence_720 && (frame.width, frame.height) == (854, 480)
+        }) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let frame_480 = receiver.latest_frame().expect("480p frame");
+    assert!(frame_480.sequence > sequence_720);
+    assert_eq!((frame_480.width, frame_480.height), (854, 480));
+    assert_eq!(frame_480.pixel_data.len(), nv12_byte_size(854, 480));
+}
+
 #[cfg(not(windows))]
 #[test]
 fn thermal_hold_blocks_abr_upshift_on_sender() {
@@ -2949,7 +3164,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
     assert_eq!(sender.bitrate_active_height(), 1080);
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn paired_openh264_publishes_to_shared_frame_ring() {
     // REQ-PICOO-FRAME-003 / VCAM-003: decode once → Shared Frame Ring for VCam consumer.
@@ -3104,6 +3319,7 @@ fn paired_loopback_binds_lan_only_without_wan() {
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "lan-phone".into(),
@@ -3437,7 +3653,7 @@ fn run_reconnect_churn(rounds: u32) {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
@@ -3456,7 +3672,7 @@ fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<
     (annex, sps, pps)
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
     // PUC-005 / REQ-PICOO-MEDIA-003: camera/epoch switch → new IDR in FrameHub <3s.
@@ -3605,7 +3821,7 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn midstream_resolution_change_openh264_updates_framehub() {
     // REQ-PICOO-MEDIA-002/010: mid-stream 160x120 → 320x240 with new SPS/PPS.
@@ -3735,7 +3951,7 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     // REQ-PICOO-SESSION-003: incomplete IDR → RequestKeyframe → fresh IDR → FrameHub.
@@ -3779,10 +3995,19 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         }
     }
     let recovery_yuv = YUVBuffer::from_vec(recovery_planes, width, height);
-    let recovery_au = encoder
+    // A new epoch resets platform decoder reference state, so recovery must
+    // start with a true IDR rather than the next P-frame from the old encoder.
+    let mut recovery_encoder = Encoder::new().expect("recovery OpenH264 encoder");
+    let recovery_au = recovery_encoder
         .encode(&recovery_yuv)
         .expect("recovery encode")
         .to_vec();
+    assert!(
+        picoo_packet::split_annex_b_nals(&recovery_au)
+            .iter()
+            .any(|nal| nal.first().is_some_and(|byte| byte & 0x1f == 5)),
+        "epoch recovery fixture must contain an IDR"
+    );
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -3935,7 +4160,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     );
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn abr_downshift_updates_stream_config_and_framehub() {
     // REQ-PICOO-MEDIA-010: sustained congestion → DownshiftResolution → 720p StreamConfig → FrameHub.
@@ -3952,16 +4177,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
 
     fn encode_pattern(w: usize, h: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut planes = vec![128u8; w * h * 3 / 2];
-        for y in 0..h {
-            for x in 0..w {
-                planes[y * w + x] = ((x as u8)
-                    .wrapping_mul(3)
-                    .wrapping_add(y as u8)
-                    .wrapping_add(seed))
-                    % 200
-                    + 20;
-            }
-        }
+        planes[..w * h].fill(seed.saturating_add(32));
         let yuv = YUVBuffer::from_vec(planes, w, h);
         let mut encoder = Encoder::new().expect("encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();
@@ -3969,8 +4185,8 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         (annex, sps, pps)
     }
 
-    let (au_hi, sps_hi, pps_hi) = encode_pattern(320, 240, 1);
-    let (au_lo, sps_lo, pps_lo) = encode_pattern(160, 120, 9);
+    let (au_hi, sps_hi, pps_hi) = encode_pattern(1920, 1080, 1);
+    let (au_lo, sps_lo, pps_lo) = encode_pattern(1280, 720, 9);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -4040,12 +4256,12 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     for _ in 0..200 {
         receiver.pump().ok();
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.width == 320) {
+        if receiver.latest_frame().is_some_and(|f| f.width == 1920) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(receiver.latest_frame().is_some_and(|f| f.width == 320));
+    assert!(receiver.latest_frame().is_some_and(|f| f.width == 1920));
 
     // Sustained congestion → ABR downshift hint (same path Android MainActivity polls).
     let mut downshifted = false;
@@ -4102,8 +4318,8 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         receiver.pump().ok();
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == 160 && frame.height == 120 {
-                assert_eq!(frame.pixel_data.len(), nv12_byte_size(160, 120));
+            if frame.width == 1280 && frame.height == 720 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(1280, 720));
                 ok = true;
                 break;
             }
@@ -4133,7 +4349,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     assert!(downshifted_480, "ABR must request second downshift to 480");
     assert_eq!(sender.bitrate_active_height(), 480);
 
-    let (au_480, sps_480, pps_480) = encode_pattern(80, 48, 3);
+    let (au_480, sps_480, pps_480) = encode_pattern(854, 480, 3);
     sender.set_stream_config(StreamConfigParams {
         width: 854,
         height: 480,
@@ -4165,8 +4381,8 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         receiver.pump().ok();
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == 80 && frame.height == 48 {
-                assert_eq!(frame.pixel_data.len(), nv12_byte_size(80, 48));
+            if frame.width == 854 && frame.height == 480 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(854, 480));
                 ok480 = true;
                 break;
             }
@@ -4176,7 +4392,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     assert!(ok480, "FrameHub must show 480p post-downshift frames");
 }
 
-#[cfg(not(windows))]
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn abr_upshift_updates_stream_config_and_framehub() {
     // REQ-PICOO-MEDIA-010: after downshift, sustained health → UpshiftResolution → 1080p FrameHub.
@@ -4193,16 +4409,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
 
     fn encode_pattern(w: usize, h: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut planes = vec![128u8; w * h * 3 / 2];
-        for y in 0..h {
-            for x in 0..w {
-                planes[y * w + x] = ((x as u8)
-                    .wrapping_mul(5)
-                    .wrapping_add(y as u8)
-                    .wrapping_add(seed))
-                    % 200
-                    + 20;
-            }
-        }
+        planes[..w * h].fill(seed.saturating_add(32));
         let yuv = YUVBuffer::from_vec(planes, w, h);
         let mut encoder = Encoder::new().expect("encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();
@@ -4210,8 +4417,8 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         (annex, sps, pps)
     }
 
-    let (au_lo, sps_lo, pps_lo) = encode_pattern(160, 120, 3);
-    let (au_hi, sps_hi, pps_hi) = encode_pattern(320, 240, 11);
+    let (au_lo, sps_lo, pps_lo) = encode_pattern(1280, 720, 3);
+    let (au_hi, sps_hi, pps_hi) = encode_pattern(1920, 1080, 11);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -4322,7 +4529,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
     for _ in 0..200 {
         receiver.pump().ok();
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.width == 160) {
+        if receiver.latest_frame().is_some_and(|f| f.width == 1280) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -4383,8 +4590,8 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         receiver.pump().ok();
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == 320 && frame.height == 240 {
-                assert_eq!(frame.pixel_data.len(), nv12_byte_size(320, 240));
+            if frame.width == 1920 && frame.height == 1080 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(1920, 1080));
                 ok = true;
                 break;
             }

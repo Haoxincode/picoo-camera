@@ -11,7 +11,7 @@ Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依
 | Rust Core（共享） | Cargo、Quinn/Rustls；vendored `protoc` | ✅ 开发与测试 |
 | Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
 | Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
-| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译基线 |
+| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译与 VideoToolbox→NV12 解码基线 |
 | iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；远端已验证 Rust XCFramework、SwiftUI 壳与 Simulator C ABI 测试基线 |
 
 **结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建与 CI 维护；**各平台最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要试图在 Linux 上交叉编译 GPUI 桌面程序、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。
@@ -41,7 +41,7 @@ GitHub Actions
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
-| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver 无签名编译基线；Camera Extension 接入后扩展为 app bundle | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask build macos`；`package macos` 待扩展实现后启用 |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码；Camera Extension 接入后扩展为 app bundle | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask build macos`；`package macos` 待扩展实现后启用 |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 
 ### 依赖关系
@@ -99,7 +99,7 @@ jobs:
           path: target/release/bundle/
 ```
 
-已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App 壳和 Simulator C ABI 生命周期测试的 Apple 原生编译、链接边界。后续新增的设备/配对 UI、AVFoundation 420v、VideoToolbox H.264 与 Swift Testing 源码已在本地 Xcode 26.6 完成 Swift 6 App/test bundle 编译链接；包含 Reicon Asset Catalog 的完整无签名 App 仍须由下一次 GitHub Actions 形成远端证据。这些证据都不替代 Camera Extension、签名、公证或 iPhone 真机媒体链路验收。
+已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及 720p→480p ABR/epoch/FrameHub 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。静态样本让该验收不依赖 CMake 或外部编码器。这些证据都不替代 Camera Extension、签名、公证或 iPhone→macOS 真机媒体链路验收。
 
 ### Apple 无签名构建基线
 

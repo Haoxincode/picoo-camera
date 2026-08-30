@@ -121,6 +121,8 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
       - name: Clippy macOS GPUI Receiver
         run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
+      - name: Test macOS VideoToolbox receiver
+        run: cargo run -p xtask -- test macos
       - name: Build macOS GPUI Receiver
         run: cargo run -p xtask -- build macos
       - uses: actions/upload-artifact@v7

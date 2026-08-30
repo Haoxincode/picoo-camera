@@ -17,8 +17,40 @@ picoo-protocol.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
 
-[target.'cfg(not(windows))'.dependencies]
+[target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dependencies]
 openh264 = { version = "0.9", default-features = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CFDictionary",
+    "CFNumber",
+    "CFString",
+] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CMBase",
+    "CMBlockBuffer",
+    "CMFormatDescription",
+    "CMSampleBuffer",
+    "CMTime",
+] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "CVBase",
+    "CVBuffer",
+    "CVImageBuffer",
+    "CVPixelBuffer",
+    "CVReturn",
+] }
+objc2-video-toolbox = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "VTDecompressionProperties",
+    "VTDecompressionSession",
+    "VTErrors",
+    "objc2-core-media",
+    "objc2-core-video",
+] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", optional = true, features = [
@@ -28,4 +60,7 @@ windows = { version = "0.62.2", optional = true, features = [
 ] }
 
 [dev-dependencies]
+picoo-testkit.workspace = true
+
+[target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dev-dependencies]
 openh264 = { version = "0.9", default-features = true }

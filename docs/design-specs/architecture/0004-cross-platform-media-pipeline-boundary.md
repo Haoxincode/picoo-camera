@@ -57,6 +57,11 @@ H.264 Access Units
   ↓ FrameHub
 ```
 
+- 使用 `objc2-video-toolbox`、`objc2-core-media`、`objc2-core-video` 的生成式 Rust 系统框架绑定，不增加 Swift/C 胶水层、CMake 或软件解码器。
+- Receiver 将 Annex-B / AVCC Access Unit 统一封装为四字节长度前缀的 `CMSampleBuffer`；SPS/PPS 改变或 `stream_epoch` 切换时销毁并重建 `VTDecompressionSession`。
+- VideoToolbox 必须创建硬件解码器并明确请求 `420v` 双平面输出；进入 FrameHub 前按 CoreVideo plane stride 复制为紧凑 NV12。目标 macOS 仅支持 Apple Silicon，不保留软件解码兼容路径。
+- macOS 正式解码失败必须作为媒体错误暴露，不得回退 OpenH264 或用占位帧掩盖真实 H.264 错误。
+
 ### 编码参数
 
 - Codec：H.264/AVC，8-bit 4:2:0 SDR Progressive，无 B 帧。

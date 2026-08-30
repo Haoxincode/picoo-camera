@@ -512,9 +512,7 @@ impl ReceiverSession {
                     self.placeholder_after = None;
                     self.status = ReceiverStatus::Connecting;
                 }
-                TransportEvent::Disconnected(_, _) => {
-                    self.on_peer_disconnected();
-                }
+                TransportEvent::Disconnected(_, _) => self.on_peer_disconnected()?,
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
                 }
@@ -596,7 +594,10 @@ impl ReceiverSession {
         Ok(())
     }
 
-    fn on_peer_disconnected(&mut self) {
+    fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
+        // Teardown must complete even if a platform decoder reports a flush
+        // error; otherwise transport state from a dead peer can survive.
+        let decoder_flush = self.decoder.flush();
         let had_live_frame =
             self.status == ReceiverStatus::Streaming && self.frame_hub.latest_ready().is_some();
         self.active_sender = None;
@@ -623,6 +624,8 @@ impl ReceiverSession {
                 ReceiverStatus::Disconnected
             };
         }
+        decoder_flush?;
+        Ok(())
     }
 
     fn maybe_finalize_disconnect_hold(&mut self) -> Result<(), ReceiverError> {
@@ -826,6 +829,8 @@ impl ReceiverSession {
             self.ingress.control_rejected_unpaired += 1;
             return Ok(());
         }
+        // Finish protocol/session teardown before surfacing a decoder error.
+        let decoder_flush = self.decoder.flush();
         // Sender-initiated stop: tear down session video without auto-reconnect wait.
         self.active_sender = None;
         self.pending_pairing = None;
@@ -843,6 +848,7 @@ impl ReceiverSession {
         } else {
             ReceiverStatus::Disconnected
         };
+        decoder_flush?;
         Ok(())
     }
 
@@ -908,7 +914,7 @@ impl ReceiverSession {
                 self.jitter.clear();
                 self.jitter_timeline = None;
                 self.reassembly = ReassemblyMap::new(8, 16);
-                let _ = self.decoder.flush();
+                self.decoder.flush()?;
             }
             self.send_request_keyframe(session)?;
         }
@@ -1146,6 +1152,9 @@ impl ReceiverSession {
     }
 
     pub fn close(&mut self) {
+        // close is intentionally infallible for UI teardown, but decoder state
+        // must never survive into a later session.
+        let _ = self.decoder.flush();
         if self.transport.is_connected() {
             self.transport
                 .close(picoo_transport::SessionId(1), CloseReason::LocalClose);
@@ -1172,8 +1181,15 @@ impl ReceiverSession {
 
     /// Test-only: simulate peer disconnect without waiting on QUIC teardown.
     #[cfg(test)]
-    pub fn inject_peer_disconnect_for_test(&mut self) {
-        self.on_peer_disconnected();
+    pub fn inject_peer_disconnect_for_test(&mut self) -> Result<(), ReceiverError> {
+        self.on_peer_disconnected()
+    }
+
+    /// Test-only decoder injection keeps synthetic payload support outside the
+    /// production platform decoder.
+    #[cfg(test)]
+    pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder>) {
+        self.decoder = decoder;
     }
 
     /// Test-only: inject a sender-originated control blob into the pairing/session handler.
@@ -1288,6 +1304,7 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let mut receiver = ReceiverSession::new();
+    receiver.decoder = Box::new(picoo_media_decode::StubDecoder::new());
     receiver.set_jitter_target_ms(0);
     receiver.set_permit_unpaired_video(true);
     let bind = receiver.listen(Endpoint {
@@ -1329,8 +1346,10 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     Err(ReceiverError::LoopbackTimeout)
 }
 
-/// Full product-path loopback: first-time pairing (short code) then video → FrameHub.
+/// Pairing/session loopback: first-time pairing (short code) then video → FrameHub.
 ///
+/// This explicitly uses `StubDecoder` for arbitrary fixture bytes. It validates
+/// the paired transport/session path, not a platform's production H.264 decoder.
 /// Does **not** use `permit_unpaired_video` (REQ-PICOO-PAIRING-003).
 pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
     use picoo_sender::SenderSession;
@@ -1338,6 +1357,7 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
 
     let identity = ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
+    receiver.decoder = Box::new(picoo_media_decode::StubDecoder::new());
     receiver.set_jitter_target_ms(0);
     let bind = receiver.listen(Endpoint {
         host: "127.0.0.1".into(),
