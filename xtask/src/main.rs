@@ -557,7 +557,14 @@ fn test_macos(sh: &Shell) -> Result<()> {
     }
 
     let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
+    let reader_harness = build_macos_shared_ring_reader_harness(sh)?;
+    let _reader_harness = sh.push_env("PICOO_MACOS_RING_READER_HARNESS", &reader_harness);
     cmd!(sh, "cargo test -p picoo-frame-hub --lib").run()?;
+    cmd!(
+        sh,
+        "cargo test -p picoo-frame-hub --lib shared_ring::tests::macos_rust_swift_cross_process_ring_contract -- --ignored --exact"
+    )
+    .run()?;
     cmd!(sh, "cargo test -p picoo-media-decode").run()?;
     cmd!(
         sh,
@@ -598,6 +605,46 @@ fn test_macos(sh: &Shell) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn build_macos_shared_ring_reader_harness(sh: &Shell) -> Result<PathBuf> {
+    let source_dir = Path::new("extensions/macos-camera-extension");
+    let atomic_source = source_dir.join("SharedRingAtomic.c");
+    let atomic_header = source_dir.join("SharedRingAtomic.h");
+    let reader_source = source_dir.join("SharedRingReader.swift");
+    let harness_source = source_dir.join("tests/SharedRingReaderHarness.swift");
+    for source in [
+        &atomic_source,
+        &atomic_header,
+        &reader_source,
+        &harness_source,
+    ] {
+        if !source.is_file() {
+            bail!(
+                "macOS Shared Frame Ring test source is missing {}",
+                source.display()
+            );
+        }
+    }
+
+    let output_dir = std::env::current_dir()?.join("target/apple/macos-tests");
+    std::fs::create_dir_all(&output_dir)?;
+    let atomic_object = output_dir.join("SharedRingAtomic.o");
+    let harness = output_dir.join("picoo-shared-ring-reader-harness");
+    cmd!(
+        sh,
+        "xcrun --sdk macosx clang -std=c17 -Wall -Wextra -Werror -arch arm64 -mmacosx-version-min=15.0 -c {atomic_source} -o {atomic_object}"
+    )
+    .run()?;
+    cmd!(
+        sh,
+        "xcrun --sdk macosx swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macos15.0 -import-objc-header {atomic_header} {reader_source} {harness_source} {atomic_object} -framework CoreVideo -o {harness}"
+    )
+    .run()?;
+    if !harness.is_file() {
+        bail!("macOS Shared Frame Ring reader harness was not produced");
+    }
+    Ok(harness)
 }
 
 fn test_ios(sh: &Shell) -> Result<()> {

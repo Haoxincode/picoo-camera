@@ -99,6 +99,8 @@ pub struct SharedFrameRingProducer {
     max_frame_bytes: usize,
     #[cfg(target_os = "windows")]
     _producer_lock: KernelLockGuard,
+    #[cfg(target_os = "macos")]
+    _producer_lock: Option<KernelLockGuard>,
 }
 
 pub struct SharedFrameRingConsumer {
@@ -186,33 +188,40 @@ impl FileMapping {
         index: usize,
         exclusive: bool,
     ) -> Result<Option<KernelLockGuard>, SharedRingError> {
-        use std::os::fd::AsRawFd;
-
         let lock_path = slot_lock_path(&self.path, index);
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|error| map_file_err(&lock_path, error))?;
-        let operation = if exclusive {
-            libc::LOCK_EX
-        } else {
-            libc::LOCK_SH
-        } | libc::LOCK_NB;
-        // SAFETY: The descriptor is live and remains owned by the returned
-        // guard for exactly one slot lease.
-        let result = unsafe { libc::flock(file.as_raw_fd(), operation) };
-        if result == 0 {
-            return Ok(Some(KernelLockGuard { file }));
-        }
-        let error = std::io::Error::last_os_error();
-        if error.kind() == std::io::ErrorKind::WouldBlock {
-            return Ok(None);
-        }
-        Err(map_file_err(&lock_path, error))
+        try_macos_file_lock(&lock_path, exclusive)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn try_macos_file_lock(
+    lock_path: &Path,
+    exclusive: bool,
+) -> Result<Option<KernelLockGuard>, SharedRingError> {
+    use std::os::fd::AsRawFd;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(lock_path)
+        .map_err(|error| map_file_err(lock_path, error))?;
+    let operation = if exclusive {
+        libc::LOCK_EX
+    } else {
+        libc::LOCK_SH
+    } | libc::LOCK_NB;
+    // SAFETY: The descriptor is live and remains owned by the returned guard.
+    let result = unsafe { libc::flock(file.as_raw_fd(), operation) };
+    if result == 0 {
+        return Ok(Some(KernelLockGuard { file }));
+    }
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return Ok(None);
+    }
+    Err(map_file_err(lock_path, error))
 }
 
 #[cfg(target_os = "windows")]
@@ -351,11 +360,17 @@ fn slot_lock_path(ring_path: &Path, index: usize) -> PathBuf {
     PathBuf::from(path)
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn producer_lock_path(ring_path: &Path) -> PathBuf {
     let mut path = ring_path.as_os_str().to_os_string();
     path.push(".producer.lock");
     PathBuf::from(path)
+}
+
+#[cfg(target_os = "macos")]
+fn acquire_macos_producer_lock(ring_path: &Path) -> Result<KernelLockGuard, SharedRingError> {
+    try_macos_file_lock(&producer_lock_path(ring_path), true)?
+        .ok_or_else(|| SharedRingError::ProducerAlreadyRunning(ring_path.to_path_buf()))
 }
 
 #[cfg(target_os = "windows")]
@@ -456,6 +471,8 @@ impl SharedFrameRingProducer {
         Self {
             mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
             max_frame_bytes,
+            #[cfg(target_os = "macos")]
+            _producer_lock: None,
         }
     }
 
@@ -707,25 +724,12 @@ impl SharedFrameRingProducer {
         max_frame_bytes: usize,
     ) -> Result<Self, SharedRingError> {
         let path = path.as_ref();
-        let size = layout_size(max_frame_bytes);
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create_new(true)
-            .open(path)
-            .map_err(|error| map_file_err(path, error))?;
-        file.set_len(size as u64)
-            .map_err(|error| map_file_err(path, error))?;
-        // SAFETY: The file is exclusively created, sized to the complete ring
-        // layout, and kept alive by the mapping returned by the OS.
-        let mapping = unsafe { MmapOptions::new().len(size).map_mut(&file) }
-            .map_err(|error| map_file_err(path, error))?;
+        let producer_lock = acquire_macos_producer_lock(path)?;
+        let mapping = create_file_mapping(path, max_frame_bytes)?;
         let mut producer = Self {
-            mapping: ProducerMapping::File(FileMapping {
-                mapping,
-                path: path.to_path_buf(),
-            }),
+            mapping: ProducerMapping::File(mapping),
             max_frame_bytes,
+            _producer_lock: Some(producer_lock),
         };
         producer.init_header();
         Ok(producer)
@@ -740,17 +744,41 @@ impl SharedFrameRingProducer {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| map_file_err(parent, error))?;
         }
-        match Self::create_file(path, max_frame_bytes) {
-            Ok(producer) => Ok(producer),
+        let producer_lock = acquire_macos_producer_lock(path)?;
+        match create_file_mapping(path, max_frame_bytes) {
+            Ok(mapping) => {
+                let mut producer = Self {
+                    mapping: ProducerMapping::File(mapping),
+                    max_frame_bytes,
+                    _producer_lock: Some(producer_lock),
+                };
+                producer.init_header();
+                Ok(producer)
+            }
             Err(SharedRingError::FileMapping { .. }) if path.is_file() => {
-                match Self::open_file(path, max_frame_bytes) {
-                    Ok(producer) => Ok(producer),
+                match open_file_mapping(path, max_frame_bytes) {
+                    Ok(mapping) => {
+                        let producer = Self {
+                            mapping: ProducerMapping::File(mapping),
+                            max_frame_bytes,
+                            _producer_lock: Some(producer_lock),
+                        };
+                        producer.validate_header()?;
+                        Ok(producer)
+                    }
                     Err(SharedRingError::InvalidHeader | SharedRingError::InvalidLayout) => {
                         // The ring is a transient cache owned by Picoo. Replace
                         // stale ABI generations atomically by pathname; any old
                         // mapping remains valid until its process releases it.
                         std::fs::remove_file(path).map_err(|error| map_file_err(path, error))?;
-                        Self::create_file(path, max_frame_bytes)
+                        let mapping = create_file_mapping(path, max_frame_bytes)?;
+                        let mut producer = Self {
+                            mapping: ProducerMapping::File(mapping),
+                            max_frame_bytes,
+                            _producer_lock: Some(producer_lock),
+                        };
+                        producer.init_header();
+                        Ok(producer)
                     }
                     Err(error) => Err(error),
                 }
@@ -765,27 +793,60 @@ impl SharedFrameRingProducer {
         max_frame_bytes: usize,
     ) -> Result<Self, SharedRingError> {
         let path = path.as_ref();
-        let size = layout_size(max_frame_bytes);
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(|error| map_file_err(path, error))?;
-        validate_file_size(path, &file, size)?;
-        // SAFETY: Size validation guarantees the mapping covers the complete
-        // fixed layout and the file remains referenced by the mapping.
-        let mapping = unsafe { MmapOptions::new().len(size).map_mut(&file) }
-            .map_err(|error| map_file_err(path, error))?;
+        let producer_lock = acquire_macos_producer_lock(path)?;
+        let mapping = open_file_mapping(path, max_frame_bytes)?;
         let producer = Self {
-            mapping: ProducerMapping::File(FileMapping {
-                mapping,
-                path: path.to_path_buf(),
-            }),
+            mapping: ProducerMapping::File(mapping),
             max_frame_bytes,
+            _producer_lock: Some(producer_lock),
         };
         producer.validate_header()?;
         Ok(producer)
     }
+}
+
+#[cfg(target_os = "macos")]
+fn create_file_mapping(
+    path: &Path,
+    max_frame_bytes: usize,
+) -> Result<FileMapping, SharedRingError> {
+    let size = layout_size(max_frame_bytes);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| map_file_err(path, error))?;
+    file.set_len(size as u64)
+        .map_err(|error| map_file_err(path, error))?;
+    // SAFETY: The file is exclusively created, sized to the complete ring
+    // layout, and kept alive by the mapping returned by the OS.
+    let mapping = unsafe { MmapOptions::new().len(size).map_mut(&file) }
+        .map_err(|error| map_file_err(path, error))?;
+    Ok(FileMapping {
+        mapping,
+        path: path.to_path_buf(),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn open_file_mapping(path: &Path, max_frame_bytes: usize) -> Result<FileMapping, SharedRingError> {
+    let size = layout_size(max_frame_bytes);
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(|error| map_file_err(path, error))?;
+    validate_file_size(path, &file, size)?;
+    // SAFETY: Size validation guarantees the mapping covers the complete
+    // fixed layout and the file remains referenced by the mapping.
+    let mapping = unsafe { MmapOptions::new().len(size).map_mut(&file) }
+        .map_err(|error| map_file_err(path, error))?;
+    validate_ring_header(mapping.as_ptr(), max_frame_bytes)?;
+    Ok(FileMapping {
+        mapping,
+        path: path.to_path_buf(),
+    })
 }
 
 impl SharedFrameRingConsumer {
@@ -1084,6 +1145,52 @@ mod tests {
         for index in 0..SLOT_COUNT {
             let _ = std::fs::remove_file(slot_lock_path(path, index));
         }
+        let _ = std::fs::remove_file(producer_lock_path(path));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn macos_reader_harness() -> PathBuf {
+        let path = std::env::var_os("PICOO_MACOS_RING_READER_HARNESS")
+            .map(PathBuf::from)
+            .expect("run this test through `cargo xtask test macos`");
+        assert!(
+            path.is_file(),
+            "missing Swift/C reader harness: {}",
+            path.display()
+        );
+        path
+    }
+
+    #[cfg(target_os = "macos")]
+    fn patterned_nv12(timestamp_us: u64, max_frame_bytes: usize) -> Vec<u8> {
+        (0..max_frame_bytes)
+            .map(|offset| {
+                ((timestamp_us + offset as u64 * 31 + (offset / 256) as u64 * 17) % 251) as u8
+            })
+            .collect()
+    }
+
+    #[cfg(target_os = "macos")]
+    const MACOS_CROSS_PROCESS_WIDTH: u32 = 64;
+    #[cfg(target_os = "macos")]
+    const MACOS_CROSS_PROCESS_HEIGHT: u32 = 64;
+    #[cfg(target_os = "macos")]
+    const MACOS_CROSS_PROCESS_STRIDE: u32 = 80;
+
+    #[cfg(target_os = "macos")]
+    fn macos_cross_process_frame_bytes() -> usize {
+        (MACOS_CROSS_PROCESS_STRIDE * MACOS_CROSS_PROCESS_HEIGHT * 3 / 2) as usize
+    }
+
+    #[cfg(target_os = "macos")]
+    fn assert_process_success(output: std::process::Output, context: &str) {
+        assert!(
+            output.status.success(),
+            "{context} failed with {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
     }
 
     #[test]
@@ -1523,6 +1630,262 @@ mod tests {
             assert_eq!(view.nv12, frame);
         }
         cleanup_file_ring(&path);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn file_backed_ring_rejects_a_second_producer() {
+        let path = std::env::temp_dir().join(format!("{}.ring", test_ring_name()));
+        let max = nv12_byte_size(64, 64);
+        let producer =
+            SharedFrameRingProducer::open_or_create_file(&path, max).expect("first producer");
+
+        let error = match SharedFrameRingProducer::open_or_create_file(&path, max) {
+            Ok(_) => panic!("second producer must fail"),
+            Err(error) => error,
+        };
+        assert!(matches!(
+            error,
+            SharedRingError::ProducerAlreadyRunning(ring_path) if ring_path == path
+        ));
+
+        drop(producer);
+        cleanup_file_ring(&path);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires the production Swift/C reader built by cargo xtask test macos"]
+    fn macos_rust_swift_cross_process_ring_contract() {
+        use std::process::{Command, Stdio};
+
+        let harness = macos_reader_harness();
+        let max = macos_cross_process_frame_bytes();
+
+        // Rust Writer and the production Swift/C Reader run concurrently in
+        // separate processes. Every copied plane must match its timestamp,
+        // proving the reader never observes partially overwritten NV12 data.
+        let stress_path = std::env::temp_dir().join(format!("{}.ring", test_ring_name()));
+        let ready_path = stress_path.with_extension("reader-ready");
+        let mut producer =
+            SharedFrameRingProducer::open_or_create_file(&stress_path, max).expect("producer");
+        let mut reader = Command::new(&harness)
+            .args([
+                "stress",
+                stress_path.to_str().expect("UTF-8 ring path"),
+                ready_path.to_str().expect("UTF-8 ready path"),
+                "192",
+                "8",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn Swift/C stress reader");
+        let ready_deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        while !ready_path.is_file() {
+            if let Some(status) = reader.try_wait().expect("poll Swift/C stress reader") {
+                panic!("Swift/C stress reader exited before readiness: {status}");
+            }
+            assert!(
+                std::time::Instant::now() < ready_deadline,
+                "Swift/C stress reader did not become ready"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        for timestamp_us in 1..=192 {
+            producer
+                .publish_nv12(
+                    MACOS_CROSS_PROCESS_WIDTH,
+                    MACOS_CROSS_PROCESS_HEIGHT,
+                    MACOS_CROSS_PROCESS_STRIDE,
+                    0,
+                    timestamp_us,
+                    &patterned_nv12(timestamp_us, max),
+                )
+                .expect("stress publish");
+            std::thread::sleep(std::time::Duration::from_micros(750));
+        }
+        assert_process_success(
+            reader
+                .wait_with_output()
+                .expect("wait for Swift/C stress reader"),
+            "Swift/C stress reader",
+        );
+        drop(producer);
+        let _ = std::fs::remove_file(&ready_path);
+        cleanup_file_ring(&stress_path);
+
+        // A killed Camera Extension leaves its shared atomic reader count
+        // behind, while Darwin releases its flock descriptor. The Rust Writer
+        // must reclaim that slot after wrapping the three-slot ring.
+        let reader_crash_path = std::env::temp_dir().join(format!("{}.ring", test_ring_name()));
+        let mut producer = SharedFrameRingProducer::open_or_create_file(&reader_crash_path, max)
+            .expect("reader-crash producer");
+        producer
+            .publish_nv12(
+                MACOS_CROSS_PROCESS_WIDTH,
+                MACOS_CROSS_PROCESS_HEIGHT,
+                MACOS_CROSS_PROCESS_STRIDE,
+                0,
+                1,
+                &patterned_nv12(1, max),
+            )
+            .expect("seed reader-crash ring");
+        let output = Command::new(&harness)
+            .args([
+                "leak-and-exit",
+                reader_crash_path.to_str().expect("UTF-8 ring path"),
+                "1",
+            ])
+            .output()
+            .expect("spawn terminating Swift/C reader");
+        assert_process_success(output, "terminating Swift/C reader");
+        unsafe {
+            assert_eq!(
+                (&*slot_meta_at(producer.mapping.as_ptr(), max, 0))
+                    .reader_count
+                    .load(Ordering::SeqCst),
+                1,
+                "terminating Swift/C reader must leave its atomic lease behind"
+            );
+        }
+        for timestamp_us in 2..=4 {
+            producer
+                .publish_nv12(
+                    MACOS_CROSS_PROCESS_WIDTH,
+                    MACOS_CROSS_PROCESS_HEIGHT,
+                    MACOS_CROSS_PROCESS_STRIDE,
+                    0,
+                    timestamp_us,
+                    &patterned_nv12(timestamp_us, max),
+                )
+                .expect("publish after reader termination");
+        }
+        unsafe {
+            let recovered_slot = &*slot_meta_at(producer.mapping.as_ptr(), max, 0);
+            assert_eq!(recovered_slot.reader_count.load(Ordering::SeqCst), 0);
+            assert_eq!(recovered_slot.timestamp_us, 4);
+        }
+        let consumer =
+            SharedFrameRingConsumer::open_file(&reader_crash_path, max).expect("Rust consumer");
+        assert_eq!(
+            consumer
+                .latest_frame()
+                .expect("recovered latest frame")
+                .timestamp_us,
+            4
+        );
+        drop((consumer, producer));
+        cleanup_file_ring(&reader_crash_path);
+
+        // A Rust Producer killed while holding both its lifecycle lock and a
+        // slot writer lease must not strand the Swift/C Reader or replacement
+        // Producer. The kernel releases both flock descriptors at exit.
+        let producer_crash_path = std::env::temp_dir().join(format!("{}.ring", test_ring_name()));
+        let status = Command::new(std::env::current_exe().expect("test executable"))
+            .args([
+                "--ignored",
+                "--exact",
+                "shared_ring::tests::macos_crash_file_producer_helper",
+                "--nocapture",
+            ])
+            .env("PICOO_TEST_CRASH_RING_PATH", &producer_crash_path)
+            .status()
+            .expect("spawn terminating Rust producer");
+        assert!(
+            status.success(),
+            "terminating Rust producer failed: {status}"
+        );
+        let abandoned = open_file_mapping(&producer_crash_path, max)
+            .expect("inspect abandoned producer mapping");
+        unsafe {
+            assert_eq!(
+                (&*const_slot_meta_at(abandoned.mapping.as_ptr(), max, 0))
+                    .reader_count
+                    .load(Ordering::SeqCst),
+                WRITER_LEASE,
+                "terminating Rust producer must leave its writer lease behind"
+            );
+        }
+        drop(abandoned);
+        let output = Command::new(&harness)
+            .args([
+                "read-once",
+                producer_crash_path.to_str().expect("UTF-8 ring path"),
+                "1",
+            ])
+            .output()
+            .expect("spawn Swift/C recovery reader");
+        assert_process_success(output, "Swift/C recovery reader");
+        let recovered = open_file_mapping(&producer_crash_path, max)
+            .expect("inspect Swift/C recovered mapping");
+        unsafe {
+            assert_eq!(
+                (&*const_slot_meta_at(recovered.mapping.as_ptr(), max, 0))
+                    .reader_count
+                    .load(Ordering::SeqCst),
+                0,
+                "Swift/C Reader must clear and release the abandoned writer lease"
+            );
+        }
+        drop(recovered);
+
+        let mut replacement =
+            SharedFrameRingProducer::open_or_create_file(&producer_crash_path, max)
+                .expect("replacement producer");
+        replacement
+            .publish_nv12(
+                MACOS_CROSS_PROCESS_WIDTH,
+                MACOS_CROSS_PROCESS_HEIGHT,
+                MACOS_CROSS_PROCESS_STRIDE,
+                0,
+                2,
+                &patterned_nv12(2, max),
+            )
+            .expect("replacement publish");
+        let consumer = SharedFrameRingConsumer::open_file(&producer_crash_path, max)
+            .expect("replacement consumer");
+        assert_eq!(
+            consumer
+                .latest_frame()
+                .expect("replacement frame")
+                .timestamp_us,
+            2
+        );
+        drop((consumer, replacement));
+        cleanup_file_ring(&producer_crash_path);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "helper process for macos_rust_swift_cross_process_ring_contract"]
+    fn macos_crash_file_producer_helper() {
+        let Some(path) = std::env::var_os("PICOO_TEST_CRASH_RING_PATH").map(PathBuf::from) else {
+            return;
+        };
+        let max = macos_cross_process_frame_bytes();
+        let mut producer =
+            SharedFrameRingProducer::open_or_create_file(&path, max).expect("crash producer");
+        producer
+            .publish_nv12(
+                MACOS_CROSS_PROCESS_WIDTH,
+                MACOS_CROSS_PROCESS_HEIGHT,
+                MACOS_CROSS_PROCESS_STRIDE,
+                0,
+                1,
+                &patterned_nv12(1, max),
+            )
+            .expect("crash producer seed frame");
+        let _writer_lock = match producer.mapping.try_slot_lock(0).expect("writer lock") {
+            SlotLockAttempt::Acquired(lock) => lock,
+            SlotLockAttempt::Busy | SlotLockAttempt::NotFile => panic!("file slot must lock"),
+        };
+        unsafe {
+            (&*slot_meta_at(producer.mapping.as_ptr(), max, 0))
+                .reader_count
+                .store(WRITER_LEASE, Ordering::SeqCst);
+        }
+        std::process::exit(0);
     }
 
     #[cfg(target_os = "macos")]
