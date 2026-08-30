@@ -51,7 +51,7 @@ QUIC Connection
   └── QUIC Datagram                  → H.264 VideoPacket 片段
 ```
 
-QUIC ALPN：`picoocam/1`
+QUIC ALPN：`picoocam/2`
 
 ### 重连与退避
 

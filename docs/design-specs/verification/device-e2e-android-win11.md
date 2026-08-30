@@ -14,7 +14,7 @@
 
 1. [ ] 安装 `PicooCamera.msi`（perMachine；`windows-bundle` 的松散文件不能替代系统安装）
 2. [ ] 启动 `picoo-desktop.exe`（开始菜单 **Picoo Camera**）
-3. [ ] 启动时不出现命令行窗口；标题栏、完整侧栏和连接页主内容均可见，普通启动不要求管理员权限
+3. [ ] 启动时不出现命令行窗口；贴边单层工作区、完整侧栏和连接页主内容均可见，顶部工具行最右侧显示最小化/最大化/关闭按钮，普通启动不要求管理员权限
 4. [ ] 开启 Windows 辅助功能后分别观察空闲和直播状态，日志不持续出现 `gpui::window: RefCell already borrowed`
 5. [ ] “虚拟摄像头”页状态：**就绪 (Ready)** / **Active**（非 `0x80040154`）
 6. [ ] 打开 **Windows 相机** 或 **设置 → 蓝牙和设备 → 摄像头**，确认列表有 **Picoo Camera**
@@ -32,7 +32,7 @@
 2. [ ] 手机 **Devices** 页通过 NSD 发现 PC
 3. [ ] 点击尚未配对的电脑，手机与桌面显示相同的六位配对短码
 4. [ ] 用户在两端分别确认数字一致后才建立信任并允许推流
-5. [ ] `PairingConfirm` 校验完成后进入 Streaming / Live
+5. [ ] 两端可按任意顺序确认；`PairingApproval → PairingCommit → PairingComplete` 完成双方持久化后才进入 Streaming / Live
 6. [ ] 桌面直播页有预览；Windows 相机 / Picoo Camera 有画面（非占位）
 7. [ ] **重复 10 次**「取消配对 → 重新配对」无卡死（验证 `PairingConfirm` 修复）
 

@@ -55,6 +55,23 @@ pub fn verify_pairing_confirm(
     }
 }
 
+/// Bind a pairing control phase to the active challenge and both device identities.
+/// QUIC authenticates the channel; this transcript hash prevents stale-session messages
+/// from being accepted for a later challenge on the same process.
+pub fn pairing_transcript_hash(
+    challenge_nonce: &[u8],
+    receiver_id: &str,
+    sender_id: &str,
+    phase: &[u8],
+) -> Vec<u8> {
+    let mut hasher = Sha256::new();
+    hasher.update(challenge_nonce);
+    hasher.update(receiver_id.as_bytes());
+    hasher.update(sender_id.as_bytes());
+    hasher.update(phase);
+    hasher.finalize().to_vec()
+}
+
 fn bytes_to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -108,6 +125,17 @@ mod tests {
         let nonce = b"nonce-123";
         let sig = pairing_confirm_signature(nonce, "receiver", "sender");
         verify_pairing_confirm(nonce, "receiver", "sender", &sig).expect("valid");
+    }
+
+    #[test]
+    fn pairing_phase_transcripts_are_challenge_and_phase_bound() {
+        let approval = pairing_transcript_hash(b"nonce-a", "receiver", "sender", b"approval-v2");
+        let another_challenge =
+            pairing_transcript_hash(b"nonce-b", "receiver", "sender", b"approval-v2");
+        let commit = pairing_transcript_hash(b"nonce-a", "receiver", "sender", b"commit-v2");
+
+        assert_ne!(approval, another_challenge);
+        assert_ne!(approval, commit);
     }
 
     #[test]

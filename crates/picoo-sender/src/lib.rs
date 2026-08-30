@@ -1,4 +1,4 @@
-//! Android/iOS sender pipeline: H.264 access unit → PCP/1 VideoPacket fragmentation.
+//! Android/iOS sender pipeline: H.264 access unit → PCP/2 VideoPacket fragmentation.
 //!
 //! REQ-PICOO-MEDIA-001, REQ-PICOO-STACK-001
 
@@ -33,6 +33,8 @@ pub enum SenderError {
     FrameIdExhausted,
     #[error("not connected")]
     NotConnected,
+    #[error("media is blocked until pairing and negotiation complete")]
+    MediaNotReady,
     #[error("transport: {0}")]
     Transport(#[from] TransportError),
     #[error("packet error: {0}")]

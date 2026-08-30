@@ -1,9 +1,9 @@
-# REQ-PICOO-PROTOCOL：PCP/1 协议
+# REQ-PICOO-PROTOCOL：PCP/2 协议
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-PROTOCOL-001 | implemented | ARCH-PICOO-PROTOCOL-001 | VideoPacket 固定二进制头（26 字节 + payload） | 编解码往返 + header size 测试 |
-| REQ-PICOO-PROTOCOL-002 | implemented | ARCH-PICOO-PROTOCOL-001 | QUIC ALPN 为 `picoocam/1` | `ALPN` 常量；Hello `protocol_version` 不匹配 fail-fast |
+| REQ-PICOO-PROTOCOL-002 | implemented | ARCH-PICOO-PROTOCOL-001 | QUIC ALPN 为 `picoocam/2` | `ALPN` 常量；Hello `protocol_version` 不匹配 fail-fast |
 | REQ-PICOO-PROTOCOL-003 | implemented | ARCH-PICOO-PROTOCOL-001 | 单包最大 1150 字节，payload 不超 MTU；单 AU 上限 1024 片（约 1.1 MiB），Sender/Receiver 使用同一常量 | `rejects_oversized_datagram`；`access_unit_over_reassembly_budget_is_rejected_before_queueing`；产品分辨率 OpenH264 epoch/分辨率切换测试 |
 | REQ-PICOO-PROTOCOL-004 | implemented | ARCH-PICOO-PROTOCOL-001 | stream_epoch 隔离重组 | packet crate epoch 测试 |
 | REQ-PICOO-PROTOCOL-005 | implemented | PUC-005 | StreamConfig 携带 codec/分辨率/SPS/PPS/epoch；AU AVCC→Annex-B 规范化 | Android/iOS 提取 SPS/PPS → FFI → StreamConfig；iOS IDR 同时内联 SPS/PPS，Receiver 拒绝与已知 StreamConfig 不同 epoch 的 Datagram；Profile/Level 从真实 SPS 推导；`stream_epoch_bump_requests_keyframe`；`stream_config_derives_main_level_4_from_sps`；`access_unit_to_annex_b`；`paired_avcc_length_prefixed_au_reaches_frame_hub` |

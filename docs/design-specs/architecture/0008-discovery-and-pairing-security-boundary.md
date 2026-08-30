@@ -43,7 +43,7 @@ Receiver 在等待连接页始终显示当前局域网 `IP:端口`。未配对 S
 
 配对短码只负责人工核对本次首次连接，不负责发现或解析 Receiver Endpoint。mDNS 正常时，Sender 从服务发现结果获得 Endpoint；mDNS 不可用时，用户必须输入 `IP:端口`，Sender 才能绕过服务发现直接连接。
 
-Receiver 通过可靠控制 Stream 将挑战和配对短码发给 Sender，两端同时显示同一短码。用户必须在手机端和桌面端分别确认数字一致；任一端拒绝、挑战到期或连接中断都应终止本次配对。短码不作为密码提交，因此不存在输入错误与尝试次数模型；它必须绑定本次握手，不能跨连接复用。未完成双向确认前不得建立信任关系。
+Receiver 通过可靠控制 Stream 将挑战和配对短码发给 Sender，两端同时显示同一短码。用户必须在手机端和桌面端分别确认数字一致，两端确认的先后顺序不得影响配对结果；Receiver 缓存先到达的有效确认。双向确认后，双方通过 `PairingApproval → PairingCommit → PairingComplete` 提交信任：Sender 持久化 Receiver 后发送 Commit，Receiver 持久化 Sender 后返回 Complete，Sender 收到 Complete 才进入 Streaming。三个提交消息都绑定当前 QUIC Session、挑战 nonce 与双方设备 ID，旧连接消息不得完成新挑战。任一端持久化或发送失败时保持 Pairing 并允许在当前挑战内重试，不得形成自动推流的单边信任。任一端拒绝、挑战到期或连接中断都应终止本次配对。短码不作为密码提交，因此不存在输入错误与尝试次数模型；它必须绑定本次握手，不能跨连接复用。未完成双向确认前不得建立信任关系或发送视频。
 
 ### 配对与公钥固定
 

@@ -1,6 +1,6 @@
 [package]
 name = "picoo-protocol"
-description = "PCP/1 protocol types: Protobuf control messages and VideoPacket binary format"
+description = "PCP/2 protocol types: Protobuf control messages and VideoPacket binary format"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

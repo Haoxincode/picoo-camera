@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package picoo.camera.v1;
+package picoo.camera.v2;
 
-// PCP/1 control messages — transported over QUIC reliable streams.
+// PCP/2 control messages — transported over QUIC reliable streams.
 // See ARCH-PICOO-PROTOCOL-001.
 
 message ClientHello {
@@ -41,6 +41,27 @@ message PairingChallenge {
 
 message PairingConfirm {
   bytes confirm_signature = 1;
+}
+
+// Receiver -> Sender after both users confirmed the same short code.
+message PairingApproval {
+  uint32 magic = 1; // must be 0x50415056 ("PAPV")
+  bytes challenge_nonce = 2;
+  bytes transcript_hash = 3;
+}
+
+// Sender -> Receiver after the Sender durably stores Receiver trust.
+message PairingCommit {
+  uint32 magic = 1; // must be 0x50434D54 ("PCMT")
+  bytes challenge_nonce = 2;
+  bytes transcript_hash = 3;
+}
+
+// Receiver -> Sender after the Receiver durably stores Sender trust.
+message PairingComplete {
+  uint32 magic = 1; // must be 0x50434D50 ("PCMP")
+  bytes challenge_nonce = 2;
+  bytes transcript_hash = 3;
 }
 
 message StreamConfig {

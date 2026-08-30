@@ -64,7 +64,7 @@ fn connect_loopback() -> Result<
     Ok((receiver, sender, receiver_session, sender_session))
 }
 
-/// Run a minimal PCP/1 session: reliable control messages plus video datagrams.
+/// Run a minimal PCP/2 session: reliable control messages plus video datagrams.
 pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
     let (mut receiver, mut sender, receiver_session, sender_session) = connect_loopback()?;
 

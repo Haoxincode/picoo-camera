@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use picoo_pairing::{TrustedDevice, TrustedDeviceStore};
 use picoo_sender::SenderSession;
-use picoo_session::ReceiverStatus;
+use picoo_session::{ReceiverStatus, SenderStatus};
 use picoo_transport::{Endpoint, QuicSenderTransport};
 
 use crate::{
@@ -139,7 +139,7 @@ fn single_decode_per_access_unit_into_frame_hub() {
     }
 
     sender
-        .ingest_and_flush(payload, true, 1, 1)
+        .ingest_and_flush_unchecked_for_test(payload, true, 1, 1)
         .expect("ingest");
     for _ in 0..200 {
         receiver.pump().expect("rx");
@@ -279,7 +279,9 @@ fn pairing_challenge_expires_clears_short_code() {
     assert!(!receiver.is_awaiting_pairing_confirm());
 
     // Late confirm after expiry must not begin streaming.
-    receiver.confirm_pairing_locally();
+    receiver
+        .confirm_pairing_locally()
+        .expect("desktop confirm after expiry");
     let _ = sender.send_pairing_confirm(&identity.receiver_id);
     for _ in 0..40 {
         receiver.pump().ok();
@@ -371,7 +373,7 @@ fn unpaired_sender_video_is_dropped() {
     }
 
     sender
-        .ingest_and_flush(b"blocked-au", true, 1, 1)
+        .ingest_and_flush_unchecked_for_test(b"blocked-au", true, 1, 1)
         .expect("send video");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -489,14 +491,16 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("confirm");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -767,9 +771,15 @@ fn unpaired_video_keeps_shared_ring_on_placeholder() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
+    // Simulate a compromised/legacy peer that ignores the production sender gate.
     for frame_id in 1..=20u64 {
         sender
-            .ingest_and_flush(format!("unpaired-{frame_id}").as_bytes(), true, frame_id, 1)
+            .ingest_and_flush_unchecked_for_test(
+                format!("unpaired-{frame_id}").as_bytes(),
+                true,
+                frame_id,
+                1,
+            )
             .expect("ingest");
         for _ in 0..8 {
             receiver.pump().expect("rx");
@@ -842,7 +852,9 @@ fn paired_sender_enters_streaming_after_client_hello() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -920,9 +932,10 @@ fn auto_accept_paired_off_requires_confirm_for_trusted_sender() {
     assert!(receiver.pairing_short_code().is_some());
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
 
-    sender
+    let err = sender
         .ingest_and_flush(b"blocked-until-confirm", true, 1, 1)
-        .expect("send");
+        .expect_err("sender must block media until pairing commits");
+    assert!(matches!(err, picoo_sender::SenderError::MediaNotReady));
     receiver.pump().expect("rx");
     assert_eq!(receiver.stats().access_units, 0);
 }
@@ -973,7 +986,7 @@ fn pairing_confirm_false_positive_does_not_complete_pairing() {
     }
 
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally().expect("desktop confirm");
 
     let bogus = PairingConfirm {
         confirm_signature: vec![0u8; 32],
@@ -1001,7 +1014,7 @@ fn pairing_confirm_false_positive_does_not_complete_pairing() {
 }
 
 #[test]
-fn pairing_confirm_before_desktop_confirm_is_ignored() {
+fn phone_confirm_before_desktop_confirm_completes_without_retry() {
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
     let bind = receiver
@@ -1046,21 +1059,26 @@ fn pairing_confirm_before_desktop_confirm_is_ignored() {
         .expect("early confirm");
     pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(200));
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
+    assert_eq!(sender.status(), SenderStatus::Pairing);
+    assert!(!receiver.trusted_devices().is_paired("early-phone"));
+    assert!(!sender.trusted_devices().is_paired(&identity.receiver_id));
 
-    receiver.confirm_pairing_locally();
-    sender
-        .send_pairing_confirm(&identity.receiver_id)
-        .expect("confirm after desktop ack");
+    receiver.confirm_pairing_locally().expect("desktop confirm");
     let streaming_deadline = Instant::now() + Duration::from_secs(3);
     while Instant::now() < streaming_deadline {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert_eq!(sender.status(), SenderStatus::Streaming);
+    assert!(receiver.trusted_devices().is_paired("early-phone"));
+    assert!(sender.trusted_devices().is_paired(&identity.receiver_id));
 }
 
 #[test]
@@ -1111,7 +1129,7 @@ fn first_time_pairing_flow_enables_video() {
     assert_eq!(recv_code, send_code);
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
 
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("pairing confirm");
@@ -1119,14 +1137,18 @@ fn first_time_pairing_flow_enables_video() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
 
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert_eq!(sender.status(), SenderStatus::Streaming);
     assert!(receiver.trusted_devices().is_paired("new-phone"));
+    assert!(sender.trusted_devices().is_paired(&identity.receiver_id));
 
     sender
         .ingest_and_flush(b"paired-after-flow", true, 1, 1)
@@ -1190,7 +1212,9 @@ fn receiver_sends_stats_to_paired_sender() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -1675,7 +1699,7 @@ fn trusted_store_persists_after_pairing() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("pairing confirm");
@@ -1803,14 +1827,16 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("confirm");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -1894,7 +1920,9 @@ fn default_jitter_holds_au_until_target_delay() {
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -1968,14 +1996,16 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
         .send_pairing_confirm(&identity.receiver_id)
         .expect("confirm");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -2143,7 +2173,9 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -2303,7 +2335,9 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -3387,7 +3421,9 @@ fn paired_loopback_binds_lan_only_without_wan() {
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));

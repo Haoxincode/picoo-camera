@@ -17,13 +17,15 @@ use picoo_jitter::{Frame as JitterFrame, JitterBuffer, PushOutcome};
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError};
 use picoo_packet::{ReassemblyError, ReassemblyMap};
 use picoo_pairing::{
-    new_pairing_challenge, random_challenge_nonce, trusted_device_from_pairing,
-    verify_pairing_confirm, PairingError, PairingHandshakeError, StoreError, TrustedDeviceStore,
+    new_pairing_challenge, pairing_transcript_hash, random_challenge_nonce,
+    trusted_device_from_pairing, verify_pairing_confirm, PairingError, PairingHandshakeError,
+    StoreError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    camera_command, CameraCommand, Capabilities, ClientHello, EncoderCommand,
-    PairingChallenge as PairingChallengeMsg, PairingConfirm, ReceiverStats as ReceiverStatsMsg,
-    Resolution, ServerHello, SessionError, StartStream, StopStream, StreamConfig,
+    camera_command, CameraCommand, Capabilities, ClientHello, EncoderCommand, PairingApproval,
+    PairingChallenge as PairingChallengeMsg, PairingCommit, PairingComplete, PairingConfirm,
+    ReceiverStats as ReceiverStatsMsg, Resolution, ServerHello, SessionError, StartStream,
+    StopStream, StreamConfig,
 };
 use picoo_protocol::{ALPN, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT};
 use picoo_session::ReceiverStatus;
@@ -129,12 +131,22 @@ struct PendingPairing {
     session: SessionId,
     challenge_nonce: Vec<u8>,
     short_code: String,
+    local_confirmed: bool,
+    remote_confirmed: bool,
+    sender_committed: bool,
+    receiver_committed: bool,
     /// PUC-001 / AC-M-PAIR-02: challenge valid for 60s (wall clock).
     expires_at: Instant,
 }
 
 /// Pairing short-code / challenge lifetime (matches Android PairingScreen TTL).
 pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);
+const PAIRING_APPROVAL_MAGIC: u32 = 0x5041_5056;
+const PAIRING_COMMIT_MAGIC: u32 = 0x5043_4D54;
+const PAIRING_COMPLETE_MAGIC: u32 = 0x5043_4D50;
+const PAIRING_APPROVAL_PHASE: &[u8] = b"pairing-approval-v2";
+const PAIRING_COMMIT_PHASE: &[u8] = b"pairing-commit-v2";
+const PAIRING_COMPLETE_PHASE: &[u8] = b"pairing-complete-v2";
 const REASSEMBLY_MAX_AGE: Duration = Duration::from_millis(120);
 
 pub struct ReceiverSession {
@@ -146,7 +158,6 @@ pub struct ReceiverSession {
     trusted_store_path: Option<PathBuf>,
     active_sender: Option<ActiveSender>,
     pending_pairing: Option<PendingPairing>,
-    local_pairing_confirmed: bool,
     status: ReceiverStatus,
     ingress: IngressStats,
     stats_reporter: StatsReporter,
@@ -192,7 +203,6 @@ impl ReceiverSession {
             trusted_store_path: None,
             active_sender: None,
             pending_pairing: None,
-            local_pairing_confirmed: false,
             status: ReceiverStatus::Disconnected,
             ingress: IngressStats::default(),
             stats_reporter: StatsReporter::new(),
@@ -473,7 +483,6 @@ impl ReceiverSession {
             return;
         }
         self.pending_pairing = None;
-        self.local_pairing_confirmed = false;
         if matches!(self.status, ReceiverStatus::Pairing) {
             // Keep connection; UI must regenerate / wait for new challenge.
             self.status = ReceiverStatus::Connecting;
@@ -481,11 +490,12 @@ impl ReceiverSession {
     }
 
     /// User confirmed the six-digit code on desktop (PUC-001).
-    pub fn confirm_pairing_locally(&mut self) {
+    pub fn confirm_pairing_locally(&mut self) -> Result<(), ReceiverError> {
         self.expire_pending_pairing_if_needed();
-        if self.pending_pairing.is_some() {
-            self.local_pairing_confirmed = true;
+        if let Some(pending) = self.pending_pairing.as_mut() {
+            pending.local_confirmed = true;
         }
+        self.advance_pairing()
     }
 
     pub fn is_awaiting_pairing_confirm(&self) -> bool {
@@ -650,7 +660,6 @@ impl ReceiverSession {
             self.status == ReceiverStatus::Streaming && self.frame_hub.latest_ready().is_some();
         self.active_sender = None;
         self.pending_pairing = None;
-        self.local_pairing_confirmed = false;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
         self.jitter.clear();
         self.jitter_timeline = None;
@@ -795,12 +804,24 @@ impl ReceiverSession {
 
     fn handle_control(&mut self, session: SessionId, msg: Bytes) -> Result<(), ReceiverError> {
         if self.pending_pairing.is_some() {
+            if let Ok(commit) = PairingCommit::decode(msg.as_ref()) {
+                if commit.magic == PAIRING_COMMIT_MAGIC
+                    && self.pairing_transcript_matches(
+                        session,
+                        &commit.challenge_nonce,
+                        &commit.transcript_hash,
+                        PAIRING_COMMIT_PHASE,
+                    )
+                {
+                    return self.handle_pairing_commit();
+                }
+            }
             // Prost will decode many unrelated blobs as PairingConfirm — require a
             // SHA-256-length signature that verifies against the pending challenge.
             if let Ok(confirm) = PairingConfirm::decode(msg.as_ref()) {
                 if confirm.confirm_signature.len() == 32 {
                     if let Some(pending) = self.pending_pairing.as_ref() {
-                        if session == pending.session && self.local_pairing_confirmed {
+                        if session == pending.session {
                             let sender_id = self
                                 .active_sender
                                 .as_ref()
@@ -1054,7 +1075,6 @@ impl ReceiverSession {
             self.transport.close(session, CloseReason::LocalClose);
             self.active_sender = None;
             self.pending_pairing = None;
-            self.local_pairing_confirmed = false;
             self.status = if self.bind_addr().is_some() {
                 ReceiverStatus::Discovering
             } else {
@@ -1103,9 +1123,12 @@ impl ReceiverSession {
             session,
             challenge_nonce: nonce,
             short_code: challenge.short_code,
+            local_confirmed: false,
+            remote_confirmed: false,
+            sender_committed: false,
+            receiver_committed: false,
             expires_at: Instant::now() + PAIRING_CHALLENGE_TTL,
         });
-        self.local_pairing_confirmed = false;
         self.active_sender = Some(ActiveSender {
             sender_id: hello.sender_id,
             device_name: hello.device_name,
@@ -1131,7 +1154,6 @@ impl ReceiverSession {
 
         if Instant::now() >= pending.expires_at {
             self.pending_pairing = None;
-            self.local_pairing_confirmed = false;
             if matches!(self.status, ReceiverStatus::Pairing) {
                 self.status = ReceiverStatus::Connecting;
             }
@@ -1140,12 +1162,6 @@ impl ReceiverSession {
 
         if session != pending.session {
             return Err(ReceiverError::Protocol("pairing session mismatch".into()));
-        }
-
-        if !self.local_pairing_confirmed {
-            return Err(ReceiverError::Protocol(
-                "desktop pairing not confirmed locally".into(),
-            ));
         }
 
         let sender_id = self
@@ -1166,22 +1182,109 @@ impl ReceiverSession {
             }
         })?;
 
-        let now_ms = self.now_ms();
+        if let Some(pending) = self.pending_pairing.as_mut() {
+            pending.remote_confirmed = true;
+        }
+        self.advance_pairing()
+    }
 
-        let active = self.active_sender.as_ref().expect("active sender");
-        self.trusted.upsert(trusted_device_from_pairing(
-            &active.sender_id,
-            &active.device_name,
-            &active.public_key,
-            now_ms,
-        ));
-        self.persist_trusted()?;
+    fn pairing_transcript_matches(
+        &self,
+        session: SessionId,
+        nonce: &[u8],
+        transcript_hash: &[u8],
+        phase: &[u8],
+    ) -> bool {
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return false;
+        };
+        let Some(active) = self.active_sender.as_ref() else {
+            return false;
+        };
+        session == pending.session
+            && nonce == pending.challenge_nonce
+            && transcript_hash
+                == pairing_transcript_hash(
+                    &pending.challenge_nonce,
+                    &self.identity.receiver_id,
+                    &active.sender_id,
+                    phase,
+                )
+    }
+
+    fn handle_pairing_commit(&mut self) -> Result<(), ReceiverError> {
+        if let Some(pending) = self.pending_pairing.as_mut() {
+            pending.sender_committed = true;
+        }
+        self.advance_pairing()
+    }
+
+    fn advance_pairing(&mut self) -> Result<(), ReceiverError> {
+        let Some(pending) = self.pending_pairing.as_ref() else {
+            return Ok(());
+        };
+        if !pending.local_confirmed || !pending.remote_confirmed {
+            return Ok(());
+        }
+        let session = pending.session;
+        let challenge_nonce = pending.challenge_nonce.clone();
+        let sender_committed = pending.sender_committed;
+        let receiver_committed = pending.receiver_committed;
+        let sender_id = self
+            .active_sender
+            .as_ref()
+            .map(|active| active.sender_id.clone())
+            .unwrap_or_default();
+
+        if !sender_committed {
+            let approval = PairingApproval {
+                magic: PAIRING_APPROVAL_MAGIC,
+                challenge_nonce: challenge_nonce.clone(),
+                transcript_hash: pairing_transcript_hash(
+                    &challenge_nonce,
+                    &self.identity.receiver_id,
+                    &sender_id,
+                    PAIRING_APPROVAL_PHASE,
+                ),
+            };
+            return self.send_control_message(session, &approval);
+        }
+
+        if !receiver_committed {
+            let now_ms = self.now_ms();
+            let active = self.active_sender.as_ref().expect("active sender");
+            let previous_trusted = self.trusted.clone();
+            self.trusted.upsert(trusted_device_from_pairing(
+                &active.sender_id,
+                &active.device_name,
+                &active.public_key,
+                now_ms,
+            ));
+            if let Err(error) = self.persist_trusted() {
+                self.trusted = previous_trusted;
+                return Err(error);
+            }
+            if let Some(pending) = self.pending_pairing.as_mut() {
+                pending.receiver_committed = true;
+            }
+        }
+
+        let complete = PairingComplete {
+            magic: PAIRING_COMPLETE_MAGIC,
+            challenge_nonce: challenge_nonce.clone(),
+            transcript_hash: pairing_transcript_hash(
+                &challenge_nonce,
+                &self.identity.receiver_id,
+                &sender_id,
+                PAIRING_COMPLETE_PHASE,
+            ),
+        };
+        self.send_control_message(session, &complete)?;
 
         if let Some(sender) = self.active_sender.as_mut() {
             sender.video_allowed = true;
         }
         self.pending_pairing = None;
-        self.local_pairing_confirmed = false;
         self.begin_streaming(session)
     }
 
@@ -1211,7 +1314,6 @@ impl ReceiverSession {
         self.status = ReceiverStatus::Disconnected;
         self.active_sender = None;
         self.pending_pairing = None;
-        self.local_pairing_confirmed = false;
         let _ = self.publish_waiting_placeholder();
     }
 
@@ -1380,7 +1482,9 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
         return Err(ReceiverError::LoopbackTimeout);
     }
 
-    sender.ingest_and_flush(payload, true, 1, 1)?;
+    // This helper intentionally exercises the receiver's explicit unpaired test bypass.
+    // Production senders never enter Streaming before pairing has committed.
+    sender.ingest_and_flush_unchecked_for_test(payload, true, 1, 1)?;
 
     for _ in 0..200 {
         receiver.pump()?;
@@ -1401,6 +1505,7 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
 /// Does **not** use `permit_unpaired_video` (REQ-PICOO-PAIRING-003).
 pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
     use picoo_sender::SenderSession;
+    use picoo_session::SenderStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let identity = ReceiverIdentity::default();
@@ -1444,18 +1549,21 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
         return Err(ReceiverError::LoopbackTimeout);
     }
 
-    receiver.confirm_pairing_locally();
+    receiver.confirm_pairing_locally()?;
     sender.send_pairing_confirm(&identity.receiver_id)?;
 
     for _ in 0..200 {
         receiver.pump()?;
         sender.pump()?;
-        if receiver.status() == ReceiverStatus::Streaming {
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    if receiver.status() != ReceiverStatus::Streaming {
+    if receiver.status() != ReceiverStatus::Streaming || sender.status() != SenderStatus::Streaming
+    {
         return Err(ReceiverError::LoopbackTimeout);
     }
 

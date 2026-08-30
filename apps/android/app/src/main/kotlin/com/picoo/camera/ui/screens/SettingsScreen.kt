@@ -132,7 +132,7 @@ fun SettingsScreen(
             }
             SettingsValueRow(
                 title = "关于 Picoo Camera",
-                description = "协议 PCP/1 · Rust Core v1.0.0",
+                description = "协议 PCP/2 · Rust Core v1.0.0",
                 value = "v0.1.0",
                 onClick = {},
             )

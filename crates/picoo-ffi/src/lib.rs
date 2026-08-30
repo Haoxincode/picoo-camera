@@ -65,7 +65,7 @@ struct SenderInner {
 /// Returns protocol version string for FFI smoke tests.
 #[no_mangle]
 pub extern "C" fn picoo_protocol_version() -> *const std::ffi::c_char {
-    static VERSION: &[u8] = b"PCP/1\0";
+    static VERSION: &[u8] = b"PCP/2\0";
     VERSION.as_ptr() as *const std::ffi::c_char
 }
 
@@ -88,7 +88,7 @@ pub extern "C" fn picoo_sender_destroy(handle: *mut std::ffi::c_void) {
     }
 }
 
-/// Connect QUIC session to host:port (PCP/1 ALPN `picoocam/1`).
+/// Connect QUIC session to host:port (PCP/2 ALPN `picoocam/2`).
 #[no_mangle]
 pub extern "C" fn picoo_sender_connect(
     handle: *mut std::ffi::c_void,
@@ -342,7 +342,8 @@ pub extern "C" fn picoo_sender_send_client_hello(
     }
 }
 
-/// Send PairingConfirm after desktop confirms six-digit code.
+/// Send the phone-side PairingConfirm after the user verifies the six-digit code.
+/// Streaming starts only after the receiver returns PairingComplete.
 #[no_mangle]
 pub extern "C" fn picoo_sender_send_pairing_confirm(
     handle: *mut std::ffi::c_void,

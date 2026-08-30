@@ -1,4 +1,4 @@
-# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/1) 边界
+# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/2) 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-002 / PUC-005 / PUC-006
@@ -9,7 +9,7 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 
 ## 架构决策
 
-协议名称：**Picoo Camera Protocol**，版本 **PCP/1**。
+协议名称：**Picoo Camera Protocol**，版本 **PCP/2**。
 
 ### 控制平面
 
@@ -19,7 +19,7 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 
 - `ClientHello` / `ServerHello`
 - `Capabilities`
-- `PairingChallenge` / `PairingConfirm`
+- `PairingChallenge` / `PairingConfirm` / `PairingApproval` / `PairingCommit` / `PairingComplete`
 - `StartStream` / `StopStream`
 - `StreamConfig`
 - `CameraCommand` / `EncoderCommand`

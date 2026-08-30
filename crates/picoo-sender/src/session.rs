@@ -6,11 +6,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
-use picoo_pairing::{pairing_confirm_signature, trusted_device_from_pairing, TrustedDeviceStore};
+use picoo_pairing::{
+    pairing_confirm_signature, pairing_transcript_hash, trusted_device_from_pairing,
+    TrustedDeviceStore,
+};
 use picoo_protocol::control::{
     camera_command, encoder_command, CameraCommand, Capabilities, ClientHello, EncoderCommand,
-    PairingChallenge, PairingConfirm, ReceiverStats as ReceiverStatsMsg, ServerHello, SessionError,
-    StartStream, StopStream,
+    PairingApproval, PairingChallenge, PairingCommit, PairingComplete, PairingConfirm,
+    ReceiverStats as ReceiverStatsMsg, ServerHello, SessionError, StartStream, StopStream,
 };
 use picoo_protocol::VideoPacket;
 use picoo_protocol::ALPN;
@@ -23,6 +26,12 @@ use crate::stream_config::StreamConfigParams;
 use crate::{SenderError, SenderPipeline, SenderStats};
 
 pub const INITIAL_STREAM_EPOCH: u32 = 1;
+const PAIRING_APPROVAL_MAGIC: u32 = 0x5041_5056;
+const PAIRING_COMMIT_MAGIC: u32 = 0x5043_4D54;
+const PAIRING_COMPLETE_MAGIC: u32 = 0x5043_4D50;
+const PAIRING_APPROVAL_PHASE: &[u8] = b"pairing-approval-v2";
+const PAIRING_COMMIT_PHASE: &[u8] = b"pairing-commit-v2";
+const PAIRING_COMPLETE_PHASE: &[u8] = b"pairing-complete-v2";
 /// Mobile FFI exposes epochs as a positive signed 32-bit integer on Android.
 pub const MAX_STREAM_EPOCH: u32 = i32::MAX as u32;
 
@@ -33,6 +42,8 @@ struct SenderPairing {
     public_key: Vec<u8>,
     challenge_nonce: Vec<u8>,
     short_code: String,
+    confirm_sent: bool,
+    trust_committed: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -666,7 +677,7 @@ impl<T: PicooTransport> SenderSession<T> {
                     self.session = Some(session);
                     self.on_connected();
                 }
-                TransportEvent::ControlMessage(_, msg) => self.handle_control(msg),
+                TransportEvent::ControlMessage(session, msg) => self.handle_control(session, msg),
                 TransportEvent::Disconnected(_, _) => {
                     self.abort_pending_reconfiguration();
                     self.session = None;
@@ -681,7 +692,33 @@ impl<T: PicooTransport> SenderSession<T> {
         }
     }
 
-    fn handle_control(&mut self, msg: bytes::Bytes) {
+    fn handle_control(&mut self, session: SessionId, msg: bytes::Bytes) {
+        if let Ok(approval) = PairingApproval::decode(msg.as_ref()) {
+            if approval.magic == PAIRING_APPROVAL_MAGIC
+                && self.pairing_transcript_matches(
+                    session,
+                    &approval.challenge_nonce,
+                    &approval.transcript_hash,
+                    PAIRING_APPROVAL_PHASE,
+                )
+            {
+                self.accept_pairing_approval();
+                return;
+            }
+        }
+        if let Ok(complete) = PairingComplete::decode(msg.as_ref()) {
+            if complete.magic == PAIRING_COMPLETE_MAGIC
+                && self.pairing_transcript_matches(
+                    session,
+                    &complete.challenge_nonce,
+                    &complete.transcript_hash,
+                    PAIRING_COMPLETE_PHASE,
+                )
+            {
+                self.accept_pairing_complete();
+                return;
+            }
+        }
         if let Ok(stats) = ReceiverStatsMsg::decode(msg.as_ref()) {
             let metrics = MetricsReceiverStats {
                 rtt_ms: stats.rtt_ms,
@@ -759,6 +796,8 @@ impl<T: PicooTransport> SenderSession<T> {
                 if let Some(pairing) = self.pairing.as_mut() {
                     pairing.challenge_nonce = challenge.challenge_nonce;
                     pairing.short_code = challenge.short_code;
+                    pairing.confirm_sent = false;
+                    pairing.trust_committed = false;
                 } else {
                     self.pairing = Some(SenderPairing {
                         receiver_id: String::new(),
@@ -766,6 +805,8 @@ impl<T: PicooTransport> SenderSession<T> {
                         public_key: Vec::new(),
                         challenge_nonce: challenge.challenge_nonce,
                         short_code: challenge.short_code,
+                        confirm_sent: false,
+                        trust_committed: false,
                     });
                 }
                 self.status = SenderStatus::Pairing;
@@ -825,6 +866,8 @@ impl<T: PicooTransport> SenderSession<T> {
                         public_key: hello.public_key,
                         challenge_nonce: Vec::new(),
                         short_code: String::new(),
+                        confirm_sent: false,
+                        trust_committed: false,
                     });
                 }
                 self.status = SenderStatus::Pairing;
@@ -840,11 +883,131 @@ impl<T: PicooTransport> SenderSession<T> {
                         public_key: hello.public_key,
                         challenge_nonce: Vec::new(),
                         short_code: String::new(),
+                        confirm_sent: false,
+                        trust_committed: false,
                     });
                 }
                 self.enter_streaming();
             }
         }
+    }
+
+    fn pairing_transcript_matches(
+        &self,
+        session: SessionId,
+        nonce: &[u8],
+        transcript_hash: &[u8],
+        phase: &[u8],
+    ) -> bool {
+        let Some(pairing) = self.pairing.as_ref() else {
+            return false;
+        };
+        let Some(sender_id) = self.sender_id.as_deref() else {
+            return false;
+        };
+        self.session == Some(session)
+            && nonce == pairing.challenge_nonce
+            && transcript_hash
+                == pairing_transcript_hash(
+                    &pairing.challenge_nonce,
+                    &pairing.receiver_id,
+                    sender_id,
+                    phase,
+                )
+    }
+
+    fn accept_pairing_approval(&mut self) {
+        if self.status != SenderStatus::Pairing {
+            return;
+        }
+        let Some(pairing) = self.pairing.clone() else {
+            self.last_session_error = Some("PAIRING_STATE_MISSING".into());
+            return;
+        };
+        if pairing.receiver_id.is_empty() {
+            self.last_session_error = Some("PAIRING_RECEIVER_ID_MISSING".into());
+            return;
+        }
+        if !pairing.confirm_sent {
+            self.last_session_error = Some("PAIRING_LOCAL_CONFIRM_MISSING".into());
+            return;
+        }
+
+        if !pairing.trust_committed {
+            let display_name = if pairing.display_name.is_empty() {
+                pairing.receiver_id.as_str()
+            } else {
+                pairing.display_name.as_str()
+            };
+            let previous_trusted = self.trusted.clone();
+            self.trusted.upsert(trusted_device_from_pairing(
+                &pairing.receiver_id,
+                display_name,
+                &pairing.public_key,
+                self.now_ms(),
+            ));
+            if self.persist_trusted().is_err() {
+                self.trusted = previous_trusted;
+                self.last_session_error = Some("PAIRING_STORE_FAILED".into());
+                return;
+            }
+            if let Some(pairing) = self.pairing.as_mut() {
+                pairing.trust_committed = true;
+            }
+        }
+
+        let Some(active_session) = self.session else {
+            self.last_session_error = Some("PAIRING_SESSION_MISSING".into());
+            return;
+        };
+        let Some(sender_id) = self.sender_id.as_deref() else {
+            self.last_session_error = Some("PAIRING_SENDER_ID_MISSING".into());
+            return;
+        };
+        let commit = PairingCommit {
+            magic: PAIRING_COMMIT_MAGIC,
+            challenge_nonce: pairing.challenge_nonce.clone(),
+            transcript_hash: pairing_transcript_hash(
+                &pairing.challenge_nonce,
+                &pairing.receiver_id,
+                sender_id,
+                PAIRING_COMMIT_PHASE,
+            ),
+        };
+        let mut out = Vec::new();
+        if commit.encode(&mut out).is_err()
+            || self
+                .transport
+                .send_control(active_session, bytes::Bytes::from(out))
+                .is_err()
+        {
+            self.last_session_error = Some("PAIRING_COMMIT_SEND_FAILED".into());
+            return;
+        }
+        self.last_session_error = None;
+    }
+
+    fn accept_pairing_complete(&mut self) {
+        if self.status != SenderStatus::Pairing {
+            return;
+        }
+        let Some(pairing) = self.pairing.as_ref() else {
+            return;
+        };
+        if !pairing.confirm_sent || !pairing.trust_committed {
+            self.last_session_error = Some("PAIRING_COMMIT_MISSING".into());
+            return;
+        }
+        if self
+            .trusted
+            .verify_paired_key(&pairing.receiver_id, &pairing.public_key)
+            .is_err()
+        {
+            self.last_session_error = Some("PAIRING_STORE_MISMATCH".into());
+            return;
+        }
+        self.last_session_error = None;
+        self.enter_streaming();
     }
 
     pub fn stats(&self) -> SessionStats {
@@ -924,6 +1087,13 @@ impl<T: PicooTransport> SenderSession<T> {
         if self.session.is_none() {
             return Err(SenderError::NotConnected);
         }
+        if !matches!(
+            self.status,
+            SenderStatus::Streaming | SenderStatus::NetworkUnstable
+        ) {
+            self.pipeline.clear_pending_packets();
+            return Err(SenderError::MediaNotReady);
+        }
         if stream_epoch != self.current_stream_epoch {
             return Err(SenderError::StaleStreamEpoch {
                 got: stream_epoch,
@@ -942,6 +1112,13 @@ impl<T: PicooTransport> SenderSession<T> {
     /// Send all pending VideoPackets over QUIC datagrams.
     pub fn flush_pending(&mut self) -> Result<usize, SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
+        if !matches!(
+            self.status,
+            SenderStatus::Streaming | SenderStatus::NetworkUnstable
+        ) {
+            self.pipeline.clear_pending_packets();
+            return Err(SenderError::MediaNotReady);
+        }
         let packets: Vec<VideoPacket> = self.pipeline.take_pending_packets();
         let mut sent = 0usize;
         for packet in packets {
@@ -963,6 +1140,23 @@ impl<T: PicooTransport> SenderSession<T> {
     ) -> Result<usize, SenderError> {
         self.ingest_access_unit(data, is_keyframe, pts_us, stream_epoch)?;
         self.flush_pending()
+    }
+
+    /// Test-only malicious/legacy-peer hook: put media on the transport without changing
+    /// the session's semantic status. Receiver security tests use this to prove that their
+    /// independent pairing gate still rejects packets even if a peer ignores the sender gate.
+    pub fn ingest_and_flush_unchecked_for_test(
+        &mut self,
+        data: &[u8],
+        is_keyframe: bool,
+        pts_us: u64,
+        stream_epoch: u32,
+    ) -> Result<usize, SenderError> {
+        let previous_status = self.status;
+        self.status = SenderStatus::Streaming;
+        let result = self.ingest_and_flush(data, is_keyframe, pts_us, stream_epoch);
+        self.status = previous_status;
+        result
     }
 
     pub fn pending_packets(&self) -> usize {
@@ -1020,6 +1214,11 @@ impl<T: PicooTransport> SenderSession<T> {
             .sender_id
             .as_deref()
             .ok_or_else(|| SenderError::Protocol("missing sender id".into()))?;
+        if pairing.receiver_id != receiver_id {
+            return Err(SenderError::Protocol(
+                "pairing receiver id does not match ServerHello".into(),
+            ));
+        }
 
         let confirm = PairingConfirm {
             confirm_signature: pairing_confirm_signature(
@@ -1035,35 +1234,31 @@ impl<T: PicooTransport> SenderSession<T> {
         self.transport
             .send_control(session, bytes::Bytes::from(buf))
             .map_err(SenderError::Transport)?;
-        if !receiver_id.is_empty() {
-            let display_name = if pairing.display_name.is_empty() {
-                receiver_id
-            } else {
-                pairing.display_name.as_str()
-            };
-            let now_ms = self.now_ms();
-            self.trusted.upsert(trusted_device_from_pairing(
-                receiver_id,
-                display_name,
-                if pairing.public_key.is_empty() {
-                    &[]
-                } else {
-                    &pairing.public_key
-                },
-                now_ms,
-            ));
-            self.persist_trusted()?;
+        if let Some(pairing) = self.pairing.as_mut() {
+            pairing.confirm_sent = true;
         }
-
-        // REQ-PICOO-SESSION-004: pairing → streaming must request IDR (same as reconnect).
-        self.enter_streaming();
+        self.last_session_error = None;
+        // The receiver may still be waiting for its local user. Trust and media start only
+        // after its authenticated PairingComplete acknowledgement (REQ-PICOO-PAIRING-001).
         Ok(())
     }
 
     /// Inject a decoded control message (tests / ABR loopback harnesses).
     pub fn inject_control_for_test(&mut self, msg: bytes::Bytes) -> Result<(), SenderError> {
-        self.handle_control(msg);
+        // Non-transport unit harnesses use a synthetic session. Pairing tests that need to
+        // verify session binding call `inject_control_for_session_for_test` explicitly.
+        let session = self.session.unwrap_or(SessionId(0));
+        self.handle_control(session, msg);
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_control_for_session_for_test(
+        &mut self,
+        session: SessionId,
+        msg: bytes::Bytes,
+    ) {
+        self.handle_control(session, msg);
     }
 
     pub fn force_status_for_test(&mut self, status: SenderStatus) {
@@ -1110,6 +1305,7 @@ mod tests {
                 port: 1,
             })
             .expect("connect");
+        session.force_status_for_test(SenderStatus::Streaming);
         session
             .ingest_access_unit(b"au-bytes", true, 1, 1)
             .expect("ingest");
@@ -1133,6 +1329,7 @@ mod tests {
                 port: 1,
             })
             .expect("connect");
+        session.force_status_for_test(SenderStatus::Streaming);
         session
             .ingest_access_unit(b"queued", true, 2, 1)
             .expect("ingest while connected");
@@ -1375,6 +1572,7 @@ mod tests {
                 port: 4433,
             })
             .expect("connect");
+        session.force_status_for_test(SenderStatus::Streaming);
         let committed_epoch = session.current_stream_epoch();
         let pending_epoch = session.begin_stream_reconfiguration();
         assert_ne!(pending_epoch, committed_epoch);
@@ -1550,6 +1748,7 @@ mod tests {
                 port: 4433,
             })
             .expect("connect");
+        session.force_status_for_test(SenderStatus::Streaming);
         let pending = session.begin_stream_reconfiguration();
         assert!(session.report_encoder_height(720, pending));
         session.set_stream_config(StreamConfigParams {
@@ -1787,7 +1986,7 @@ mod tests {
     }
 
     #[test]
-    fn pairing_confirm_persists_trusted_receiver() {
+    fn pairing_confirm_waits_for_receiver_completion() {
         use picoo_pairing::TrustedDeviceStore;
 
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1818,24 +2017,89 @@ mod tests {
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject hello");
 
+        let challenge_nonce = vec![0xABu8; 32];
         let challenge = PairingChallenge {
             short_code: "123456".into(),
-            challenge_nonce: vec![0xABu8; 32],
+            challenge_nonce: challenge_nonce.clone(),
         };
         let mut buf = Vec::new();
         challenge.encode(&mut buf).expect("encode challenge");
         session
             .inject_control_for_test(bytes::Bytes::from(buf))
             .expect("inject challenge");
+        let _ = session.take_keyframe_request();
+
+        let approval = PairingApproval {
+            magic: PAIRING_APPROVAL_MAGIC,
+            challenge_nonce: challenge_nonce.clone(),
+            transcript_hash: pairing_transcript_hash(
+                &challenge_nonce,
+                "windows-receiver",
+                "android-sender",
+                PAIRING_APPROVAL_PHASE,
+            ),
+        };
+        let mut approval_buf = Vec::new();
+        approval.encode(&mut approval_buf).expect("encode approval");
+        session
+            .inject_control_for_test(bytes::Bytes::copy_from_slice(&approval_buf))
+            .expect("inject premature approval");
+        assert_eq!(session.status(), SenderStatus::Pairing);
+        assert_eq!(
+            session.last_session_error(),
+            Some("PAIRING_LOCAL_CONFIRM_MISSING")
+        );
+        assert!(!session.trusted_devices().is_paired("windows-receiver"));
 
         session
             .send_pairing_confirm("windows-receiver")
             .expect("confirm");
 
+        assert_eq!(session.status(), SenderStatus::Pairing);
+        assert!(!session.trusted_devices().is_paired("windows-receiver"));
+        assert!(!session.take_keyframe_request());
+        assert!(matches!(
+            session.ingest_access_unit(b"must-not-send", true, 1, INITIAL_STREAM_EPOCH),
+            Err(SenderError::MediaNotReady)
+        ));
+        assert_eq!(session.pending_packets(), 0);
+
+        let active_session = session.session.expect("active session");
+        session.inject_control_for_session_for_test(
+            SessionId(active_session.0 + 1),
+            bytes::Bytes::copy_from_slice(&approval_buf),
+        );
+        assert!(!session.trusted_devices().is_paired("windows-receiver"));
+
+        session
+            .inject_control_for_test(bytes::Bytes::from(approval_buf))
+            .expect("inject approval");
+        assert_eq!(session.status(), SenderStatus::Pairing);
+        assert!(session.trusted_devices().is_paired("windows-receiver"));
+        assert!(!session.take_keyframe_request());
+
+        let complete = PairingComplete {
+            magic: PAIRING_COMPLETE_MAGIC,
+            challenge_nonce: challenge_nonce.clone(),
+            transcript_hash: pairing_transcript_hash(
+                &challenge_nonce,
+                "windows-receiver",
+                "android-sender",
+                PAIRING_COMPLETE_PHASE,
+            ),
+        };
+        let mut complete_buf = Vec::new();
+        complete
+            .encode(&mut complete_buf)
+            .expect("encode completion");
+        session
+            .inject_control_for_test(bytes::Bytes::from(complete_buf))
+            .expect("inject completion");
+
         assert_eq!(session.status(), SenderStatus::Streaming);
         assert!(
             session.take_keyframe_request(),
-            "pairing confirm must request IDR before first encode"
+            "receiver completion must request IDR before first encode"
         );
 
         let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("load");
