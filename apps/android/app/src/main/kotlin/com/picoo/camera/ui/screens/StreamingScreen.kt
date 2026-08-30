@@ -73,6 +73,10 @@ fun StreamingScreen(
     resolutionLabel: String,
     bitrateMbps: String,
     lensFacing: LensFacing,
+    previewBufferWidth: Int,
+    previewBufferHeight: Int,
+    previewSensorOrientationDegrees: Int,
+    previewFrontFacing: Boolean,
     localPreviewMirrored: Boolean,
     thermalForced720: Boolean,
     powerHint: String,
@@ -92,8 +96,9 @@ fun StreamingScreen(
     evSupported: Boolean,
     onDisconnect: () -> Unit,
     onStopReconnect: () -> Unit,
-    onPreviewSurfaceAvailable: (android.view.Surface) -> Unit,
-    onPreviewSurfaceDestroyed: () -> Unit,
+    onPreviewSurfaceAvailable: (android.graphics.SurfaceTexture) -> Unit,
+    onPreviewSurfaceDestroyed: (android.graphics.SurfaceTexture) -> Unit,
+    onPreviewDisplayChanged: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var uiLocked by remember { mutableStateOf(false) }
@@ -155,9 +160,14 @@ fun StreamingScreen(
         if (cameraGranted) {
             CameraPreviewSurface(
                 modifier = Modifier.fillMaxSize(),
+                bufferWidth = previewBufferWidth,
+                bufferHeight = previewBufferHeight,
+                sensorOrientationDegrees = previewSensorOrientationDegrees,
+                frontFacing = previewFrontFacing,
                 mirrorLocal = localPreviewMirrored,
                 onSurfaceAvailable = onPreviewSurfaceAvailable,
                 onSurfaceDestroyed = onPreviewSurfaceDestroyed,
+                onDisplayChanged = onPreviewDisplayChanged,
             )
             val evAlpha = ExposurePreview.overlayAlpha(exposureEv)
             if (evAlpha > 0f) {

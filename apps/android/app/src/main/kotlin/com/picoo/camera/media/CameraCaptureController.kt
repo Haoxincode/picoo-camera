@@ -1,7 +1,7 @@
 package com.picoo.camera.media
 
+import android.graphics.SurfaceTexture
 import android.util.Size
-import android.view.Surface
 
 /**
  * Camera2 + MediaCodec capture configuration (REQ-PICOO-MEDIA-001).
@@ -17,8 +17,16 @@ data class CaptureProfile(
     val lensFacing: LensFacing = LensFacing.Back,
 )
 
+/** Camera buffer geometry needed by the UI-only TextureView transform. */
+data class PreviewTransformInfo(
+    val bufferSize: Size = Size(1280, 720),
+    val sensorOrientationDegrees: Int = 90,
+    val lensFacing: LensFacing = LensFacing.Back,
+)
+
 enum class CaptureState {
     Idle,
+    Opening,
     Previewing,
     Streaming,
     Error,
@@ -27,14 +35,15 @@ enum class CaptureState {
 interface CameraCaptureController {
     val state: CaptureState
     val profile: CaptureProfile
+    val previewTransformInfo: PreviewTransformInfo
     val streamEpoch: Int
     /** Current AE exposure compensation index (device units). */
     val exposureCompensation: Int
     /** Inclusive range supported by the active camera; empty if unknown. */
     val exposureCompensationRange: IntRange
 
-    fun bindPreviewSurface(surface: Surface)
-    fun unbindPreviewSurface()
+    fun bindPreviewSurface(surfaceTexture: SurfaceTexture)
+    fun unbindPreviewSurface(surfaceTexture: SurfaceTexture)
     fun startPreview()
     fun stopPreview()
     /** Apply an epoch allocated by Rust before the next encoder discontinuity. */

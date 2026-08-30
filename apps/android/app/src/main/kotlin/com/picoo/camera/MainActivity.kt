@@ -357,6 +357,7 @@ private fun SenderHomeScreen(
             },
         )
     }
+    var previewTransformInfo by remember { mutableStateOf(encoder.previewTransformInfo) }
     val encoderReconfiguration = remember { EncoderReconfigurationCoordinator() }
 
     fun applyStreamConfigToSender() {
@@ -503,7 +504,6 @@ private fun SenderHomeScreen(
         val encoding = encoderState == CaptureState.Previewing
         val liveEncode = cameraGranted && encoding && when (senderStatus) {
             PicooNative.STATUS_STREAMING,
-            PicooNative.STATUS_NEGOTIATING,
             PicooNative.STATUS_RECONNECTING,
             PicooNative.STATUS_NETWORK_UNSTABLE,
             -> true
@@ -520,7 +520,6 @@ private fun SenderHomeScreen(
     LaunchedEffect(senderStatus, cameraGranted) {
         val shouldEncode = cameraGranted && when (senderStatus) {
             PicooNative.STATUS_STREAMING,
-            PicooNative.STATUS_NEGOTIATING,
             PicooNative.STATUS_RECONNECTING,
             PicooNative.STATUS_NETWORK_UNSTABLE,
             -> true
@@ -533,7 +532,7 @@ private fun SenderHomeScreen(
                 encoder.requestKeyFrame()
             }
             encoderState = encoder.state
-        } else if (senderStatus == PicooNative.STATUS_DISCONNECTED &&
+        } else if (encoder.state == CaptureState.Opening ||
             encoder.state == CaptureState.Previewing
         ) {
             encoder.stopPreview()
@@ -544,7 +543,6 @@ private fun SenderHomeScreen(
     LaunchedEffect(senderStatus) {
         val live = when (senderStatus) {
             PicooNative.STATUS_STREAMING,
-            PicooNative.STATUS_NEGOTIATING,
             PicooNative.STATUS_RECONNECTING,
             PicooNative.STATUS_NETWORK_UNSTABLE,
             -> true
@@ -604,6 +602,10 @@ private fun SenderHomeScreen(
                     reconnectDelayMs = 0L
                 }
                 encoderState = encoder.state
+                val latestPreviewTransformInfo = encoder.previewTransformInfo
+                if (latestPreviewTransformInfo != previewTransformInfo) {
+                    previewTransformInfo = latestPreviewTransformInfo
+                }
                 if (senderStatus == PicooNative.STATUS_DISCONNECTED) {
                     encoderReconfiguration.abandonDisconnectedSession(senderHandle)
                 }
@@ -793,6 +795,12 @@ private fun SenderHomeScreen(
                 ) {
                     waitOutcome = WaitOutcome.Rejected
                 }
+                if (phonePairingConfirmed &&
+                    senderStatus == PicooNative.STATUS_STREAMING &&
+                    previousStatus != PicooNative.STATUS_STREAMING
+                ) {
+                    reloadTrustedStore()
+                }
                 if (senderStatus == PicooNative.STATUS_DISCONNECTED &&
                     previousStatus != PicooNative.STATUS_DISCONNECTED &&
                     !suppressAutoConnect
@@ -945,7 +953,6 @@ private fun SenderHomeScreen(
                     val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
                     if (rc == 0) {
                         errorText = null
-                        reloadTrustedStore()
                         phonePairingConfirmed = true
                         waitOutcome = WaitOutcome.Pending
                         senderTab = SenderTab.Wait
@@ -985,12 +992,19 @@ private fun SenderHomeScreen(
                 onRegenerate = { regeneratePairing() },
             )
             SenderTab.Streaming -> StreamingScreen(
+                // Camera2 owns the selected buffer geometry; Compose only transforms it.
                 cameraGranted = cameraGranted,
                 receiverName = pairingDisplayName,
                 linkQualityChip = linkQualityChip,
                 resolutionLabel = resolutionLabel,
                 bitrateMbps = bitrateMbps,
                 lensFacing = encoder.profile.lensFacing,
+                previewBufferWidth = previewTransformInfo.bufferSize.width,
+                previewBufferHeight = previewTransformInfo.bufferSize.height,
+                previewSensorOrientationDegrees =
+                    previewTransformInfo.sensorOrientationDegrees,
+                previewFrontFacing =
+                    previewTransformInfo.lensFacing == LensFacing.Front,
                 localPreviewMirrored = localPreviewMirrored,
                 thermalForced720 = thermalForced720,
                 powerHint = if (thermalForced720) "" else powerHint,
@@ -1012,6 +1026,7 @@ private fun SenderHomeScreen(
                 onFlipCamera = {
                     if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
                         encoder.switchCamera()
+                        previewTransformInfo = encoder.previewTransformInfo
                         localPreviewMirrored =
                             LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
                         encoderState = encoder.state
@@ -1044,6 +1059,7 @@ private fun SenderHomeScreen(
                         PicooNative.setPreferredHeight(senderHandle, next.height)
                         encoder.setTargetBitrateBps(bitrate)
                         encoder.setResolution(next.width, next.height)
+                        previewTransformInfo = encoder.previewTransformInfo
                         encoderState = encoder.state
                         streamConfigDirty.set(true)
                         errorText = null
@@ -1083,10 +1099,16 @@ private fun SenderHomeScreen(
                 },
                 onPreviewSurfaceAvailable = { surface ->
                     encoder.bindPreviewSurface(surface)
+                    previewTransformInfo = encoder.previewTransformInfo
                     encoderState = encoder.state
                     errorText = encoder.lastError
                 },
-                onPreviewSurfaceDestroyed = { encoder.unbindPreviewSurface() },
+                onPreviewSurfaceDestroyed = { surfaceTexture ->
+                    encoder.unbindPreviewSurface(surfaceTexture)
+                },
+                onPreviewDisplayChanged = {
+                    previewTransformInfo = encoder.refreshPreviewTransformInfo()
+                },
             )
         }
     }

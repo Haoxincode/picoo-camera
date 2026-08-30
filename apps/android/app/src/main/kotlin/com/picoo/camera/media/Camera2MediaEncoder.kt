@@ -9,11 +9,14 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Range
@@ -44,6 +47,13 @@ class Camera2MediaEncoder(
         private set
 
     @Volatile
+    override var previewTransformInfo = PreviewTransformInfo(
+        bufferSize = initialProfile.resolution,
+        lensFacing = initialProfile.lensFacing,
+    )
+        private set
+
+    @Volatile
     override var streamEpoch: Int = initialStreamEpoch
         private set
 
@@ -62,12 +72,14 @@ class Camera2MediaEncoder(
     private val codecThread = HandlerThread("picoo-codec").apply { start() }
     private val codecHandler = Handler(codecThread.looper)
 
+    @Volatile private var previewSurfaceTexture: SurfaceTexture? = null
     @Volatile private var previewSurface: Surface? = null
     @Volatile private var cameraDevice: CameraDevice? = null
     @Volatile private var captureSession: CameraCaptureSession? = null
     @Volatile private var mediaCodec: MediaCodec? = null
     @Volatile private var codecInputSurface: Surface? = null
     @Volatile private var selectedCameraId: String? = null
+    @Volatile private var activePhysicalCameraId: String? = null
     private var captureSize: Size = profile.resolution
 
     private var frameCount = 0
@@ -78,6 +90,8 @@ class Camera2MediaEncoder(
     @Volatile private var lastAppliedBitrateBps: Int = targetBitrateBps
     private val cameraGeneration = AtomicLong(0)
     private val codecGeneration = AtomicLong(0)
+    private val captureSessionGeneration = AtomicLong(0)
+    private val reopenAfterCameraGeneration = AtomicLong(-1)
     private val cameraLifecycleLock = Any()
     private val codecLifecycleLock = Any()
 
@@ -116,6 +130,7 @@ class Camera2MediaEncoder(
     override fun prepareStreamEpoch(epoch: Int) {
         require(epoch > 0) { "stream epoch must come from Rust" }
         streamEpoch = epoch
+        restartOpeningPreviewIfCameraOpened()
     }
 
     override fun requestKeyFrame() {
@@ -129,29 +144,41 @@ class Camera2MediaEncoder(
         reissueRepeatingRequest()
     }
 
-    override fun bindPreviewSurface(surface: Surface) {
-        val changed = previewSurface !== surface
-        previewSurface = surface
-        when {
-            _state.get() == CaptureState.Idle -> startPreview()
-            changed && cameraDevice != null && codecInputSurface != null ->
-                rebuildCaptureSession(cameraDevice!!)
+    override fun bindPreviewSurface(surfaceTexture: SurfaceTexture) {
+        val changed = previewSurfaceTexture !== surfaceTexture
+        if (changed) {
+            closeCaptureSession()
+            previewSurface?.release()
+            previewSurfaceTexture = surfaceTexture
+            val bufferSize = previewTransformInfo.bufferSize
+            surfaceTexture.setDefaultBufferSize(bufferSize.width, bufferSize.height)
+            previewSurface = Surface(surfaceTexture)
+        }
+        if (changed && cameraDevice != null && codecInputSurface != null) {
+            rebuildCaptureSession(cameraDevice!!)
         }
     }
 
-    override fun unbindPreviewSurface() {
-        if (previewSurface == null) return
+    override fun unbindPreviewSurface(surfaceTexture: SurfaceTexture) {
+        if (previewSurfaceTexture !== surfaceTexture) return
+        previewSurfaceTexture = null
+        closeCaptureSession()
+        previewSurface?.release()
         previewSurface = null
         // Keep H.264 encode alive when the Compose TextureView is torn down
         // (tab switch / config change); rebuild a codec-only Camera2 session.
         val camera = cameraDevice
-        if (_state.get() == CaptureState.Previewing && camera != null && codecInputSurface != null) {
+        val state = _state.get()
+        if ((state == CaptureState.Opening || state == CaptureState.Previewing) &&
+            camera != null &&
+            codecInputSurface != null
+        ) {
             rebuildCaptureSession(camera)
         }
     }
 
     override fun startPreview() {
-        if (_state.get() == CaptureState.Previewing) return
+        if (!_state.compareAndSet(CaptureState.Idle, CaptureState.Opening)) return
         // Codec-only capture is allowed so STREAMING can encode before the
         // local preview SurfaceTexture is ready (REQ-PICOO-MEDIA-001).
         lastError = null
@@ -160,6 +187,7 @@ class Camera2MediaEncoder(
 
     override fun stopPreview() {
         // Invalidate callbacks before any resource begins closing.
+        reopenAfterCameraGeneration.set(-1)
         cameraGeneration.incrementAndGet()
         codecGeneration.incrementAndGet()
         _state.set(CaptureState.Idle)
@@ -186,9 +214,10 @@ class Camera2MediaEncoder(
             return
         }
         profile = profile.copy(lensFacing = facing)
-        if (_state.get() == CaptureState.Previewing) {
-            stopPreview()
-            startPreview()
+        when (_state.get()) {
+            CaptureState.Previewing -> restartPreviewAfterCameraCloses()
+            CaptureState.Opening -> restartOpeningPreviewIfCameraOpened()
+            else -> Unit
         }
         // New epoch requires IDR for remote decoder recovery (REQ-PICOO-MEDIA-003).
         requestSyncFrame()
@@ -197,9 +226,10 @@ class Camera2MediaEncoder(
     override fun setResolution(width: Int, height: Int) {
         val next = Size(width, height)
         profile = profile.copy(resolution = next)
-        if (_state.get() == CaptureState.Previewing) {
-            stopPreview()
-            startPreview()
+        when (_state.get()) {
+            CaptureState.Previewing -> restartPreviewAfterCameraCloses()
+            CaptureState.Opening -> restartOpeningPreviewIfCameraOpened()
+            else -> Unit
         }
         requestSyncFrame()
     }
@@ -217,14 +247,55 @@ class Camera2MediaEncoder(
         targetBitrateBps = bitrateBps
         appliedStreamEpoch = 0
         appliedEncoderHeight = 0
-        stopPreview()
-        startPreview()
+        when (_state.get()) {
+            CaptureState.Previewing -> restartPreviewAfterCameraCloses()
+            CaptureState.Opening -> restartOpeningPreviewIfCameraOpened()
+            else -> {
+                stopPreview()
+                startPreview()
+            }
+        }
     }
 
     override fun close() {
         stopPreview()
+        previewSurfaceTexture = null
+        previewSurface?.release()
+        previewSurface = null
         cameraThread.quitSafely()
         codecThread.quitSafely()
+    }
+
+    private fun restartPreviewAfterCameraCloses() {
+        val generation = cameraGeneration.get()
+        val camera = synchronized(cameraLifecycleLock) {
+            cameraDevice.also { cameraDevice = null }
+        }
+        if (camera == null) {
+            val previousState = _state.get()
+            if ((previousState != CaptureState.Opening &&
+                    previousState != CaptureState.Previewing) ||
+                !_state.compareAndSet(previousState, CaptureState.Idle)
+            ) {
+                return
+            }
+            startPreview()
+            return
+        }
+        reopenAfterCameraGeneration.set(generation)
+        _state.set(CaptureState.Opening)
+        closeCaptureSession()
+        releaseCodec()
+        frameCount = 0
+        keyFrameCount = 0
+        stats = EncoderStats()
+        camera.close()
+    }
+
+    private fun restartOpeningPreviewIfCameraOpened() {
+        if (_state.get() == CaptureState.Opening && cameraDevice != null) {
+            restartPreviewAfterCameraCloses()
+        }
     }
 
     private fun openCamera() {
@@ -240,14 +311,19 @@ class Camera2MediaEncoder(
             return
         }
         selectedCameraId = cameraId
+        activePhysicalCameraId = null
         captureSize = chooseCaptureSize(cameraId, profile.resolution)
+        refreshPreviewTransformInfo()
+        previewSurfaceTexture?.setDefaultBufferSize(captureSize.width, captureSize.height)
         refreshExposureRange(cameraId)
+        val openingProfile = profile
+        val openingStreamEpoch = streamEpoch
 
         val generation = cameraGeneration.incrementAndGet()
         runCatching {
             cameraManager.openCamera(
                 cameraId,
-                createCameraStateCallback(generation),
+                createCameraStateCallback(generation, openingProfile, openingStreamEpoch),
                 cameraHandler,
             )
         }.onFailure { fail("openCamera failed: ${it.message}") }
@@ -274,16 +350,37 @@ class Camera2MediaEncoder(
         }
     }
 
-    private fun createCameraStateCallback(generation: Long) = object : CameraDevice.StateCallback() {
+    private fun createCameraStateCallback(
+        generation: Long,
+        openingProfile: CaptureProfile,
+        openingStreamEpoch: Int,
+    ) = object : CameraDevice.StateCallback() {
+        private var reopenAfterClose = false
+
         override fun onOpened(camera: CameraDevice) {
             synchronized(cameraLifecycleLock) {
                 if (generation != cameraGeneration.get()) {
                     camera.close()
                     return
                 }
+                if (profile != openingProfile || streamEpoch != openingStreamEpoch) {
+                    reopenAfterClose = true
+                    camera.close()
+                    return
+                }
                 cameraDevice = camera
             }
             setupEncoderAndSession(camera, generation)
+        }
+
+        override fun onClosed(camera: CameraDevice) {
+            val plannedReopen = reopenAfterCameraGeneration.compareAndSet(generation, -1)
+            if ((reopenAfterClose || plannedReopen) &&
+                generation == cameraGeneration.get() &&
+                _state.compareAndSet(CaptureState.Opening, CaptureState.Idle)
+            ) {
+                startPreview()
+            }
         }
 
         override fun onDisconnected(camera: CameraDevice) {
@@ -399,22 +496,40 @@ class Camera2MediaEncoder(
     /** Create / replace the Camera2 session using preview (optional) + codec InputSurface. */
     private fun rebuildCaptureSession(
         camera: CameraDevice,
-        generation: Long = codecGeneration.get(),
+        codecGenerationSnapshot: Long = codecGeneration.get(),
     ) {
         val codecSurface = codecInputSurface ?: run {
-            fail("Codec input surface missing")
+            if (codecGenerationSnapshot == codecGeneration.get() &&
+                camera === cameraDevice &&
+                _state.get() != CaptureState.Idle
+            ) {
+                fail("Codec input surface missing")
+            }
             return
         }
         closeCaptureSession()
+        val sessionGeneration = captureSessionGeneration.incrementAndGet()
+        val previewTarget = previewSurface
         val targets = buildList {
-            previewSurface?.let { add(it) }
-            add(codecSurface)
+            previewTarget?.let { surface ->
+                add(
+                    OutputConfiguration(surface).apply {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
+                        }
+                    },
+                )
+            }
+            add(OutputConfiguration(codecSurface))
         }
         runCatching {
             val callback = object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
                         val accepted = synchronized(cameraLifecycleLock) {
-                            if (generation == codecGeneration.get() && camera === cameraDevice) {
+                            if (sessionGeneration == captureSessionGeneration.get() &&
+                                codecGenerationSnapshot == codecGeneration.get() &&
+                                camera === cameraDevice
+                            ) {
                                 captureSession = session
                                 true
                             } else {
@@ -425,11 +540,37 @@ class Camera2MediaEncoder(
                             session.close()
                             return
                         }
-                        val request = buildCaptureRequest(camera, session) ?: return
+                        val request = buildCaptureRequest(
+                            camera = camera,
+                            previewTarget = previewTarget,
+                            codecTarget = codecSurface,
+                        ).getOrElse { error ->
+                            session.close()
+                            if (isCurrentCaptureSession(
+                                    sessionGeneration,
+                                    codecGenerationSnapshot,
+                                    camera,
+                                )
+                            ) {
+                                fail("CaptureRequest failed: ${error.message}")
+                            }
+                            return
+                        }
                         runCatching {
-                            session.setRepeatingRequest(request, null, cameraHandler)
+                            session.setRepeatingRequest(
+                                request,
+                                createCaptureCallback(
+                                    sessionGeneration,
+                                    codecGenerationSnapshot,
+                                    camera,
+                                ),
+                                cameraHandler,
+                            )
                         }.onSuccess {
-                            if (generation == codecGeneration.get() && camera === cameraDevice) {
+                            if (sessionGeneration == captureSessionGeneration.get() &&
+                                codecGenerationSnapshot == codecGeneration.get() &&
+                                camera === cameraDevice
+                            ) {
                                 _state.set(CaptureState.Previewing)
                                 requestSyncFrame()
                             } else {
@@ -437,7 +578,10 @@ class Camera2MediaEncoder(
                             }
                         }.onFailure {
                             session.close()
-                            if (generation == codecGeneration.get() && camera === cameraDevice) {
+                            if (sessionGeneration == captureSessionGeneration.get() &&
+                                codecGenerationSnapshot == codecGeneration.get() &&
+                                camera === cameraDevice
+                            ) {
                                 fail("Capture session start failed: ${it.message}")
                             }
                         }
@@ -445,7 +589,10 @@ class Camera2MediaEncoder(
 
                     override fun onConfigureFailed(session: CameraCaptureSession) {
                         session.close()
-                        if (generation == codecGeneration.get() && camera === cameraDevice) {
+                        if (sessionGeneration == captureSessionGeneration.get() &&
+                            codecGenerationSnapshot == codecGeneration.get() &&
+                            camera === cameraDevice
+                        ) {
                             fail("Capture session configure failed")
                         }
                     }
@@ -453,13 +600,16 @@ class Camera2MediaEncoder(
             camera.createCaptureSession(
                 SessionConfiguration(
                     SessionConfiguration.SESSION_REGULAR,
-                    targets.map(::OutputConfiguration),
+                    targets,
                     Executor { command -> cameraHandler.post(command) },
                     callback,
                 ),
             )
         }.onFailure {
-            if (generation == codecGeneration.get() && camera === cameraDevice) {
+            if (sessionGeneration == captureSessionGeneration.get() &&
+                codecGenerationSnapshot == codecGeneration.get() &&
+                camera === cameraDevice
+            ) {
                 fail("createCaptureSession failed: ${it.message}")
             }
         }
@@ -467,30 +617,78 @@ class Camera2MediaEncoder(
 
     private fun buildCaptureRequest(
         camera: CameraDevice,
-        session: CameraCaptureSession,
-    ): CaptureRequest? {
-        return runCatching {
+        previewTarget: Surface?,
+        codecTarget: Surface,
+    ): Result<CaptureRequest> = runCatching {
             camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
-                previewSurface?.let { addTarget(it) }
-                codecInputSurface?.let { addTarget(it) }
+                previewTarget?.let { addTarget(it) }
+                addTarget(codecTarget)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(profile.targetFps, profile.targetFps))
                 if (!exposureCompensationRange.isEmpty()) {
                     set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, exposureCompensation)
                 }
             }.build()
-        }.getOrElse {
-            fail("CaptureRequest failed: ${it.message}")
-            null
+        }
+
+    private fun isCurrentCaptureSession(
+        sessionGeneration: Long,
+        codecGenerationSnapshot: Long,
+        camera: CameraDevice,
+    ): Boolean = sessionGeneration == captureSessionGeneration.get() &&
+        codecGenerationSnapshot == codecGeneration.get() &&
+        camera === cameraDevice
+
+    private fun createCaptureCallback(
+        sessionGeneration: Long,
+        codecGenerationSnapshot: Long,
+        camera: CameraDevice,
+    ) = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(
+            session: CameraCaptureSession,
+            request: CaptureRequest,
+            result: TotalCaptureResult,
+        ) {
+            if (!isCurrentCaptureSession(
+                    sessionGeneration,
+                    codecGenerationSnapshot,
+                    camera,
+                )
+            ) {
+                return
+            }
+            val physicalCameraId =
+                result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)
+                    ?.takeIf(String::isNotEmpty)
+                    ?: return
+            if (activePhysicalCameraId != physicalCameraId) {
+                activePhysicalCameraId = physicalCameraId
+                refreshPreviewTransformInfo()
+            }
         }
     }
 
     private fun reissueRepeatingRequest() {
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
-        val request = buildCaptureRequest(camera, session) ?: return
+        val previewTarget = previewSurface
+        val codecTarget = codecInputSurface ?: return
+        val request = buildCaptureRequest(camera, previewTarget, codecTarget).getOrElse {
+            lastError = "exposure request failed: ${it.message}"
+            return
+        }
+        val sessionGeneration = captureSessionGeneration.get()
+        val codecGenerationSnapshot = codecGeneration.get()
         runCatching {
-            session.setRepeatingRequest(request, null, cameraHandler)
+            session.setRepeatingRequest(
+                request,
+                createCaptureCallback(
+                    sessionGeneration,
+                    codecGenerationSnapshot,
+                    camera,
+                ),
+                cameraHandler,
+            )
         }.onFailure {
             lastError = "exposure update failed: ${it.message}"
         }
@@ -676,6 +874,25 @@ class Camera2MediaEncoder(
         }.getOrNull() ?: 0
     }
 
+    /** Refresh dynamic camera orientation (API 32+ fold state / display reconfiguration). */
+    fun refreshPreviewTransformInfo(): PreviewTransformInfo {
+        val cameraId = activePhysicalCameraId ?: selectedCameraId ?: return previewTransformInfo
+        val characteristics = runCatching {
+            cameraManager.getCameraCharacteristics(cameraId)
+        }.getOrNull() ?: return previewTransformInfo
+        val facing = when (characteristics.get(CameraCharacteristics.LENS_FACING)) {
+            CameraCharacteristics.LENS_FACING_FRONT -> LensFacing.Front
+            CameraCharacteristics.LENS_FACING_BACK -> LensFacing.Back
+            else -> profile.lensFacing
+        }
+        return PreviewTransformInfo(
+            bufferSize = captureSize,
+            sensorOrientationDegrees =
+                characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0,
+            lensFacing = facing,
+        ).also { previewTransformInfo = it }
+    }
+
     private fun findCameraId(facing: LensFacing): String? {
         val target = when (facing) {
             LensFacing.Back -> CameraCharacteristics.LENS_FACING_BACK
@@ -712,6 +929,7 @@ class Camera2MediaEncoder(
     }
 
     private fun closeCaptureSession() {
+        captureSessionGeneration.incrementAndGet()
         synchronized(cameraLifecycleLock) {
             captureSession?.close()
             captureSession = null
