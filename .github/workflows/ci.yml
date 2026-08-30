@@ -37,17 +37,19 @@ jobs:
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - run: PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
       - name: Verify shared Reicon assets
         run: bash scripts/check_reicon_assets.sh
       - name: Point Gradle at installed SDK
         run: |
+          source apps/android/toolchain.properties
           test -n "${ANDROID_HOME}"
-          test -d "${ANDROID_HOME}/ndk/28.0.12674087"
+          test -d "${ANDROID_HOME}/ndk/${PICOO_ANDROID_NDK_VERSION}"
           echo "sdk.dir=${ANDROID_HOME}" > apps/android/local.properties
           echo "Using ANDROID_HOME=${ANDROID_HOME}"
           ls "${ANDROID_HOME}/licenses"
+          bash scripts/check_android_toolchain.sh
       - run: cargo run -p xtask -- build android
       - name: Android unit tests
         run: ./apps/android/gradlew -p apps/android testDebugUnitTest

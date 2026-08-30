@@ -5,8 +5,15 @@ Jetpack Compose + Camera2 + MediaCodec + Rust JNI。
 ## 构建
 
 ```bash
-# 首次：安装 Android SDK / NDK / cargo-ndk
+# Linux CI/Cloud Agent：安装 Android SDK / NDK / cargo-ndk
 PICOO_INSTALL_ANDROID=1 bash .cursor/install.sh
+
+# macOS 本机：SDK 可由 Android Studio 放在外置盘，只补齐固定工具版本
+source apps/android/toolchain.properties
+cargo install cargo-ndk --version "${PICOO_CARGO_NDK_VERSION}" --locked
+rustup target add aarch64-linux-android
+# scripts/setup-android-sdk.sh 会复用当前 ANDROID_HOME 或 ANDROID_SDK_ROOT
+PICOO_KEEP_ANDROID_HOME=1 bash scripts/setup-android-sdk.sh
 
 # 构建 debug APK（含 Rust FFI）
 cargo xtask build android
@@ -23,7 +30,8 @@ cargo xtask package android   # 含 scripts/check_android_so_16k.sh
 ```
 
 > 小米 15 / Android 15 等 16KB 页设备：单一 `libpicoo_ffi.so` 必须 16KB 对齐。
-> 默认 NDK **28.0.12674087**。
+> 工具链版本统一定义在 `apps/android/toolchain.properties`：当前 NDK **28.2.13676358**（NDK r28c）、`cargo-ndk` **4.1.2**。这是当前 AGP 8.5.2 链路已完成 APK/AAB 与 16KB ELF 验证的固定组合；Gradle、本机脚本与 CI 构建前都会校验，避免版本漂移。NDK 与 AGP/Gradle 下一次统一升级，不单独追新。
+> Gradle 构建运行时统一使用 JDK 21（CI 为 Temurin 21，macOS 可直接使用当前 Android Studio 自带的 JBR 21）；App 的 Java/Kotlin 字节码目标仍为 17。
 
 ### 跨机型兼容（16KB 页）
 
@@ -31,7 +39,7 @@ cargo xtask package android   # 含 scripts/check_android_so_16k.sh
 | --- | --- |
 | Android 15+ 16KB 页旗舰（如小米 15） | 需要本仓库对齐后的 APK；未对齐会冷启动闪退 |
 | 传统 4KB 页 Android 机 | **兼容**：16KB 对齐的 `.so` 可在 4KB 页上加载 |
-| iPhone / iOS | **不适用**：Mach-O 体系，无 Android ELF 16KB 对齐问题；iOS 不在 V1 范围 |
+| iPhone / iOS | **不适用**：Mach-O 体系，无 Android ELF 16KB 对齐问题；iOS Sender 由独立 Xcode/SwiftUI 工程构建 |
 
 预览与推流走 Camera2 + MediaCodec；手动连接仅解析用户输入的 `IP:端口`，不引入扫码 SDK。
 

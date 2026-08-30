@@ -2,19 +2,24 @@
 # 安装 Android SDK / NDK，供 Gradle 与 cargo-ndk 构建 Sender APK。
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=../apps/android/toolchain.properties
+source "${ROOT}/apps/android/toolchain.properties"
+
 # GitHub-hosted runners pre-set ANDROID_HOME to /usr/local/lib/android/sdk.
 # That tree often lacks NDK 28 licenses and may not be writable — prefer a
 # per-job SDK under $HOME unless the caller opts into the preinstalled root.
-if [ "${PICOO_KEEP_ANDROID_HOME:-0}" = "1" ] && [ -n "${ANDROID_HOME:-}" ]; then
-  :
+if [ "${PICOO_KEEP_ANDROID_HOME:-0}" = "1" ] \
+  && { [ -n "${ANDROID_HOME:-}" ] || [ -n "${ANDROID_SDK_ROOT:-}" ]; }; then
+  ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
 else
   ANDROID_HOME="${PICOO_ANDROID_HOME:-${HOME}/android-sdk}"
 fi
 
 # NDK r28+: 16 KB page-size support for Xiaomi 15 / Android 15 Rust cdylib.
-NDK_VERSION="${PICOO_ANDROID_NDK_VERSION:-28.0.12674087}"
-BUILD_TOOLS="${PICOO_ANDROID_BUILD_TOOLS:-34.0.0}"
-PLATFORM="${PICOO_ANDROID_PLATFORM:-android-34}"
+NDK_VERSION="${PICOO_ANDROID_NDK_VERSION}"
+BUILD_TOOLS="${PICOO_ANDROID_BUILD_TOOLS}"
+PLATFORM="${PICOO_ANDROID_PLATFORM}"
 CMDLINE_TOOLS="${ANDROID_HOME}/cmdline-tools/latest"
 
 log() { printf '\n[android-sdk] %s\n' "$*"; }
@@ -52,6 +57,11 @@ ensure_cmdline_tools() {
   if [ -x "${CMDLINE_TOOLS}/bin/sdkmanager" ]; then
     return 0
   fi
+  if [ "$(uname -s)" != "Linux" ]; then
+    log "ERROR: Android command-line tools missing at ${CMDLINE_TOOLS}"
+    log "Install Android SDK Command-line Tools from Android Studio, then rerun with PICOO_KEEP_ANDROID_HOME=1."
+    return 1
+  fi
   log "安装 Android command-line tools 到 ${ANDROID_HOME}"
   mkdir -p "${ANDROID_HOME}/cmdline-tools"
   tmp="$(mktemp -d)"
@@ -78,6 +88,12 @@ if [ ! -d "${ANDROID_HOME}/platforms/${PLATFORM}" ]; then
   NEED_INSTALL=1
 fi
 if [ ! -d "${ANDROID_HOME}/ndk/${NDK_VERSION}" ]; then
+  NEED_INSTALL=1
+fi
+if [ ! -d "${ANDROID_HOME}/build-tools/${BUILD_TOOLS}" ]; then
+  NEED_INSTALL=1
+fi
+if [ ! -d "${ANDROID_HOME}/platform-tools" ]; then
   NEED_INSTALL=1
 fi
 

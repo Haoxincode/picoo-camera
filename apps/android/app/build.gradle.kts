@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,12 +7,24 @@ plugins {
 }
 
 val workspaceRoot = rootProject.projectDir.parentFile.parentFile
+val picooToolchain = Properties().apply {
+    rootProject.file("toolchain.properties").inputStream().use(::load)
+}
+val picooNdkVersion = picooToolchain.getProperty("PICOO_ANDROID_NDK_VERSION")
+    ?: error("PICOO_ANDROID_NDK_VERSION is missing from toolchain.properties")
+val picooBuildToolsVersion = picooToolchain.getProperty("PICOO_ANDROID_BUILD_TOOLS")
+    ?: error("PICOO_ANDROID_BUILD_TOOLS is missing from toolchain.properties")
+val picooCompileSdk = picooToolchain.getProperty("PICOO_ANDROID_PLATFORM")
+    ?.removePrefix("android-")
+    ?.toIntOrNull()
+    ?: error("PICOO_ANDROID_PLATFORM must use the android-<api> form")
 
 android {
     namespace = "com.picoo.camera"
-    compileSdk = 34
+    compileSdk = picooCompileSdk
+    buildToolsVersion = picooBuildToolsVersion
     // NDK r28+ ships 16 KB-aligned libc++ and honors flexible page sizes (Xiaomi 15 / Android 15).
-    ndkVersion = "28.0.12674087"
+    ndkVersion = picooNdkVersion
 
     defaultConfig {
         applicationId = "com.picoo.camera"
@@ -78,14 +92,22 @@ dependencies {
 val rustAbi = "arm64-v8a"
 val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs")
 
+val checkAndroidRustToolchain by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Verify the pinned cargo-ndk and Android NDK toolchain"
+    workingDir = workspaceRoot
+    commandLine("bash", workspaceRoot.resolve("scripts/check_android_toolchain.sh"))
+    environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
+}
+
 tasks.register<Exec>("cargoBuildFfi") {
     group = "build"
     description = "Build picoo-ffi Rust cdylib for Android arm64"
     workingDir = workspaceRoot
+    dependsOn(checkAndroidRustToolchain)
     doFirst {
         jniLibsDir.asFile.mkdirs()
-        val ndkHome = System.getenv("ANDROID_NDK_HOME") ?: android.ndkDirectory.absolutePath
-        environment("ANDROID_NDK_HOME", ndkHome)
+        environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
     }
     commandLine(
         "cargo",

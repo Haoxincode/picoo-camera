@@ -11,6 +11,9 @@ set -euo pipefail
 
 LYCHEE_VERSION="0.24.2"
 LYCHEE_URL="https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-musl.tar.gz"
+# shellcheck source=../apps/android/toolchain.properties
+source "$(dirname "$0")/../apps/android/toolchain.properties"
+CARGO_NDK_VERSION="${PICOO_CARGO_NDK_VERSION}"
 BIN_DIR="/usr/local/bin"
 
 log() { printf '\n[install] %s\n' "$*"; }
@@ -52,9 +55,9 @@ if [ "${PICOO_INSTALL_ANDROID:-0}" = "1" ]; then
   fi
   # shellcheck source=/dev/null
   source "$(dirname "$0")/../scripts/setup-android-sdk.sh"
-  if ! command -v cargo-ndk >/dev/null 2>&1; then
-    log "安装 cargo-ndk"
-    cargo install cargo-ndk --locked
+  if [ "$(cargo ndk --version 2>/dev/null || true)" != "cargo-ndk ${CARGO_NDK_VERSION}" ]; then
+    log "安装 cargo-ndk ${CARGO_NDK_VERSION}"
+    cargo install cargo-ndk --version "${CARGO_NDK_VERSION}" --locked
   fi
   if command -v rustup >/dev/null 2>&1; then
     rustup target add aarch64-linux-android >/dev/null 2>&1 || true
