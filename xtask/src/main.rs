@@ -40,6 +40,7 @@ enum BuildPlatform {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum PackagePlatform {
     Android,
+    Macos,
     Windows,
 }
 
@@ -136,8 +137,21 @@ fn package(platform: PackagePlatform) -> Result<()> {
             );
             Ok(())
         }
+        PackagePlatform::Macos => {
+            build(BuildPlatform::Macos)?;
+            let sh = Shell::new()?;
+            package_macos(&sh)
+        }
     }
 }
+
+const MACOS_APP_BUNDLE_ID: &str = "com.haoxincode.picoo-camera";
+const MACOS_EXTENSION_BUNDLE_ID: &str = "com.haoxincode.picoo-camera.camera-extension";
+const MACOS_EXTENSION_BUNDLE_NAME: &str =
+    "com.haoxincode.picoo-camera.camera-extension.systemextension";
+const MACOS_APP_GROUP_SUFFIX: &str = "com.haoxincode.picoo-camera";
+const MACOS_APP_GROUP_PLACEHOLDER: &str = "@PICOO_APP_GROUP_IDENTIFIER@";
+const MACOS_UNSIGNED_TEAM_PREFIX: &str = "UNSIGNED.";
 
 fn build_ios(sh: &Shell) -> Result<()> {
     if !cfg!(target_os = "macos") {
@@ -244,6 +258,10 @@ fn build_macos(sh: &Shell) -> Result<()> {
         "cargo build -p picoo-desktop --release --features gpui-ui"
     )
     .run()?;
+    let receiver = cargo_target_dir(sh)?.join("release/picoo-desktop");
+    if !receiver.is_file() {
+        bail!("macOS Receiver was not produced at {}", receiver.display());
+    }
 
     let project = Path::new("extensions/macos-camera-extension/PicooCameraExtension.xcodeproj");
     if !project.is_dir() {
@@ -257,28 +275,253 @@ fn build_macos(sh: &Shell) -> Result<()> {
     let extension_dir = apple_dir.join("macos");
     let object_dir = apple_dir.join("macos-obj");
     let products_dir = apple_dir.join("macos-products");
+    let team_prefix = macos_team_identifier_prefix()?;
+    if extension_dir.exists() {
+        std::fs::remove_dir_all(&extension_dir)?;
+    }
     std::fs::create_dir_all(&extension_dir)?;
     cmd!(
         sh,
-        "xcodebuild -project {project} -target PicooCameraExtension -configuration Release -sdk macosx -arch arm64 CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR={extension_dir} OBJROOT={object_dir} SYMROOT={products_dir} build"
+        "xcodebuild -project {project} -target PicooCameraExtension -configuration Release -sdk macosx -arch arm64 CODE_SIGNING_ALLOWED=NO TeamIdentifierPrefix={team_prefix} CONFIGURATION_BUILD_DIR={extension_dir} OBJROOT={object_dir} SYMROOT={products_dir} build"
     )
     .run()?;
 
-    let extension = extension_dir.join("PicooCameraExtension.systemextension");
+    let extension = extension_dir.join(MACOS_EXTENSION_BUNDLE_NAME);
     validate_macos_camera_extension(sh, &extension)?;
-    let archive = apple_dir.join("PicooCameraExtension.systemextension.zip");
-    archive_apple_bundle(sh, &extension, &archive)?;
 
-    eprintln!("macOS receiver: target/release/picoo-desktop");
+    eprintln!("macOS receiver: {}", receiver.display());
     eprintln!("macOS Camera Extension (unsigned): {}", extension.display());
-    eprintln!("macOS Camera Extension artifact: {}", archive.display());
     Ok(())
+}
+
+fn package_macos(sh: &Shell) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        bail!("macOS app must be packaged on a macOS host");
+    }
+
+    let root = std::env::current_dir()?;
+    let apple_dir = root.join("target/apple");
+    let app = apple_dir.join("macos/Picoo Camera.app");
+    let executable = app.join("Contents/MacOS/picoo-desktop");
+    let embedded_extension = app
+        .join("Contents/Library/SystemExtensions")
+        .join(MACOS_EXTENSION_BUNDLE_NAME);
+    let built_extension = apple_dir.join("macos").join(MACOS_EXTENSION_BUNDLE_NAME);
+    let receiver = cargo_target_dir(sh)?.join("release/picoo-desktop");
+    let info_template = root.join("installers/macos/Info.plist");
+    let entitlements_template = root.join("installers/macos/PicooCamera.entitlements");
+    let rendered_entitlements = apple_dir.join("PicooCamera-macOS.entitlements");
+
+    for required in [
+        &receiver,
+        &built_extension,
+        &info_template,
+        &entitlements_template,
+    ] {
+        if !required.exists() {
+            bail!("macOS package input is missing {}", required.display());
+        }
+    }
+
+    if app.exists() {
+        std::fs::remove_dir_all(&app)?;
+    }
+    std::fs::create_dir_all(executable.parent().expect("app executable parent"))?;
+    std::fs::create_dir_all(
+        embedded_extension
+            .parent()
+            .expect("system extension parent"),
+    )?;
+    std::fs::copy(&receiver, &executable)?;
+    cmd!(sh, "ditto {built_extension} {embedded_extension}").run()?;
+
+    let extension_group = macos_extension_app_group(sh, &embedded_extension)?;
+    let expected_group = format!(
+        "{}{MACOS_APP_GROUP_SUFFIX}",
+        macos_team_identifier_prefix()?
+    );
+    if extension_group != expected_group {
+        bail!(
+            "macOS Camera Extension App Group `{extension_group}` does not match `{expected_group}`"
+        );
+    }
+    let info = render_macos_host_info(&std::fs::read_to_string(&info_template)?, &extension_group)?;
+    std::fs::write(app.join("Contents/Info.plist"), info)?;
+    let entitlements = render_macos_host_entitlements(
+        &std::fs::read_to_string(&entitlements_template)?,
+        &extension_group,
+    )?;
+    std::fs::write(&rendered_entitlements, entitlements)?;
+
+    validate_macos_host_app(sh, &app, &rendered_entitlements)?;
+    let archive = apple_dir.join("PicooCamera-macOS-unsigned.zip");
+    archive_apple_bundle(sh, &app, &archive)?;
+
+    eprintln!("macOS app (unsigned): {}", app.display());
+    eprintln!("macOS app artifact: {}", archive.display());
+    Ok(())
+}
+
+fn render_macos_host_info(template: &str, app_group: &str) -> Result<String> {
+    render_macos_app_group_template(template, app_group, "Host Info.plist")
+}
+
+fn render_macos_host_entitlements(template: &str, app_group: &str) -> Result<String> {
+    render_macos_app_group_template(template, app_group, "Host entitlements")
+}
+
+fn render_macos_app_group_template(
+    template: &str,
+    app_group: &str,
+    template_name: &str,
+) -> Result<String> {
+    let placeholder_count = template.matches(MACOS_APP_GROUP_PLACEHOLDER).count();
+    if placeholder_count != 1 {
+        bail!("macOS {template_name} must contain exactly one {MACOS_APP_GROUP_PLACEHOLDER} token");
+    }
+    if app_group.is_empty()
+        || !app_group
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'))
+        || !app_group.ends_with(MACOS_APP_GROUP_SUFFIX)
+    {
+        bail!("invalid Picoo Camera App Group identifier `{app_group}`");
+    }
+    Ok(template.replace(MACOS_APP_GROUP_PLACEHOLDER, app_group))
+}
+
+fn macos_team_identifier_prefix() -> Result<String> {
+    let Ok(team_id) = std::env::var("PICOO_APPLE_TEAM_ID") else {
+        return Ok(MACOS_UNSIGNED_TEAM_PREFIX.into());
+    };
+    macos_team_identifier_prefix_for(&team_id)
+}
+
+fn macos_team_identifier_prefix_for(team_id: &str) -> Result<String> {
+    if team_id.len() != 10
+        || !team_id
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        bail!("PICOO_APPLE_TEAM_ID must be a 10-character uppercase Apple Team ID");
+    }
+    Ok(format!("{team_id}."))
+}
+
+fn macos_extension_app_group(sh: &Shell, extension: &Path) -> Result<String> {
+    let info_plist = extension.join("Contents/Info.plist");
+    let plist_json = cmd!(sh, "plutil -convert json -o - {info_plist}").read()?;
+    let plist: serde_json::Value = serde_json::from_str(&plist_json)?;
+    plist
+        .get("PicooAppGroupIdentifier")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("macOS Camera Extension has no App Group identity"))
+}
+
+fn validate_macos_host_app(sh: &Shell, app: &Path, entitlements: &Path) -> Result<()> {
+    let info_plist = app.join("Contents/Info.plist");
+    let executable = app.join("Contents/MacOS/picoo-desktop");
+    let embedded_extension = app
+        .join("Contents/Library/SystemExtensions")
+        .join(MACOS_EXTENSION_BUNDLE_NAME);
+    if !info_plist.is_file() || !executable.is_file() || !embedded_extension.is_dir() {
+        bail!("incomplete macOS Host app bundle: {}", app.display());
+    }
+
+    let plist_json = cmd!(sh, "plutil -convert json -o - {info_plist}").read()?;
+    let plist: serde_json::Value = serde_json::from_str(&plist_json)?;
+    let host_group = plist
+        .get("PicooAppGroupIdentifier")
+        .and_then(|value| value.as_str());
+    if plist
+        .get("CFBundleIdentifier")
+        .and_then(|value| value.as_str())
+        != Some(MACOS_APP_BUNDLE_ID)
+        || plist
+            .get("CFBundlePackageType")
+            .and_then(|value| value.as_str())
+            != Some("APPL")
+        || plist
+            .get("CFBundleExecutable")
+            .and_then(|value| value.as_str())
+            != Some("picoo-desktop")
+        || plist
+            .get("LSMinimumSystemVersion")
+            .and_then(|value| value.as_str())
+            != Some("15.0")
+        || plist
+            .get("NSSystemExtensionUsageDescription")
+            .and_then(|value| value.as_str())
+            .is_none_or(str::is_empty)
+        || plist
+            .get("NSLocalNetworkUsageDescription")
+            .and_then(|value| value.as_str())
+            .is_none_or(str::is_empty)
+        || !plist
+            .get("NSBonjourServices")
+            .and_then(|value| value.as_array())
+            .is_some_and(|services| services.iter().any(|service| service == "_picoocam._udp"))
+    {
+        bail!("macOS Host Info.plist is missing its product or System Extension identity");
+    }
+
+    let extension_group = macos_extension_app_group(sh, &embedded_extension)?;
+    if host_group != Some(extension_group.as_str()) {
+        bail!("macOS Host and Camera Extension must use the same App Group");
+    }
+
+    let extension_info = embedded_extension.join("Contents/Info.plist");
+    let extension_json = cmd!(sh, "plutil -convert json -o - {extension_info}").read()?;
+    let extension_plist: serde_json::Value = serde_json::from_str(&extension_json)?;
+    if extension_plist
+        .get("CFBundleIdentifier")
+        .and_then(|value| value.as_str())
+        != Some(MACOS_EXTENSION_BUNDLE_ID)
+    {
+        bail!("embedded macOS Camera Extension has the wrong bundle identifier");
+    }
+
+    let entitlements_json = cmd!(sh, "plutil -convert json -o - {entitlements}").read()?;
+    let entitlements: serde_json::Value = serde_json::from_str(&entitlements_json)?;
+    let expected_group = extension_group;
+    if entitlements
+        .get("com.apple.security.app-sandbox")
+        .and_then(|value| value.as_bool())
+        != Some(true)
+        || entitlements
+            .get("com.apple.security.network.client")
+            .and_then(|value| value.as_bool())
+            != Some(true)
+        || entitlements
+            .get("com.apple.security.network.server")
+            .and_then(|value| value.as_bool())
+            != Some(true)
+        || entitlements
+            .get("com.apple.developer.system-extension.install")
+            .and_then(|value| value.as_bool())
+            != Some(true)
+        || !entitlements
+            .get("com.apple.security.application-groups")
+            .and_then(|value| value.as_array())
+            .is_some_and(|groups| groups.iter().any(|group| group == &expected_group))
+    {
+        bail!(
+            "macOS Host signing input is missing sandbox, network, System Extension, or App Group capability"
+        );
+    }
+
+    let binary = cmd!(sh, "file {executable}").read()?;
+    if !binary.contains("arm64") || binary.contains("x86_64") {
+        bail!("macOS Host app must be ARM64-only: {binary}");
+    }
+    validate_macos_camera_extension(sh, &embedded_extension)
 }
 
 fn validate_macos_camera_extension(sh: &Shell, extension: &Path) -> Result<()> {
     let info_plist = extension.join("Contents/Info.plist");
-    let executable = extension.join("Contents/MacOS/PicooCameraExtension");
-    if !info_plist.is_file() || !executable.is_file() {
+    if !info_plist.is_file() {
         bail!(
             "incomplete macOS Camera Extension bundle: {}",
             extension.display()
@@ -287,6 +530,15 @@ fn validate_macos_camera_extension(sh: &Shell, extension: &Path) -> Result<()> {
 
     let plist_json = cmd!(sh, "plutil -convert json -o - {info_plist}").read()?;
     let plist: serde_json::Value = serde_json::from_str(&plist_json)?;
+    let executable_name = plist
+        .get("CFBundleExecutable")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("macOS Camera Extension has no executable identity"))?;
+    let executable = extension.join("Contents/MacOS").join(executable_name);
+    if !executable.is_file() {
+        bail!("macOS Camera Extension executable is missing");
+    }
     let app_group = plist
         .get("PicooAppGroupIdentifier")
         .and_then(|value| value.as_str())
@@ -296,9 +548,15 @@ fn validate_macos_camera_extension(sh: &Shell, extension: &Path) -> Result<()> {
         .and_then(|value| value.as_str())
         .filter(|value| !value.is_empty());
     if plist
-        .get("CFBundleDisplayName")
+        .get("CFBundleIdentifier")
         .and_then(|value| value.as_str())
-        != Some("Picoo Camera")
+        != Some(MACOS_EXTENSION_BUNDLE_ID)
+        || extension.file_name().and_then(|value| value.to_str())
+            != Some(MACOS_EXTENSION_BUNDLE_NAME)
+        || plist
+            .get("CFBundleDisplayName")
+            .and_then(|value| value.as_str())
+            != Some("Picoo Camera")
         || plist
             .get("CFBundlePackageType")
             .and_then(|value| value.as_str())
@@ -720,7 +978,10 @@ fn ios_runtime_version(identifier: &str) -> Vec<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::ios_runtime_version;
+    use super::{
+        ios_runtime_version, macos_team_identifier_prefix_for, render_macos_host_entitlements,
+        render_macos_host_info, MACOS_APP_GROUP_PLACEHOLDER,
+    };
 
     #[test]
     fn ios_runtime_versions_sort_numerically() {
@@ -728,5 +989,46 @@ mod tests {
             ios_runtime_version("com.apple.CoreSimulator.SimRuntime.iOS-26-10")
                 > ios_runtime_version("com.apple.CoreSimulator.SimRuntime.iOS-26-9")
         );
+    }
+
+    #[test]
+    fn macos_host_info_resolves_the_extension_app_group() {
+        let template = format!(
+            "<key>PicooAppGroupIdentifier</key><string>{MACOS_APP_GROUP_PLACEHOLDER}</string>"
+        );
+        let rendered = render_macos_host_info(&template, "TEAM.com.haoxincode.picoo-camera")
+            .expect("render host Info.plist");
+        assert!(rendered.contains("TEAM.com.haoxincode.picoo-camera"));
+        assert!(!rendered.contains(MACOS_APP_GROUP_PLACEHOLDER));
+    }
+
+    #[test]
+    fn macos_host_info_rejects_a_different_app_group() {
+        assert!(
+            render_macos_host_info(MACOS_APP_GROUP_PLACEHOLDER, "TEAM.com.example.other").is_err()
+        );
+    }
+
+    #[test]
+    fn macos_host_entitlements_resolve_the_extension_app_group() {
+        let template = format!(
+            "<key>com.apple.security.application-groups</key><array><string>{MACOS_APP_GROUP_PLACEHOLDER}</string></array>"
+        );
+        let rendered =
+            render_macos_host_entitlements(&template, "ABCDEFGHIJ.com.haoxincode.picoo-camera")
+                .expect("render host entitlements");
+        assert!(rendered.contains("ABCDEFGHIJ.com.haoxincode.picoo-camera"));
+        assert!(!rendered.contains(MACOS_APP_GROUP_PLACEHOLDER));
+    }
+
+    #[test]
+    fn macos_team_identifier_requires_the_apple_team_id_shape() {
+        assert_eq!(
+            macos_team_identifier_prefix_for("A1B2C3D4E5").expect("valid Apple Team ID"),
+            "A1B2C3D4E5."
+        );
+        for invalid in ["SHORT", "abcdefghij", "A1B2C3D4E-", "A1B2C3D4E5F"] {
+            assert!(macos_team_identifier_prefix_for(invalid).is_err());
+        }
     }
 }

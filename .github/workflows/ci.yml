@@ -121,14 +121,14 @@ jobs:
         run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
       - name: Test macOS VideoToolbox receiver and shared ring
         run: cargo run -p xtask -- test macos
-      - name: Build macOS GPUI Receiver and Camera Extension
-        run: cargo run -p xtask -- build macos
+      - name: Package macOS Host app with Camera Extension
+        run: cargo run -p xtask -- package macos
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-receiver-camera-extension-unsigned
+          name: macos-app-unsigned
           path: |
-            target/release/picoo-desktop
-            target/apple/PicooCameraExtension.systemextension.zip
+            target/apple/PicooCamera-macOS-unsigned.zip
+            target/apple/PicooCamera-macOS.entitlements
           if-no-files-found: error
 
   ios:

@@ -1116,14 +1116,19 @@ pub fn macos_app_group_identifier() -> Result<String, SharedRingError> {
 mod tests {
     use super::*;
     use crate::placeholder::{nv12_black, nv12_byte_size, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEST_RING_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
     fn test_ring_name() -> String {
         format!(
-            "test-{}",
+            "test-{}-{}-{}",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            TEST_RING_SEQUENCE.fetch_add(1, Ordering::Relaxed),
         )
     }
 

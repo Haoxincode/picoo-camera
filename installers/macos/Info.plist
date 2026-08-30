@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>Picoo Camera</string>
+    <key>CFBundleExecutable</key>
+    <string>picoo-desktop</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.haoxincode.picoo-camera</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>Picoo Camera</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.video</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>15.0</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Picoo Camera 需要访问本地网络，以发现手机并接收同一 Wi-Fi 下的视频。</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_picoocam._udp</string>
+    </array>
+    <key>NSSystemExtensionUsageDescription</key>
+    <string>Picoo Camera 需要启用摄像头扩展，才能在会议软件中提供手机画面。</string>
+    <key>PicooAppGroupIdentifier</key>
+    <string>@PICOO_APP_GROUP_IDENTIFIER@</string>
+</dict>
+</plist>
