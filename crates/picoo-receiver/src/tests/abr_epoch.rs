@@ -464,9 +464,11 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
 
     // A newer AU cannot prove loss because QUIC Datagram may reorder across
     // frames. The bounded 120 ms reassembly deadline discards the partial IDR
-    // and reports the loss exactly once.
+    // and reports the loss exactly once. The recovery command also shares the
+    // production one-second anti-storm window with the initial-config request.
     let mut keyed = false;
-    for _ in 0..160 {
+    let keyframe_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    while std::time::Instant::now() < keyframe_deadline {
         receiver.pump().expect("rx reassembly deadline");
         sender.pump().expect("tx reassembly deadline");
         if sender.take_keyframe_request() {
