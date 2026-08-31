@@ -35,6 +35,16 @@ MFCreateVirtualCamera
 
 Media Source 作为独立组件安装并注册，由 Windows Frame Server 加载。
 
+Windows 输出媒体类型由 Frame Server 客户端在 `Start` 的 presentation descriptor 中选择，
+并在该次运行周期内保持稳定。Shared Frame Ring 的 producer 分辨率不是重新协商信号；MF Source
+必须在自身边界把输入 NV12 等比缩放并以黑边补齐到已协商的 480p/720p/1080p。不得在
+`RequestSample` 中因占位帧、直播帧或方向变化而反向修改 current media type 或重建 allocator。
+转换后的直播帧和占位帧必须按源帧 revision 与输出尺寸复用，像素转换不得持有 stream 的 COM
+状态锁。默认 allocator 只允许在 stream stopped 状态替换；stream start/stop 的 allocator、事件与
+可见状态必须作为事务提交，失败时不得留下半启动状态。`RequestSample` 的像素阶段完成后必须按
+lifecycle revision 复核，并与 start/stop/shutdown 共用 lifecycle operation 锁后才可访问 allocator
+和提交 `MEMediaSample`，防止停流事件被旧请求反向越过。
+
 `PicooVirtualCameraSource.dll` 是 Windows-only Rust `cdylib`，使用 `windows-rs` 的类型化 Win32/COM 绑定实现 `IClassFactory`、`IMFActivate`、`IMFMediaSourceEx`、`IMFMediaStream2`、`IMFGetService` 与 `IMFSampleAllocatorControl`。它由 Cargo 在 Windows runner 上构建，不维护 C++、WRL、VCXPROJ 或 MSBuild 项目。DLL 可以复用 `picoo-frame-hub` 的 Shared Frame Ring 布局与占位帧实现，但不得依赖 Receiver、QUIC、解码或配对 crate。
 
 ### macOS
@@ -107,4 +117,4 @@ Rust Receiver Core
 
 ## 相关 Requirements
 
-- [REQ-PICOO-VCAM-001..007](../requirements/vcam.md)
+- [REQ-PICOO-VCAM-001..008](../requirements/vcam.md)

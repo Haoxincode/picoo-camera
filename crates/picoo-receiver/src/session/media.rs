@@ -104,7 +104,7 @@ impl ReceiverSession {
             return Ok(());
         }
         self.ingress.decode_invocations += 1;
-        let decoded = match self
+        let outcome = match self
             .decoder
             .decode_access_unit(&access_unit, self.current_stream_config.as_ref())
         {
@@ -117,10 +117,10 @@ impl ReceiverSession {
                 return Ok(());
             }
         };
-        if keyframe {
+        if keyframe && outcome.refresh_accepted {
             self.mark_decoder_refresh_accepted();
         }
-        match decoded {
+        match outcome.frame {
             Some(frame) => {
                 // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
                 let rotation = self

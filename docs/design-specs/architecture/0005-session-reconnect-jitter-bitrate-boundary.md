@@ -78,9 +78,11 @@ Receiver 每秒向 Sender 发送 `ReceiverStats`：
 
 `RTT`、`packet_loss`、`jitter`、`reassembly_drop`、`decoder_drop`、`frame_age`、`receive_bitrate`、`jitter_buffer_depth`
 
-其中 `packet_loss` 描述 Receiver 能从不完整 AU 观察到的缺失视频 fragment 比例，分子是超时或
-淘汰 AU 中缺失的 fragment 数，分母是同一窗口内已收到与已确认缺失的 fragment 总数。不得把
-AU drop 数与 Datagram 数放入同一比率。没有任何 fragment 到达的完整 AU 在 PCP/2 增加独立
+其中 `packet_loss` 描述 Receiver 能从已决 AU 观察到的缺失视频 fragment 比例。完整 AU 在完成时、
+不完整 AU 在超时或淘汰时整体归入一个统计窗口；分子是这些 AU 中确认缺失的 fragment 数，分母是
+这些 AU 的期望 fragment 总数（收到 + 确认缺失）。不得把同一 AU 的收到片与缺片拆到两个窗口，
+也不得把主动 recovery/epoch 清空的仍在途 AU 计作网络丢包。没有任何 fragment 到达的完整 AU
+在 PCP/2 增加独立
 packet sequence 前无法由该指标观察，因此该指标不是 transport-wide 精确丢包率。QUIC 路径的
 `lost_packets / sent_packets` 只描述本端发出的包；在 Receiver 端它主要是控制流，不能作为
 Android 视频丢包率反馈给 ABR。未建立双端时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；

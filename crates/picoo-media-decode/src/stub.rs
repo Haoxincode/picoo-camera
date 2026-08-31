@@ -4,7 +4,7 @@ use bytes::Bytes;
 use picoo_frame_hub::waiting_placeholder_for_size;
 use picoo_protocol::control::StreamConfig;
 
-use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
+use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
@@ -35,7 +35,7 @@ impl AccessUnitDecoder for StubDecoder {
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         let (width, height) = Self::dimensions(stream_config);
 
         let nv12 = if picoo_frame_hub::nv12_byte_size(width, height) == access_unit.len() {
@@ -51,14 +51,17 @@ impl AccessUnitDecoder for StubDecoder {
             waiting_placeholder_for_size(width, height)
         };
 
-        Ok(Some(DecodedFrame {
-            width,
-            height,
-            stride: width,
-            rotation: 0,
-            timestamp_us: now_timestamp_us(),
-            nv12: Bytes::from(nv12),
-        }))
+        Ok(DecodeOutcome::frame(
+            DecodedFrame {
+                width,
+                height,
+                stride: width,
+                rotation: 0,
+                timestamp_us: now_timestamp_us(),
+                nv12: Bytes::from(nv12),
+            },
+            true,
+        ))
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {

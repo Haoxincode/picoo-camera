@@ -34,10 +34,10 @@ const REASSEMBLY_MAX_AGE: Duration = Duration::from_millis(120);
 
 struct StatsReporter {
     last_sent: Instant,
-    window_packets: u64,
     window_bytes: u64,
     last_reassembly_drops: u64,
     last_missing_fragments: u64,
+    last_resolved_fragments: u64,
     window_decoder_drops: u64,
 }
 
@@ -45,16 +45,15 @@ impl StatsReporter {
     fn new() -> Self {
         Self {
             last_sent: Instant::now(),
-            window_packets: 0,
             window_bytes: 0,
             last_reassembly_drops: 0,
             last_missing_fragments: 0,
+            last_resolved_fragments: 0,
             window_decoder_drops: 0,
         }
     }
 
     fn record_packet(&mut self, payload_len: usize) {
-        self.window_packets += 1;
         self.window_bytes += payload_len as u64;
     }
 
@@ -67,12 +66,11 @@ impl StatsReporter {
     }
 }
 
-fn observed_fragment_loss_ratio(received_fragments: u64, missing_fragments: u64) -> f64 {
-    let observed_fragments = received_fragments.saturating_add(missing_fragments);
-    if observed_fragments == 0 {
+fn observed_fragment_loss_ratio(resolved_fragments: u64, missing_fragments: u64) -> f64 {
+    if resolved_fragments == 0 {
         0.0
     } else {
-        missing_fragments as f64 / observed_fragments as f64
+        missing_fragments.min(resolved_fragments) as f64 / resolved_fragments as f64
     }
 }
 
@@ -300,7 +298,7 @@ impl ReceiverSession {
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
                 }
-                TransportEvent::VideoPacket(session, packet) => {
+                TransportEvent::VideoPacket(_, packet) => {
                     // Enforce the wall-clock deadline before a queued late tail
                     // gets a chance to complete an already-expired AU.
                     self.expire_reassembly_deadline()?;
@@ -314,15 +312,27 @@ impl ReceiverSession {
                         .current_stream_config
                         .as_ref()
                         .map(|config| config.stream_epoch);
-                    if configured_epoch.is_some() && configured_epoch != Some(packet_epoch) {
+                    let configured_epoch = match configured_epoch {
+                        Some(epoch) => epoch,
+                        // Explicit test/diagnostic bypass may carry arbitrary
+                        // bytes and intentionally has no protocol negotiation.
+                        None if self.permit_unpaired_video => packet_epoch,
+                        None => {
+                            // Control and Datagram channels can reorder. Never decode
+                            // product media before StreamConfig establishes codec/epoch.
+                            self.waiting_for_stream_config_epoch = Some(packet_epoch);
+                            continue;
+                        }
+                    };
+                    if configured_epoch != packet_epoch {
                         // Stale datagrams from an old epoch are expected after
-                        // reconfiguration. A future/unknown epoch waits for its
-                        // reliable StreamConfig and requests one fresh IDR.
-                        if configured_epoch.is_some_and(|epoch| packet_epoch > epoch)
+                        // reconfiguration. A future epoch waits for reliable
+                        // StreamConfig; that config transition owns the single
+                        // rate-limited fresh-IDR request.
+                        if packet_epoch > configured_epoch
                             && self.waiting_for_stream_config_epoch != Some(packet_epoch)
                         {
                             self.waiting_for_stream_config_epoch = Some(packet_epoch);
-                            self.send_request_keyframe_now(session)?;
                         }
                         continue;
                     }
@@ -509,6 +519,10 @@ impl ReceiverSession {
             .reassembly
             .missing_fragment_count()
             .saturating_sub(self.stats_reporter.last_missing_fragments);
+        let resolved_fragments = self
+            .reassembly
+            .resolved_fragment_count()
+            .saturating_sub(self.stats_reporter.last_resolved_fragments);
 
         let frame_age_ms = self
             .frame_hub
@@ -524,13 +538,12 @@ impl ReceiverSession {
 
         // REQ-PICOO-PROTOCOL-006: real RTT from Quinn path stats (via transport facade).
         let link = self.transport.link_stats().unwrap_or_default();
-        let window_packets = self.stats_reporter.window_packets;
         // Quinn's `lost_packets / sent_packets` describes packets sent by this
         // endpoint. On Receiver those are control-stream packets, not incoming
         // Android video datagrams, so feeding that ratio into Sender ABR causes
         // false quality drops. Compare missing and received video fragments in
         // the same unit instead (REQ-PICOO-PROTOCOL-009).
-        let packet_loss = observed_fragment_loss_ratio(window_packets, missing_fragments);
+        let packet_loss = observed_fragment_loss_ratio(resolved_fragments, missing_fragments);
 
         let stats = ReceiverStatsMsg {
             rtt_ms: link.rtt_ms,
@@ -564,11 +577,11 @@ impl ReceiverSession {
         }
 
         self.stats_reporter.last_sent = Instant::now();
-        self.stats_reporter.window_packets = 0;
         self.stats_reporter.window_bytes = 0;
         self.stats_reporter.window_decoder_drops = 0;
         self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
         self.stats_reporter.last_missing_fragments = self.reassembly.missing_fragment_count();
+        self.stats_reporter.last_resolved_fragments = self.reassembly.resolved_fragment_count();
 
         Ok(())
     }
@@ -654,7 +667,7 @@ mod stats_tests {
     #[test]
     fn fragment_loss_compares_received_and_missing_fragments_in_the_same_unit() {
         assert_eq!(observed_fragment_loss_ratio(0, 0), 0.0);
-        assert_eq!(observed_fragment_loss_ratio(9, 1), 0.1);
-        assert_eq!(observed_fragment_loss_ratio(0, 1), 1.0);
+        assert_eq!(observed_fragment_loss_ratio(10, 1), 0.1);
+        assert_eq!(observed_fragment_loss_ratio(1, 1), 1.0);
     }
 }

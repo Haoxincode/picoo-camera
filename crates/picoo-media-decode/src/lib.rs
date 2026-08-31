@@ -44,13 +44,38 @@ pub struct DecodedFrame {
     pub nv12: Bytes,
 }
 
+/// Result of submitting one access unit to a platform decoder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodeOutcome {
+    pub frame: Option<DecodedFrame>,
+    /// True only when this AU contained an IDR and the platform accepted it
+    /// without reporting a drop. Receiver uses this to leave AwaitingRefresh.
+    pub refresh_accepted: bool,
+}
+
+impl DecodeOutcome {
+    pub fn frame(frame: DecodedFrame, refresh_accepted: bool) -> Self {
+        Self {
+            frame: Some(frame),
+            refresh_accepted,
+        }
+    }
+
+    pub fn accepted_without_frame(refresh_accepted: bool) -> Self {
+        Self {
+            frame: None,
+            refresh_accepted,
+        }
+    }
+}
+
 /// Decode one H.264 access unit into NV12 for FrameHub consumption.
 pub trait AccessUnitDecoder: Send {
     fn decode_access_unit(
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError>;
+    ) -> Result<DecodeOutcome, DecodeError>;
 
     fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
         Ok(None)
@@ -100,7 +125,7 @@ impl AccessUnitDecoder for UnavailableDecoder {
         &mut self,
         _access_unit: &[u8],
         _stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         Err(DecodeError::Platform(self.0.clone()))
     }
 
@@ -151,6 +176,7 @@ mod tests {
         let frame = decoder
             .decode_access_unit(b"test-au", None)
             .expect("decode")
+            .frame
             .expect("frame");
         assert!(!frame.nv12.is_empty());
         assert_eq!(frame.width, 1280);
@@ -188,6 +214,7 @@ mod tests {
         let frame = decoder
             .decode_access_unit(&annex, None)
             .expect("decode")
+            .frame
             .expect("picture");
         assert_eq!(frame.width, width as u32);
         assert_eq!(frame.height, height as u32);
@@ -206,6 +233,7 @@ mod tests {
         let frame = decoder
             .decode_access_unit(b"test-au", None)
             .expect("decode")
+            .frame
             .expect("frame");
         assert_eq!(frame.width, 1280);
         assert_eq!(frame.height, 720);
@@ -244,6 +272,7 @@ mod tests {
         let frame = decoder
             .decode_access_unit(&length_prefixed, None)
             .expect("decode")
+            .frame
             .expect("picture");
         assert_eq!(frame.width, width as u32);
         assert_eq!(frame.height, height as u32);

@@ -8,7 +8,7 @@
 use std::mem::ManuallyDrop;
 
 use bytes::Bytes;
-use picoo_packet::{access_unit_to_annex_b, annex_b_parameter_sets};
+use picoo_packet::{access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets};
 use picoo_protocol::control::StreamConfig;
 use windows::core::{GUID, HRESULT};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
@@ -28,7 +28,7 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 
-use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
+use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
@@ -182,11 +182,12 @@ impl MfH264Decoder {
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         self.ensure_configured(stream_config)?;
         // Android MediaCodec commonly emits length-prefixed AUs; MF expects Annex-B.
         let annex = access_unit_to_annex_b(access_unit);
         let access_unit = annex.as_ref();
+        let refresh_accepted = access_unit_contains_idr(access_unit);
         let owned;
         let payload = if self.inject_sequence_header && !self.sequence_header.is_empty() {
             self.inject_sequence_header = false;
@@ -209,10 +210,14 @@ impl MfH264Decoder {
                 self.height,
             )?;
             self.next_sample_time_100ns += duration_100ns;
-            match pending {
-                Some(frame) => Ok(Some(frame)),
-                None => drain_output(&self.transform, self.width, self.height),
-            }
+            let frame = match pending {
+                Some(frame) => Some(frame),
+                None => drain_output(&self.transform, self.width, self.height)?,
+            };
+            Ok(DecodeOutcome {
+                frame,
+                refresh_accepted,
+            })
         }
     }
 }
@@ -222,12 +227,14 @@ impl AccessUnitDecoder for MfH264Decoder {
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         self.decode_h264_au(access_unit, stream_config)
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {
-        unsafe { reset_transform(&self.transform)? };
+        if self.configured {
+            unsafe { reset_transform(&self.transform)? };
+        }
         self.next_sample_time_100ns = 0;
         self.inject_sequence_header = !self.sequence_header.is_empty();
         Ok(())

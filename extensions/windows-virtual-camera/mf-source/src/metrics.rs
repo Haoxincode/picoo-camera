@@ -46,28 +46,20 @@ impl VcamMetrics {
         }
     }
 
-    pub fn record_request(&mut self) {
-        self.requests = self.requests.saturating_add(1);
-    }
-
-    pub fn record_delivery(
+    pub fn record_result(
         &mut self,
-        origin: FrameOrigin,
+        origin: Option<FrameOrigin>,
         delivery_time: Duration,
     ) -> Option<VcamMetricsSnapshot> {
+        self.requests = self.requests.saturating_add(1);
         match origin {
-            FrameOrigin::Fresh => self.fresh = self.fresh.saturating_add(1),
-            FrameOrigin::Cached => self.cached = self.cached.saturating_add(1),
-            FrameOrigin::Placeholder => {
+            Some(FrameOrigin::Fresh) => self.fresh = self.fresh.saturating_add(1),
+            Some(FrameOrigin::Cached) => self.cached = self.cached.saturating_add(1),
+            Some(FrameOrigin::Placeholder) => {
                 self.placeholder = self.placeholder.saturating_add(1);
             }
+            None => self.failed = self.failed.saturating_add(1),
         }
-        self.record_delivery_time(delivery_time);
-        self.take_snapshot_if_due()
-    }
-
-    pub fn record_failure(&mut self, delivery_time: Duration) -> Option<VcamMetricsSnapshot> {
-        self.failed = self.failed.saturating_add(1);
         self.record_delivery_time(delivery_time);
         self.take_snapshot_if_due()
     }
@@ -114,10 +106,9 @@ mod tests {
     fn snapshot_keeps_request_and_frame_origin_counts_consistent() {
         let mut metrics = VcamMetrics::new();
         metrics.window_started = Instant::now() - REPORT_INTERVAL;
-        metrics.record_request();
 
         assert!(metrics
-            .record_delivery(FrameOrigin::Fresh, Duration::from_micros(100))
+            .record_result(Some(FrameOrigin::Fresh), Duration::from_micros(100))
             .is_some_and(|snapshot| {
                 snapshot.requests == 1
                     && snapshot.fresh == 1
@@ -133,12 +124,10 @@ mod tests {
     fn report_window_resets_after_snapshot() {
         let mut metrics = VcamMetrics::new();
         metrics.window_started = Instant::now() - REPORT_INTERVAL;
-        metrics.record_request();
-        let _ = metrics.record_delivery(FrameOrigin::Cached, Duration::from_micros(200));
+        let _ = metrics.record_result(Some(FrameOrigin::Cached), Duration::from_micros(200));
 
-        metrics.record_request();
         assert!(metrics
-            .record_delivery(FrameOrigin::Placeholder, Duration::from_micros(50))
+            .record_result(Some(FrameOrigin::Placeholder), Duration::from_micros(50))
             .is_none());
     }
 
@@ -146,10 +135,9 @@ mod tests {
     fn failed_request_is_visible_without_a_frame_origin() {
         let mut metrics = VcamMetrics::new();
         metrics.window_started = Instant::now() - REPORT_INTERVAL;
-        metrics.record_request();
 
         let snapshot = metrics
-            .record_failure(Duration::from_micros(25))
+            .record_result(None, Duration::from_micros(25))
             .expect("snapshot");
         assert_eq!(snapshot.requests, 1);
         assert_eq!(snapshot.failed, 1);

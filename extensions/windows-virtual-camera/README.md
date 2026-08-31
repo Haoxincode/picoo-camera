@@ -35,6 +35,8 @@ Frame Provider 每 250 ms 检查 Shared Frame Ring 的 Producer 代际；Receive
 Source 每秒通过 Windows debug output 输出 `requests_per_sec`、fresh/cached/placeholder/failed
 样本数与 delivery 平均/最大耗时。该指标用于识别 Frame Server 异常 request pump；当前
 不主动 sleep 或改变 pacing，是否限速以 Win11 会议软件真机记录为依据。
+Frame Server 选择 480p/720p/1080p 后，该运行周期的输出类型保持稳定；Shared Frame Ring
+画面在 Source 内等比缩放并以黑边补齐，placeholder/live 切换不会触发动态格式重协商。
 详见 [ci-and-build.md](../../docs/development/ci-and-build.md)。
 
 ### Windows registration (Win11)

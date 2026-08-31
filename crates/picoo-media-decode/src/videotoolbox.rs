@@ -27,11 +27,12 @@ use objc2_video_toolbox::{
 };
 use picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES;
 use picoo_packet::{
-    annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit, split_annex_b_nals,
+    access_unit_contains_idr, annex_b_to_length_prefixed, extract_sps_pps,
+    is_length_prefixed_access_unit, split_annex_b_nals,
 };
 use picoo_protocol::control::StreamConfig;
 
-use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
+use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 struct CopiedNv12 {
     width: u32,
@@ -139,11 +140,12 @@ impl VideoToolboxDecoder {
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         // Validate and normalize the AU before touching decoder state. This
         // keeps malformed protocol payloads observable instead of turning
         // them into a misleading "decoder not initialized" result.
         let avcc = access_unit_to_avcc(access_unit)?;
+        let contains_idr = access_unit_contains_idr(access_unit);
         let (sps, pps) =
             parameter_sets(stream_config, access_unit).ok_or(DecodeError::NotInitialized)?;
         self.ensure_session(&sps, &pps)?;
@@ -173,7 +175,7 @@ impl VideoToolboxDecoder {
         };
         check_status("VTDecompressionSessionDecodeFrame", status)?;
         if info_flags.contains(VTDecodeInfoFlags::FrameDropped) {
-            return Ok(None);
+            return Ok(DecodeOutcome::accepted_without_frame(false));
         }
 
         let output = self
@@ -184,16 +186,19 @@ impl VideoToolboxDecoder {
             .take()
             .unwrap_or(Ok(None))?;
         let Some(output) = output else {
-            return Ok(None);
+            return Ok(DecodeOutcome::accepted_without_frame(contains_idr));
         };
-        Ok(Some(DecodedFrame {
-            width: output.width,
-            height: output.height,
-            stride: output.stride,
-            rotation: stream_config.map(|config| config.rotation).unwrap_or(0),
-            timestamp_us: now_timestamp_us(),
-            nv12: Bytes::from(output.bytes),
-        }))
+        Ok(DecodeOutcome::frame(
+            DecodedFrame {
+                width: output.width,
+                height: output.height,
+                stride: output.stride,
+                rotation: stream_config.map(|config| config.rotation).unwrap_or(0),
+                timestamp_us: now_timestamp_us(),
+                nv12: Bytes::from(output.bytes),
+            },
+            contains_idr,
+        ))
     }
 }
 
@@ -214,7 +219,7 @@ impl AccessUnitDecoder for VideoToolboxDecoder {
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         self.decode_real_access_unit(access_unit, stream_config)
     }
 
@@ -512,6 +517,7 @@ mod tests {
         let frame = decoder
             .decode_access_unit(H264_64X64_RED_IDR, None)
             .expect("VideoToolbox decode")
+            .frame
             .expect("decoded frame");
         assert_eq!((frame.width, frame.height, frame.stride), (64, 64, 64));
         assert_eq!(frame.nv12.len(), 64 * 64 * 3 / 2);
@@ -540,6 +546,7 @@ mod tests {
         let frame = decoder
             .decode_access_unit(&avcc, Some(&config))
             .expect("VideoToolbox decode")
+            .frame
             .expect("decoded frame");
         assert_eq!((frame.width, frame.height, frame.stride), (64, 64, 64));
         assert_eq!(frame.nv12.len(), 64 * 64 * 3 / 2);
@@ -571,6 +578,7 @@ mod tests {
         let first = decoder
             .decode_access_unit(H264_64X64_RED_IDR, None)
             .expect("64x64 decode")
+            .frame
             .expect("64x64 frame");
         assert_eq!((first.width, first.height), (64, 64));
         let first_sps = decoder.sps.clone();
@@ -578,6 +586,7 @@ mod tests {
         let second = decoder
             .decode_access_unit(H264_1280X720_RED_IDR, None)
             .expect("1280x720 decode")
+            .frame
             .expect("1280x720 frame");
         assert_eq!((second.width, second.height), (1280, 720));
         assert_ne!(first_sps, decoder.sps);

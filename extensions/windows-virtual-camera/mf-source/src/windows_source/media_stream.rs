@@ -10,19 +10,19 @@ use windows::Win32::Media::MediaFoundation::{
     IMFMediaEventQueue, IMFMediaSource, IMFMediaStream2, IMFMediaStream2_Impl, IMFMediaStream_Impl,
     IMFMediaType, IMFMediaTypeHandler, IMFSample, IMFSampleAllocatorControl,
     IMFSampleAllocatorControl_Impl, IMFStreamDescriptor, IMFVideoSampleAllocator, MEMediaSample,
-    MEStreamFormatChanged, MEStreamStarted, MEStreamStopped, MFCreateEventQueue, MFCreateMediaType,
-    MFCreateMemoryBuffer, MFCreateSample, MFCreateStreamDescriptor, MFFrameSourceTypes_Color,
-    MFMediaType_Video, MFNominalRange_16_235, MFSampleAllocatorUsage,
-    MFSampleAllocatorUsage_UsesProvidedAllocator, MFSampleExtension_Token, MFVideoFormat_NV12,
-    MFVideoInterlace_Progressive, MFVideoPrimaries_BT709, MFVideoTransFunc_709,
-    MFVideoTransferMatrix_BT709, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS,
-    MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES, MF_DEVICESTREAM_FRAMESERVER_SHARED,
-    MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID, MF_E_INVALIDSTREAMNUMBER,
-    MF_E_INVALID_STATE_TRANSITION, MF_E_MEDIA_SOURCE_WRONGSTATE, MF_E_SHUTDOWN,
-    MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
-    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
-    MF_STREAM_STATE, MF_STREAM_STATE_RUNNING, MF_STREAM_STATE_STOPPED,
+    MEStreamStarted, MEStreamStopped, MFCreateEventQueue, MFCreateMediaType, MFCreateMemoryBuffer,
+    MFCreateSample, MFCreateStreamDescriptor, MFFrameSourceTypes_Color, MFMediaType_Video,
+    MFNominalRange_16_235, MFSampleAllocatorUsage, MFSampleAllocatorUsage_UsesProvidedAllocator,
+    MFSampleExtension_Token, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
+    MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
+    MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES,
+    MF_DEVICESTREAM_FRAMESERVER_SHARED, MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID,
+    MF_E_INVALIDREQUEST, MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION,
+    MF_E_MEDIA_SOURCE_WRONGSTATE, MF_E_SHUTDOWN, MF_MT_ALL_SAMPLES_INDEPENDENT,
+    MF_MT_DEFAULT_STRIDE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
+    MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION,
+    MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX, MF_STREAM_STATE,
+    MF_STREAM_STATE_RUNNING, MF_STREAM_STATE_STOPPED,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
@@ -43,11 +43,14 @@ pub(super) struct StreamState {
     descriptor: Option<AgileReference<IMFStreamDescriptor>>,
     current_type: Option<AgileReference<IMFMediaType>>,
     allocator: Option<AgileReference<IMFVideoSampleAllocator>>,
-    frames: FrameProvider,
+    frames: Arc<Mutex<FrameProvider>>,
     metrics: VcamMetrics,
     output_width: u32,
     output_height: u32,
     state: MF_STREAM_STATE,
+    transitioning: bool,
+    lifecycle_revision: u64,
+    lifecycle_operation: Arc<Mutex<()>>,
     stream_id: u32,
 }
 
@@ -85,11 +88,14 @@ impl MediaStream {
                 descriptor: Some(AgileReference::new(&descriptor)?),
                 current_type: Some(AgileReference::new(&type_720)?),
                 allocator: None,
-                frames: FrameProvider::new(),
+                frames: Arc::new(Mutex::new(FrameProvider::new())),
                 metrics: VcamMetrics::new(),
                 output_width: 1280,
                 output_height: 720,
                 state: MF_STREAM_STATE_STOPPED,
+                transitioning: false,
+                lifecycle_revision: 0,
+                lifecycle_operation: Arc::new(Mutex::new(())),
                 stream_id: 0,
             }));
             let interface = Self {
@@ -116,9 +122,13 @@ pub(super) fn descriptor(shared: &SharedStreamState) -> Result<IMFStreamDescript
 }
 
 pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
+    let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
+    let _operation = lock(&lifecycle_operation)?;
     let (queue, allocator) = {
         let mut state = lock(shared)?;
         state.state = MF_STREAM_STATE_STOPPED;
+        state.transitioning = false;
+        state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
         state.source = None;
         state.descriptor = None;
         state.current_type = None;
@@ -141,10 +151,15 @@ pub(super) fn set_stream_state(
     shared: &SharedStreamState,
     requested: MF_STREAM_STATE,
 ) -> Result<()> {
-    let (queue, allocator, current_type, changed) = {
+    let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
+    let _operation = lock(&lifecycle_operation)?;
+    let (previous, queue, allocator, current_type) = {
         let mut state = lock(shared)?;
         if state.queue.is_none() {
             return Err(Error::from(MF_E_SHUTDOWN));
+        }
+        if state.transitioning {
+            return Err(Error::from(MF_E_INVALID_STATE_TRANSITION));
         }
         if state.state == requested {
             return Ok(());
@@ -159,42 +174,115 @@ pub(super) fn set_stream_state(
             .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
         let allocator = state.allocator.clone();
         let current_type = state.current_type.clone();
-        state.state = requested;
-        (queue, allocator, current_type, true)
+        state.transitioning = true;
+        (state.state, queue, allocator, current_type)
     };
 
-    let queue = queue.resolve()?;
-    let allocator = allocator.map(|value| value.resolve()).transpose()?;
-    let current_type = current_type.map(|value| value.resolve()).transpose()?;
+    let result = (|| {
+        let queue = queue.resolve()?;
+        let allocator = allocator.map(|value| value.resolve()).transpose()?;
+        let current_type = current_type.map(|value| value.resolve()).transpose()?;
 
-    if changed && requested == MF_STREAM_STATE_RUNNING {
-        if let (Some(allocator), Some(media_type)) = (allocator, current_type) {
-            unsafe { allocator.InitializeSampleAllocator(10, &media_type)? };
-        }
-        unsafe {
-            queue.QueueEventParamVar(
-                MEStreamStarted.0 as u32,
-                &GUID::zeroed(),
-                HRESULT(0),
-                std::ptr::null(),
-            )?;
-        }
-    } else if changed {
-        if let Some(allocator) = allocator {
-            unsafe {
-                let _ = allocator.UninitializeSampleAllocator();
+        if requested == MF_STREAM_STATE_RUNNING {
+            if let (Some(allocator), Some(media_type)) = (&allocator, &current_type) {
+                unsafe { allocator.InitializeSampleAllocator(10, media_type)? };
+            }
+            let commit_result = {
+                let mut state = lock(shared)?;
+                if state.queue.is_none() {
+                    Err(Error::from(MF_E_SHUTDOWN))
+                } else if state.state != previous {
+                    Err(Error::from(MF_E_INVALID_STATE_TRANSITION))
+                } else {
+                    state.state = requested;
+                    state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                    Ok(())
+                }
+            };
+            if let Err(error) = commit_result {
+                if let Some(allocator) = allocator {
+                    unsafe {
+                        let _ = allocator.UninitializeSampleAllocator();
+                    }
+                }
+                return Err(error);
+            }
+            let event_result = unsafe {
+                queue.QueueEventParamVar(
+                    MEStreamStarted.0 as u32,
+                    &GUID::zeroed(),
+                    HRESULT(0),
+                    std::ptr::null(),
+                )
+            };
+            if let Err(error) = event_result {
+                let mut state = lock(shared)?;
+                if state.state == requested {
+                    state.state = previous;
+                    state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                }
+                drop(state);
+                if let Some(allocator) = allocator {
+                    unsafe {
+                        let _ = allocator.UninitializeSampleAllocator();
+                    }
+                }
+                return Err(error);
+            }
+        } else {
+            if let Some(allocator) = &allocator {
+                unsafe {
+                    allocator.UninitializeSampleAllocator()?;
+                }
+            }
+            let commit_result = {
+                let mut state = lock(shared)?;
+                if state.queue.is_none() {
+                    Err(Error::from(MF_E_SHUTDOWN))
+                } else if state.state != previous {
+                    Err(Error::from(MF_E_INVALID_STATE_TRANSITION))
+                } else {
+                    state.state = requested;
+                    state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                    Ok(())
+                }
+            };
+            if let Err(error) = commit_result {
+                if let (Some(allocator), Some(media_type)) = (&allocator, &current_type) {
+                    let _ = unsafe { allocator.InitializeSampleAllocator(10, media_type) };
+                }
+                return Err(error);
+            }
+            let event_result = unsafe {
+                queue.QueueEventParamVar(
+                    MEStreamStopped.0 as u32,
+                    &GUID::zeroed(),
+                    HRESULT(0),
+                    std::ptr::null(),
+                )
+            };
+            if let Err(error) = event_result {
+                let allocator_restored =
+                    if let (Some(allocator), Some(media_type)) = (&allocator, &current_type) {
+                        unsafe { allocator.InitializeSampleAllocator(10, media_type) }.is_ok()
+                    } else {
+                        true
+                    };
+                if allocator_restored {
+                    let mut state = lock(shared)?;
+                    if state.state == requested {
+                        state.state = previous;
+                        state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                    }
+                }
+                return Err(error);
             }
         }
-        unsafe {
-            queue.QueueEventParamVar(
-                MEStreamStopped.0 as u32,
-                &GUID::zeroed(),
-                HRESULT(0),
-                std::ptr::null(),
-            )?;
-        }
-    }
-    Ok(())
+        Ok(())
+    })();
+
+    lock(shared)?.transitioning = false;
+    result
 }
 
 pub(super) fn set_default_allocator(
@@ -202,12 +290,69 @@ pub(super) fn set_default_allocator(
     output_stream_id: u32,
     allocator: Ref<'_, IUnknown>,
 ) -> Result<()> {
-    let mut state = lock(shared)?;
-    if output_stream_id != state.stream_id {
-        return Err(Error::from(MF_E_INVALIDSTREAMNUMBER));
-    }
     let allocator = allocator.ok()?;
-    state.allocator = Some(AgileReference::new(&allocator.cast()?)?);
+    let replacement = AgileReference::new(&allocator.cast()?)?;
+    let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
+    let _operation = lock(&lifecycle_operation)?;
+    let previous = {
+        let mut state = lock(shared)?;
+        if state.queue.is_none() {
+            return Err(Error::from(MF_E_SHUTDOWN));
+        }
+        if output_stream_id != state.stream_id {
+            return Err(Error::from(MF_E_INVALIDSTREAMNUMBER));
+        }
+        if state.state != MF_STREAM_STATE_STOPPED {
+            return Err(Error::from(MF_E_INVALIDREQUEST));
+        }
+        if state.transitioning {
+            return Err(Error::from(MF_E_INVALIDREQUEST));
+        }
+        state.allocator.replace(replacement)
+    };
+    if let Some(previous) = previous {
+        unsafe {
+            let _ = previous.resolve()?.UninitializeSampleAllocator();
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn set_output_media_type(
+    shared: &SharedStreamState,
+    media_type: &IMFMediaType,
+) -> Result<()> {
+    let packed_size = unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE)? };
+    let width = (packed_size >> 32) as u32;
+    let height = packed_size as u32;
+    if !is_supported_output_size(width, height) {
+        return Err(Error::from(E_INVALIDARG));
+    }
+
+    let mut state = lock(shared)?;
+    if state.transitioning {
+        return Err(Error::from(MF_E_INVALIDREQUEST));
+    }
+    if state.state != MF_STREAM_STATE_STOPPED {
+        return if (state.output_width, state.output_height) == (width, height) {
+            Ok(())
+        } else {
+            Err(Error::from(MF_E_INVALIDREQUEST))
+        };
+    }
+    let descriptor = state
+        .descriptor
+        .as_ref()
+        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
+        .resolve()?;
+    unsafe {
+        descriptor
+            .GetMediaTypeHandler()?
+            .SetCurrentMediaType(media_type)?;
+    }
+    state.current_type = Some(AgileReference::new(media_type)?);
+    state.output_width = width;
+    state.output_height = height;
     Ok(())
 }
 
@@ -280,17 +425,15 @@ impl IMFMediaStream_Impl for MediaStream_Impl {
 
     fn RequestSample(&self, token: Ref<'_, IUnknown>) -> Result<()> {
         let delivery_started = std::time::Instant::now();
-        lock(&self.shared)?.metrics.record_request();
-        let result = deliver_sample(&self.shared, token, delivery_started);
-        if result.is_err() {
-            let snapshot = lock(&self.shared)?
-                .metrics
-                .record_failure(delivery_started.elapsed());
-            if let Some(snapshot) = snapshot {
-                emit_metrics(snapshot);
-            }
+        let result = deliver_sample(&self.shared, token);
+        let origin = result.as_ref().ok().copied();
+        let snapshot = lock(&self.shared)?
+            .metrics
+            .record_result(origin, delivery_started.elapsed());
+        if let Some(snapshot) = snapshot {
+            emit_metrics(snapshot);
         }
-        result
+        result.map(|_| ())
     }
 }
 
@@ -358,80 +501,57 @@ fn pack_u32_pair(high: u32, low: u32) -> u64 {
     ((high as u64) << 32) | low as u64
 }
 
-fn ensure_output_format(state: &mut StreamState, frame: &OwnedNv12Frame) -> Result<bool> {
-    if (frame.width, frame.height) == (state.output_width, state.output_height) {
-        return Ok(false);
-    }
-    let media_type = create_nv12_media_type(frame.width, frame.height)?;
-    if let Some(descriptor) = &state.descriptor {
-        let descriptor = descriptor.resolve()?;
-        unsafe {
-            descriptor
-                .GetMediaTypeHandler()?
-                .SetCurrentMediaType(&media_type)?;
-        }
-    }
-    if let Some(allocator) = &state.allocator {
-        let allocator = allocator.resolve()?;
-        unsafe {
-            let _ = allocator.UninitializeSampleAllocator();
-            if state.state == MF_STREAM_STATE_RUNNING {
-                allocator.InitializeSampleAllocator(10, &media_type)?;
-            }
-        }
-    }
-    state.current_type = Some(AgileReference::new(&media_type)?);
-    state.output_width = frame.width;
-    state.output_height = frame.height;
-    Ok(true)
-}
-
 fn deliver_sample(
     shared: &SharedStreamState,
     token: Ref<'_, IUnknown>,
-    delivery_started: std::time::Instant,
-) -> Result<()> {
-    let (sample, queue, format_changed, current_type, frame_origin) = {
-        let mut state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING {
+) -> Result<crate::frame_provider::FrameOrigin> {
+    let (frames, lifecycle_operation, lifecycle_revision, output_width, output_height) = {
+        let state = lock(shared)?;
+        if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
             return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
         }
-        let acquired = state.frames.acquire();
-        let frame_origin = acquired.origin;
-        let frame = acquired.frame;
-        if nv12_len(frame.width, frame.height) != Some(frame.pixels.len()) {
-            return Err(Error::from(E_FAIL));
+        (
+            Arc::clone(&state.frames),
+            Arc::clone(&state.lifecycle_operation),
+            state.lifecycle_revision,
+            state.output_width,
+            state.output_height,
+        )
+    };
+    let acquired = lock(&frames)?.acquire_for_output(output_width, output_height);
+    let frame_origin = acquired.origin;
+    let frame = acquired.frame;
+    if nv12_len(frame.width, frame.height) != Some(frame.pixels.len()) {
+        return Err(Error::from(E_FAIL));
+    }
+    // Pixel conversion intentionally happens outside the lifecycle operation.
+    // Revalidate immediately before touching MF objects so a Stop/Shutdown can
+    // never uninitialize the allocator or overtake this sample event.
+    let _operation = lock(&lifecycle_operation)?;
+    let (allocator, queue) = {
+        let state = lock(shared)?;
+        if state.state != MF_STREAM_STATE_RUNNING
+            || state.transitioning
+            || state.lifecycle_revision != lifecycle_revision
+            || (state.output_width, state.output_height) != (output_width, output_height)
+        {
+            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
         }
-        let format_changed = ensure_output_format(&mut state, &frame)?;
         let allocator = state
             .allocator
             .as_ref()
             .map(AgileReference::resolve)
             .transpose()?;
-        let sample = create_sample(allocator.as_ref(), &frame, token.as_ref())?;
         let queue = state
             .queue
             .as_ref()
             .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
             .resolve()?;
-        let current_type = state
-            .current_type
-            .as_ref()
-            .map(AgileReference::resolve)
-            .transpose()?;
-        (sample, queue, format_changed, current_type, frame_origin)
+        (allocator, queue)
     };
+    let sample = create_sample(allocator.as_ref(), &frame, token.as_ref())?;
 
     unsafe {
-        if format_changed {
-            let media_type = current_type.ok_or_else(|| Error::from(E_FAIL))?;
-            queue.QueueEventParamUnk(
-                MEStreamFormatChanged.0 as u32,
-                &GUID::zeroed(),
-                HRESULT(0),
-                &media_type.cast::<IUnknown>()?,
-            )?;
-        }
         queue.QueueEventParamUnk(
             MEMediaSample.0 as u32,
             &GUID::zeroed(),
@@ -439,13 +559,7 @@ fn deliver_sample(
             &sample.cast::<IUnknown>()?,
         )?;
     }
-    let snapshot = lock(shared)?
-        .metrics
-        .record_delivery(frame_origin, delivery_started.elapsed());
-    if let Some(snapshot) = snapshot {
-        emit_metrics(snapshot);
-    }
-    Ok(())
+    Ok(frame_origin)
 }
 
 fn emit_metrics(snapshot: VcamMetricsSnapshot) {

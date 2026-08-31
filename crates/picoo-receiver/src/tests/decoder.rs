@@ -19,9 +19,10 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
             &mut self,
             _access_unit: &[u8],
             _stream_config: Option<&picoo_protocol::control::StreamConfig>,
-        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
-        {
-            Ok(None)
+        ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
+                false,
+            ))
         }
 
         fn reset(&mut self) -> Result<(), picoo_media_decode::DecodeError> {
@@ -52,16 +53,32 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
 #[test]
 fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recovery() {
     struct AlwaysFails;
+    struct DropsRefresh;
 
     impl picoo_media_decode::AccessUnitDecoder for AlwaysFails {
         fn decode_access_unit(
             &mut self,
             _access_unit: &[u8],
             _stream_config: Option<&picoo_protocol::control::StreamConfig>,
-        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
-        {
+        ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
             Err(picoo_media_decode::DecodeError::Platform(
                 "fixture failure".into(),
+            ))
+        }
+
+        fn reset(&mut self) -> Result<(), picoo_media_decode::DecodeError> {
+            Ok(())
+        }
+    }
+
+    impl picoo_media_decode::AccessUnitDecoder for DropsRefresh {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
+                false,
             ))
         }
 
@@ -88,6 +105,15 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
         .expect("delta is dropped while awaiting IDR");
     assert_eq!(receiver.stats().decode_invocations, 1);
     assert_eq!(receiver.stats().recovery_dropped_access_units, 1);
+
+    receiver.set_decoder_for_test(Box::new(DropsRefresh));
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"dropped-idr"), true)
+        .expect("a dropped IDR does not fail the session");
+    assert!(
+        receiver.awaiting_decoder_refresh_for_test(),
+        "FrameDropped/Ok(None) must not reopen the delta gate"
+    );
 
     use_stub_decoder(&mut receiver);
     receiver

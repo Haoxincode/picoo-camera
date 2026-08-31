@@ -7,7 +7,7 @@ use windows::core::{
 use windows::Win32::Media::MediaFoundation::{
     IMFAsyncCallback, IMFAsyncResult, IMFAttributes, IMFGetService, IMFGetService_Impl,
     IMFMediaEvent, IMFMediaEventGenerator_Impl, IMFMediaEventQueue, IMFMediaSource,
-    IMFMediaSourceEx, IMFMediaSourceEx_Impl, IMFMediaSource_Impl, IMFMediaStream2,
+    IMFMediaSourceEx, IMFMediaSourceEx_Impl, IMFMediaSource_Impl, IMFMediaStream2, IMFMediaType,
     IMFSampleAllocatorControl, IMFSampleAllocatorControl_Impl, IMFStreamDescriptor, MENewStream,
     MESourceStarted, MESourceStopped, MEUpdatedStream, MFCreateEventQueue,
     MFCreatePresentationDescriptor, MFSampleAllocatorUsage, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS,
@@ -18,8 +18,8 @@ use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
 
 use super::media_stream::{
-    allocator_usage, attach_source, descriptor, set_default_allocator, set_stream_state, shutdown,
-    MediaStream, SharedStreamState,
+    allocator_usage, attach_source, descriptor, set_default_allocator, set_output_media_type,
+    set_stream_state, shutdown, MediaStream, SharedStreamState,
 };
 use super::{lock, query_interface, ObjectTracker};
 
@@ -132,6 +132,7 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
         _time_format: *const GUID,
         _start_position: *const PROPVARIANT,
     ) -> Result<()> {
+        let mut selected_media_type: Option<IMFMediaType> = None;
         if let Some(presentation) = presentation.as_ref() {
             unsafe {
                 let mut selected = BOOL(0);
@@ -140,11 +141,15 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
                 if !selected.as_bool() {
                     presentation.SelectStream(0)?;
                 }
+                if let Some(descriptor) = descriptor {
+                    selected_media_type =
+                        Some(descriptor.GetMediaTypeHandler()?.GetCurrentMediaType()?);
+                }
             }
         }
 
         let (queue, stream, stream_state, first_presentation) = {
-            let mut state = lock(&self.state)?;
+            let state = lock(&self.state)?;
             if state.shutdown {
                 return Err(Error::from(MF_E_SHUTDOWN));
             }
@@ -159,9 +164,12 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
                 .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
                 .resolve()?;
             let first = !state.stream_presented;
-            state.stream_presented = true;
             (queue, stream, state.stream_state.clone(), first)
         };
+
+        if let Some(media_type) = selected_media_type.as_ref() {
+            set_output_media_type(&stream_state, media_type)?;
+        }
 
         let stream_unknown = stream.cast::<IUnknown>()?;
         unsafe {
@@ -176,17 +184,31 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
                 &stream_unknown,
             )?;
         }
+        if first_presentation {
+            let mut state = lock(&self.state)?;
+            if state.shutdown {
+                return Err(Error::from(MF_E_SHUTDOWN));
+            }
+            state.stream_presented = true;
+        }
         set_stream_state(
             &stream_state,
             windows::Win32::Media::MediaFoundation::MF_STREAM_STATE_RUNNING,
         )?;
-        unsafe {
+        let started = unsafe {
             queue.QueueEventParamVar(
                 MESourceStarted.0 as u32,
                 &GUID::zeroed(),
                 HRESULT(0),
                 std::ptr::null(),
-            )?;
+            )
+        };
+        if let Err(error) = started {
+            let _ = set_stream_state(
+                &stream_state,
+                windows::Win32::Media::MediaFoundation::MF_STREAM_STATE_STOPPED,
+            );
+            return Err(error);
         }
         Ok(())
     }

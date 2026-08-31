@@ -7,8 +7,9 @@ use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
 pub use h264::{
-    access_unit_to_annex_b, annex_b_parameter_sets, annex_b_to_length_prefixed, extract_sps_pps,
-    is_length_prefixed_access_unit, length_prefixed_to_annex_b, split_annex_b_nals,
+    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
+    annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
+    length_prefixed_to_annex_b, split_annex_b_nals,
 };
 use picoo_protocol::{VideoPacket, VideoPacketFlags};
 use thiserror::Error;
@@ -57,6 +58,8 @@ pub struct ReassemblyMap {
     terminal_frames: HashSet<FrameKey>,
     drops: u64,
     missing_fragments: u64,
+    /// Total expected fragments for AUs whose complete/drop outcome is known.
+    resolved_fragments: u64,
     /// Set when a non-discardable AU is dropped and the prediction chain may be invalid.
     reference_loss_pending: bool,
     /// Set when a partial KEYFRAME is discarded (REQ-PICOO-SESSION-003).
@@ -75,6 +78,7 @@ impl ReassemblyMap {
             terminal_frames: HashSet::new(),
             drops: 0,
             missing_fragments: 0,
+            resolved_fragments: 0,
             reference_loss_pending: false,
             keyframe_loss_pending: false,
         }
@@ -92,20 +96,27 @@ impl ReassemblyMap {
         self.missing_fragments
     }
 
-    /// Discard pending media while preserving cumulative loss counters.
-    /// Used when a decoder reference chain is reset inside the same session.
+    /// Expected fragment count for all completed or confirmed-incomplete AUs.
+    /// This advances atomically with each AU outcome so reporting windows never
+    /// split a frame's received and missing fragments.
+    pub fn resolved_fragment_count(&self) -> u64 {
+        self.resolved_fragments
+    }
+
+    /// Discard pending media without classifying still-in-flight fragments as loss.
+    /// A monotonic boundary prevents late tails from rebuilding abandoned AUs in
+    /// this epoch even after the bounded terminal-frame cache rotates.
     pub fn clear_pending(&mut self) {
-        let pending = self
-            .frames
-            .drain()
-            .map(|(_, frame)| frame)
-            .collect::<Vec<_>>();
-        for frame in pending {
-            self.record_incomplete_drop(frame);
+        let abandoned = self.frames.drain().map(|(key, _)| key).collect::<Vec<_>>();
+        if let Some(latest) = abandoned.iter().map(|key| key.frame_id).max() {
+            self.expired_through_frame_id = Some(
+                self.expired_through_frame_id
+                    .map_or(latest, |expired| expired.max(latest)),
+            );
         }
-        self.expired_through_frame_id = None;
-        self.rejected_frames.clear();
-        self.terminal_frames.clear();
+        for key in abandoned {
+            self.remember_terminal(key);
+        }
     }
 
     /// True if a keyframe was dropped since the last take (REQ-PICOO-SESSION-003).
@@ -172,7 +183,7 @@ impl ReassemblyMap {
         }
 
         if packet.stream_epoch > self.current_epoch {
-            self.clear_pending();
+            self.reset_pending_for_epoch();
             self.current_epoch = packet.stream_epoch;
         }
 
@@ -258,8 +269,12 @@ impl ReassemblyMap {
 
         let flags = entry.flags;
         let pts_us = entry.pts_us;
+        let fragment_count = entry.fragment_count;
         self.frames.remove(&key);
         self.remember_terminal(key);
+        self.resolved_fragments = self
+            .resolved_fragments
+            .saturating_add(u64::from(fragment_count));
         Ok(Some(AssembledAccessUnit {
             data: assembled.freeze(),
             pts_us,
@@ -302,7 +317,19 @@ impl ReassemblyMap {
                 .fragment_count
                 .saturating_sub(frame.fragments.len() as u16),
         ));
+        self.resolved_fragments = self
+            .resolved_fragments
+            .saturating_add(u64::from(frame.fragment_count));
         self.drops = self.drops.saturating_add(1);
+    }
+
+    fn reset_pending_for_epoch(&mut self) {
+        self.frames.clear();
+        self.expired_through_frame_id = None;
+        self.rejected_frames.clear();
+        self.terminal_frames.clear();
+        self.reference_loss_pending = false;
+        self.keyframe_loss_pending = false;
     }
 
     fn remember_terminal(&mut self, key: FrameKey) {
@@ -366,6 +393,7 @@ mod tests {
             Some(&b"abcd"[..])
         );
         assert_eq!(map.missing_fragment_count(), 0);
+        assert_eq!(map.resolved_fragment_count(), 2);
     }
 
     #[test]
@@ -414,6 +442,7 @@ mod tests {
         map.expire_incomplete_older_than(Instant::now(), Duration::ZERO);
         assert!(map.take_keyframe_loss());
         assert_eq!(map.missing_fragment_count(), 1);
+        assert_eq!(map.resolved_fragment_count(), 2);
 
         let key_tail = VideoPacket {
             version: VideoPacket::VERSION,
@@ -432,18 +461,54 @@ mod tests {
     }
 
     #[test]
-    fn clearing_pending_preserves_same_unit_fragment_loss_counters() {
+    fn clearing_pending_preserves_counters_without_inventing_network_loss() {
         let mut map = ReassemblyMap::new(8, 16);
-        assert!(map.ingest(fragment(1, 1, 0, 3, b"a")).unwrap().is_none());
-        assert!(map.ingest(fragment(1, 1, 2, 3, b"c")).unwrap().is_none());
+        assert!(map.ingest(fragment(1, 1, 0, 2, b"a")).unwrap().is_none());
+        map.expire_incomplete_older_than(Instant::now(), Duration::ZERO);
+        assert_eq!(map.drop_count(), 1);
+        assert_eq!(map.missing_fragment_count(), 1);
+        assert_eq!(map.resolved_fragment_count(), 2);
+
+        assert!(map.ingest(fragment(1, 2, 0, 3, b"b")).unwrap().is_none());
 
         map.clear_pending();
 
         assert_eq!(map.drop_count(), 1);
         assert_eq!(map.missing_fragment_count(), 1);
-        assert!(map.take_reference_chain_loss());
-        assert!(map.ingest(fragment(1, 2, 0, 1, b"next")).unwrap().is_some());
+        assert_eq!(map.resolved_fragment_count(), 2);
+        assert!(map
+            .ingest(fragment(1, 2, 1, 3, b"late-tail"))
+            .unwrap()
+            .is_none());
+        assert!(map.ingest(fragment(1, 3, 0, 1, b"next")).unwrap().is_some());
         assert_eq!(map.missing_fragment_count(), 1);
+        assert_eq!(map.resolved_fragment_count(), 3);
+    }
+
+    #[test]
+    fn clearing_pending_rejects_late_tails_after_terminal_cache_rotates() {
+        let mut map = ReassemblyMap::new(1, 16);
+        assert!(map
+            .ingest(fragment(1, 1, 0, 2, b"old-head"))
+            .unwrap()
+            .is_none());
+        map.clear_pending();
+
+        // Rotate the single-frame map's two-entry terminal cache with newer,
+        // fully resolved frames. The monotonic clear boundary must still keep
+        // the abandoned frame terminal.
+        assert!(map.ingest(fragment(1, 2, 0, 1, b"two")).unwrap().is_some());
+        assert!(map
+            .ingest(fragment(1, 3, 0, 1, b"three"))
+            .unwrap()
+            .is_some());
+        assert!(map.ingest(fragment(1, 4, 0, 1, b"four")).unwrap().is_some());
+        assert!(map
+            .ingest(fragment(1, 1, 1, 2, b"late-tail"))
+            .unwrap()
+            .is_none());
+        assert_eq!(map.drop_count(), 0);
+        assert_eq!(map.missing_fragment_count(), 0);
     }
 
     #[test]

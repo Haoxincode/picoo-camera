@@ -115,6 +115,14 @@ pub fn access_unit_to_annex_b(data: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     }
 }
 
+/// True when an Annex-B or length-prefixed AU contains an IDR slice (NAL type 5).
+pub fn access_unit_contains_idr(data: &[u8]) -> bool {
+    let annex_b = access_unit_to_annex_b(data);
+    split_annex_b_nals(annex_b.as_ref())
+        .iter()
+        .any(|nal| nal.first().is_some_and(|byte| byte & 0x1f == 5))
+}
+
 /// Extract SPS (type 7) and PPS (type 8) from Annex-B or AVCC `csd-0` style blobs.
 ///
 /// Returns NAL payloads without start codes.
@@ -261,6 +269,15 @@ mod tests {
             access_unit_to_annex_b(&avcc),
             std::borrow::Cow::Owned(_)
         ));
+    }
+
+    #[test]
+    fn detects_idr_in_annex_b_and_length_prefixed_access_units() {
+        let annex = [0, 0, 0, 1, 0x65, 1, 2, 3];
+        assert!(access_unit_contains_idr(&annex));
+        let avcc = annex_b_to_length_prefixed(&annex).expect("avcc");
+        assert!(access_unit_contains_idr(&avcc));
+        assert!(!access_unit_contains_idr(&[0, 0, 0, 1, 0x41, 1]));
     }
 
     #[test]

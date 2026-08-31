@@ -6,12 +6,13 @@ use openh264::formats::YUVSource;
 use openh264::nal_units;
 use picoo_frame_hub::nv12_byte_size;
 use picoo_packet::{
-    access_unit_to_annex_b, annex_b_parameter_sets, is_length_prefixed_access_unit,
+    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
+    is_length_prefixed_access_unit,
 };
 use picoo_protocol::control::StreamConfig;
 
 use crate::stub::StubDecoder;
-use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
+use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 pub struct OpenH264Decoder {
     decoder: Decoder,
@@ -123,7 +124,7 @@ impl AccessUnitDecoder for OpenH264Decoder {
         &mut self,
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
-    ) -> Result<Option<DecodedFrame>, DecodeError> {
+    ) -> Result<DecodeOutcome, DecodeError> {
         // Preserve stub semantics for unit/loopback fixtures that are not real H.264.
         if Self::looks_like_loopback_stub(access_unit, stream_config) {
             return self.stub.decode_access_unit(access_unit, stream_config);
@@ -133,6 +134,7 @@ impl AccessUnitDecoder for OpenH264Decoder {
 
         let annex = access_unit_to_annex_b(access_unit);
         let access_unit = annex.as_ref();
+        let contains_idr = access_unit_contains_idr(access_unit);
 
         let mut last: Option<(u32, u32, u32, Vec<u8>)> = None;
         // Decode each NAL; keep the latest picture (IDR/P).
@@ -159,16 +161,19 @@ impl AccessUnitDecoder for OpenH264Decoder {
         }
 
         let Some((width, height, stride, nv12)) = last else {
-            return Ok(None);
+            return Ok(DecodeOutcome::accepted_without_frame(false));
         };
-        Ok(Some(DecodedFrame {
-            width,
-            height,
-            stride,
-            rotation: stream_config.map(|c| c.rotation).unwrap_or(0),
-            timestamp_us: now_timestamp_us(),
-            nv12: Bytes::from(nv12),
-        }))
+        Ok(DecodeOutcome::frame(
+            DecodedFrame {
+                width,
+                height,
+                stride,
+                rotation: stream_config.map(|c| c.rotation).unwrap_or(0),
+                timestamp_us: now_timestamp_us(),
+                nv12: Bytes::from(nv12),
+            },
+            contains_idr,
+        ))
     }
 
     fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
