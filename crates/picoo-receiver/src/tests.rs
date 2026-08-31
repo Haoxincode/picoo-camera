@@ -3065,27 +3065,33 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .ingest_and_flush(&avcc, true, 1, 1)
-        .expect("ingest avcc");
-    for _ in 0..300 {
-        receiver.pump().ok();
-        sender.pump().ok();
-        if let Some(frame) = receiver.latest_frame() {
-            if frame.width == width as u32 && frame.height == height as u32 {
-                assert_eq!(
-                    frame.pixel_data.len(),
-                    nv12_byte_size(frame.width, frame.height)
-                );
-                assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
-                return;
+    // A synchronous MFT may legally retain the first sample while priming. A
+    // short sequence still verifies the live AVCC -> MF -> FrameHub path without
+    // relying on a drain operation that production streaming never performs.
+    for pts_us in 1..=3 {
+        sender
+            .ingest_and_flush(&avcc, true, pts_us, 1)
+            .expect("ingest avcc");
+        for _ in 0..100 {
+            receiver.pump().ok();
+            sender.pump().ok();
+            if let Some(frame) = receiver.latest_frame() {
+                if frame.width == width as u32 && frame.height == height as u32 {
+                    assert_eq!(
+                        frame.pixel_data.len(),
+                        nv12_byte_size(frame.width, frame.height)
+                    );
+                    assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
+                    return;
+                }
             }
+            std::thread::sleep(Duration::from_millis(2));
         }
-        std::thread::sleep(Duration::from_millis(2));
     }
     panic!(
-        "AVCC AU did not reach FrameHub; stats={:?}",
-        receiver.stats()
+        "AVCC AU did not reach FrameHub; stats={:?}; media_error={:?}",
+        receiver.stats(),
+        receiver.last_media_error()
     );
 }
 

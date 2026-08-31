@@ -17,8 +17,8 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFT_MESSAGE_COMMAND_FLUSH,
     MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MF_E_NOTACCEPTING,
-    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-    MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -62,6 +62,12 @@ impl MfH264Decoder {
         let transform: IMFTransform =
             unsafe { CoCreateInstance(&CMSH264DecoderMFT, None, CLSCTX_INPROC_SERVER) }
                 .map_err(|e| DecodeError::Platform(format!("CoCreateInstance H264 MFT: {e}")))?;
+        unsafe {
+            transform
+                .GetAttributes()
+                .and_then(|attributes| attributes.SetUINT32(&MF_LOW_LATENCY, 1))
+                .map_err(|e| DecodeError::Platform(format!("enable MF low latency: {e}")))?;
+        }
 
         Ok(Self {
             transform,
