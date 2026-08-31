@@ -235,6 +235,8 @@ private fun SenderHomeScreen(
     var senderTab by uiState::senderTab
     var phonePairingConfirmed by uiState::phonePairingConfirmed
     var discoveryComplete by uiState::discoveryComplete
+    var discoveryEnabled by uiState::discoveryEnabled
+    var discoverySearchGeneration by uiState::discoverySearchGeneration
     var wifiPillText by uiState::wifiPillText
     var pairingRemainingSeconds by uiState::pairingRemainingSeconds
     var pairingExpired by uiState::pairingExpired
@@ -269,11 +271,13 @@ private fun SenderHomeScreen(
         if (!nearbyWifiGranted) onRequestNearbyWifi()
     }
 
-    LaunchedEffect(discoveredList) {
-        if (discoveredList.isEmpty()) {
+    LaunchedEffect(discoveredList, discoverySearchGeneration, discoveryEnabled) {
+        if (!discoveryEnabled) {
+            discoveryComplete = true
+        } else if (discoveredList.isEmpty()) {
             discoveryComplete = false
             delay(3_000)
-            if (discoveredListState.value.isEmpty()) {
+            if (discoveryEnabled && discoveredListState.value.isEmpty()) {
                 discoveryComplete = true
             }
         } else {
@@ -325,8 +329,8 @@ private fun SenderHomeScreen(
         }
     }
 
-    DisposableEffect(nsdBrowser, nearbyWifiGranted) {
-        if (nearbyWifiGranted) nsdBrowser.start()
+    DisposableEffect(nsdBrowser, nearbyWifiGranted, discoveryEnabled, discoverySearchGeneration) {
+        if (nearbyWifiGranted && discoveryEnabled) nsdBrowser.start()
         onDispose { nsdBrowser.stop() }
     }
 
@@ -915,6 +919,15 @@ private fun SenderHomeScreen(
                 },
                 onRequestNearbyWifi = onRequestNearbyWifi,
                 onOpenSettings = { senderTab = SenderTab.Settings },
+                onRestartDiscovery = {
+                    discoveryEnabled = true
+                    discoveryComplete = false
+                    discoverySearchGeneration += 1
+                },
+                onStopDiscovery = {
+                    discoveryEnabled = false
+                    discoveryComplete = true
+                },
             )
             SenderTab.Settings -> SettingsScreen(
                 pairedDeviceCount = pairedDevices.size,

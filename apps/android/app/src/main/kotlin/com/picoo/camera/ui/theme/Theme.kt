@@ -21,28 +21,32 @@ import com.picoo.camera.R
 
 /** ARCH-PICOO-UI-002 — primitive tokens are confined to this platform adapter. */
 private object PicooPrimitiveLight {
-    val Canvas = Color(0xFFFFFFFF)
-    val Chrome = Color(0xFFFAFAFA)
-    val Subtle = Color(0xFFF5F5F5)
-    val Border = Color(0xFFE5E5E5)
-    val Foreground = Color(0xFF0A0A0A)
-    val Muted = Color(0xFF737373)
-    val Primary = Color(0xFF1447E6)
-    val Highlight = Color(0xFF155DFC)
-    val Success = Color(0xFF008A5C)
+    val Canvas = Color(0xFFF7F8FC)
+    val Chrome = Color(0xFFFEFEFF)
+    val Subtle = Color(0xFFEFF4FF)
+    val Border = Color(0xFFE3E7EF)
+    val Foreground = Color(0xFF111318)
+    val Muted = Color(0xFF666B76)
+    val Primary = Color(0xFF155DFC)
+    val Highlight = Color(0xFF0B67EA)
+    val AccentSurface = Color(0xFFEAF2FF)
+    val AccentBorder = Color(0xFFC9DCFF)
+    val Success = Color(0xFF007F55)
     val Warning = Color(0xFF9A6500)
     val Danger = Color(0xFFE7000B)
 }
 
 private object PicooPrimitiveDark {
-    val Canvas = Color(0xFF0A0A0A)
-    val Chrome = Color(0xFF171717)
-    val Subtle = Color(0xFF262626)
+    val Canvas = Color(0xFF0D0F14)
+    val Chrome = Color(0xFF161A22)
+    val Subtle = Color(0xFF1D2635)
     val Border = Color(0x1AFFFFFF)
     val Foreground = Color(0xFFFAFAFA)
     val Muted = Color(0xFFA1A1A1)
     val Primary = Color(0xFF193CB8)
     val Highlight = Color(0xFF2B7FFF)
+    val AccentSurface = Color(0xFF14233D)
+    val AccentBorder = Color(0xFF29466F)
     val Success = Color(0xFF00BC7D)
     val Warning = Color(0xFFF0C14A)
     val Danger = Color(0xFFFF6467)
@@ -64,6 +68,8 @@ data class PicooSemanticColors(
     val statusWarning: Color,
     val statusDanger: Color,
     val focusRing: Color,
+    val surfaceAccent: Color,
+    val borderAccent: Color,
 )
 
 private val PicooLightColors = PicooSemanticColors(
@@ -80,6 +86,8 @@ private val PicooLightColors = PicooSemanticColors(
     statusWarning = PicooPrimitiveLight.Warning,
     statusDanger = PicooPrimitiveLight.Danger,
     focusRing = PicooPrimitiveLight.Highlight,
+    surfaceAccent = PicooPrimitiveLight.AccentSurface,
+    borderAccent = PicooPrimitiveLight.AccentBorder,
 )
 
 private val PicooDarkColors = PicooSemanticColors(
@@ -96,6 +104,8 @@ private val PicooDarkColors = PicooSemanticColors(
     statusWarning = PicooPrimitiveDark.Warning,
     statusDanger = PicooPrimitiveDark.Danger,
     focusRing = PicooPrimitiveDark.Highlight,
+    surfaceAccent = PicooPrimitiveDark.AccentSurface,
+    borderAccent = PicooPrimitiveDark.AccentBorder,
 )
 
 @Immutable
@@ -107,16 +117,32 @@ data class PicooDimensions(
     val space16: Dp = 16.dp,
     val space24: Dp = 24.dp,
     val space32: Dp = 32.dp,
+    val space40: Dp = 40.dp,
+    val borderHairline: Dp = 1.dp,
     val radiusControl: Dp = 7.dp,
     val radiusSurface: Dp = 15.dp,
+    val radiusAction: Dp = 14.dp,
+    val radiusHero: Dp = 20.dp,
+    val radiusIconContainer: Dp = 12.dp,
     val iconCompact: Dp = 16.dp,
     val iconStandard: Dp = 20.dp,
     val iconEmphasis: Dp = 24.dp,
     val iconHero: Dp = 32.dp,
     val touchTarget: Dp = 48.dp,
+    val actionButtonHeight: Dp = 52.dp,
     val cameraStopTarget: Dp = 64.dp,
     val cameraStopStroke: Dp = 3.5.dp,
     val maxContentWidth: Dp = 680.dp,
+    val controlContentWidth: Dp = 520.dp,
+    val screenGutter: Dp = 24.dp,
+    val heroTopSpacing: Dp = 40.dp,
+    val sectionGap: Dp = 24.dp,
+    val panelHorizontalPadding: Dp = 32.dp,
+    val panelVerticalPadding: Dp = 24.dp,
+    val discoveryIllustrationHeight: Dp = 184.dp,
+    val discoveryDeviceWidth: Dp = 176.dp,
+    val settingsIconContainer: Dp = 48.dp,
+    val elevationSurface: Dp = 2.dp,
 )
 
 @Immutable

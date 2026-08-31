@@ -50,6 +50,8 @@ class SenderHomeState {
     var senderTab by mutableStateOf(SenderTab.Devices)
     var phonePairingConfirmed by mutableStateOf(false)
     var discoveryComplete by mutableStateOf(false)
+    var discoveryEnabled by mutableStateOf(true)
+    var discoverySearchGeneration by mutableIntStateOf(0)
     var wifiPillText by mutableStateOf("局域网")
     var pairingRemainingSeconds by mutableIntStateOf(60)
     var pairingExpired by mutableStateOf(false)

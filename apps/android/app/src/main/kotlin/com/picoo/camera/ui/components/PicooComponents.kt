@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
@@ -45,6 +47,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.picoo.camera.ui.theme.PicooCameraColors
@@ -52,21 +55,54 @@ import com.picoo.camera.ui.theme.PicooTheme
 
 enum class PicooVisualContext { Control, Camera }
 
+enum class PicooButtonVariant { Neutral, AccentOutline }
+
+enum class PicooButtonSize { Standard, Compact }
+
+/** Shared control-context panel. Callers own layout; the component owns surface treatment. */
+@Composable
+fun PicooSurfacePanel(
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val colors = PicooTheme.colors
+    val dimensions = PicooTheme.dimensions
+    Surface(
+        modifier = modifier,
+        color = colors.surfaceGroup,
+        shape = RoundedCornerShape(dimensions.radiusHero),
+        border = BorderStroke(dimensions.borderHairline, colors.borderDefault),
+        shadowElevation = dimensions.elevationSurface,
+        content = content,
+    )
+}
+
 @Composable
 fun PicooPrimaryButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    loading: Boolean = false,
     context: PicooVisualContext = PicooVisualContext.Control,
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
     val dimensions = PicooTheme.dimensions
     val colors = PicooTheme.colors
+    val progressColor = if (context == PicooVisualContext.Camera) {
+        PicooCameraColors.Content
+    } else {
+        colors.actionOnPrimary
+    }
     Button(
         onClick = onClick,
-        modifier = modifier.defaultMinSize(minHeight = dimensions.touchTarget),
-        enabled = enabled,
-        shape = RoundedCornerShape(dimensions.radiusControl),
+        modifier = modifier
+            .defaultMinSize(minHeight = dimensions.actionButtonHeight)
+            .semantics {
+                if (loading) stateDescription = "正在处理"
+            },
+        enabled = enabled && !loading,
+        shape = RoundedCornerShape(dimensions.radiusAction),
         contentPadding = PaddingValues(horizontal = dimensions.space16, vertical = dimensions.space12),
         elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
         colors = ButtonDefaults.buttonColors(
@@ -75,7 +111,11 @@ fun PicooPrimaryButton(
             } else {
                 colors.actionPrimary
             },
-            contentColor = Color.White,
+            contentColor = if (context == PicooVisualContext.Camera) {
+                PicooCameraColors.Content
+            } else {
+                colors.actionOnPrimary
+            },
             disabledContainerColor = if (context == PicooVisualContext.Camera) {
                 PicooCameraColors.Control
             } else {
@@ -88,7 +128,20 @@ fun PicooPrimaryButton(
             },
         ),
     ) {
-        Text(text = text, style = MaterialTheme.typography.labelLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            when {
+                loading -> CircularProgressIndicator(
+                    modifier = Modifier.size(dimensions.iconStandard),
+                    color = progressColor,
+                    strokeWidth = dimensions.space2,
+                )
+                leadingContent != null -> leadingContent()
+            }
+            if (loading || leadingContent != null) {
+                Spacer(modifier = Modifier.size(dimensions.space8))
+            }
+            Text(text = text, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 
@@ -97,46 +150,74 @@ fun PicooGhostButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    primary: Boolean = false,
-    small: Boolean = false,
+    variant: PicooButtonVariant = PicooButtonVariant.Neutral,
+    size: PicooButtonSize = PicooButtonSize.Standard,
+    enabled: Boolean = true,
+    loading: Boolean = false,
     context: PicooVisualContext = PicooVisualContext.Control,
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
-    if (primary) {
-        PicooPrimaryButton(
-            text = text,
-            onClick = onClick,
-            modifier = modifier,
-            context = context,
-        )
-        return
-    }
     val dimensions = PicooTheme.dimensions
     val colors = PicooTheme.colors
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier.defaultMinSize(minHeight = dimensions.touchTarget),
-        shape = RoundedCornerShape(dimensions.radiusControl),
+        modifier = modifier
+            .defaultMinSize(
+                minHeight = if (size == PicooButtonSize.Compact) {
+                    dimensions.touchTarget
+                } else {
+                    dimensions.actionButtonHeight
+                },
+            )
+            .semantics {
+                if (loading) stateDescription = "正在处理"
+            },
+        enabled = enabled && !loading,
+        shape = RoundedCornerShape(dimensions.radiusAction),
         contentPadding = PaddingValues(
             horizontal = dimensions.space16,
-            vertical = if (small) dimensions.space8 else dimensions.space12,
+            vertical = if (size == PicooButtonSize.Compact) dimensions.space8 else dimensions.space12,
         ),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = if (context == PicooVisualContext.Camera) {
                 PicooCameraColors.Content
+            } else if (variant == PicooButtonVariant.AccentOutline) {
+                colors.actionHighlight
             } else {
                 colors.contentPrimary
             },
         ),
         border = BorderStroke(
-            1.dp,
+            dimensions.borderHairline,
             if (context == PicooVisualContext.Camera) {
                 PicooCameraColors.ControlBorder
+            } else if (variant == PicooButtonVariant.AccentOutline) {
+                colors.actionHighlight
             } else {
                 colors.borderDefault
             },
         ),
     ) {
-        Text(text = text, style = MaterialTheme.typography.labelLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            when {
+                loading -> CircularProgressIndicator(
+                    modifier = Modifier.size(dimensions.iconStandard),
+                    color = if (context == PicooVisualContext.Camera) {
+                        PicooCameraColors.Content
+                    } else if (variant == PicooButtonVariant.AccentOutline) {
+                        colors.actionHighlight
+                    } else {
+                        colors.contentPrimary
+                    },
+                    strokeWidth = dimensions.space2,
+                )
+                leadingContent != null -> leadingContent()
+            }
+            if (loading || leadingContent != null) {
+                Spacer(modifier = Modifier.size(dimensions.space8))
+            }
+            Text(text = text, style = MaterialTheme.typography.labelLarge)
+        }
     }
 }
 
@@ -155,9 +236,9 @@ fun PicooDangerButton(
         shape = RoundedCornerShape(dimensions.radiusControl),
         colors = ButtonDefaults.outlinedButtonColors(
             containerColor = if (armed) colors.statusDanger else Color.Transparent,
-            contentColor = if (armed) Color.White else colors.statusDanger,
+            contentColor = if (armed) colors.actionOnPrimary else colors.statusDanger,
         ),
-        border = BorderStroke(1.dp, colors.statusDanger),
+        border = BorderStroke(dimensions.borderHairline, colors.statusDanger),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelLarge)
     }
@@ -245,14 +326,14 @@ fun DiscoveryPulseDot(searching: Boolean) {
         initialValue = if (searching) 0.42f else 1f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1_200, easing = LinearEasing),
+            animation = tween(PicooTheme.motion.deliberateMillis * 2, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "discoveryAlpha",
     )
     Box(
         modifier = Modifier
-            .size(8.dp)
+            .size(PicooTheme.dimensions.space8)
             .alpha(if (searching) alpha else 1f)
             .scale(if (searching) 1f else 0.9f)
             .background(

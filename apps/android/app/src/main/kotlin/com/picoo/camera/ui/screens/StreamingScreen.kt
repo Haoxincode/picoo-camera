@@ -63,6 +63,7 @@ import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.ExposurePreview
 import com.picoo.camera.ui.components.PicooGhostButton
+import com.picoo.camera.ui.components.PicooButtonSize
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
 import com.picoo.camera.ui.components.PicooVisualContext
@@ -626,7 +627,7 @@ private fun ReconnectOverlay(
             PicooGhostButton(
                 text = "停止重连并退出",
                 onClick = onStopReconnect,
-                small = true,
+                size = PicooButtonSize.Compact,
                 context = PicooVisualContext.Camera,
             )
         }
