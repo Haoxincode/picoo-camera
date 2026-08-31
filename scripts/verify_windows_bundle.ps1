@@ -10,6 +10,7 @@ $Dll = Join-Path $Bundle "PicooVirtualCameraSource.dll"
 $Exe = Join-Path $Bundle "picoo-desktop.exe"
 $ProductIcon = Join-Path $Bundle "PicooCamera.ico"
 $Msi = Join-Path $Bundle "msi/PicooCamera.msi"
+$MsiVersionFile = Join-Path $Bundle "msi/PicooCamera.version"
 
 Write-Host "Repo root: $Root"
 Write-Host "Bundle:    $Bundle"
@@ -60,9 +61,12 @@ if ($null -eq $associatedIcon -or $associatedIcon.Width -lt 16 -or $associatedIc
 $associatedIcon.Dispose()
 Write-Host "ok: picoo-desktop.exe exposes an embedded application icon"
 
-if (-not (Test-Path $Msi)) {
-    Write-Error "Missing MSI: $Msi (set PICOO_REQUIRE_MSI=1)"
+foreach ($path in @($Msi, $MsiVersionFile)) {
+    if (-not (Test-Path $path)) {
+        Write-Error "Missing MSI output: $path (set PICOO_REQUIRE_MSI=1)"
+    }
 }
+$ExpectedMsiVersion = (Get-Content -Raw $MsiVersionFile).Trim()
 Write-Host "ok: PicooCamera.msi ($((Get-Item $Msi).Length) bytes)"
 
 # `wix build` defaults to x86 even when the authoring references
@@ -71,6 +75,8 @@ Write-Host "ok: PicooCamera.msi ($((Get-Item $Msi).Length) bytes)"
 $windowsInstaller = New-Object -ComObject WindowsInstaller.Installer
 $database = $null
 $summaryInfo = $null
+$productVersionView = $null
+$productVersionRecord = $null
 try {
     # Open the package read-only, then obtain its SummaryInformation stream from
     # the Database object. Database.SummaryInformation requires maxProperties=0
@@ -97,7 +103,21 @@ try {
         $summaryInfo,
         @([int]7)
     )
+    $productVersionQuery = 'SELECT `Value` FROM `Property` WHERE `Property` = ''ProductVersion'''
+    $productVersionView = $database.OpenView($productVersionQuery)
+    $productVersionView.Execute()
+    $productVersionRecord = $productVersionView.Fetch()
+    if ($null -eq $productVersionRecord) {
+        Write-Error "PicooCamera.msi does not contain ProductVersion"
+    }
+    $ProductVersion = [string]$productVersionRecord.StringData(1)
 } finally {
+    if ($null -ne $productVersionRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($productVersionRecord)
+    }
+    if ($null -ne $productVersionView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($productVersionView)
+    }
     if ($null -ne $summaryInfo) {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($summaryInfo)
     }
@@ -110,6 +130,10 @@ if (-not $templateSummary.StartsWith("x64;", [StringComparison]::OrdinalIgnoreCa
     Write-Error "PicooCamera.msi must be an x64 package; Template Summary is '$templateSummary'"
 }
 Write-Host "ok: PicooCamera.msi Template Summary is $templateSummary"
+if ($ProductVersion -ne $ExpectedMsiVersion) {
+    Write-Error "MSI ProductVersion '$ProductVersion' does not match generated version '$ExpectedMsiVersion'"
+}
+Write-Host "ok: PicooCamera.msi ProductVersion is $ProductVersion"
 
 # Post-build MSI smoke (REQ-PICOO-VCAM-004): COM registration is declarative WiX data.
 # The Rust cdylib does not expose or require self-registration through regsvr32.

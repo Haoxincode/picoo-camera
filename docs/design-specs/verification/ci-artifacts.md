@@ -83,13 +83,17 @@ windows-bundle/
 ├── picoo-vcam-ring-reader.exe     # Shared Frame Ring 诊断
 ├── PicooVirtualCameraSource.dll   # MF IMFMediaSource（UTF-16「Picoo Camera」已嵌入）
 └── msi/
-    └── PicooCamera.msi            # 与 windows-msi artifact 相同
+    ├── PicooCamera.msi            # 与 windows-msi artifact 相同
+    └── PicooCamera.version        # CI 单调递增的 MSI ProductVersion
 ```
 
 CI 在打包后运行 `scripts/verify_windows_bundle.ps1`：校验 exe/dll/msi 与产品 `.ico` 存在、
 EXE 可提取应用图标、DLL 含 UTF-16 `Picoo Camera`（REQ-VCAM-001），并扫描 MSI 含
 `PicooProductIcon`、CLSID、`InprocServer32` 与 `--register-vcam --no-wait`，同时禁止自注册
-CustomAction 与 `DllRegisterServer`（REQ-VCAM-004 / REQ-PICOO-UI-013）。松散 bundle 仅用于
+CustomAction 与 `DllRegisterServer`（REQ-VCAM-004 / REQ-PICOO-UI-013）；同时读取 MSI
+Property 表，确保 `ProductVersion` 与 `PicooCamera.version` 一致。CI 使用 workspace
+Major/Minor 加 `github.run_number` 生成三字段版本，保证后生成的安装包可以替换早期产物。
+松散 bundle 仅用于
 编译、导出与加载 smoke，不能写系统 COM 注册；**不**在 CI 上执行 `msiexec /i`（perMachine
 需 Win11 管理员真机验收）。
 
@@ -97,7 +101,7 @@ CustomAction 与 `DllRegisterServer`（REQ-VCAM-004 / REQ-PICOO-UI-013）。松�
 
 ```text
 android-release/
-├── app-release.apk                # com.picoo.camera v0.1.0, arm64-v8a
+├── app-release.apk                # com.picoo.camera v0.1.1, arm64-v8a
 └── app-release.aab
 ```
 

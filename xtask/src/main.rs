@@ -384,13 +384,18 @@ fn package(platform: PackagePlatform) -> Result<()> {
         PackagePlatform::Windows => {
             build(BuildPlatform::Windows)?;
             let sh = Shell::new()?;
+            let build_number = std::env::var("PICOO_BUILD_NUMBER").ok();
+            let msi_version =
+                windows_msi_version(env!("CARGO_PKG_VERSION"), build_number.as_deref())?;
             let stage_script = Path::new("installers/windows/stage.ps1");
             if stage_script.exists() {
                 cmd!(
                     sh,
                     "powershell -ExecutionPolicy Bypass -File installers/windows/stage.ps1"
                 )
+                .env("PICOO_WINDOWS_MSI_VERSION", &msi_version)
                 .run()?;
+                eprintln!("windows MSI product version: {msi_version}");
             } else {
                 eprintln!("windows package: stage.ps1 not found");
             }
@@ -424,6 +429,55 @@ fn package(platform: PackagePlatform) -> Result<()> {
             package_macos(&sh, MacosPackageMode::Unsigned)
         }
     }
+}
+
+/// Resolve the three-field version Windows Installer actually compares.
+///
+/// Local packages use the workspace SemVer. CI replaces the third field with
+/// GitHub's monotonically increasing workflow run number so every downloaded
+/// MSI is a real major upgrade instead of a side-by-side same-version product.
+fn windows_msi_version(package_version: &str, build_number: Option<&str>) -> Result<String> {
+    let numeric_version = package_version
+        .split(['-', '+'])
+        .next()
+        .unwrap_or(package_version);
+    let components = numeric_version.split('.').collect::<Vec<_>>();
+    if components.len() != 3 {
+        bail!("workspace package version must contain three numeric fields for Windows MSI");
+    }
+
+    let major = components[0]
+        .parse::<u16>()
+        .map_err(|_| anyhow::anyhow!("invalid Windows MSI major version in `{package_version}`"))?;
+    let minor = components[1]
+        .parse::<u16>()
+        .map_err(|_| anyhow::anyhow!("invalid Windows MSI minor version in `{package_version}`"))?;
+    let package_patch = components[2]
+        .parse::<u16>()
+        .map_err(|_| anyhow::anyhow!("invalid Windows MSI patch version in `{package_version}`"))?;
+    if major > 255 || minor > 255 {
+        bail!("Windows MSI major and minor versions must not exceed 255");
+    }
+
+    let build = match build_number {
+        Some(value) => {
+            let build = value.parse::<u16>().map_err(|_| {
+                anyhow::anyhow!("PICOO_BUILD_NUMBER must be an integer from 1 through 65535")
+            })?;
+            if build == 0 {
+                bail!("PICOO_BUILD_NUMBER must be greater than zero");
+            }
+            if build <= package_patch {
+                bail!(
+                    "PICOO_BUILD_NUMBER ({build}) must exceed workspace patch version ({package_patch})"
+                );
+            }
+            build
+        }
+        None => package_patch,
+    };
+
+    Ok(format!("{major}.{minor}.{build}"))
 }
 
 const MACOS_APP_BUNDLE_ID: &str = "com.haoxincode.picoo-camera";
@@ -512,9 +566,10 @@ fn build_ios(sh: &Shell) -> Result<()> {
     if !project.is_dir() {
         bail!("iOS Xcode project is missing {}", project.display());
     }
+    let (marketing_version, build_number) = apple_bundle_versions()?;
     cmd!(
         sh,
-        "xcodebuild -project {project} -target PicooCamera -configuration Debug -sdk iphonesimulator -arch arm64 CODE_SIGNING_ALLOWED=NO CONFIGURATION_BUILD_DIR={ios_app_dir} OBJROOT={ios_obj_dir} SYMROOT={ios_products_dir} PICOO_CORE_XCFRAMEWORK_PATH={xcframework} build"
+        "xcodebuild -project {project} -target PicooCamera -configuration Debug -sdk iphonesimulator -arch arm64 CODE_SIGNING_ALLOWED=NO MARKETING_VERSION={marketing_version} CURRENT_PROJECT_VERSION={build_number} CONFIGURATION_BUILD_DIR={ios_app_dir} OBJROOT={ios_obj_dir} SYMROOT={ios_products_dir} PICOO_CORE_XCFRAMEWORK_PATH={xcframework} build"
     )
     .run()?;
 
@@ -562,7 +617,7 @@ fn build_macos(sh: &Shell) -> Result<()> {
     let object_dir = apple_dir.join("macos-obj");
     let products_dir = apple_dir.join("macos-products");
     let team_prefix = macos_team_identifier_prefix()?;
-    let (marketing_version, build_number) = macos_bundle_versions()?;
+    let (marketing_version, build_number) = apple_bundle_versions()?;
     if extension_dir.exists() {
         std::fs::remove_dir_all(&extension_dir)?;
     }
@@ -642,7 +697,7 @@ fn package_macos(sh: &Shell, mode: MacosPackageMode) -> Result<()> {
             "macOS Camera Extension App Group `{extension_group}` does not match `{MACOS_APP_GROUP_ID}`"
         );
     }
-    let (marketing_version, build_number) = macos_bundle_versions()?;
+    let (marketing_version, build_number) = apple_bundle_versions()?;
     let (signing_team_id, signing_team_prefix) = macos_signing_identifiers()?;
     // Packaging mode, not the presence of a Team ID, owns this runtime
     // behavior. `package macos` is always unsigned; only `release macos`
@@ -1085,10 +1140,12 @@ fn render_exact_placeholder(
     Ok(template.replace(placeholder, value))
 }
 
-fn macos_bundle_versions() -> Result<(String, String)> {
+fn apple_bundle_versions() -> Result<(String, String)> {
     let marketing_version =
         std::env::var("PICOO_RELEASE_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").into());
-    let build_number = std::env::var("PICOO_RELEASE_BUILD_NUMBER").unwrap_or_else(|_| "1".into());
+    let build_number = std::env::var("PICOO_RELEASE_BUILD_NUMBER")
+        .or_else(|_| std::env::var("PICOO_BUILD_NUMBER"))
+        .unwrap_or_else(|_| "2".into());
     validate_macos_marketing_version(&marketing_version)?;
     validate_macos_build_number(&build_number)?;
     Ok((marketing_version, build_number))
@@ -1811,8 +1868,8 @@ mod tests {
     use super::{
         ios_runtime_version, macos_team_identifier_prefix_for, render_macos_entitlements,
         render_macos_host_info, validate_macos_build_number, validate_macos_marketing_version,
-        MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER, MACOS_APP_BUNDLE_ID, MACOS_APP_GROUP_ID,
-        MACOS_APP_GROUP_PLACEHOLDER, MACOS_BUILD_NUMBER_PLACEHOLDER,
+        windows_msi_version, MACOS_APPLICATION_IDENTIFIER_PLACEHOLDER, MACOS_APP_BUNDLE_ID,
+        MACOS_APP_GROUP_ID, MACOS_APP_GROUP_PLACEHOLDER, MACOS_BUILD_NUMBER_PLACEHOLDER,
         MACOS_MARKETING_VERSION_PLACEHOLDER, MACOS_TEAM_IDENTIFIER_PLACEHOLDER,
         MACOS_UNSIGNED_BUILD_PLACEHOLDER,
     };
@@ -1865,6 +1922,28 @@ mod tests {
             ios_runtime_version("com.apple.CoreSimulator.SimRuntime.iOS-26-10")
                 > ios_runtime_version("com.apple.CoreSimulator.SimRuntime.iOS-26-9")
         );
+    }
+
+    #[test]
+    fn windows_ci_build_number_produces_a_real_msi_upgrade_version() {
+        assert_eq!(
+            windows_msi_version("0.1.1", Some("472")).expect("valid CI version"),
+            "0.1.472"
+        );
+        assert_eq!(
+            windows_msi_version("2.3.4-beta.1", None).expect("valid local version"),
+            "2.3.4"
+        );
+    }
+
+    #[test]
+    fn windows_msi_version_rejects_non_increasing_or_out_of_range_builds() {
+        for build in ["0", "4", "not-a-number", "65536"] {
+            assert!(windows_msi_version("1.2.4", Some(build)).is_err());
+        }
+        assert!(windows_msi_version("256.1.0", None).is_err());
+        assert!(windows_msi_version("1.256.0", None).is_err());
+        assert!(windows_msi_version("1.2", None).is_err());
     }
 
     #[test]

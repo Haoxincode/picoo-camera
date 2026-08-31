@@ -187,7 +187,7 @@
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CODE_SIGN_ENTITLEMENTS = PicooCameraExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				EXECUTABLE_NAME = PicooCameraExtension;
 				ENABLE_APP_SANDBOX = YES;
@@ -196,7 +196,7 @@
 				GCC_C_LANGUAGE_STANDARD = c17;
 				INFOPLIST_FILE = Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.haoxincode.picoo-camera.camera-extension";
 				PRODUCT_NAME = "com.haoxincode.picoo-camera.camera-extension";
 				REGISTER_APP_GROUPS = YES;
@@ -217,7 +217,7 @@
 				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
 				CODE_SIGN_ENTITLEMENTS = PicooCameraExtension.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				EXECUTABLE_NAME = PicooCameraExtension;
 				ENABLE_APP_SANDBOX = YES;
@@ -226,7 +226,7 @@
 				GCC_C_LANGUAGE_STANDARD = c17;
 				INFOPLIST_FILE = Info.plist;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.haoxincode.picoo-camera.camera-extension";
 				PRODUCT_NAME = "com.haoxincode.picoo-camera.camera-extension";
 				REGISTER_APP_GROUPS = YES;

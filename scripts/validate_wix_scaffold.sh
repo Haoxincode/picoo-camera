@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WXS="$ROOT/installers/windows/picoo-camera.wxs"
 BUILD_MSI="$ROOT/installers/windows/build-msi.ps1"
+CI_WORKFLOW="$ROOT/.github/workflows/ci.yml"
 VCAM_IDS="$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/mod.rs"
 VCAM_MANIFEST="$ROOT/extensions/windows-virtual-camera/mf-source/Cargo.toml"
 VCAM_RS="$ROOT/apps/desktop/src/vcam_register.rs"
@@ -34,6 +35,7 @@ need_re() {
 
 need "$WXS" 'Name="Picoo Camera"'
 need "$WXS" 'Manufacturer="Picoo"'
+need "$WXS" 'Version="$(PicooMsiVersion)"'
 need "$WXS" 'UpgradeCode="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E70"'
 need "$WXS" 'PicooVirtualCameraSource.dll'
 need "$WXS" 'picoo-desktop.exe'
@@ -77,6 +79,16 @@ need "$WXS" 'Icon Id="PicooProductIcon"'
 need "$WXS" 'ARPPRODUCTICON'
 need "$WXS" 'PicooCamera.ico'
 need "$BUILD_MSI" 'wix build $Wxs -arch x64'
+need "$BUILD_MSI" '$env:PICOO_WINDOWS_MSI_VERSION'
+need "$BUILD_MSI" '-d "PicooMsiVersion=$MsiVersion"'
+need "$BUILD_MSI" 'PicooCamera.version'
+need "$CI_WORKFLOW" 'PICOO_BUILD_NUMBER: ${{ github.run_number }}'
+if grep -qE 'Version="[0-9]+\.[0-9]+\.[0-9]+"' "$WXS"; then
+  echo "picoo-camera.wxs must not hard-code the MSI ProductVersion"
+  fail=1
+else
+  echo "ok: picoo-camera.wxs has no hard-coded ProductVersion"
+fi
 need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[1234]"'
 need "$WXS" 'Component Id="DesktopExe"'
 need "$WXS" 'Component Id="VcamDll"'
@@ -141,6 +153,8 @@ fi
 need "$VERIFY_PS1" "'RegisterVcamComDll'"
 need "$VERIFY_PS1" "'regsvr32.exe'"
 need "$VERIFY_PS1" "'DllRegisterServer'"
+need "$VERIFY_PS1" 'ProductVersion'
+need "$VERIFY_PS1" 'PicooCamera.version'
 
 if [[ "$fail" -ne 0 ]]; then
   echo "WiX scaffold validation failed"

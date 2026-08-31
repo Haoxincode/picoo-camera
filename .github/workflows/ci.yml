@@ -11,6 +11,10 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  # All platform packages from one run share a monotonic installation build.
+  PICOO_BUILD_NUMBER: ${{ github.run_number }}
+
 jobs:
   rust-and-docs:
     runs-on: ubuntu-latest

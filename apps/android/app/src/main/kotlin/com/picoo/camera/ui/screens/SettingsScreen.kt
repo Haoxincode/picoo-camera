@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import com.picoo.camera.BuildConfig
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
@@ -155,7 +156,7 @@ fun SettingsScreen(
                         SettingsValueRow(
                             title = "Picoo Camera",
                             description = "无线低延迟摄像头",
-                            value = "v0.1.0",
+                            value = "v${BuildConfig.VERSION_NAME}",
                             onClick = null,
                         )
                     }

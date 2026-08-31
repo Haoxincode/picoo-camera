@@ -6,6 +6,18 @@ $Bundle = Join-Path $Root "target/release/bundle"
 $OutDir = Join-Path $Bundle "msi"
 $Wxs = Join-Path $PSScriptRoot "picoo-camera.wxs"
 $RequireMsi = $env:PICOO_REQUIRE_MSI -eq "1"
+$MsiVersion = $env:PICOO_WINDOWS_MSI_VERSION
+
+if ([string]::IsNullOrWhiteSpace($MsiVersion)) {
+    Write-Error "PICOO_WINDOWS_MSI_VERSION is required; run cargo xtask package windows"
+}
+if ($MsiVersion -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$') {
+    Write-Error "PICOO_WINDOWS_MSI_VERSION must contain three numeric fields: $MsiVersion"
+}
+$MsiVersionFields = $MsiVersion.Split('.') | ForEach-Object { [uint32]$_ }
+if ($MsiVersionFields[0] -gt 255 -or $MsiVersionFields[1] -gt 255 -or $MsiVersionFields[2] -gt 65535) {
+    Write-Error "PICOO_WINDOWS_MSI_VERSION is outside Windows Installer limits: $MsiVersion"
+}
 
 if (-not (Test-Path (Join-Path $Bundle "picoo-desktop.exe"))) {
     Write-Error "Missing staged bundle. Run: cargo xtask package windows"
@@ -44,13 +56,14 @@ foreach ($ext in @(
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $Msi = Join-Path $OutDir "PicooCamera.msi"
+$VersionFile = Join-Path $OutDir "PicooCamera.version"
 
-Write-Host "Building MSI from $Wxs with bindpath Bundle=$Bundle"
-& wix build $Wxs -arch x64 -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle
+Write-Host "Building MSI $MsiVersion from $Wxs with bindpath Bundle=$Bundle"
+& wix build $Wxs -arch x64 -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle -d "PicooMsiVersion=$MsiVersion"
 if ($LASTEXITCODE -ne 0) {
     # WiX 7+ requires OSMF EULA acceptance (WIX7015).
     Write-Host "Retrying wix build with -acceptEula wix7 (WiX 7+)"
-    & wix build $Wxs -arch x64 -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle -acceptEula wix7
+    & wix build $Wxs -arch x64 -ext WixToolset.Firewall.wixext -ext WixToolset.Util.wixext -o $Msi -b Bundle=$Bundle -d "PicooMsiVersion=$MsiVersion" -acceptEula wix7
     if ($LASTEXITCODE -ne 0) {
         Write-Error "wix build failed with exit code $LASTEXITCODE"
     }
@@ -60,4 +73,5 @@ if (-not (Test-Path $Msi)) {
     Write-Error "MSI was not produced at $Msi"
 }
 
-Write-Host "MSI ready: $Msi"
+[System.IO.File]::WriteAllText($VersionFile, $MsiVersion)
+Write-Host "MSI ready: $Msi (ProductVersion $MsiVersion)"

@@ -2,6 +2,9 @@ import Observation
 import SwiftUI
 import UIKit
 
+private let picooAppVersion =
+    Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+
 struct ContentView: View {
     @Bindable var model: SenderAppModel
     @Environment(\.scenePhase) private var scenePhase
@@ -694,7 +697,7 @@ private struct SettingsSheet: View {
                 }
 
                 Section("关于") {
-                    LabeledContent("Picoo Camera", value: "v0.1.0")
+                    LabeledContent("Picoo Camera", value: "v\(picooAppVersion)")
                 }
             }
             .navigationTitle("手机端设置")

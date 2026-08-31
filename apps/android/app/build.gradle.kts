@@ -18,6 +18,17 @@ val picooCompileSdk = picooToolchain.getProperty("PICOO_ANDROID_PLATFORM")
     ?.removePrefix("android-")
     ?.toIntOrNull()
     ?: error("PICOO_ANDROID_PLATFORM must use the android-<api> form")
+val picooVersionName = Regex("""(?m)^version = "([0-9]+\.[0-9]+\.[0-9]+)"$""")
+    .find(workspaceRoot.resolve("Cargo.toml").readText())
+    ?.groupValues
+    ?.get(1)
+    ?: error("workspace package version is missing from Cargo.toml")
+val picooVersionCode = providers.environmentVariable("PICOO_BUILD_NUMBER")
+    .orElse("2")
+    .get()
+    .toIntOrNull()
+    ?.takeIf { it > 0 }
+    ?: error("PICOO_BUILD_NUMBER must be a positive Android versionCode")
 
 android {
     namespace = "com.picoo.camera"
@@ -30,8 +41,8 @@ android {
         applicationId = "com.picoo.camera"
         minSdk = 29
         targetSdk = picooCompileSdk
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = picooVersionCode
+        versionName = picooVersionName
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -63,6 +74,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

@@ -5124,7 +5124,7 @@ checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
 name = "picoo-desktop"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dispatch2",
  "gpui",
@@ -5156,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-diagnostics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "picoo-pairing",
  "picoo-protocol",
@@ -5167,7 +5167,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-discovery"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "local-ip-address",
  "mdns-sd",
@@ -5178,7 +5178,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-ffi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cbindgen 0.27.0",
  "jni",
@@ -5196,7 +5196,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-frame-hub"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "libc",
@@ -5210,7 +5210,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-jitter"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "proptest",
@@ -5218,7 +5218,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-media-decode"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "objc2-core-foundation",
@@ -5237,7 +5237,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-metrics"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5245,7 +5245,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-packet"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "picoo-protocol",
@@ -5255,7 +5255,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-pairing"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5266,7 +5266,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
@@ -5280,14 +5280,14 @@ dependencies = [
 
 [[package]]
 name = "picoo-rate-control"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "picoo-metrics",
 ]
 
 [[package]]
 name = "picoo-receiver"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "openh264",
@@ -5310,7 +5310,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-sender"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "picoo-metrics",
@@ -5328,7 +5328,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-session"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5337,7 +5337,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "picoo-packet",
@@ -5350,7 +5350,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-transport"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "picoo-protocol",
@@ -5363,7 +5363,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-vcam-ring-reader"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "picoo-frame-hub",
  "picoo-receiver",
@@ -5373,7 +5373,7 @@ dependencies = [
 
 [[package]]
 name = "picoo-windows-vcam-source"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "picoo-frame-hub",
  "windows 0.62.2",
@@ -9425,7 +9425,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",

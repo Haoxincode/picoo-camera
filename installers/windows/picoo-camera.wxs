@@ -6,7 +6,7 @@
   <Package
       Name="Picoo Camera"
       Manufacturer="Picoo"
-      Version="0.1.0"
+      Version="$(PicooMsiVersion)"
       UpgradeCode="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E70"
       Scope="perMachine">
     <MajorUpgrade DowngradeErrorMessage="A newer version of Picoo Camera is already installed." />
