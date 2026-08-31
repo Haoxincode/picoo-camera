@@ -4,7 +4,7 @@ import android.graphics.SurfaceTexture
 import android.util.Size
 
 /**
- * Camera2 + MediaCodec capture configuration (REQ-PICOO-MEDIA-001).
+ * Camera2 + platform compositor + MediaCodec capture configuration (MEDIA-001 / MEDIA-013).
  */
 enum class LensFacing {
     Back,

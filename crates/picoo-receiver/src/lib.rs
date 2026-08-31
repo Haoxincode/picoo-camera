@@ -1442,6 +1442,7 @@ impl ReceiverSession {
         nv12: &[u8],
     ) -> Result<(), ReceiverError> {
         // REQ-PICOO-MEDIA-009: rotate pixels to upright before FrameHub / Shared Ring / VCam.
+        // REQ-PICOO-MEDIA-004: then apply remote StreamConfig.mirrored in upright space.
         let rotated_buf =
             picoo_frame_hub::nv12_rotate_clockwise(width, height, stride, rotation, nv12);
         let (width, height, stride, base_pixels): (u32, u32, u32, &[u8]) = match &rotated_buf {
@@ -1449,31 +1450,6 @@ impl ReceiverSession {
             None => (width, height, stride, nv12),
         };
 
-        // REQ-PICOO-MEDIA-013: keep the negotiated desktop output landscape 16:9.
-        // A portrait phone therefore becomes an upright central cover crop rather
-        // than changing the VCam geometry to 9:16.
-        let target_geometry = self.current_stream_config.as_ref().map(|config| {
-            (
-                config.width.max(config.height),
-                config.width.min(config.height),
-            )
-        });
-        let normalized_buf = target_geometry.and_then(|(target_width, target_height)| {
-            picoo_frame_hub::nv12_center_crop_scale(
-                width,
-                height,
-                stride,
-                target_width,
-                target_height,
-                base_pixels,
-            )
-        });
-        let (width, height, stride, base_pixels): (u32, u32, u32, &[u8]) = match &normalized_buf {
-            Some((ow, oh, os, buf)) => (*ow, *oh, *os, buf.as_slice()),
-            None => (width, height, stride, base_pixels),
-        };
-
-        // REQ-PICOO-MEDIA-004: mirror after orientation and crop normalization.
         let mirrored = self
             .current_stream_config
             .as_ref()

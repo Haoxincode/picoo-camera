@@ -14,14 +14,21 @@ Picoo Camera 第一版固定 H.264 480p30 / 720p30 / 1080p30。媒体路径涉�
 ```text
 Camera2 Capture Session
   ├── Local Preview Surface
-  └── MediaCodec Input Surface (H.264)
+  └── SurfaceTexture (OES)
+        ↓ EGL/GLES 旋转 + 中央 cover 裁切
+        ↓ 固定横向 16:9 MediaCodec Input Surface (H.264)
         ↓
 Rust Sender Core (Packetizer / Session / Rate Control)
         ↓
 QUIC Datagram
 ```
 
-- 优先硬件编码；使用 `MediaCodec.createInputSurface()` 直接将摄像头输出送入编码器。
+- 优先硬件编码；使用 `MediaCodec.createInputSurface()`，由平台 EGL/GLES 合成器把 Camera2 OES
+  纹理写入编码器，不让原始像素跨 FFI。合成器必须与 Camera2/MediaCodec generation 一起创建、
+  失效和释放，不得在旧编码器 Surface 上继续交换缓冲。
+- Android 在编码前按传感器方向、显示方向和前后摄像头计算唯一变换，输出始终为已经直立的横向
+  480p/720p/1080p 16:9。横持尽量使用完整画面；竖持在直立空间中取中央 cover 区域。编码后的
+  `StreamConfig.rotation` 固定为 `0`，Receiver 不为旧 Android Sender 保留二次裁切兼容。
 - MediaCodec 的释放、创建、配置和启动必须在同一 codec 线程串行执行；旧实例完全释放后才能创建新实例，以兼容只支持单个硬件 H.264 encoder 的设备。
 - 第一版不使用 CameraX Recorder 作为实时传输核心。
 
@@ -119,7 +126,9 @@ Kotlin/Swift 的稳定状态码由 `SenderStatus` 生成，CI 以 `cargo xtask g
 
 - 默认：前置摄像头本机预览镜像；传输到会议软件的画面不镜像。
 - 用户可手动开启远端镜像。
-- 视频帧必须携带旋转和方向信息；桌面端负责输出会议软件可稳定消费的方向与比例。
+- Android Sender 在编码前将方向和横向 16:9 比例规范化；其视频帧声明 `rotation = 0`。
+- Receiver 仍消费协议方向字段以支持其他 Sender 平台，但不得为旧 Android Sender 推断方向或执行
+  中央裁切；会议软件接收的 Android 画面几何以 Sender 编码结果为准。
 
 ### 解码消费规则
 
@@ -140,6 +149,11 @@ Kotlin/Swift 的稳定状态码由 `SenderStatus` 生成，CI 以 `cargo xtask g
 ### CameraX Recorder 作为 Android 实时核心
 
 不采用。该 API 偏向录像文件，容器与编码格式控制不足以支撑低延迟 QUIC Datagram 路径。
+
+### Receiver 对 Android 竖屏帧二次裁切
+
+不采用。Receiver 无法与手机构图界面共享同一变换，而且会在编码并传输无效区域后再次缩放，
+浪费码率并让所有桌面平台承担 Sender 的输出契约。方向与构图应在 Android 编码前一次完成。
 
 ### Receiver 在 GPUI 或虚拟摄像头进程内重复解码
 

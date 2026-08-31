@@ -29,9 +29,7 @@ import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
-/**
- * Camera2 capture session → MediaCodec InputSurface hardware H.264 (REQ-PICOO-MEDIA-001).
- */
+/** Camera2 → OES/EGL compositor → MediaCodec InputSurface H.264 (MEDIA-001 / MEDIA-013). */
 class Camera2MediaEncoder(
     context: Context,
     initialProfile: CaptureProfile = CaptureProfile(),
@@ -79,8 +77,10 @@ class Camera2MediaEncoder(
     @Volatile private var captureSession: CameraCaptureSession? = null
     @Volatile private var mediaCodec: MediaCodec? = null
     @Volatile private var codecInputSurface: Surface? = null
+    @Volatile private var encodingCompositor: CameraEncodingCompositor? = null
     @Volatile private var selectedCameraId: String? = null
     @Volatile private var activePhysicalCameraId: String? = null
+    @Volatile private var displayRotationDegrees: Int = 0
     private var captureSize: Size = profile.resolution
 
     private var frameCount = 0
@@ -100,6 +100,7 @@ class Camera2MediaEncoder(
     private data class DetachedCodec(
         val codec: MediaCodec?,
         val surface: Surface?,
+        val compositor: CameraEncodingCompositor?,
         val nextGeneration: Long,
     )
 
@@ -144,6 +145,14 @@ class Camera2MediaEncoder(
         if (clamped == exposureCompensation) return
         exposureCompensation = clamped
         reissueRepeatingRequest()
+    }
+
+    /** Update the display-relative transform used before frames enter MediaCodec. */
+    fun setDisplayRotationDegrees(rotationDegrees: Int) {
+        val normalized = ((rotationDegrees % 360) + 360) % 360
+        if (displayRotationDegrees == normalized) return
+        displayRotationDegrees = normalized
+        encodingCompositor?.updateRotation(currentEncodingRotationDegrees())
     }
 
     override fun bindPreviewSurface(surfaceTexture: SurfaceTexture) {
@@ -207,7 +216,7 @@ class Camera2MediaEncoder(
                 return@post
             }
             val camera = cameraDevice ?: return@post
-            if (codecInputSurface == null) {
+            if (encodingCompositor == null) {
                 return@post
             }
             val codecGenerationSnapshot = codecGeneration.get()
@@ -488,12 +497,37 @@ class Camera2MediaEncoder(
                 return@post
             }
             var inputSurface: Surface? = null
+            var compositor: CameraEncodingCompositor? = null
             try {
                 if (!isCurrentCodecTransition(generation, camera, cameraGenerationSnapshot)) {
                     runCatching { codec.release() }
                     return@post
                 }
                 inputSurface = codec.createInputSurface()
+                compositor = CameraEncodingCompositor.create(
+                    encoderSurface = inputSurface,
+                    cameraBufferSize = captureSize,
+                    outputSize = encodeSize,
+                    initialRotationDegrees = currentEncodingRotationDegrees(),
+                    onError = { message ->
+                        reportCodecStartFailure(
+                            generation,
+                            camera,
+                            cameraGenerationSnapshot,
+                            message,
+                        )
+                    },
+                ).getOrElse { error ->
+                    runCatching { inputSurface.release() }
+                    runCatching { codec.release() }
+                    reportCodecStartFailure(
+                        generation,
+                        camera,
+                        cameraGenerationSnapshot,
+                        "Encoding compositor start failed: ${error.message}",
+                    )
+                    return@post
+                }
                 codec.setCallback(
                     createCodecCallback(generation, generationEpoch, encodeSize.height),
                     codecHandler,
@@ -502,13 +536,16 @@ class Camera2MediaEncoder(
                     if (isCurrentCodecTransition(generation, camera, cameraGenerationSnapshot)) {
                         mediaCodec = codec
                         codecInputSurface = inputSurface
+                        encodingCompositor = compositor
                         true
                     } else {
                         false
                     }
                 }
                 if (!accepted) {
-                    releaseCodecResources(DetachedCodec(codec, inputSurface, generation))
+                    releaseCodecResources(
+                        DetachedCodec(codec, inputSurface, compositor, generation),
+                    )
                     return@post
                 }
                 codec.start()
@@ -516,8 +553,11 @@ class Camera2MediaEncoder(
                 synchronized(codecLifecycleLock) {
                     if (mediaCodec === codec) mediaCodec = null
                     if (codecInputSurface === inputSurface) codecInputSurface = null
+                    if (encodingCompositor === compositor) encodingCompositor = null
                 }
-                releaseCodecResources(DetachedCodec(codec, inputSurface, generation))
+                releaseCodecResources(
+                    DetachedCodec(codec, inputSurface, compositor, generation),
+                )
                 reportCodecStartFailure(
                     generation,
                     camera,
@@ -556,14 +596,14 @@ class Camera2MediaEncoder(
         }
     }
 
-    /** Create / replace the Camera2 session using preview (optional) + codec InputSurface. */
+    /** Create / replace Camera2 session using preview + compositor OES input. */
     private fun rebuildCaptureSession(
         camera: CameraDevice,
         codecGenerationSnapshot: Long = codecGeneration.get(),
     ) {
         closeCaptureSession()
         val sessionGeneration = captureSessionGeneration.incrementAndGet()
-        var codecSurfaceMissing = false
+        var encodingSurfaceMissing = false
         runCatching {
             synchronized(outputSurfaceLock) {
                 if (sessionGeneration != captureSessionGeneration.get() ||
@@ -573,8 +613,8 @@ class Camera2MediaEncoder(
                 ) {
                     return@synchronized
                 }
-                val codecSurface = codecInputSurface ?: run {
-                    codecSurfaceMissing = true
+                val encodingTarget = encodingCompositor?.cameraInputSurface ?: run {
+                    encodingSurfaceMissing = true
                     return@synchronized
                 }
                 val previewTarget = previewSurface
@@ -588,7 +628,13 @@ class Camera2MediaEncoder(
                             },
                         )
                     }
-                    add(OutputConfiguration(codecSurface))
+                    add(
+                        OutputConfiguration(encodingTarget).apply {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
+                            }
+                        },
+                    )
                 }
                 val callback = object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
@@ -610,7 +656,7 @@ class Camera2MediaEncoder(
                         val request = buildCaptureRequest(
                             camera = camera,
                             previewTarget = previewTarget,
-                            codecTarget = codecSurface,
+                            encodingTarget = encodingTarget,
                         ).getOrElse { error ->
                             session.close()
                             if (isCurrentCaptureSession(
@@ -681,24 +727,24 @@ class Camera2MediaEncoder(
                 fail("createCaptureSession failed: ${it.message}")
             }
         }
-        if (codecSurfaceMissing &&
+        if (encodingSurfaceMissing &&
             sessionGeneration == captureSessionGeneration.get() &&
             codecGenerationSnapshot == codecGeneration.get() &&
             camera === cameraDevice &&
             _state.get() != CaptureState.Idle
         ) {
-            fail("Codec input surface missing")
+            fail("Encoding compositor input surface missing")
         }
     }
 
     private fun buildCaptureRequest(
         camera: CameraDevice,
         previewTarget: Surface?,
-        codecTarget: Surface,
+        encodingTarget: Surface,
     ): Result<CaptureRequest> = runCatching {
             camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 previewTarget?.let { addTarget(it) }
-                addTarget(codecTarget)
+                addTarget(encodingTarget)
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(profile.targetFps, profile.targetFps))
                 if (!exposureCompensationRange.isEmpty()) {
@@ -748,8 +794,8 @@ class Camera2MediaEncoder(
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
         val previewTarget = previewSurface
-        val codecTarget = codecInputSurface ?: return
-        val request = buildCaptureRequest(camera, previewTarget, codecTarget).getOrElse {
+        val encodingTarget = encodingCompositor?.cameraInputSurface ?: return
+        val request = buildCaptureRequest(camera, previewTarget, encodingTarget).getOrElse {
             lastError = "exposure request failed: ${it.message}"
             return
         }
@@ -776,7 +822,7 @@ class Camera2MediaEncoder(
         generationHeight: Int,
     ) = object : MediaCodec.Callback() {
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
-            // InputSurface mode: camera feeds encoder directly.
+            // InputSurface mode: the EGL compositor feeds the encoder.
         }
 
         override fun onOutputBufferAvailable(
@@ -941,14 +987,12 @@ class Camera2MediaEncoder(
         }
     }
 
-    fun sensorOrientationDegrees(): Int {
-        val cameraId = selectedCameraId ?: return 0
-        return runCatching {
-            cameraManager
-                .getCameraCharacteristics(cameraId)
-                .get(CameraCharacteristics.SENSOR_ORIENTATION)
-        }.getOrNull() ?: 0
-    }
+    private fun currentEncodingRotationDegrees(): Int =
+        StreamOrientation.relativeRotationDegrees(
+            sensorOrientationDegrees = previewTransformInfo.sensorOrientationDegrees,
+            displayRotationDegrees = displayRotationDegrees,
+            frontFacing = previewTransformInfo.lensFacing == LensFacing.Front,
+        )
 
     /** Refresh dynamic camera orientation (API 32+ fold state / display reconfiguration). */
     fun refreshPreviewTransformInfo(): PreviewTransformInfo {
@@ -966,7 +1010,10 @@ class Camera2MediaEncoder(
             sensorOrientationDegrees =
                 characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0,
             lensFacing = facing,
-        ).also { previewTransformInfo = it }
+        ).also {
+            previewTransformInfo = it
+            encodingCompositor?.updateRotation(currentEncodingRotationDegrees())
+        }
     }
 
     private fun findCameraId(facing: LensFacing): String? {
@@ -1030,15 +1077,16 @@ class Camera2MediaEncoder(
         DetachedCodec(
             codec = mediaCodec.also { mediaCodec = null },
             surface = codecInputSurface.also { codecInputSurface = null },
+            compositor = encodingCompositor.also { encodingCompositor = null },
             nextGeneration = generation,
         )
     }
 
     private fun releaseCodecResources(detached: DetachedCodec) {
         synchronized(outputSurfaceLock) {
-            // Releasing MediaCodec can invalidate its InputSurface before the
-            // Java Surface wrapper is released, so the complete teardown must
-            // stay mutually exclusive with Camera2 target construction.
+            // Stop EGL swaps and release Camera2's OES target before invalidating
+            // the MediaCodec InputSurface it renders into.
+            runCatching { detached.compositor?.close() }
             runCatching { detached.codec?.stop() }
             runCatching { detached.codec?.release() }
             runCatching { detached.surface?.release() }

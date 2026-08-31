@@ -44,7 +44,6 @@ import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.StreamResolution
-import com.picoo.camera.media.StreamOrientation
 import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.network.WifiNetworkInfo
@@ -350,6 +349,7 @@ private fun SenderHomeScreen(
     }
 
     fun applyStreamConfigToSender() {
+        encoder.setDisplayRotationDegrees(displayRotationDegrees())
         val width = encoder.profile.resolution.width
         val height = encoder.profile.resolution.height
         val rustBitrate = PicooNative.readSenderSnapshot(senderHandle).currentBitrateBps
@@ -366,11 +366,8 @@ private fun SenderHomeScreen(
             fps = 30,
             bitrateBps = bitrate,
             mirrored = remoteMirrored,
-            rotation = StreamOrientation.relativeRotationDegrees(
-                sensorOrientationDegrees = encoder.sensorOrientationDegrees(),
-                displayRotationDegrees = displayRotationDegrees(),
-                frontFacing = encoder.profile.lensFacing == LensFacing.Front,
-            ),
+            // Android compositor already emits upright landscape pixels.
+            rotation = 0,
             sps = sets?.first,
             pps = sets?.second,
         )
@@ -1121,6 +1118,7 @@ private fun SenderHomeScreen(
                     resetToDevices()
                 },
                 onPreviewSurfaceAvailable = { surface ->
+                    encoder.setDisplayRotationDegrees(displayRotationDegrees())
                     encoder.bindPreviewSurface(surface)
                     previewTransformInfo = encoder.previewTransformInfo
                     encoderState = encoder.state
@@ -1130,8 +1128,8 @@ private fun SenderHomeScreen(
                     encoder.unbindPreviewSurface(surfaceTexture)
                 },
                 onPreviewDisplayChanged = {
+                    encoder.setDisplayRotationDegrees(displayRotationDegrees())
                     previewTransformInfo = encoder.refreshPreviewTransformInfo()
-                    streamConfigDirty.set(true)
                 },
             )
         }
