@@ -1,0 +1,154 @@
+use std::time::Duration;
+
+use picoo_sender::SenderSession;
+use picoo_transport::{Endpoint, QuicSenderTransport};
+
+use crate::{run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession};
+
+use super::use_stub_decoder;
+
+#[test]
+fn decoder_is_flushed_at_every_session_teardown_boundary() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    struct FlushCounter(Arc<AtomicUsize>);
+
+    impl picoo_media_decode::AccessUnitDecoder for FlushCounter {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
+        {
+            Ok(None)
+        }
+
+        fn flush(
+            &mut self,
+        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
+        {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(None)
+        }
+    }
+
+    let flushes = Arc::new(AtomicUsize::new(0));
+    let mut receiver = ReceiverSession::new();
+    receiver.set_decoder_for_test(Box::new(FlushCounter(Arc::clone(&flushes))));
+
+    receiver
+        .inject_peer_disconnect_for_test()
+        .expect("peer disconnect flush");
+    assert_eq!(flushes.load(Ordering::SeqCst), 1);
+
+    receiver.set_permit_unpaired_video(true);
+    receiver
+        .handle_stop_stream(picoo_transport::SessionId(1))
+        .expect("StopStream flush");
+    assert_eq!(flushes.load(Ordering::SeqCst), 2);
+
+    receiver.close();
+    assert_eq!(flushes.load(Ordering::SeqCst), 3);
+}
+
+#[test]
+fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recovery() {
+    struct AlwaysFails;
+
+    impl picoo_media_decode::AccessUnitDecoder for AlwaysFails {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
+        {
+            Err(picoo_media_decode::DecodeError::Platform(
+                "fixture failure".into(),
+            ))
+        }
+    }
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_decoder_for_test(Box::new(AlwaysFails));
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"broken-au"))
+        .expect("a media failure must not terminate the receiver pump");
+    assert_eq!(receiver.stats().access_units, 1);
+    assert_eq!(receiver.stats().decoded_frames, 0);
+    assert_eq!(
+        receiver.last_media_error(),
+        Some("platform decoder: fixture failure")
+    );
+
+    use_stub_decoder(&mut receiver);
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"recovered-au"))
+        .expect("decoder recovery");
+    assert_eq!(receiver.stats().decoded_frames, 1);
+    assert_eq!(receiver.last_media_error(), None);
+}
+
+#[test]
+fn loopback_sender_to_receiver_frame_hub() {
+    let payload = b"test-access-unit";
+    let frame = run_loopback_access_unit(payload).expect("loopback");
+    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+}
+
+#[test]
+fn single_decode_per_access_unit_into_frame_hub() {
+    // REQ-PICOO-MEDIA-006: one decode invocation per reassembled AU (hub fans out).
+    let payload = b"single-decode-au";
+    let mut receiver = ReceiverSession::new();
+    use_stub_decoder(&mut receiver);
+    receiver.set_jitter_target_ms(0);
+    receiver.set_permit_unpaired_video(true);
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+
+    for _ in 0..500 {
+        receiver.pump().expect("rx");
+        sender.pump().expect("tx");
+        if sender.is_connected() && receiver.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    sender
+        .ingest_and_flush_unchecked_for_test(payload, true, 1, 1)
+        .expect("ingest");
+    for _ in 0..200 {
+        receiver.pump().expect("rx");
+        sender.pump().ok();
+        if receiver.stats().access_units > 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let stats = receiver.stats();
+    assert_eq!(stats.access_units, 1);
+    assert_eq!(stats.decode_invocations, 1);
+    assert!(receiver.latest_frame().is_some());
+}
+
+#[test]
+fn paired_loopback_reaches_frame_hub_without_unpaired_bypass() {
+    let payload = b"paired-product-path-au";
+    let frame = run_paired_loopback_access_unit(payload).expect("paired loopback");
+    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+}

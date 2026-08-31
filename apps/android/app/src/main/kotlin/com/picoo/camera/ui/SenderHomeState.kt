@@ -10,6 +10,7 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LocalPreviewMirror
+import com.picoo.camera.media.PreviewTransformInfo
 import com.picoo.camera.ui.screens.WaitOutcome
 
 /**
@@ -22,6 +23,7 @@ import com.picoo.camera.ui.screens.WaitOutcome
 @Stable
 class SenderHomeState {
     var encoderState by mutableStateOf(CaptureState.Idle)
+    var previewTransformInfo by mutableStateOf(PreviewTransformInfo())
     var errorText by mutableStateOf<String?>(null)
     var hostText by mutableStateOf("127.0.0.1")
     var portText by mutableStateOf("4433")

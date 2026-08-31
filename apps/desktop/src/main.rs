@@ -15,7 +15,7 @@ mod startup;
 mod tray;
 
 #[cfg(feature = "gpui-ui")]
-mod gpui_app;
+mod gpui;
 #[cfg(all(feature = "gpui-ui", target_os = "macos"))]
 mod macos_system_extension;
 #[cfg(feature = "gpui-ui")]
@@ -77,7 +77,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--gpui") {
         #[cfg(feature = "gpui-ui")]
         {
-            if let Err(err) = gpui_app::run_gpui_app() {
+            if let Err(err) = gpui::run_gpui_app() {
                 eprintln!("GPUI app failed: {err}");
                 std::process::exit(1);
             }
@@ -111,7 +111,7 @@ fn main() {
 
     #[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
     if args.len() <= 1 {
-        if let Err(err) = gpui_app::run_gpui_app() {
+        if let Err(err) = gpui::run_gpui_app() {
             eprintln!("GPUI app failed: {err}");
             std::process::exit(1);
         }

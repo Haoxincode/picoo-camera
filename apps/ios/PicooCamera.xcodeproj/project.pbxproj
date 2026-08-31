@@ -15,11 +15,16 @@
 		A10000000000000000000007 /* SystemConfiguration.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* SystemConfiguration.framework */; };
 		A10000000000000000000008 /* SenderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* SenderModels.swift */; };
 		A10000000000000000000009 /* SenderAppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* SenderAppModel.swift */; };
+		A10000000000000000000021 /* SenderSessionTick.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000021 /* SenderSessionTick.swift */; };
+		A10000000000000000000022 /* SenderDiscoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000022 /* SenderDiscoveryCoordinator.swift */; };
+		A10000000000000000000023 /* SenderEncoderApplyCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000023 /* SenderEncoderApplyCoordinator.swift */; };
 		A1000000000000000000000A /* CameraCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* CameraCapture.swift */; };
 		A1000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* Assets.xcassets */; };
 		A1000000000000000000000C /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* AVFoundation.framework */; };
 		A1000000000000000000000D /* Network.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* Network.framework */; };
 		A1000000000000000000000E /* VideoEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000011 /* VideoEncoder.swift */; };
+		A10000000000000000000024 /* VideoEncoderPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000024 /* VideoEncoderPipeline.swift */; };
+		A10000000000000000000025 /* VideoEncoderOutput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000025 /* VideoEncoderOutput.swift */; };
 		A1000000000000000000000F /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* VideoToolbox.framework */; };
 		A10000000000000000000010 /* SenderMediaPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* SenderMediaPipeline.swift */; };
 		A10000000000000000000020 /* PicooDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000020 /* PicooDesignSystem.swift */; };
@@ -48,11 +53,16 @@
 		A20000000000000000000009 /* SystemConfiguration.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SystemConfiguration.framework; path = System/Library/Frameworks/SystemConfiguration.framework; sourceTree = SDKROOT; };
 		A2000000000000000000000B /* SenderModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderModels.swift; sourceTree = "<group>"; };
 		A2000000000000000000000C /* SenderAppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderAppModel.swift; sourceTree = "<group>"; };
+		A20000000000000000000021 /* SenderSessionTick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderSessionTick.swift; sourceTree = "<group>"; };
+		A20000000000000000000022 /* SenderDiscoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderDiscoveryCoordinator.swift; sourceTree = "<group>"; };
+		A20000000000000000000023 /* SenderEncoderApplyCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderEncoderApplyCoordinator.swift; sourceTree = "<group>"; };
 		A2000000000000000000000D /* CameraCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCapture.swift; sourceTree = "<group>"; };
 		A2000000000000000000000E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000000000000000000000F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
 		A20000000000000000000010 /* Network.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Network.framework; path = System/Library/Frameworks/Network.framework; sourceTree = SDKROOT; };
 		A20000000000000000000011 /* VideoEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoEncoder.swift; sourceTree = "<group>"; };
+		A20000000000000000000024 /* VideoEncoderPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoEncoderPipeline.swift; sourceTree = "<group>"; };
+		A20000000000000000000025 /* VideoEncoderOutput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoEncoderOutput.swift; sourceTree = "<group>"; };
 		A20000000000000000000012 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
 		A20000000000000000000013 /* SenderMediaPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderMediaPipeline.swift; sourceTree = "<group>"; };
 		A20000000000000000000020 /* PicooDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PicooDesignSystem.swift; sourceTree = "<group>"; };
@@ -100,8 +110,13 @@
 				A20000000000000000000003 /* PicooSenderSession.swift */,
 				A2000000000000000000000B /* SenderModels.swift */,
 				A2000000000000000000000C /* SenderAppModel.swift */,
+				A20000000000000000000021 /* SenderSessionTick.swift */,
+				A20000000000000000000022 /* SenderDiscoveryCoordinator.swift */,
+				A20000000000000000000023 /* SenderEncoderApplyCoordinator.swift */,
 				A2000000000000000000000D /* CameraCapture.swift */,
 				A20000000000000000000011 /* VideoEncoder.swift */,
+				A20000000000000000000024 /* VideoEncoderPipeline.swift */,
+				A20000000000000000000025 /* VideoEncoderOutput.swift */,
 				A20000000000000000000013 /* SenderMediaPipeline.swift */,
 				A2000000000000000000000E /* Assets.xcassets */,
 				A2000000000000000000000A /* Info.plist */,
@@ -220,8 +235,13 @@
 				A10000000000000000000003 /* PicooSenderSession.swift in Sources */,
 				A10000000000000000000008 /* SenderModels.swift in Sources */,
 				A10000000000000000000009 /* SenderAppModel.swift in Sources */,
+				A10000000000000000000021 /* SenderSessionTick.swift in Sources */,
+				A10000000000000000000022 /* SenderDiscoveryCoordinator.swift in Sources */,
+				A10000000000000000000023 /* SenderEncoderApplyCoordinator.swift in Sources */,
 				A1000000000000000000000A /* CameraCapture.swift in Sources */,
 				A1000000000000000000000E /* VideoEncoder.swift in Sources */,
+				A10000000000000000000024 /* VideoEncoderPipeline.swift in Sources */,
+				A10000000000000000000025 /* VideoEncoderOutput.swift in Sources */,
 				A10000000000000000000010 /* SenderMediaPipeline.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
