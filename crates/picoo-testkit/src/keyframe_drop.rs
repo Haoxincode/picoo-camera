@@ -70,6 +70,32 @@ impl<T: PicooTransport> PicooTransport for DropKeyframeTailTransport<T> {
         self.inner.send_video(session, packet)
     }
 
+    fn send_video_batch(
+        &mut self,
+        session: SessionId,
+        packets: Vec<VideoPacket>,
+    ) -> Result<(), TransportError> {
+        let mut forwarded = Vec::with_capacity(packets.len());
+        for packet in packets {
+            let is_key_tail = packet.flags.contains(VideoPacketFlags::KEYFRAME)
+                && packet.fragment_index > 0
+                && packet.fragment_count > 1;
+            if self.armed && is_key_tail {
+                self.dropped_tail_fragments += 1;
+            } else {
+                self.forwarded_video += 1;
+                forwarded.push(packet);
+            }
+        }
+        if forwarded.is_empty() {
+            Ok(())
+        } else {
+            // Preserve the inner transport's one-command-per-access-unit
+            // backpressure boundary after applying deterministic packet loss.
+            self.inner.send_video_batch(session, forwarded)
+        }
+    }
+
     fn poll_event(&mut self) -> Option<TransportEvent> {
         self.inner.poll_event()
     }
@@ -123,5 +149,44 @@ mod tests {
         t.send_video(session, tail).unwrap();
         assert_eq!(t.dropped_tail_fragments, 1);
         assert_eq!(t.forwarded_video, 1);
+    }
+
+    #[test]
+    fn batch_drop_preserves_one_forwarded_access_unit() {
+        let mut t = DropKeyframeTailTransport::new(MemoryTransport::new());
+        t.arm();
+        let session = t
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 9,
+            })
+            .expect("connect");
+        let _ = t.poll_event();
+        let head = VideoPacket {
+            version: VideoPacket::VERSION,
+            flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::START_OF_ACCESS_UNIT,
+            stream_epoch: 1,
+            frame_id: 1,
+            pts_us: 0,
+            fragment_index: 0,
+            fragment_count: 2,
+            payload: Bytes::from_static(b"k0"),
+        };
+        let tail = VideoPacket {
+            fragment_index: 1,
+            flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::END_OF_ACCESS_UNIT,
+            payload: Bytes::from_static(b"k1"),
+            ..head.clone()
+        };
+
+        t.send_video_batch(session, vec![head, tail])
+            .expect("filtered batch");
+
+        assert_eq!(t.dropped_tail_fragments, 1);
+        assert_eq!(t.forwarded_video, 1);
+        assert!(matches!(
+            t.poll_event(),
+            Some(TransportEvent::VideoPacket(_, packet)) if packet.fragment_index == 0
+        ));
     }
 }
