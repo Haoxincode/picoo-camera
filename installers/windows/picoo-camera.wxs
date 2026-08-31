@@ -109,7 +109,7 @@
       <Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73">
         <File Id="PicooRingReader" Source="!(bindpath.Bundle)\picoo-vcam-ring-reader.exe" KeyPath="yes" />
       </Component>
-      <!-- REQ-PICOO-VCAM-004 / PRD §19.3: UDP firewall for QUIC (port matches DEFAULT_QUIC_PORT). -->
+      <!-- REQ-PICOO-VCAM-004 / DISCOVERY-001: allow QUIC and DNS-SD discovery. -->
       <Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74">
         <RegistryValue
             Root="HKLM"
@@ -123,6 +123,13 @@
             Name="Picoo Camera QUIC"
             Protocol="udp"
             Port="4433"
+            Scope="any"
+            IgnoreFailure="yes" />
+        <fw:FirewallException
+            Id="PicooMdnsUdp"
+            Name="Picoo Camera Discovery"
+            Protocol="udp"
+            Port="5353"
             Scope="any"
             IgnoreFailure="yes" />
       </Component>

@@ -85,7 +85,9 @@ private fun TextureView.applyCameraTransform(
     frontFacing: Boolean,
     mirrorLocal: Boolean,
 ) {
-    surfaceTexture?.setDefaultBufferSize(bufferWidth, bufferHeight)
+    // A TextureView can be detached between Compose update and this call. Vendor
+    // SurfaceTexture implementations may throw instead of silently ignoring it.
+    runCatching { surfaceTexture?.setDefaultBufferSize(bufferWidth, bufferHeight) }
     val displayRotationDegrees = when (display?.rotation ?: Surface.ROTATION_0) {
         Surface.ROTATION_0 -> 0
         Surface.ROTATION_90 -> 90
@@ -104,12 +106,14 @@ private fun TextureView.applyCameraTransform(
     )
     val centerX = width / 2f
     val centerY = height / 2f
-    setTransform(
-        Matrix().apply {
-            setScale(transform.scaleX, transform.scaleY, centerX, centerY)
-            postRotate(transform.rotationDegrees, centerX, centerY)
-        },
-    )
+    runCatching {
+        setTransform(
+            Matrix().apply {
+                setScale(transform.scaleX, transform.scaleY, centerX, centerY)
+                postRotate(transform.rotationDegrees, centerX, centerY)
+            },
+        )
+    }
     // Mirror in display coordinates after rotation/crop; it never changes the encoded stream.
     pivotX = centerX
     pivotY = centerY

@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use thiserror::Error;
 
 use crate::types::{ReceiverAdvertisement, SERVICE_TYPE};
@@ -45,6 +45,17 @@ impl MdnsAdvertiser {
         let ip: IpAddr = host_ip
             .parse()
             .map_err(|_| DiscoveryError::InvalidHost(host_ip.into()))?;
+
+        // Advertise only on the interface that owns the LAN address selected by
+        // `local_advertise_ipv4`. Leaving the daemon on its all-interface default
+        // lets VPN/Hyper-V/WSL adapters become mDNS egress candidates on desktop
+        // platforms even though the TXT/A record contains the Wi-Fi address.
+        self.daemon
+            .disable_interface(IfKind::All)
+            .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+        self.daemon
+            .enable_interface(ip)
+            .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
 
         let hostname = format!("{}.local.", advertisement.receiver_id);
         let instance = advertisement.display_name.clone();

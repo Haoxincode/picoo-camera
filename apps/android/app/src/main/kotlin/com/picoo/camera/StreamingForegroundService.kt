@@ -11,7 +11,9 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 
 /**
  * Keeps the sender process alive while streaming — REQ-PICOO-UI-005 / PUC-005.
@@ -38,18 +40,28 @@ class StreamingForegroundService : Service() {
                 return START_NOT_STICKY
             }
             else -> {
-                acquireWakeLock()
-                val notification = buildNotification()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    startForeground(
-                        NOTIFICATION_ID,
-                        notification,
-                        ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,
-                    )
-                } else {
-                    startForeground(NOTIFICATION_ID, notification)
+                try {
+                    acquireWakeLock()
+                    val notification = buildNotification()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        startForeground(
+                            NOTIFICATION_ID,
+                            notification,
+                            ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,
+                        )
+                    } else {
+                        startForeground(NOTIFICATION_ID, notification)
+                    }
+                    return START_STICKY
+                } catch (error: RuntimeException) {
+                    // OEM Android builds may reject a camera FGS despite the Activity
+                    // being foreground. Keep the sender UI alive and surface the event
+                    // in a system bug report instead of crashing the process.
+                    Log.e(TAG, "Unable to start camera foreground service", error)
+                    releaseWakeLock()
+                    stopSelf()
+                    return START_NOT_STICKY
                 }
-                return START_STICKY
             }
         }
     }
@@ -121,14 +133,24 @@ class StreamingForegroundService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val ACTION_STOP = "com.picoo.camera.action.STOP_STREAMING"
 
-        fun start(context: Context) {
+        fun start(context: Context): Boolean {
             val intent = Intent(context, StreamingForegroundService::class.java)
-            context.startForegroundService(intent)
+            return runCatching {
+                ContextCompat.startForegroundService(context, intent)
+                true
+            }.onFailure { Log.e(TAG, "Unable to request camera foreground service", it) }
+                .getOrDefault(false)
         }
 
-        fun stop(context: Context) {
+        fun stop(context: Context): Boolean {
             val intent = Intent(context, StreamingForegroundService::class.java).setAction(ACTION_STOP)
-            context.startService(intent)
+            return runCatching {
+                context.startService(intent)
+                true
+            }.onFailure { Log.e(TAG, "Unable to stop camera foreground service", it) }
+                .getOrDefault(false)
         }
+
+        private const val TAG = "PicooStreamingService"
     }
 }

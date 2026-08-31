@@ -19,6 +19,7 @@ import android.media.MediaFormat
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Surface
@@ -219,7 +220,12 @@ class Camera2MediaEncoder(
         // Codec-only capture is allowed so STREAMING can encode before the
         // local preview SurfaceTexture is ready (REQ-PICOO-MEDIA-001).
         lastError = null
-        openCamera()
+        // CameraManager/OEM calls stay on the camera thread. Some vendor Camera2
+        // implementations throw synchronously while enumerating/opening cameras;
+        // never let that exception terminate the Compose main thread.
+        cameraHandler.post {
+            if (_state.get() == CaptureState.Opening) openCamera()
+        }
     }
 
     override fun stopPreview() {
@@ -338,51 +344,52 @@ class Camera2MediaEncoder(
     }
 
     private fun openCamera() {
-        if (
-            ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            fail("Camera permission is required")
-            return
-        }
-        val cameraId = findCameraId(profile.lensFacing) ?: run {
-            fail("No camera for ${profile.lensFacing}")
-            return
-        }
-        selectedCameraId = cameraId
-        activePhysicalCameraId = null
-        captureSize = chooseCaptureSize(cameraId, profile.resolution)
-        refreshPreviewTransformInfo()
-        synchronized(outputSurfaceLock) {
-            val surfaceTexture = previewSurfaceTexture
-            if (surfaceTexture != null) {
-                runCatching {
-                    surfaceTexture.setDefaultBufferSize(captureSize.width, captureSize.height)
-                }.onFailure {
-                    // A disappearing local TextureView must not terminate the
-                    // remote encoder. Drop only the invalid preview target;
-                    // the next SurfaceTexture callback will bind a fresh one.
-                    if (previewSurfaceTexture === surfaceTexture) {
-                        previewSurfaceTexture = null
-                        previewSurface?.release()
-                        previewSurface = null
+        try {
+            if (
+                ContextCompat.checkSelfPermission(appContext, Manifest.permission.CAMERA) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                fail("Camera permission is required")
+                return
+            }
+            val cameraId = findCameraId(profile.lensFacing) ?: run {
+                fail("No camera for ${profile.lensFacing}")
+                return
+            }
+            selectedCameraId = cameraId
+            activePhysicalCameraId = null
+            captureSize = chooseCaptureSize(cameraId, profile.resolution)
+            refreshPreviewTransformInfo()
+            synchronized(outputSurfaceLock) {
+                val surfaceTexture = previewSurfaceTexture
+                if (surfaceTexture != null) {
+                    runCatching {
+                        surfaceTexture.setDefaultBufferSize(captureSize.width, captureSize.height)
+                    }.onFailure {
+                        // A disappearing local TextureView must not terminate the
+                        // remote encoder. Drop only the invalid preview target;
+                        // the next SurfaceTexture callback will bind a fresh one.
+                        if (previewSurfaceTexture === surfaceTexture) {
+                            previewSurfaceTexture = null
+                            previewSurface?.release()
+                            previewSurface = null
+                        }
+                        lastError = "Preview surface resize failed: ${it.message}"
                     }
-                    lastError = "Preview surface resize failed: ${it.message}"
                 }
             }
-        }
-        refreshExposureRange(cameraId)
-        val openingProfile = profile
-        val openingStreamEpoch = streamEpoch
-
-        val generation = cameraGeneration.incrementAndGet()
-        runCatching {
+            refreshExposureRange(cameraId)
+            val openingProfile = profile
+            val openingStreamEpoch = streamEpoch
+            val generation = cameraGeneration.incrementAndGet()
             cameraManager.openCamera(
                 cameraId,
                 createCameraStateCallback(generation, openingProfile, openingStreamEpoch),
                 cameraHandler,
             )
-        }.onFailure { fail("openCamera failed: ${it.message}") }
+        } catch (error: Exception) {
+            fail("openCamera failed: ${error.message ?: error.javaClass.simpleName}")
+        }
     }
 
     private fun refreshExposureRange(cameraId: String) {
@@ -1000,7 +1007,7 @@ class Camera2MediaEncoder(
     private fun closeCaptureSession() {
         captureSessionGeneration.incrementAndGet()
         synchronized(cameraLifecycleLock) {
-            captureSession?.close()
+            runCatching { captureSession?.close() }
             captureSession = null
         }
     }
@@ -1008,7 +1015,7 @@ class Camera2MediaEncoder(
     private fun closeCameraDevice() {
         synchronized(cameraLifecycleLock) {
             cameraGeneration.incrementAndGet()
-            cameraDevice?.close()
+            runCatching { cameraDevice?.close() }
             cameraDevice = null
         }
     }
@@ -1039,10 +1046,15 @@ class Camera2MediaEncoder(
     }
 
     private fun fail(message: String) {
+        Log.e(TAG, message)
         lastError = message
         _state.set(CaptureState.Error)
         closeCaptureSession()
         closeCameraDevice()
         releaseCodec()
+    }
+
+    private companion object {
+        const val TAG = "Camera2MediaEncoder"
     }
 }

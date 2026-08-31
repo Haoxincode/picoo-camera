@@ -206,12 +206,16 @@ mod tests {
     }
 
     #[test]
-    fn default_quic_port_matches_wix_firewall() {
+    fn discovery_ports_match_wix_firewall() {
         assert_eq!(DEFAULT_QUIC_PORT, 4433);
         let wxs = include_str!("../../../installers/windows/picoo-camera.wxs");
         assert!(
             wxs.contains("Port=\"4433\""),
             "WiX FirewallException Port must equal DEFAULT_QUIC_PORT ({DEFAULT_QUIC_PORT})"
+        );
+        assert!(
+            wxs.contains("Port=\"5353\""),
+            "WiX FirewallException must allow mDNS/DNS-SD discovery on UDP 5353"
         );
     }
 }

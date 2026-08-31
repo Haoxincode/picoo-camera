@@ -107,12 +107,14 @@ need "$WXS" 'WixQuietExec'
 need "$WXS" 'xmlns:util='
 need "$WXS" 'UnregisterVcamOnRemove'
 need "$WXS" '--unregister-vcam'
-# LAN QUIC firewall exception scaffolding (PRD §19.3)
+# LAN QUIC and mDNS discovery firewall exception scaffolding (PRD §19.3 / DISCOVERY-001)
 need "$WXS" 'FirewallException'
 need "$WXS" 'xmlns:fw='
 need "$WXS" 'fw:FirewallException'
 need "$WXS" 'Port="4433"'
 need "$WXS" 'Picoo Camera QUIC'
+need "$WXS" 'Port="5353"'
+need "$WXS" 'Picoo Camera Discovery'
 need "$WXS" 'Protocol="udp"'
 
 # DEFAULT_QUIC_PORT in Rust must stay aligned with WiX FirewallException.
