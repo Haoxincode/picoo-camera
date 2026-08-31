@@ -88,6 +88,8 @@ pub struct SenderSession<T: PicooTransport> {
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
     status: SenderStatus,
+    /// Session state suspended by the platform camera permission gate.
+    permission_resume_status: Option<SenderStatus>,
     last_endpoint: Option<Endpoint>,
     reconnect_backoff: ReconnectBackoff,
     reconnect_after: Option<Instant>,
@@ -135,6 +137,7 @@ impl<T: PicooTransport> SenderSession<T> {
             trusted: TrustedDeviceStore::new(),
             trusted_store_path: None,
             status: SenderStatus::Disconnected,
+            permission_resume_status: None,
             last_endpoint: None,
             reconnect_backoff: ReconnectBackoff::default(),
             reconnect_after: None,
@@ -177,13 +180,19 @@ impl<T: PicooTransport> SenderSession<T> {
 
     /// Surface camera/mic permission gate to UI (REQ-PICOO-SESSION-001).
     pub fn mark_permission_required(&mut self) {
+        if self.status != SenderStatus::PermissionRequired {
+            self.permission_resume_status = Some(self.status);
+        }
         self.status = SenderStatus::PermissionRequired;
     }
 
     /// Clear permission gate once the host grants access (REQ-PICOO-SESSION-001).
     pub fn clear_permission_required(&mut self) {
         if self.status == SenderStatus::PermissionRequired {
-            self.status = SenderStatus::Disconnected;
+            self.status = self
+                .permission_resume_status
+                .take()
+                .unwrap_or(SenderStatus::Disconnected);
         }
     }
 
@@ -1128,13 +1137,10 @@ impl<T: PicooTransport> SenderSession<T> {
             return Err(SenderError::MediaNotReady);
         }
         let packets: Vec<VideoPacket> = self.pipeline.take_pending_packets();
-        let mut sent = 0usize;
-        for packet in packets {
-            self.transport
-                .send_video(session, packet)
-                .map_err(SenderError::Transport)?;
-            sent += 1;
-        }
+        let sent = packets.len();
+        self.transport
+            .send_video_batch(session, packets)
+            .map_err(SenderError::Transport)?;
         self.sent_datagrams += sent as u64;
         Ok(sent)
     }
@@ -1982,6 +1988,19 @@ mod tests {
         assert_eq!(session.status(), SenderStatus::PermissionRequired);
         session.clear_permission_required();
         assert_eq!(session.status(), SenderStatus::Disconnected);
+    }
+
+    #[test]
+    fn camera_permission_gate_resumes_live_session_without_reconnect() {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session.force_status_for_test(SenderStatus::Streaming);
+
+        session.mark_permission_required();
+        session.mark_permission_required();
+        assert_eq!(session.status(), SenderStatus::PermissionRequired);
+
+        session.clear_permission_required();
+        assert_eq!(session.status(), SenderStatus::Streaming);
     }
 
     #[test]

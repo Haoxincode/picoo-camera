@@ -18,9 +18,12 @@ use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
 use crate::{CloseReason, SessionId, TransportEvent, TransportLinkStats};
 
 const COMMAND_CAPACITY: usize = 64;
-const VIDEO_COMMAND_CAPACITY: usize = 512;
+// Capacity is measured in complete access units, not fragments. A deep video
+// queue directly becomes glass-to-glass latency under congestion.
+const VIDEO_COMMAND_CAPACITY: usize = 3;
 const VIDEO_EVENT_CAPACITY: usize = 512;
 const CONTROL_READ_BUFFER: usize = 4096;
+const DATAGRAM_BUFFER_SIZE: usize = 2 * 1024 * 1024;
 
 #[derive(Debug, Error)]
 pub enum QuicTransportError {
@@ -55,7 +58,7 @@ pub(crate) enum Command {
 #[derive(Debug)]
 struct VideoCommand {
     session: SessionId,
-    packet: VideoPacket,
+    packets: Vec<VideoPacket>,
 }
 
 #[derive(Default)]
@@ -175,13 +178,13 @@ impl TransportActor {
             })
     }
 
-    pub(crate) fn send_video(
+    pub(crate) fn send_video_batch(
         &self,
         session: SessionId,
-        packet: VideoPacket,
+        packets: Vec<VideoPacket>,
     ) -> Result<(), QuicTransportError> {
         self.video_commands
-            .try_send(VideoCommand { session, packet })
+            .try_send(VideoCommand { session, packets })
             .map_err(|error| match error {
                 mpsc::error::TrySendError::Full(_) => QuicTransportError::VideoBackpressure,
                 mpsc::error::TrySendError::Closed(_) => QuicTransportError::WorkerUnavailable,
@@ -237,8 +240,8 @@ fn transport_config() -> Arc<TransportConfig> {
     config
         .max_concurrent_uni_streams(VarInt::from_u32(4))
         .keep_alive_interval(Some(Duration::from_secs(5)))
-        .datagram_receive_buffer_size(Some(2 * 1024 * 1024))
-        .datagram_send_buffer_size(2 * 1024 * 1024);
+        .datagram_receive_buffer_size(Some(DATAGRAM_BUFFER_SIZE))
+        .datagram_send_buffer_size(DATAGRAM_BUFFER_SIZE);
     Arc::new(config)
 }
 
@@ -519,13 +522,32 @@ async fn run_connection(
             }
             command = video.recv() => {
                 match command {
-                    Some(VideoCommand { session: target, packet }) if target == session => {
-                        let encoded = match packet.encode() {
+                    Some(VideoCommand { session: target, packets }) if target == session => {
+                        let keyframe = packets.first().is_some_and(|packet| {
+                            packet.flags.contains(picoo_protocol::VideoPacketFlags::KEYFRAME)
+                        });
+                        let encoded = match packets
+                            .into_iter()
+                            .map(|packet| packet.encode())
+                            .collect::<Result<Vec<_>, _>>()
+                        {
                             Ok(encoded) => encoded,
                             Err(error) => break CloseReason::Error(error.to_string()),
                         };
-                        if let Err(error) = connection.send_datagram(encoded) {
-                            break CloseReason::Error(error.to_string());
+                        let required = encoded.iter().map(Bytes::len).sum::<usize>();
+                        // Quinn evicts oldest individual datagrams when its send buffer
+                        // fills. For delta frames, drop this whole AU before enqueueing so
+                        // Receiver never sees an avoidable half-frame. A keyframe may evict
+                        // stale queued deltas to restore decoder state, provided the complete
+                        // keyframe itself fits in the configured buffer.
+                        let available = connection.datagram_send_buffer_space();
+                        if should_enqueue_access_unit(available, required, keyframe) {
+                            if let Err(error) = encoded
+                                .into_iter()
+                                .try_for_each(|datagram| connection.send_datagram(datagram))
+                            {
+                                break CloseReason::Error(error.to_string());
+                            }
                         }
                     }
                     Some(_) => {}
@@ -573,6 +595,10 @@ async fn run_connection(
     events.critical(TransportEvent::Disconnected(session, disconnect_reason));
 }
 
+fn should_enqueue_access_unit(available: usize, required: usize, keyframe: bool) -> bool {
+    available >= required || (keyframe && required <= DATAGRAM_BUFFER_SIZE)
+}
+
 fn link_stats(connection: &Connection) -> TransportLinkStats {
     let stats = connection.stats();
     TransportLinkStats {
@@ -581,5 +607,26 @@ fn link_stats(connection: &Connection) -> TransportLinkStats {
         sent_packets: stats.path.sent_packets,
         recv_packets: stats.udp_rx.datagrams,
         dgram_recv: stats.frame_rx.datagram,
+    }
+}
+
+#[cfg(test)]
+mod access_unit_queue_tests {
+    use super::*;
+
+    #[test]
+    fn congested_delta_is_dropped_as_a_complete_access_unit() {
+        assert!(!should_enqueue_access_unit(1_000, 1_001, false));
+        assert!(should_enqueue_access_unit(1_001, 1_001, false));
+    }
+
+    #[test]
+    fn recovery_keyframe_may_replace_stale_deltas_but_must_fit_itself() {
+        assert!(should_enqueue_access_unit(0, DATAGRAM_BUFFER_SIZE, true));
+        assert!(!should_enqueue_access_unit(
+            0,
+            DATAGRAM_BUFFER_SIZE + 1,
+            true
+        ));
     }
 }

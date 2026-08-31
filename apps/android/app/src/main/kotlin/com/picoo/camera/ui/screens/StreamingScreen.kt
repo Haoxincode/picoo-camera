@@ -2,14 +2,12 @@ package com.picoo.camera.ui.screens
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,7 +42,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -77,6 +74,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun StreamingScreen(
     cameraGranted: Boolean,
+    cameraPermissionPermanentlyDenied: Boolean,
     receiverName: String,
     linkQualityChip: String,
     resolutionLabel: String,
@@ -109,6 +107,7 @@ fun StreamingScreen(
 ) {
     StreamingScreenContent(
         cameraGranted = cameraGranted,
+        cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
         receiverName = receiverName,
         linkQualityChip = linkQualityChip,
         resolutionLabel = resolutionLabel,
@@ -151,6 +150,7 @@ fun StreamingScreen(
 @Composable
 internal fun StreamingScreenContent(
     cameraGranted: Boolean,
+    cameraPermissionPermanentlyDenied: Boolean,
     receiverName: String,
     linkQualityChip: String,
     resolutionLabel: String,
@@ -215,55 +215,64 @@ internal fun StreamingScreenContent(
         }
     }
 
-    BoxWithConstraints(
+    Box(
         modifier = modifier
             .fillMaxSize()
             .background(PicooCameraColors.Surface),
     ) {
-        val portraitWindow = maxHeight > maxWidth
-
         if (cameraGranted) {
-            previewContent()
-            val overlayAlpha = ExposurePreview.overlayAlpha(exposureEv)
-            if (overlayAlpha > 0f) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            ExposurePreview.overlayColor(exposureEv).copy(alpha = overlayAlpha),
-                        ),
-                )
-            }
-            if (flipBlurActive) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .blur(PicooCameraDimensions.FlipBlur)
-                        .background(PicooCameraColors.TransitionScrim),
-                )
-            }
-        } else {
-            CameraPermissionPlaceholder(onRequestCamera = onRequestCamera)
-        }
-
-        if (cameraGranted && !uiLocked) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(immersive) {
-                        detectTapGestures(
-                            onTap = { offset ->
-                                focusRingCenter = offset
-                                focusRingActive = true
-                            },
-                            onDoubleTap = { immersive = !immersive },
-                        )
+                    .semantics {
+                        contentDescription = "本机相机预览"
+                        stateDescription = "全屏预览，电脑端固定输出中央 16:9"
                     },
+            ) {
+                previewContent()
+                val overlayAlpha = ExposurePreview.overlayAlpha(exposureEv)
+                if (overlayAlpha > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                ExposurePreview.overlayColor(exposureEv).copy(alpha = overlayAlpha),
+                            ),
+                    )
+                }
+                if (flipBlurActive) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .blur(PicooCameraDimensions.FlipBlur)
+                            .background(PicooCameraColors.TransitionScrim),
+                    )
+                }
+                if (!uiLocked) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(immersive) {
+                                detectTapGestures(
+                                    onTap = { offset ->
+                                        focusRingCenter = offset
+                                        focusRingActive = true
+                                    },
+                                    onDoubleTap = { immersive = !immersive },
+                                )
+                            },
+                    )
+                }
+                if (focusRingActive) FocusRing(center = focusRingCenter)
+            }
+        } else {
+            CameraPermissionPlaceholder(
+                permanentlyDenied = cameraPermissionPermanentlyDenied,
+                onRequestCamera = onRequestCamera,
             )
         }
 
         if (!immersive) {
-            OutputGuideOverlay(portraitWindow = portraitWindow)
             ConnectionHud(
                 receiverName = receiverName,
                 linkQualityChip = linkQualityChip,
@@ -308,7 +317,6 @@ internal fun StreamingScreenContent(
             )
         }
 
-        if (focusRingActive) FocusRing(center = focusRingCenter)
         if (thermalToast) {
             CameraToast(
                 text = "设备偏热保护中，1080P 暂不可选",
@@ -327,7 +335,10 @@ internal fun StreamingScreenContent(
 }
 
 @Composable
-private fun CameraPermissionPlaceholder(onRequestCamera: () -> Unit) {
+private fun CameraPermissionPlaceholder(
+    permanentlyDenied: Boolean,
+    onRequestCamera: () -> Unit,
+) {
     val dimensions = PicooTheme.dimensions
     Box(
         modifier = Modifier
@@ -337,13 +348,19 @@ private fun CameraPermissionPlaceholder(onRequestCamera: () -> Unit) {
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = "需要相机权限才能预览与推流",
+                text = if (permanentlyDenied) {
+                    "相机权限已关闭，请前往系统设置开启后继续推流"
+                } else {
+                    "需要相机权限才能预览与推流"
+                },
                 color = PicooCameraColors.ContentMuted,
                 style = PicooCameraTypography.Status,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = dimensions.space32),
             )
             Spacer(modifier = Modifier.height(dimensions.space12))
             PicooPrimaryButton(
-                text = "启用相机",
+                text = if (permanentlyDenied) "前往设置" else "启用相机",
                 onClick = onRequestCamera,
                 modifier = Modifier.padding(horizontal = dimensions.space32),
                 context = PicooVisualContext.Camera,
@@ -481,98 +498,6 @@ private fun ResolutionMetric(
             style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
         )
     }
-}
-
-@Composable
-private fun OutputGuideOverlay(portraitWindow: Boolean) {
-    val dimensions = PicooTheme.dimensions
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val widthLimit = maxWidth * if (portraitWindow) {
-            PicooCameraDimensions.GuidePortraitWidthFraction
-        } else {
-            PicooCameraDimensions.GuideLandscapeWidthFraction
-        }
-        val heightLimit = maxHeight * if (portraitWindow) {
-            PicooCameraDimensions.GuidePortraitHeightFraction
-        } else {
-            PicooCameraDimensions.GuideLandscapeHeightFraction
-        }
-        val widthFromHeight = heightLimit * PicooCameraDimensions.VideoAspectRatio
-        val frameWidth = if (widthFromHeight < widthLimit) widthFromHeight else widthLimit
-        val frameHeight = frameWidth / PicooCameraDimensions.VideoAspectRatio
-
-        Column(
-            modifier = Modifier.align(Alignment.Center),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(frameWidth)
-                    .height(frameHeight)
-                    .semantics {
-                        contentDescription = "16:9 电脑端输出范围"
-                        stateDescription = if (portraitWindow) {
-                            "竖屏中央裁切，建议横屏使用"
-                        } else {
-                            "横屏输出范围"
-                        }
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                GuideCorners()
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    GuideLabelLine()
-                    Text(
-                        text = "16:9 电脑端输出范围",
-                        color = PicooCameraColors.ContentMuted,
-                        style = PicooCameraTypography.Guide.copy(fontFamily = PicooFont.Mono),
-                    )
-                    GuideLabelLine()
-                }
-            }
-            if (portraitWindow) {
-                Spacer(modifier = Modifier.height(dimensions.space12))
-                Text(
-                    text = "建议横屏使用，电脑端仅显示框内区域",
-                    color = PicooCameraColors.ContentSubtle,
-                    style = PicooCameraTypography.GuideHint,
-                    textAlign = TextAlign.Center,
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun GuideCorners() {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val corner = PicooCameraDimensions.GuideCornerLength.toPx()
-        val stroke = PicooCameraDimensions.GuideStroke.toPx()
-        val right = size.width
-        val bottom = size.height
-        val color = PicooCameraColors.SafeFrame
-        drawLine(color, Offset.Zero, Offset(corner, 0f), stroke, StrokeCap.Round)
-        drawLine(color, Offset.Zero, Offset(0f, corner), stroke, StrokeCap.Round)
-        drawLine(color, Offset(right, 0f), Offset(right - corner, 0f), stroke, StrokeCap.Round)
-        drawLine(color, Offset(right, 0f), Offset(right, corner), stroke, StrokeCap.Round)
-        drawLine(color, Offset(0f, bottom), Offset(corner, bottom), stroke, StrokeCap.Round)
-        drawLine(color, Offset(0f, bottom), Offset(0f, bottom - corner), stroke, StrokeCap.Round)
-        drawLine(color, Offset(right, bottom), Offset(right - corner, bottom), stroke, StrokeCap.Round)
-        drawLine(color, Offset(right, bottom), Offset(right, bottom - corner), stroke, StrokeCap.Round)
-    }
-}
-
-@Composable
-private fun GuideLabelLine() {
-    Box(
-        modifier = Modifier
-            .width(PicooCameraDimensions.GuideLabelLineWidth)
-            .height(PicooCameraDimensions.GuideLabelLineHeight)
-            .background(PicooCameraColors.ContentSubtle),
-    )
 }
 
 @Composable

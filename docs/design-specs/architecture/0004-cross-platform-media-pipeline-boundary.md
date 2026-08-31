@@ -29,6 +29,10 @@ QUIC Datagram
 - Android 在编码前按传感器方向、显示方向和前后摄像头计算唯一变换，输出始终为已经直立的横向
   480p/720p/1080p 16:9。横持尽量使用完整画面；竖持在直立空间中取中央 cover 区域。编码后的
   `StreamConfig.rotation` 固定为 `0`，Receiver 不为旧 Android Sender 保留二次裁切兼容。
+- 竖持裁切时，Camera2 源的短边必须优先覆盖编码输出宽度，并受目标 FPS 的最小帧时长约束。
+  本机 TextureView 使用全屏 center-cover，避免因手机屏幕与相机源比例不同产生黑边；不叠加容易
+  误解的小型构图参考框。电脑端仍由 EGL 合成器独立执行中央横向 16:9 输出，因此竖屏本机预览
+  是相机控制取景器，不声称与电脑端逐像素同构。
 - MediaCodec 的释放、创建、配置和启动必须在同一 codec 线程串行执行；旧实例完全释放后才能创建新实例，以兼容只支持单个硬件 H.264 encoder 的设备。
 - 第一版不使用 CameraX Recorder 作为实时传输核心。
 
@@ -54,6 +58,9 @@ H.264 Access Units
 ```
 
 - 优先硬件解码。
+- Media Foundation 输出的可见高度与底层 allocation height 不等价；例如 1080 行可由 1088 行
+  宏块对齐分配承载。进入 FrameHub 前必须按实际 row pitch 和 allocation height 分别复制可见 Y/UV
+  行为紧凑 NV12，不得仅由总字节数反推一个横向 stride。
 
 ### Receiver：macOS
 
@@ -73,6 +80,9 @@ H.264 Access Units
 ### 编码参数
 
 - Codec：H.264/AVC，8-bit 4:2:0 SDR Progressive，无 B 帧。
+- V1 SDR 色彩语义为 BT.709 limited range；Sender 显式配置 color standard/range/transfer，
+  Receiver 的 HD NV12 预览使用同一矩阵。内存布局与色彩矩阵是两个独立契约：Receiver 必须先按
+  实际 row pitch / allocation height 找到正确 UV 平面，再应用色彩转换。
 - 默认 Profile Main Level 4.0；不支持时回退 Baseline。
 - Keyframe interval：2 秒。
 - 动态码率范围：

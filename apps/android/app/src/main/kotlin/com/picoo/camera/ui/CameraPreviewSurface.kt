@@ -33,6 +33,8 @@ internal fun needsTextureViewMirror(
 /**
  * Camera2 TextureView transform adapted from Android's resizable Camera2 preview guidance.
  * It reverses TextureView's non-uniform fill, then applies one uniform center-crop scale.
+ * The host view is the exact 16:9 desktop-output viewport, so this crop mirrors
+ * the encoding compositor instead of showing additional pixels outside output.
  */
 internal fun calculatePreviewTransform(
     viewWidth: Int,

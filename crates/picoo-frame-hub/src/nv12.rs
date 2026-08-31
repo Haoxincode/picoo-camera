@@ -10,14 +10,14 @@ fn clamp_u8(v: i32) -> u8 {
     v.clamp(0, 255) as u8
 }
 
-/// BT.601 limited-range YUV → RGBA.
+/// BT.709 limited-range YUV → RGBA, matching the V1 stream color contract.
 fn yuv_to_rgba(y: i32, u: i32, v: i32) -> [u8; 4] {
     let c = (y - 16).max(0);
     let d = u - 128;
     let e = v - 128;
-    let r = (298 * c + 409 * e + 128) >> 8;
-    let g = (298 * c - 100 * d - 208 * e + 128) >> 8;
-    let b = (298 * c + 516 * d + 128) >> 8;
+    let r = (298 * c + 459 * e + 128) >> 8;
+    let g = (298 * c - 55 * d - 136 * e + 128) >> 8;
+    let b = (298 * c + 541 * d + 128) >> 8;
     [clamp_u8(r), clamp_u8(g), clamp_u8(b), 255]
 }
 
@@ -165,7 +165,13 @@ pub fn nv12_preview_rgba_max_width(
     if width == 0 || height == 0 || stride == 0 {
         return None;
     }
-    let expected = nv12_byte_size(width, height);
+    if stride < width {
+        return None;
+    }
+    let expected = (stride as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(3)?
+        / 2;
     if nv12.len() < expected {
         return None;
     }
@@ -223,6 +229,21 @@ mod tests {
         // Black frame → near-zero RGB (alpha is 255)
         assert!(rgba[0] <= 16 && rgba[1] <= 16 && rgba[2] <= 16);
         assert_eq!(rgba[3], 255);
+    }
+
+    #[test]
+    fn preview_uses_bt709_limited_range() {
+        let width = 1280;
+        let height = 720;
+        let mut nv12 = vec![81_u8; nv12_byte_size(width, height)];
+        let uv_offset = (width * height) as usize;
+        for uv in nv12[uv_offset..].chunks_exact_mut(2) {
+            uv.copy_from_slice(&[90, 240]);
+        }
+
+        let (_, _, rgba) =
+            nv12_preview_rgba_max_width(width, height, width, &nv12, 1).expect("preview");
+        assert_eq!(&rgba[..4], &[255, 24, 0, 255]);
     }
 
     #[test]

@@ -47,11 +47,21 @@ Receiver 与 Sender UI 必须能反映以下状态（至少）：
 - Decoded Frame Queue
 - Shared Frame Ring
 
+Sender 的 Access Unit 是视频发送队列的最小原子项，不是单个 Datagram 分片。提交前必须完成整帧
+分片，并确认整组能够进入应用队列；Quinn send buffer 空间不足时丢弃完整非关键 AU，不能先发送
+头部再丢尾部。关键帧可以替换陈旧 delta 队列以恢复解码，但关键帧自身也必须完整进入发送缓冲。
+视频队列深度必须按实时预算限制，不能用数百个分片的队列把拥塞转化为持续延迟。
+
 ### 自适应码率
 
 Receiver 每秒向 Sender 发送 `ReceiverStats`：
 
 `RTT`、`packet_loss`、`jitter`、`reassembly_drop`、`decoder_drop`、`frame_age`、`receive_bitrate`、`jitter_buffer_depth`
+
+其中 `packet_loss` 描述 Receiver 入站视频重组损失。QUIC 路径的 `lost_packets / sent_packets` 只描述
+本端发出的包；在 Receiver 端它主要是控制流，不能作为 Android 视频丢包率反馈给 ABR。未建立双端
+时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；Receiver 解码完成后的本地 `frame_age` 不得与
+RTT 相加并标成端到端延迟。
 
 控制策略：
 

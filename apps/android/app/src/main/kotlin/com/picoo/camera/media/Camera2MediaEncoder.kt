@@ -965,19 +965,33 @@ class Camera2MediaEncoder(
 
     private fun createEncoder(size: Size): MediaCodec? {
         lastAppliedBitrateBps = targetBitrateBps
+        val codec = runCatching {
+            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+        }.getOrNull() ?: return null
+        val bitrateMode = runCatching {
+            val capabilities = codec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            if (capabilities.encoderCapabilities.isBitrateModeSupported(
+                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
+                )
+            ) {
+                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
+            } else {
+                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
+            }
+        }.getOrDefault(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, size.width, size.height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, targetBitrateBps)
             setInteger(MediaFormat.KEY_FRAME_RATE, profile.targetFps)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-            setInteger(
-                MediaFormat.KEY_BITRATE_MODE,
-                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR,
-            )
+            setInteger(MediaFormat.KEY_BITRATE_MODE, bitrateMode)
+            setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+            setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+            setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            setInteger(MediaFormat.KEY_PRIORITY, 0)
+            setFloat(MediaFormat.KEY_OPERATING_RATE, profile.targetFps.toFloat())
         }
-        val codec = runCatching {
-            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        }.getOrNull() ?: return null
         return runCatching {
             codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             codec
@@ -1028,15 +1042,29 @@ class Camera2MediaEncoder(
     }
 
     private fun chooseCaptureSize(cameraId: String, target: Size): Size {
-        val map = cameraManager.getCameraCharacteristics(cameraId)
+        val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+        val map = characteristics
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
             ?: return target
-        val choices = map.getOutputSizes(SurfaceTexture::class.java)
-            ?.map { CaptureSizeSelector.Dim(it.width, it.height) }
-            .orEmpty()
+        val maxFrameDurationNanos = 1_000_000_000L / profile.targetFps.coerceAtLeast(1)
+        val outputSizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
+        val frameRateCapable = outputSizes.filter { size ->
+            val duration = map.getOutputMinFrameDuration(SurfaceTexture::class.java, size)
+            duration <= 0L || duration <= maxFrameDurationNanos
+        }.ifEmpty { outputSizes.toList() }
+        val sensorOrientation =
+            characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
+        val portraitCrop = StreamOrientation.relativeRotationDegrees(
+            sensorOrientationDegrees = sensorOrientation,
+            displayRotationDegrees = displayRotationDegrees,
+            frontFacing = profile.lensFacing == LensFacing.Front,
+        ) % 180 != 0
+        val choices = frameRateCapable
+            .map { CaptureSizeSelector.Dim(it.width, it.height) }
         val selected = CaptureSizeSelector.select(
             choices,
             CaptureSizeSelector.Dim(target.width, target.height),
+            portraitCrop = portraitCrop,
         )
         if (selected.fellBackFrom1080) {
             val encode = CaptureSizeSelector.encodeSizeFor(

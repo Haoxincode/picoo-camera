@@ -14,12 +14,15 @@ use windows::core::{GUID, HRESULT};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::{
     CMSH264DecoderMFT, IMFMediaBuffer, IMFSample, IMFTransform, MFCreateAlignedMemoryBuffer,
-    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFVideoFormat_H264,
-    MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFT_MESSAGE_COMMAND_FLUSH,
-    MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
+    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video,
+    MFNominalRange_16_235, MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
+    MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
+    MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MF_E_NOTACCEPTING,
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -284,6 +287,18 @@ unsafe fn configure_transform(
     out_type
         .SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack_frame_size(1, 1))
         .map_err(|e| DecodeError::Platform(format!("output pixel aspect: {e}")))?;
+    out_type
+        .SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32)
+        .map_err(|e| DecodeError::Platform(format!("output YUV matrix: {e}")))?;
+    out_type
+        .SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, MFNominalRange_16_235.0 as u32)
+        .map_err(|e| DecodeError::Platform(format!("output nominal range: {e}")))?;
+    out_type
+        .SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT709.0 as u32)
+        .map_err(|e| DecodeError::Platform(format!("output primaries: {e}")))?;
+    out_type
+        .SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_709.0 as u32)
+        .map_err(|e| DecodeError::Platform(format!("output transfer function: {e}")))?;
     transform
         .SetOutputType(0, &out_type, 0)
         .map_err(|e| DecodeError::Platform(format!("SetOutputType: {e}")))?;
@@ -420,29 +435,109 @@ unsafe fn sample_to_frame(
         .ConvertToContiguousBuffer()
         .map_err(|e| DecodeError::Platform(format!("ConvertToContiguousBuffer: {e}")))?;
     let nv12 = copy_buffer_to_bytes(&buffer)?;
-    let minimum_stride = width as usize;
-    let rows_times_two = height as usize * 3;
-    let doubled_len = nv12.len().saturating_mul(2);
-    let stride = if rows_times_two > 0 && doubled_len % rows_times_two == 0 {
-        doubled_len / rows_times_two
-    } else {
-        0
-    };
-    if stride < minimum_stride {
-        return Err(DecodeError::Platform(format!(
-            "short NV12 output: {} bytes for {width}x{height}",
-            nv12.len()
-        )));
-    }
+    let nv12 = normalize_contiguous_nv12(&nv12, width, height)?;
 
     Ok(DecodedFrame {
         width,
         height,
-        stride: stride as u32,
+        stride: width,
         rotation: 0,
         timestamp_us: now_timestamp_us(),
         nv12: Bytes::from(nv12),
     })
+}
+
+/// Media Foundation may expose a contiguous NV12 buffer whose allocation height
+/// is macroblock-aligned (for example 1920x1088 for a visible 1920x1080 frame).
+/// The UV plane then starts after the allocated Y rows, not after the visible
+/// rows. Normalize both vertically aligned and row-pitched storage to a tight
+/// visible frame so downstream consumers have one unambiguous layout.
+fn normalize_contiguous_nv12(
+    source: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, DecodeError> {
+    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(DecodeError::Platform(format!(
+            "invalid NV12 dimensions: {width}x{height}"
+        )));
+    }
+
+    let width = width as usize;
+    let height = height as usize;
+    let tight_len = width
+        .checked_mul(height)
+        .and_then(|value| value.checked_mul(3))
+        .map(|value| value / 2)
+        .ok_or_else(|| DecodeError::Platform("NV12 dimensions overflow".into()))?;
+    if source.len() < tight_len {
+        return Err(DecodeError::Platform(format!(
+            "short NV12 output: {} bytes, need {tight_len}",
+            source.len()
+        )));
+    }
+    if source.len() == tight_len {
+        return Ok(source.to_vec());
+    }
+
+    // Horizontal pitch: allocation is `stride * visible_height * 3 / 2`.
+    let visible_rows_x2 = height * 3;
+    let doubled_len = source.len().saturating_mul(2);
+    if doubled_len % visible_rows_x2 == 0 {
+        let stride = doubled_len / visible_rows_x2;
+        if stride >= width {
+            return copy_visible_nv12(source, width, height, stride, height);
+        }
+    }
+
+    // Vertical allocation: allocation is `width * allocated_height * 3 / 2`.
+    let width_x3 = width * 3;
+    if doubled_len % width_x3 == 0 {
+        let allocated_height = doubled_len / width_x3;
+        if allocated_height >= height {
+            return copy_visible_nv12(source, width, height, width, allocated_height);
+        }
+    }
+
+    Err(DecodeError::Platform(format!(
+        "unsupported NV12 allocation: {} bytes for visible {width}x{height}",
+        source.len()
+    )))
+}
+
+fn copy_visible_nv12(
+    source: &[u8],
+    width: usize,
+    height: usize,
+    stride: usize,
+    allocated_height: usize,
+) -> Result<Vec<u8>, DecodeError> {
+    let uv_offset = stride
+        .checked_mul(allocated_height)
+        .ok_or_else(|| DecodeError::Platform("NV12 UV offset overflow".into()))?;
+    let required = uv_offset
+        .checked_add(stride * (height / 2))
+        .ok_or_else(|| DecodeError::Platform("NV12 allocation overflow".into()))?;
+    if source.len() < required {
+        return Err(DecodeError::Platform(format!(
+            "short NV12 planes: {} bytes, need {required}",
+            source.len()
+        )));
+    }
+
+    let mut tight = vec![0_u8; width * height * 3 / 2];
+    for row in 0..height {
+        let src = row * stride;
+        let dst = row * width;
+        tight[dst..dst + width].copy_from_slice(&source[src..src + width]);
+    }
+    let tight_uv_offset = width * height;
+    for row in 0..height / 2 {
+        let src = uv_offset + row * stride;
+        let dst = tight_uv_offset + row * width;
+        tight[dst..dst + width].copy_from_slice(&source[src..src + width]);
+    }
+    Ok(tight)
 }
 
 unsafe fn drain_output(
@@ -515,5 +610,39 @@ mod tests {
         let decoder = MfH264Decoder::new().expect("create MF decoder inside GPUI-like STA");
         drop(decoder);
         unsafe { CoUninitialize() };
+    }
+
+    #[test]
+    fn normalizes_macroblock_aligned_1088_allocation_to_visible_1080() {
+        let width = 1920usize;
+        let visible_height = 1080usize;
+        let allocated_height = 1088usize;
+        let mut source = vec![0_u8; width * allocated_height * 3 / 2];
+        source[width * allocated_height] = 23;
+        source[width * allocated_height + 1] = 211;
+
+        let tight = normalize_contiguous_nv12(&source, width as u32, visible_height as u32)
+            .expect("normalize vertically aligned NV12");
+
+        assert_eq!(tight.len(), width * visible_height * 3 / 2);
+        assert_eq!(
+            &tight[width * visible_height..width * visible_height + 2],
+            &[23, 211]
+        );
+    }
+
+    #[test]
+    fn normalizes_row_pitched_nv12_to_tight_visible_rows() {
+        let width = 4usize;
+        let height = 2usize;
+        let stride = 8usize;
+        let mut source = vec![0_u8; stride * height * 3 / 2];
+        source[0..4].copy_from_slice(&[1, 2, 3, 4]);
+        source[8..12].copy_from_slice(&[5, 6, 7, 8]);
+        source[16..20].copy_from_slice(&[9, 10, 11, 12]);
+
+        let tight = normalize_contiguous_nv12(&source, width as u32, height as u32)
+            .expect("normalize pitched NV12");
+        assert_eq!(tight, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     }
 }

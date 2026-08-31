@@ -788,7 +788,11 @@ impl ReceiverSession {
         } else {
             reassembly_drop as f64 / (window_packets + reassembly_drop) as f64
         };
-        let packet_loss = app_loss.max(link.sent_loss_ratio());
+        // Quinn's `lost_packets / sent_packets` describes packets sent by this
+        // endpoint. On Receiver those are control-stream packets, not incoming
+        // Android video datagrams, so feeding that ratio into Sender ABR causes
+        // false quality drops. Video health is measured at AU reassembly here.
+        let packet_loss = app_loss;
 
         let stats = ReceiverStatsMsg {
             rtt_ms: link.rtt_ms,

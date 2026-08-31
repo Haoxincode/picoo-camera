@@ -82,6 +82,18 @@ pub trait PicooTransport {
     fn send_control(&mut self, session: SessionId, message: Bytes) -> Result<(), TransportError>;
     fn send_video(&mut self, session: SessionId, packet: VideoPacket)
         -> Result<(), TransportError>;
+    /// Queue one encoded access unit atomically. Implementations with a lossy
+    /// transport must drop the whole batch rather than leaving a partial frame.
+    fn send_video_batch(
+        &mut self,
+        session: SessionId,
+        packets: Vec<VideoPacket>,
+    ) -> Result<(), TransportError> {
+        for packet in packets {
+            self.send_video(session, packet)?;
+        }
+        Ok(())
+    }
     fn poll_event(&mut self) -> Option<TransportEvent>;
     fn close(&mut self, session: SessionId, reason: CloseReason);
 

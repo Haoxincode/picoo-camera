@@ -8,6 +8,8 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -63,17 +65,55 @@ class StreamingScreenSemanticsTest {
         composeRule.runOnIdle { assertEquals(1, disconnectCount) }
     }
 
+    @Test
+    fun permanentlyDeniedCameraPermissionExplainsSettingsAction() {
+        var requestCount = 0
+        setConnectedContent(
+            cameraGranted = false,
+            cameraPermissionPermanentlyDenied = true,
+            onRequestCamera = { requestCount += 1 },
+        )
+
+        composeRule.onNodeWithText("相机权限已关闭，请前往系统设置开启后继续推流")
+            .assertTextEquals("相机权限已关闭，请前往系统设置开启后继续推流")
+        composeRule.onNodeWithText("前往设置").performClick()
+        composeRule.runOnIdle { assertEquals(1, requestCount) }
+    }
+
+    @Test
+    fun connectedPreviewIsFullScreenWithoutAReferenceFrame() {
+        setConnectedContent()
+
+        composeRule.onNodeWithContentDescription("本机相机预览").fetchSemanticsNode()
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithContentDescription("16:9 电脑端输出范围")
+                .fetchSemanticsNodes().size,
+        )
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithText("横屏可获得更大的预览画面")
+                .fetchSemanticsNodes().size,
+        )
+    }
+
     private fun controlWidth(contentDescription: String): Float =
         composeRule.onNodeWithContentDescription(contentDescription)
             .fetchSemanticsNode()
             .boundsInRoot
             .width
 
-    private fun setConnectedContent(onDisconnect: () -> Unit = {}) {
+    private fun setConnectedContent(
+        cameraGranted: Boolean = true,
+        cameraPermissionPermanentlyDenied: Boolean = false,
+        onRequestCamera: () -> Unit = {},
+        onDisconnect: () -> Unit = {},
+    ) {
         composeRule.setContent {
             PicooCameraTheme {
                 StreamingScreenContent(
-                    cameraGranted = true,
+                    cameraGranted = cameraGranted,
+                    cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
                     receiverName = "Studio PC",
                     linkQualityChip = "稳定 · 63ms",
                     resolutionLabel = "720p",
@@ -83,7 +123,7 @@ class StreamingScreenSemanticsTest {
                     powerHint = "",
                     reconnecting = false,
                     packetLossLabel = "0% 丢包",
-                    onRequestCamera = {},
+                    onRequestCamera = onRequestCamera,
                     onFlipCamera = {},
                     onToggleResolution = {},
                     onToggleMirror = {},

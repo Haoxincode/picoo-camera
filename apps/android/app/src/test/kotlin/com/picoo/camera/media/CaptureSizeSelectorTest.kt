@@ -57,4 +57,40 @@ class CaptureSizeSelectorTest {
         assertEquals(1080, choice.size.height)
         assertFalse(choice.fellBackFrom1080)
     }
+
+    @Test
+    fun portrait1080ChoosesSmallestSourceWhoseShortEdgeAvoidsUpscaling() {
+        val available = listOf(
+            CaptureSizeSelector.Dim(1920, 1080),
+            CaptureSizeSelector.Dim(3840, 2160),
+            CaptureSizeSelector.Dim(2560, 1920),
+            CaptureSizeSelector.Dim(4000, 3000),
+        )
+
+        val choice = CaptureSizeSelector.select(
+            available,
+            CaptureSizeSelector.Dim(1920, 1080),
+            portraitCrop = true,
+        )
+
+        assertEquals(CaptureSizeSelector.Dim(2560, 1920), choice.size)
+        assertFalse(choice.fellBackFrom1080)
+    }
+
+    @Test
+    fun portraitFallsBackToClosestSourceWhenNoShortEdgeIsWideEnough() {
+        val available = listOf(
+            CaptureSizeSelector.Dim(1280, 720),
+            CaptureSizeSelector.Dim(1920, 1080),
+        )
+
+        val choice = CaptureSizeSelector.select(
+            available,
+            CaptureSizeSelector.Dim(1920, 1080),
+            portraitCrop = true,
+        )
+
+        assertEquals(CaptureSizeSelector.Dim(1920, 1080), choice.size)
+        assertFalse(choice.fellBackFrom1080)
+    }
 }

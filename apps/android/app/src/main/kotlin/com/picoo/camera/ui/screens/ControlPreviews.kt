@@ -150,6 +150,7 @@ private fun StreamingScreenPreview() {
     PicooCameraTheme {
         StreamingScreenContent(
             cameraGranted = true,
+            cameraPermissionPermanentlyDenied = false,
             receiverName = "Picoo Camera",
             linkQualityChip = "稳定 · 63ms",
             resolutionLabel = "720p",

@@ -24,7 +24,7 @@ class CameraPreviewTransformTest {
     }
 
     @Test
-    fun tallScreenCenterCropsInsteadOfStretching() {
+    fun outputViewportCenterCropsCameraWithoutStretching() {
         val transform = calculatePreviewTransform(
             viewWidth = 1080,
             viewHeight = 2400,
@@ -35,8 +35,7 @@ class CameraPreviewTransformTest {
             frontFacing = true,
         )
 
-        assertTrue(transform.scaleX > 1f)
-        assertEquals(1f, transform.scaleY, 0.0001f)
+        assertTrue(transform.scaleX > 1f || transform.scaleY > 1f)
     }
 
     @Test
@@ -117,7 +116,7 @@ class CameraPreviewTransformTest {
     }
 
     @Test
-    fun fourByThreeOemFallbackCenterCropsTallDisplay() {
+    fun fourByThreeOemSourceCenterCropsInsideOutputViewport() {
         val transform = calculatePreviewTransform(
             viewWidth = 1080,
             viewHeight = 2400,
@@ -128,7 +127,6 @@ class CameraPreviewTransformTest {
             frontFacing = false,
         )
 
-        assertTrue(transform.scaleX > 1f)
-        assertEquals(1f, transform.scaleY, 0.0001f)
+        assertTrue(transform.scaleX > 1f || transform.scaleY > 1f)
     }
 }

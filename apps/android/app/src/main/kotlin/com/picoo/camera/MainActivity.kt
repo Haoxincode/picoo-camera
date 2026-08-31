@@ -1,8 +1,11 @@
 package com.picoo.camera
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.Surface
 import android.view.WindowManager
 import android.widget.Toast
@@ -58,21 +61,26 @@ import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     private var cameraGranted by mutableStateOf(false)
+    private var cameraPermissionPermanentlyDenied by mutableStateOf(false)
     private var nearbyWifiGranted by mutableStateOf(true)
     private var notificationsGranted by mutableStateOf(true)
-    private var pendingAfterCameraGrant: (() -> Unit)? = null
+    private var cameraPermissionRequestInFlight = false
+    private var cameraPermissionAutoRequested = false
     private var activeSenderHandle: Long = 0L
+    private val permissionPreferences by lazy {
+        getSharedPreferences("picoo_permissions", MODE_PRIVATE)
+    }
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            cameraPermissionRequestInFlight = false
             cameraGranted = granted
-            val pending = pendingAfterCameraGrant
-            pendingAfterCameraGrant = null
+            cameraPermissionPermanentlyDenied =
+                !granted && !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
             if (granted) {
                 if (activeSenderHandle != 0L && PicooNative.isAvailable) {
                     PicooNative.clearPermissionRequired(activeSenderHandle)
                 }
-                pending?.invoke()
             } else if (activeSenderHandle != 0L && PicooNative.isAvailable) {
                 PicooNative.markPermissionRequired(activeSenderHandle)
             }
@@ -88,18 +96,33 @@ class MainActivity : ComponentActivity() {
             notificationsGranted = granted
         }
 
-    fun requestCameraPermission(then: (() -> Unit)? = null) {
+    fun requestCameraPermission(userInitiated: Boolean) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
         ) {
             cameraGranted = true
+            cameraPermissionPermanentlyDenied = false
             if (activeSenderHandle != 0L && PicooNative.isAvailable) {
                 PicooNative.clearPermissionRequired(activeSenderHandle)
             }
-            then?.invoke()
             return
         }
-        pendingAfterCameraGrant = then
+        if (cameraPermissionRequestInFlight) return
+        if (!userInitiated && cameraPermissionAutoRequested) return
+        if (cameraPermissionPermanentlyDenied) {
+            if (userInitiated) {
+                startActivity(
+                    Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", packageName, null),
+                    ),
+                )
+            }
+            return
+        }
+        cameraPermissionAutoRequested = true
+        cameraPermissionRequestInFlight = true
+        permissionPreferences.edit().putBoolean("camera_requested", true).apply()
         permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
@@ -140,6 +163,10 @@ class MainActivity : ComponentActivity() {
         cameraGranted =
             ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED
+        cameraPermissionPermanentlyDenied =
+            !cameraGranted &&
+            permissionPreferences.getBoolean("camera_requested", false) &&
+            !shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             nearbyWifiGranted =
                 ContextCompat.checkSelfPermission(this, Manifest.permission.NEARBY_WIFI_DEVICES) ==
@@ -162,13 +189,29 @@ class MainActivity : ComponentActivity() {
                     SenderHomeScreen(
                         sessionModel = viewModel(),
                         cameraGranted = cameraGranted,
+                        cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
                         nearbyWifiGranted = nearbyWifiGranted,
                         notificationsGranted = notificationsGranted,
-                        onRequestCamera = { then -> requestCameraPermission(then) },
+                        onEnsureCamera = { requestCameraPermission(userInitiated = false) },
+                        onRequestCamera = { requestCameraPermission(userInitiated = true) },
                         onRequestNearbyWifi = { ensureNearbyWifiPermission() },
                         onRequestNotifications = { ensureNotificationsPermission() },
                     )
                 }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
+            PackageManager.PERMISSION_GRANTED
+        cameraGranted = granted
+        if (granted) {
+            cameraPermissionPermanentlyDenied = false
+            cameraPermissionAutoRequested = false
+            if (activeSenderHandle != 0L && PicooNative.isAvailable) {
+                PicooNative.clearPermissionRequired(activeSenderHandle)
             }
         }
     }
@@ -199,9 +242,11 @@ private fun NativeLoadFailedScreen(
 private fun SenderHomeScreen(
     sessionModel: SenderSessionViewModel,
     cameraGranted: Boolean,
+    cameraPermissionPermanentlyDenied: Boolean,
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
-    onRequestCamera: (then: (() -> Unit)?) -> Unit,
+    onEnsureCamera: () -> Unit,
+    onRequestCamera: () -> Unit,
     onRequestNearbyWifi: () -> Unit,
     onRequestNotifications: () -> Unit,
 ) {
@@ -547,15 +592,18 @@ private fun SenderHomeScreen(
     }
 
     LaunchedEffect(senderStatus, cameraGranted) {
-        val shouldEncode = cameraGranted && when (senderStatus) {
+        val liveSession = when (senderStatus) {
             PicooNative.STATUS_STREAMING,
             PicooNative.STATUS_RECONNECTING,
             PicooNative.STATUS_NETWORK_UNSTABLE,
             -> true
             else -> false
         }
-        if (shouldEncode) {
-            onRequestCamera(null)
+        if (liveSession && !cameraGranted) {
+            if (senderHandle != 0L) PicooNative.markPermissionRequired(senderHandle)
+            onEnsureCamera()
+        } else if (liveSession) {
+            if (senderHandle != 0L) PicooNative.clearPermissionRequired(senderHandle)
             encoder.startPreview()
             if (senderHandle != 0L && PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                 encoder.requestKeyFrame()
@@ -820,7 +868,9 @@ private fun SenderHomeScreen(
                 if (previousStatus == PicooNative.STATUS_RECONNECTING &&
                     senderStatus == PicooNative.STATUS_STREAMING
                 ) {
-                    if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
+                    if (cameraGranted &&
+                        beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
+                    ) {
                         encoder.stopPreview()
                         encoder.startPreview()
                         streamConfigDirty.set(true)
@@ -954,7 +1004,7 @@ private fun SenderHomeScreen(
                 onCheckPermissions = {
                     onRequestNearbyWifi()
                     onRequestNotifications()
-                    onRequestCamera(null)
+                    onRequestCamera()
                 },
                 onOpenPairedDevices = { senderTab = SenderTab.Devices },
                 onRemovePaired = { device ->
@@ -1027,6 +1077,7 @@ private fun SenderHomeScreen(
             SenderTab.Streaming -> StreamingScreen(
                 // Camera2 owns the selected buffer geometry; Compose only transforms it.
                 cameraGranted = cameraGranted,
+                cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
                 receiverName = pairingDisplayName,
                 linkQualityChip = linkQualityChip,
                 resolutionLabel = resolutionLabel,
@@ -1054,7 +1105,7 @@ private fun SenderHomeScreen(
                         "0% 丢包"
                     }
                 },
-                onRequestCamera = { onRequestCamera(null) },
+                onRequestCamera = onRequestCamera,
                 onFlipCamera = {
                     if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
                         encoder.switchCamera()

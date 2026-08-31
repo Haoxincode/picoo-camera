@@ -93,7 +93,22 @@ impl PicooTransport for QuicSenderTransport {
         self.actor
             .as_ref()
             .ok_or(TransportError::NotConnected)?
-            .send_video(session, packet)
+            .send_video_batch(session, vec![packet])
+            .map_err(Self::map_send_error)
+    }
+
+    fn send_video_batch(
+        &mut self,
+        session: SessionId,
+        packets: Vec<VideoPacket>,
+    ) -> Result<(), TransportError> {
+        if self.active_session != Some(session) {
+            return Err(TransportError::NotConnected);
+        }
+        self.actor
+            .as_ref()
+            .ok_or(TransportError::NotConnected)?
+            .send_video_batch(session, packets)
             .map_err(Self::map_send_error)
     }
 

@@ -201,7 +201,6 @@ object PicooCameraColors {
     val DangerEmphasis = Color(0xFFFF2D46)
     val DangerContent = Color(0xFFFFB0B8)
     val Focus = Color(0xFFFFDC52)
-    val SafeFrame = Color(0x59FFFFFF)
     val StopBorder = Color(0xD9FFFFFF)
 }
 
@@ -216,18 +215,10 @@ object PicooCameraDimensions {
     val ThermalIcon = 12.dp
     val FlipBlur = 14.dp
     val ToastTopInset = 96.dp
-    val GuideCornerLength = 28.dp
-    val GuideStroke = 2.dp
-    val GuideLabelLineWidth = 24.dp
-    val GuideLabelLineHeight = 1.dp
     val DockControlHeight = 72.dp
     val DockActionHeight = 64.dp
     val DockDividerHeight = 48.dp
     val DockHairline = 1.dp
-    const val GuidePortraitWidthFraction = 0.84f
-    const val GuidePortraitHeightFraction = 0.42f
-    const val GuideLandscapeWidthFraction = 0.72f
-    const val GuideLandscapeHeightFraction = 0.56f
     const val VideoAspectRatio = 16f / 9f
     const val DisabledAlpha = 0.35f
     const val FocusRingTargetScale = 0.82f
@@ -269,12 +260,6 @@ object PicooCameraTypography {
         fontFamily = PicooFont.Mono,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-    )
-    val Guide = TextStyle(
-        fontFamily = PicooFont.Mono,
-        fontSize = 12.sp,
-        lineHeight = 16.sp,
-        fontWeight = FontWeight.Medium,
     )
     val GuideHint = TextStyle(
         fontFamily = PicooFont.Body,

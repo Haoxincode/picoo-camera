@@ -346,9 +346,11 @@ impl ReceiverRuntime {
                     height: cfg.map(|c| c.height).unwrap_or(0),
                     fps: 30,
                     bitrate_bps: stats.map(|s| s.receive_bitrate).unwrap_or(0),
-                    latency_ms: stats
-                        .map(|s| finite_metric(s.rtt_ms + s.frame_age_ms))
-                        .unwrap_or(0.0),
+                    // `frame_age_ms` starts when decode completes; adding it to
+                    // RTT double-counts local display residency and is not an
+                    // end-to-end capture timestamp. Until clock synchronization
+                    // exists, expose the measured path RTT without inventing E2E.
+                    latency_ms: stats.map(|s| finite_metric(s.rtt_ms)).unwrap_or(0.0),
                     packet_loss: stats.map(|s| finite_metric(s.packet_loss)).unwrap_or(0.0),
                 }
             },
