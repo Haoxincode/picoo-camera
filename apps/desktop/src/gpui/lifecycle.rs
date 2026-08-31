@@ -71,8 +71,6 @@ impl PicooDesktopApp {
             pairing_dialog_pending: None,
             pairing_dialog_visible: false,
             pairing_locally_confirmed: false,
-            #[cfg(all(windows, feature = "windows-vcam"))]
-            vcam_registration: None,
         }
     }
 

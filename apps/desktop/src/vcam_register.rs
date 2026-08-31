@@ -3,22 +3,26 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::thread;
 
 use windows::core::{GUID, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, ERROR_SUCCESS, WAIT_OBJECT_0};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_CANCELLED, ERROR_SUCCESS, RPC_E_CHANGED_MODE, WAIT_OBJECT_0,
+};
 use windows::Win32::Media::MediaFoundation::{
-    IMFVirtualCamera, MFCreateVirtualCamera, MFShutdown, MFStartup,
+    IMFActivate, IMFAttributes, IMFVirtualCamera, MFCreateAttributes, MFCreateVirtualCamera,
+    MFEnumDeviceSources, MFShutdown, MFStartup, MFVirtualCameraAccess_AllUsers,
     MFVirtualCameraAccess_CurrentUser, MFVirtualCameraLifetime_Session,
-    MFVirtualCameraLifetime_System, MFVirtualCameraType_SoftwareCameraSource, MF_VERSION,
+    MFVirtualCameraLifetime_System, MFVirtualCameraType_SoftwareCameraSource,
+    MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_VERSION,
 };
 use windows::Win32::System::Com::{
     CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
     COINIT_MULTITHREADED,
 };
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
 };
 use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
@@ -35,53 +39,65 @@ const FRIENDLY_NAME: &str = "Picoo Camera";
 const CLSID_KEY: &str = r"SOFTWARE\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}";
 const INPROC_SERVER_KEY: &str =
     r"SOFTWARE\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32";
+const PRODUCT_KEY: &str = r"SOFTWARE\Picoo\PicooCamera";
+const SYMBOLIC_LINK_VALUE: &str = "vcam_symbolic_link";
 
 pub struct VirtualCameraRegistration {
     camera: IMFVirtualCamera,
+    _symbolic_link: String,
     _mf: MfInit,
     _com: ComInit,
-}
-
-/// Owns the explicit-repair camera session on the dedicated thread that created it.
-pub struct VirtualCameraSessionHost {
-    shutdown_tx: mpsc::Sender<()>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl Drop for VirtualCameraSessionHost {
-    fn drop(&mut self) {
-        let _ = self.shutdown_tx.send(());
-        // Dropping a JoinHandle detaches it. The worker wakes immediately and
-        // releases Camera → MF → COM without ever blocking the GPUI thread.
-        let _ = self.thread.take();
-    }
 }
 
 impl VirtualCameraRegistration {
     /// Register and start the Picoo Camera virtual camera for the current user session.
     pub fn register_and_start() -> Result<Self, String> {
         ensure_com_server_registered()?;
-        create_virtual_camera(MFVirtualCameraLifetime_Session)
+        start_virtual_camera(
+            MFVirtualCameraLifetime_Session,
+            MFVirtualCameraAccess_CurrentUser,
+            true,
+        )
     }
 
-    /// Register a system-lifetime virtual camera (survives process exit; used by MSI install).
+    /// Register an all-users, system-lifetime virtual camera (MSI/UAC only).
     pub fn register_system() -> Result<Self, String> {
-        {
-            let _com = ShellComInit::new()?;
-            ensure_installed_com_server_registered()?;
+        repair_installed_com_server()?;
+        let existed_before_attempt = registered_camera_symbolic_link()?.is_some();
+        let registration = start_virtual_camera(
+            MFVirtualCameraLifetime_System,
+            MFVirtualCameraAccess_AllUsers,
+            !existed_before_attempt,
+        )?;
+        if let Err(err) = write_registry_string(
+            PRODUCT_KEY,
+            Some(SYMBOLIC_LINK_VALUE),
+            &registration._symbolic_link,
+        ) {
+            if !existed_before_attempt {
+                let _ = registration.remove();
+            }
+            return Err(format!("虚拟摄像头已创建，但无法保存设备身份：{err}"));
         }
-        create_virtual_camera(MFVirtualCameraLifetime_System)
+        Ok(registration)
     }
 
     /// Remove a system-lifetime virtual camera registration (used by MSI uninstall).
     pub fn remove_system() -> Result<(), String> {
-        {
-            let _com = ShellComInit::new()?;
-            ensure_installed_com_server_registered()?;
+        repair_installed_com_server()?;
+        let (camera, _mf, _com) = create_virtual_camera_identity(
+            MFVirtualCameraLifetime_System,
+            MFVirtualCameraAccess_AllUsers,
+        )?;
+        unsafe {
+            camera
+                .Remove()
+                .map_err(|err| format!("IMFVirtualCamera::Remove failed: {err}"))?;
         }
-        let registration = create_virtual_camera(MFVirtualCameraLifetime_System)?;
-        registration.remove()?;
-        unregister_com_server()
+        // This value only supports detection. WiX owns the declarative COM
+        // transaction, so post-Remove metadata cleanup must be best-effort.
+        let _ = delete_registry_value(PRODUCT_KEY, SYMBOLIC_LINK_VALUE);
+        Ok(())
     }
 
     /// Remove the virtual camera registration from the system.
@@ -109,6 +125,67 @@ pub fn com_server_registered() -> bool {
     }
 }
 
+/// Return the symbolic link only when Media Foundation can enumerate the
+/// registered Picoo video-capture device for the current user.
+pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
+    let Some(expected_link) = read_registry_string(PRODUCT_KEY, Some(SYMBOLIC_LINK_VALUE)) else {
+        return Ok(None);
+    };
+    let _com = EnumerationComInit::new()?;
+    let _mf = MfInit::new()?;
+    let mut attributes = None;
+    unsafe {
+        MFCreateAttributes(&mut attributes, 1)
+            .map_err(|err| format!("创建摄像头枚举属性失败：{err}"))?;
+    }
+    let attributes = attributes.ok_or_else(|| "Media Foundation 未返回枚举属性".to_string())?;
+    unsafe {
+        attributes
+            .SetGUID(
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+            )
+            .map_err(|err| format!("配置摄像头枚举属性失败：{err}"))?;
+    }
+
+    let mut raw_devices: *mut Option<IMFActivate> = std::ptr::null_mut();
+    let mut device_count = 0u32;
+    unsafe {
+        MFEnumDeviceSources(&attributes, &mut raw_devices, &mut device_count)
+            .map_err(|err| format!("枚举 Windows 摄像头失败：{err}"))?;
+    }
+    if raw_devices.is_null() {
+        return Ok(None);
+    }
+
+    let result = unsafe {
+        let devices = std::slice::from_raw_parts_mut(raw_devices, device_count as usize);
+        let mut match_link = None;
+        for device in devices.iter_mut() {
+            let Some(device) = device.as_ref() else {
+                continue;
+            };
+            let friendly = mf_attribute_string(device, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
+            let symbolic_link = mf_attribute_string(
+                device,
+                &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+            );
+            if friendly.as_deref() == Some(FRIENDLY_NAME)
+                && symbolic_link.as_deref() == Some(expected_link.as_str())
+            {
+                match_link = symbolic_link;
+                break;
+            }
+        }
+        for device in devices.iter_mut() {
+            let _ = device.take();
+        }
+        CoTaskMemFree(Some(raw_devices.cast()));
+        match_link
+    };
+    Ok(result)
+}
+
 /// Repair declarative COM registration when the installer keys are missing or stale.
 pub fn ensure_com_server_registered() -> Result<(), String> {
     let dll = resolve_vcam_dll().ok_or_else(|| {
@@ -128,6 +205,11 @@ fn ensure_installed_com_server_registered() -> Result<(), String> {
         return Ok(());
     }
     register_com_server(&dll)
+}
+
+fn repair_installed_com_server() -> Result<(), String> {
+    let _com = ShellComInit::new()?;
+    ensure_installed_com_server_registered()
 }
 
 /// Run the existing maintenance command through the Windows UAC boundary.
@@ -192,65 +274,6 @@ pub fn repair_system_registration_elevated() -> Result<(), String> {
     Ok(())
 }
 
-/// Run repair and MF activation as one dedicated-thread transaction.
-///
-/// `IMFVirtualCamera` never crosses threads: the returned host only owns a
-/// shutdown channel and join handle, while the worker keeps the COM object.
-pub fn repair_and_start_elevated() -> Result<VirtualCameraSessionHost, String> {
-    start_session_worker(true)
-}
-
-/// Start an already-installed camera on a dedicated thread and keep its COM/MF
-/// runtime there for the whole desktop session.
-pub fn start_registered_on_worker() -> Result<VirtualCameraSessionHost, String> {
-    start_session_worker(false)
-}
-
-fn start_session_worker(repair_registration: bool) -> Result<VirtualCameraSessionHost, String> {
-    let (ready_tx, ready_rx) = mpsc::sync_channel(1);
-    let (shutdown_tx, shutdown_rx) = mpsc::channel();
-    let thread = thread::Builder::new()
-        .name("picoo-vcam-session".into())
-        .spawn(move || {
-            let registration_result = if repair_registration {
-                repair_system_registration_elevated()
-            } else {
-                Ok(())
-            };
-            match registration_result.and_then(|()| create_registered_session()) {
-                Ok(registration) => {
-                    if ready_tx.send(Ok(())).is_ok() {
-                        let _ = shutdown_rx.recv();
-                    }
-                    drop(registration);
-                }
-                Err(err) => {
-                    let _ = ready_tx.send(Err(err));
-                }
-            }
-        })
-        .map_err(|err| format!("无法启动虚拟摄像头修复线程：{err}"))?;
-
-    match ready_rx.recv() {
-        Ok(Ok(())) => Ok(VirtualCameraSessionHost {
-            shutdown_tx,
-            thread: Some(thread),
-        }),
-        Ok(Err(err)) => {
-            let _ = thread.join();
-            Err(err)
-        }
-        Err(_) => {
-            let panicked = thread.join().is_err();
-            if panicked {
-                Err("虚拟摄像头修复线程异常退出".to_string())
-            } else {
-                Err("虚拟摄像头修复线程未返回结果".to_string())
-            }
-        }
-    }
-}
-
 fn resolve_installed_vcam_dll() -> Result<PathBuf, String> {
     let executable = std::env::current_exe()
         .and_then(std::fs::canonicalize)
@@ -288,9 +311,50 @@ fn program_files_x64() -> Result<PathBuf, String> {
         .map_err(|err| format!("无法解析 Windows Program Files 目录：{err}"))
 }
 
-fn create_virtual_camera(
+fn start_virtual_camera(
     lifetime: windows::Win32::Media::MediaFoundation::MFVirtualCameraLifetime,
+    access: windows::Win32::Media::MediaFoundation::MFVirtualCameraAccess,
+    remove_on_failure: bool,
 ) -> Result<VirtualCameraRegistration, String> {
+    let (camera, mf, com) = create_virtual_camera_identity(lifetime, access)?;
+
+    if let Err(err) = unsafe { camera.Start(None) } {
+        if remove_on_failure {
+            unsafe {
+                let _ = camera.Remove();
+            }
+        }
+        return Err(format!("IMFVirtualCamera::Start failed: {err}"));
+    }
+
+    let symbolic_link = mf_attribute_string(
+        &camera,
+        &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
+    )
+    .filter(|value| !value.is_empty());
+    let Some(symbolic_link) = symbolic_link else {
+        if remove_on_failure {
+            unsafe {
+                let _ = camera.Remove();
+            }
+        }
+        return Err(
+            "IMFVirtualCamera::Start 已返回成功，但 Windows 未提供摄像头 symbolic link".to_string(),
+        );
+    };
+
+    Ok(VirtualCameraRegistration {
+        camera,
+        _symbolic_link: symbolic_link,
+        _mf: mf,
+        _com: com,
+    })
+}
+
+fn create_virtual_camera_identity(
+    lifetime: windows::Win32::Media::MediaFoundation::MFVirtualCameraLifetime,
+    access: windows::Win32::Media::MediaFoundation::MFVirtualCameraAccess,
+) -> Result<(IMFVirtualCamera, MfInit, ComInit), String> {
     let com = ComInit::new()?;
     let mf = MfInit::new()?;
     let friendly = wide(FRIENDLY_NAME);
@@ -300,34 +364,22 @@ fn create_virtual_camera(
         MFCreateVirtualCamera(
             MFVirtualCameraType_SoftwareCameraSource,
             lifetime,
-            MFVirtualCameraAccess_CurrentUser,
+            access,
             PCWSTR(friendly.as_ptr()),
             PCWSTR(clsid.as_ptr()),
             None,
         )
     }
     .map_err(|e| format!("MFCreateVirtualCamera failed: {e}"))?;
-
-    unsafe {
-        camera
-            .Start(None)
-            .map_err(|e| format!("IMFVirtualCamera::Start failed: {e}"))?;
-    }
-
-    Ok(VirtualCameraRegistration {
-        camera,
-        _mf: mf,
-        _com: com,
-    })
+    Ok((camera, mf, com))
 }
 
-fn create_registered_session() -> Result<VirtualCameraRegistration, String> {
-    if !com_server_registered() {
-        return Err(
-            "Picoo Camera COM registration is missing or stale after elevated repair".to_string(),
-        );
-    }
-    create_virtual_camera(MFVirtualCameraLifetime_Session)
+fn mf_attribute_string(attributes: &IMFAttributes, key: &GUID) -> Option<String> {
+    let length = unsafe { attributes.GetStringLength(key).ok()? };
+    let mut buffer = vec![0u16; length.saturating_add(1) as usize];
+    unsafe { attributes.GetString(key, &mut buffer, None).ok()? };
+    buffer.truncate(length as usize);
+    String::from_utf16(&buffer).ok()
 }
 
 pub fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
@@ -346,7 +398,15 @@ pub fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
 }
 
 fn read_inproc_server_path() -> Option<PathBuf> {
-    let key_wide = wide(INPROC_SERVER_KEY);
+    read_registry_string(INPROC_SERVER_KEY, None).map(PathBuf::from)
+}
+
+fn read_registry_string(key: &str, name: Option<&str>) -> Option<String> {
+    let key_wide = wide(key);
+    let name_wide = name.map(wide);
+    let value_name = name_wide
+        .as_ref()
+        .map_or_else(PCWSTR::null, |value| PCWSTR(value.as_ptr()));
     let mut hkey = Default::default();
     unsafe {
         if RegOpenKeyExW(
@@ -363,12 +423,28 @@ fn read_inproc_server_path() -> Option<PathBuf> {
     }
 
     let mut kind = REG_SZ;
-    let mut bytes = vec![0u8; 1024];
-    let mut size = bytes.len() as u32;
+    let mut size = 0u32;
+    let size_query = unsafe {
+        RegQueryValueExW(
+            hkey,
+            value_name,
+            None,
+            Some(&mut kind),
+            None,
+            Some(&mut size),
+        )
+    };
+    if size_query != ERROR_SUCCESS || kind != REG_SZ || size < 2 {
+        unsafe {
+            let _ = RegCloseKey(hkey);
+        }
+        return None;
+    }
+    let mut bytes = vec![0u8; size as usize];
     let query = unsafe {
         RegQueryValueExW(
             hkey,
-            PCWSTR::null(),
+            value_name,
             None,
             Some(&mut kind),
             Some(bytes.as_mut_ptr()),
@@ -390,7 +466,7 @@ fn read_inproc_server_path() -> Option<PathBuf> {
     if wide_path.is_empty() {
         return None;
     }
-    Some(PathBuf::from(String::from_utf16_lossy(&wide_path)))
+    Some(String::from_utf16_lossy(&wide_path))
 }
 
 fn paths_equivalent(left: &Path, right: &Path) -> bool {
@@ -416,14 +492,36 @@ fn register_com_server(dll: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn unregister_com_server() -> Result<(), String> {
-    let key = wide(CLSID_KEY);
-    let status = unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, PCWSTR(key.as_ptr())) };
+fn delete_registry_value(key: &str, name: &str) -> Result<(), String> {
+    let key = wide(key);
+    let name = wide(name);
+    let mut handle = Default::default();
+    let open = unsafe {
+        RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(key.as_ptr()),
+            None,
+            KEY_WRITE,
+            &mut handle,
+        )
+    };
+    if open.0 == windows::Win32::Foundation::ERROR_FILE_NOT_FOUND.0 {
+        return Ok(());
+    }
+    if open != ERROR_SUCCESS {
+        return Err(format!(
+            "failed to open virtual camera identity key ({open:?})"
+        ));
+    }
+    let status = unsafe { RegDeleteValueW(handle, PCWSTR(name.as_ptr())) };
+    unsafe {
+        let _ = RegCloseKey(handle);
+    }
     if status == ERROR_SUCCESS || status.0 == windows::Win32::Foundation::ERROR_FILE_NOT_FOUND.0 {
         Ok(())
     } else {
         Err(format!(
-            "failed to remove COM registration ({status:?}); run as Administrator"
+            "failed to remove virtual camera identity ({status:?})"
         ))
     }
 }
@@ -482,6 +580,37 @@ impl ComInit {
                 .map_err(|e| format!("CoInitializeEx failed: {e}"))?;
         }
         Ok(Self)
+    }
+}
+
+/// Initializes COM when the caller has no apartment yet, while accepting the
+/// GPUI thread's existing STA apartment. Only a successful initialization is
+/// paired with `CoUninitialize`.
+struct EnumerationComInit {
+    initialized_here: bool,
+}
+
+impl EnumerationComInit {
+    fn new() -> Result<Self, String> {
+        match unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
+            Ok(()) => Ok(Self {
+                initialized_here: true,
+            }),
+            Err(err) if err.code() == RPC_E_CHANGED_MODE => Ok(Self {
+                initialized_here: false,
+            }),
+            Err(err) => Err(format!("摄像头枚举 COM 初始化失败：{err}")),
+        }
+    }
+}
+
+impl Drop for EnumerationComInit {
+    fn drop(&mut self) {
+        if self.initialized_here {
+            unsafe {
+                windows::Win32::System::Com::CoUninitialize();
+            }
+        }
     }
 }
 

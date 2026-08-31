@@ -1,9 +1,9 @@
 use std::ffi::c_void;
 use std::sync::Mutex;
 
-use windows::core::{
-    implement, AgileReference, Error, IUnknown, Interface, Ref, Result, BOOL, GUID, HRESULT,
-};
+use windows::core::{implement, Error, IUnknown, Interface, Ref, Result, BOOL, GUID, HRESULT};
+use windows::Win32::Foundation::ERROR_SET_NOT_FOUND;
+use windows::Win32::Media::KernelStreaming::{IKsControl, IKsControl_Impl, KSIDENTIFIER};
 use windows::Win32::Media::MediaFoundation::{
     IMFAsyncCallback, IMFAsyncResult, IMFAttributes, IMFGetService, IMFGetService_Impl,
     IMFMediaEvent, IMFMediaEventGenerator_Impl, IMFMediaEventQueue, IMFMediaSource,
@@ -26,10 +26,9 @@ use super::{lock, query_interface, ObjectTracker};
 const MF_SAMPLEALLOCATOR_SERVICE: GUID = GUID::from_u128(0xbbcd045d_4d8b_49e6_9d72_6c60c22a445b);
 
 struct SourceState {
-    queue: Option<AgileReference<IMFMediaEventQueue>>,
-    presentation:
-        Option<AgileReference<windows::Win32::Media::MediaFoundation::IMFPresentationDescriptor>>,
-    stream: Option<AgileReference<IMFMediaStream2>>,
+    queue: Option<IMFMediaEventQueue>,
+    presentation: Option<windows::Win32::Media::MediaFoundation::IMFPresentationDescriptor>,
+    stream: Option<IMFMediaStream2>,
     stream_state: SharedStreamState,
     shutdown: bool,
     stream_presented: bool,
@@ -39,10 +38,11 @@ struct SourceState {
     IMFMediaSourceEx,
     IMFGetService,
     IMFSampleAllocatorControl,
+    IKsControl,
     IAgileObject
 )]
 pub(super) struct MediaSource {
-    attributes: AgileReference<IMFAttributes>,
+    attributes: IMFAttributes,
     state: Mutex<SourceState>,
     _tracker: ObjectTracker,
 }
@@ -56,11 +56,11 @@ impl MediaSource {
             let presentation = MFCreatePresentationDescriptor(Some(&[Some(stream_descriptor)]))?;
 
             let source: IMFMediaSourceEx = Self {
-                attributes: AgileReference::new(&attributes)?,
+                attributes,
                 state: Mutex::new(SourceState {
-                    queue: Some(AgileReference::new(&queue)?),
-                    presentation: Some(AgileReference::new(&presentation)?),
-                    stream: Some(AgileReference::new(&stream)?),
+                    queue: Some(queue),
+                    presentation: Some(presentation),
+                    stream: Some(stream),
                     stream_state: stream_state.clone(),
                     shutdown: false,
                     stream_presented: false,
@@ -122,8 +122,8 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
         state
             .presentation
             .as_ref()
-            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-            .resolve()
+            .cloned()
+            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
     }
 
     fn Start(
@@ -156,13 +156,13 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
             let queue = state
                 .queue
                 .as_ref()
-                .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-                .resolve()?;
+                .cloned()
+                .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
             let stream = state
                 .stream
                 .as_ref()
-                .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-                .resolve()?;
+                .cloned()
+                .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
             let first = !state.stream_presented;
             (queue, stream, state.stream_state.clone(), first)
         };
@@ -223,8 +223,8 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
                 state
                     .queue
                     .as_ref()
-                    .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-                    .resolve()?,
+                    .cloned()
+                    .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?,
                 state.stream_state.clone(),
             )
         };
@@ -265,7 +265,6 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
         }
         shutdown(&stream_state)?;
         if let Some(queue) = queue {
-            let queue = queue.resolve()?;
             unsafe { queue.Shutdown()? };
         }
         Ok(())
@@ -275,7 +274,7 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
 impl IMFMediaSourceEx_Impl for MediaSource_Impl {
     fn GetSourceAttributes(&self) -> Result<IMFAttributes> {
         ensure_source_alive(&self.state)?;
-        self.attributes.resolve()
+        Ok(self.attributes.clone())
     }
 
     fn GetStreamAttributes(&self, stream_id: u32) -> Result<IMFAttributes> {
@@ -307,9 +306,44 @@ impl IMFGetService_Impl for MediaSource_Impl {
         let stream = lock(&self.state)?
             .stream
             .as_ref()
-            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-            .resolve()?;
+            .cloned()
+            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
         unsafe { query_interface(&stream, riid, output) }
+    }
+}
+
+impl IKsControl_Impl for MediaSource_Impl {
+    fn KsProperty(
+        &self,
+        _property: *const KSIDENTIFIER,
+        _property_length: u32,
+        _property_data: *mut c_void,
+        _data_length: u32,
+        bytes_returned: *mut u32,
+    ) -> Result<()> {
+        unsupported_ks_control(bytes_returned)
+    }
+
+    fn KsMethod(
+        &self,
+        _method: *const KSIDENTIFIER,
+        _method_length: u32,
+        _method_data: *mut c_void,
+        _data_length: u32,
+        bytes_returned: *mut u32,
+    ) -> Result<()> {
+        unsupported_ks_control(bytes_returned)
+    }
+
+    fn KsEvent(
+        &self,
+        _event: *const KSIDENTIFIER,
+        _event_length: u32,
+        _event_data: *mut c_void,
+        _data_length: u32,
+        bytes_returned: *mut u32,
+    ) -> Result<()> {
+        unsupported_ks_control(bytes_returned)
     }
 }
 
@@ -346,8 +380,17 @@ fn source_queue(state: &Mutex<SourceState>) -> Result<IMFMediaEventQueue> {
     state
         .queue
         .as_ref()
-        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-        .resolve()
+        .cloned()
+        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
+}
+
+fn unsupported_ks_control(bytes_returned: *mut u32) -> Result<()> {
+    if !bytes_returned.is_null() {
+        unsafe {
+            bytes_returned.write(0);
+        }
+    }
+    Err(Error::from(HRESULT::from_win32(ERROR_SET_NOT_FOUND.0)))
 }
 
 fn ensure_source_alive(state: &Mutex<SourceState>) -> Result<()> {

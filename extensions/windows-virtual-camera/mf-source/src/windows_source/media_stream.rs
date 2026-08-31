@@ -1,8 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use windows::core::{
-    implement, AgileReference, Error, IUnknown, Interface, Ref, Result, GUID, HRESULT,
-};
+use windows::core::{implement, Error, IUnknown, Interface, Ref, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG};
 use windows::Win32::Media::KernelStreaming::PINNAME_VIDEO_CAPTURE;
 use windows::Win32::Media::MediaFoundation::{
@@ -38,11 +36,11 @@ use super::{lock, ObjectTracker};
 pub(super) type SharedStreamState = Arc<Mutex<StreamState>>;
 
 pub(super) struct StreamState {
-    source: Option<AgileReference<IMFMediaSource>>,
-    queue: Option<AgileReference<IMFMediaEventQueue>>,
-    descriptor: Option<AgileReference<IMFStreamDescriptor>>,
-    current_type: Option<AgileReference<IMFMediaType>>,
-    allocator: Option<AgileReference<IMFVideoSampleAllocator>>,
+    source: Option<IMFMediaSource>,
+    queue: Option<IMFMediaEventQueue>,
+    descriptor: Option<IMFStreamDescriptor>,
+    current_type: Option<IMFMediaType>,
+    allocator: Option<IMFVideoSampleAllocator>,
     frames: Arc<Mutex<FrameProvider>>,
     metrics: VcamMetrics,
     output_width: u32,
@@ -53,6 +51,14 @@ pub(super) struct StreamState {
     lifecycle_operation: Arc<Mutex<()>>,
     stream_id: u32,
 }
+
+// SAFETY: the Media Foundation objects stored here are the platform's
+// free-threaded event queue/descriptors/media types/allocator, plus Picoo's own
+// IAgileObject media source. Every mutation is serialized by the containing
+// Mutex. We intentionally assert that contract directly instead of calling
+// RoGetAgileReference, which requires proxy registration these MF interfaces do
+// not provide in the Frame Server process.
+unsafe impl Send for StreamState {}
 
 #[implement(IMFMediaStream2, IMFSampleAllocatorControl, IAgileObject)]
 pub(super) struct MediaStream {
@@ -84,9 +90,9 @@ impl MediaStream {
 
             let shared = Arc::new(Mutex::new(StreamState {
                 source: None,
-                queue: Some(AgileReference::new(&queue)?),
-                descriptor: Some(AgileReference::new(&descriptor)?),
-                current_type: Some(AgileReference::new(&type_720)?),
+                queue: Some(queue),
+                descriptor: Some(descriptor),
+                current_type: Some(type_720),
                 allocator: None,
                 frames: Arc::new(Mutex::new(FrameProvider::new())),
                 metrics: VcamMetrics::new(),
@@ -109,7 +115,7 @@ impl MediaStream {
 }
 
 pub(super) fn attach_source(shared: &SharedStreamState, source: IMFMediaSource) -> Result<()> {
-    lock(shared)?.source = Some(AgileReference::new(&source)?);
+    lock(shared)?.source = Some(source);
     Ok(())
 }
 
@@ -117,8 +123,8 @@ pub(super) fn descriptor(shared: &SharedStreamState) -> Result<IMFStreamDescript
     lock(shared)?
         .descriptor
         .as_ref()
+        .cloned()
         .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
-        .and_then(AgileReference::resolve)
 }
 
 pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
@@ -135,13 +141,11 @@ pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
         (state.queue.take(), state.allocator.take())
     };
     if let Some(allocator) = allocator {
-        let allocator = allocator.resolve()?;
         unsafe {
             let _ = allocator.UninitializeSampleAllocator();
         }
     }
     if let Some(queue) = queue {
-        let queue = queue.resolve()?;
         unsafe { queue.Shutdown()? };
     }
     Ok(())
@@ -179,10 +183,6 @@ pub(super) fn set_stream_state(
     };
 
     let result = (|| {
-        let queue = queue.resolve()?;
-        let allocator = allocator.map(|value| value.resolve()).transpose()?;
-        let current_type = current_type.map(|value| value.resolve()).transpose()?;
-
         if requested == MF_STREAM_STATE_RUNNING {
             if let (Some(allocator), Some(media_type)) = (&allocator, &current_type) {
                 unsafe { allocator.InitializeSampleAllocator(10, media_type)? };
@@ -291,7 +291,7 @@ pub(super) fn set_default_allocator(
     allocator: Ref<'_, IUnknown>,
 ) -> Result<()> {
     let allocator = allocator.ok()?;
-    let replacement = AgileReference::new(&allocator.cast()?)?;
+    let replacement = allocator.cast()?;
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
     let previous = {
@@ -312,7 +312,7 @@ pub(super) fn set_default_allocator(
     };
     if let Some(previous) = previous {
         unsafe {
-            let _ = previous.resolve()?.UninitializeSampleAllocator();
+            let _ = previous.UninitializeSampleAllocator();
         }
     }
     Ok(())
@@ -343,14 +343,14 @@ pub(super) fn set_output_media_type(
     let descriptor = state
         .descriptor
         .as_ref()
-        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-        .resolve()?;
+        .cloned()
+        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
     unsafe {
         descriptor
             .GetMediaTypeHandler()?
             .SetCurrentMediaType(media_type)?;
     }
-    state.current_type = Some(AgileReference::new(media_type)?);
+    state.current_type = Some(media_type.clone());
     state.output_width = width;
     state.output_height = height;
     Ok(())
@@ -415,8 +415,8 @@ impl IMFMediaStream_Impl for MediaStream_Impl {
         lock(&self.shared)?
             .source
             .as_ref()
+            .cloned()
             .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
-            .and_then(AgileReference::resolve)
     }
 
     fn GetStreamDescriptor(&self) -> Result<IMFStreamDescriptor> {
@@ -468,8 +468,8 @@ fn stream_queue(shared: &SharedStreamState) -> Result<IMFMediaEventQueue> {
     lock(shared)?
         .queue
         .as_ref()
-        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-        .resolve()
+        .cloned()
+        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
 }
 
 fn create_nv12_media_type(width: u32, height: u32) -> Result<IMFMediaType> {
@@ -537,16 +537,12 @@ fn deliver_sample(
         {
             return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
         }
-        let allocator = state
-            .allocator
-            .as_ref()
-            .map(AgileReference::resolve)
-            .transpose()?;
+        let allocator = state.allocator.as_ref().cloned();
         let queue = state
             .queue
             .as_ref()
-            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?
-            .resolve()?;
+            .cloned()
+            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
         (allocator, queue)
     };
     let sample = create_sample(allocator.as_ref(), &frame, token.as_ref())?;

@@ -32,7 +32,20 @@
         BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
         DllEntry="WixQuietExec"
         Execute="deferred"
-        Impersonate="yes"
+        Impersonate="no"
+        Return="check" />
+
+    <SetProperty
+        Id="RollbackVcamRegistration"
+        Value="&quot;[#PicooDesktop]&quot; --unregister-vcam"
+        Before="RollbackVcamRegistration"
+        Sequence="execute" />
+    <CustomAction
+        Id="RollbackVcamRegistration"
+        BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+        DllEntry="WixQuietExec"
+        Execute="rollback"
+        Impersonate="no"
         Return="ignore" />
 
     <SetProperty
@@ -45,10 +58,11 @@
         BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
         DllEntry="WixQuietExec"
         Execute="deferred"
-        Impersonate="yes"
-        Return="ignore" />
+        Impersonate="no"
+        Return="check" />
 
     <InstallExecuteSequence>
+      <Custom Action="RollbackVcamRegistration" Before="RegisterVcamOnInstall" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
       <Custom Action="RegisterVcamOnInstall" After="InstallFiles" Condition="NOT REMOVE" />
       <Custom Action="UnregisterVcamOnRemove" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
     </InstallExecuteSequence>

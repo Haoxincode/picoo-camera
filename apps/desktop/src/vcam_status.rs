@@ -58,7 +58,17 @@ fn detect_non_macos_vcam_status() -> VirtualCameraStatus {
     }
 
     #[cfg(all(windows, feature = "windows-vcam"))]
-    VirtualCameraStatus::Installed
+    match crate::vcam_register::registered_camera_symbolic_link() {
+        Ok(Some(symbolic_link)) => {
+            tracing::debug!(%symbolic_link, "Picoo Camera is visible to Media Foundation");
+            VirtualCameraStatus::Active
+        }
+        Ok(None) => VirtualCameraStatus::NotInstalled,
+        Err(err) => {
+            tracing::warn!("Media Foundation camera enumeration failed: {err}");
+            VirtualCameraStatus::Unknown
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -164,7 +174,9 @@ fn vcam_repair_hint_for(platform: VcamPlatform, status: VirtualCameraStatus) -> 
             | VirtualCameraStatus::NotInstalled => {
                 "未检测到 Picoo Camera 系统注册。若已安装，请点下方「安装或修复…」并在 Windows 用户账户控制中允许；若组件缺失，请重新运行 PicooCamera.msi。"
             }
-            VirtualCameraStatus::Unknown => "正在检测虚拟摄像头状态…",
+            VirtualCameraStatus::Unknown => {
+                "Windows 无法完成摄像头枚举。请点下方「安装或修复…」；若仍失败，请重新运行 PicooCamera.msi。"
+            }
         },
         VcamPlatform::Macos => match status {
             VirtualCameraStatus::Bundled => {

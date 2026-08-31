@@ -136,3 +136,130 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
         S_FALSE
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::core::{IUnknown, Interface};
+    use windows::Win32::Media::KernelStreaming::IKsControl;
+    use windows::Win32::Media::MediaFoundation::{
+        IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2, MFShutdown,
+        MFStartup, MF_VERSION,
+    };
+    use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
+    use windows::Win32::System::Com::{
+        CoInitializeEx, CoUninitialize, IAgileObject, IClassFactory, COINIT_MULTITHREADED,
+    };
+
+    const MF_SAMPLEALLOCATOR_SERVICE: GUID =
+        GUID::from_u128(0xbbcd045d_4d8b_49e6_9d72_6c60c22a445b);
+
+    struct ComApartment;
+
+    impl ComApartment {
+        fn start(label: &str) -> Self {
+            unsafe {
+                CoInitializeEx(None, COINIT_MULTITHREADED)
+                    .ok()
+                    .unwrap_or_else(|error| panic!("{label} CoInitializeEx(MTA): {error}"));
+            }
+            Self
+        }
+    }
+
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            unsafe { CoUninitialize() };
+        }
+    }
+
+    struct MfPlatform {
+        _com: ComApartment,
+    }
+
+    impl MfPlatform {
+        fn start() -> Self {
+            let com = ComApartment::start("test");
+            unsafe {
+                if let Err(error) = MFStartup(MF_VERSION, Default::default()) {
+                    panic!("MFStartup failed: {error}");
+                }
+            }
+            Self { _com: com }
+        }
+    }
+
+    impl Drop for MfPlatform {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = MFShutdown();
+            }
+        }
+    }
+
+    #[test]
+    fn in_process_activation_exposes_and_runs_the_frame_server_source_contract() {
+        let _platform = MfPlatform::start();
+        unsafe {
+            let mut raw_factory = std::ptr::null_mut();
+            DllGetClassObject(&PICOO_VCAM_CLSID, &IClassFactory::IID, &mut raw_factory)
+                .ok()
+                .expect("DllGetClassObject(IClassFactory)");
+            let factory = IClassFactory::from_raw(raw_factory);
+            let activator: IMFActivate = factory
+                .CreateInstance(None::<&IUnknown>)
+                .expect("IClassFactory::CreateInstance(IMFActivate)");
+            activator
+                .cast::<IAgileObject>()
+                .expect("activator must expose IAgileObject");
+            let source_ex: IMFMediaSourceEx = activator
+                .ActivateObject()
+                .expect("IMFActivate::ActivateObject(IMFMediaSourceEx)");
+            source_ex
+                .cast::<IAgileObject>()
+                .expect("media source must expose IAgileObject");
+            source_ex
+                .cast::<IKsControl>()
+                .expect("Frame Server media source must expose IKsControl");
+            let services = source_ex
+                .cast::<IMFGetService>()
+                .expect("Frame Server media source must expose IMFGetService");
+            let stream: IMFMediaStream2 = services
+                .GetService(&MF_SAMPLEALLOCATOR_SERVICE)
+                .expect("media source must expose its IMFMediaStream2 service");
+            stream
+                .cast::<IAgileObject>()
+                .expect("media stream must expose IAgileObject");
+
+            let cross_thread_source = source_ex.clone().into_raw() as usize;
+            let cross_thread_stream = stream.clone().into_raw() as usize;
+            std::thread::spawn(move || {
+                let _com = ComApartment::start("worker");
+                let source = IMFMediaSourceEx::from_raw(cross_thread_source as *mut _);
+                let stream = IMFMediaStream2::from_raw(cross_thread_stream as *mut _);
+                source
+                    .GetSourceAttributes()
+                    .expect("agile source must be callable from another MTA thread");
+                stream
+                    .GetStreamDescriptor()
+                    .expect("agile stream must be callable from another MTA thread");
+                drop(source);
+                drop(stream);
+            })
+            .join()
+            .expect("cross-thread agile-source check");
+
+            let source: IMFMediaSource = source_ex.cast().expect("IMFMediaSource");
+            let presentation = source
+                .CreatePresentationDescriptor()
+                .expect("CreatePresentationDescriptor");
+            presentation.SelectStream(0).expect("SelectStream(0)");
+            let start_position = PROPVARIANT::default();
+            source
+                .Start(&presentation, &GUID::zeroed(), &start_position)
+                .expect("IMFMediaSource::Start");
+            source.Stop().expect("IMFMediaSource::Stop");
+            source.Shutdown().expect("IMFMediaSource::Shutdown");
+        }
+    }
+}

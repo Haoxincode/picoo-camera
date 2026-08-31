@@ -105,9 +105,36 @@ echo "ok: picoo-camera.wxs uses declarative COM registration only"
 need "$WXS" 'RegisterVcamOnInstall'
 need "$WXS" '--register-vcam --no-wait'
 need "$WXS" 'WixQuietExec'
+if awk '/Id="RegisterVcamOnInstall"/{found=1} found && /Return=/{print; exit}' "$WXS" | grep -q 'Return="check"'; then
+  echo "ok: MSI install fails when MF virtual-camera registration fails"
+else
+  echo "picoo-camera.wxs: RegisterVcamOnInstall must use Return=check"
+  fail=1
+fi
 need "$WXS" 'xmlns:util='
 need "$WXS" 'UnregisterVcamOnRemove'
 need "$WXS" '--unregister-vcam'
+need "$WXS" 'RollbackVcamRegistration'
+need "$WXS" 'Execute="rollback"'
+need "$WXS" 'Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED"'
+if awk '/Id="RollbackVcamRegistration"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
+  echo "ok: rollback removal uses the AllUsers administrator context"
+else
+  echo "picoo-camera.wxs: RollbackVcamRegistration must be non-impersonated"
+  fail=1
+fi
+if awk '/Id="UnregisterVcamOnRemove"/{found=1} found && /Return=/{print; exit}' "$WXS" | grep -q 'Return="check"'; then
+  echo "ok: MSI keeps installed files when VCam removal fails"
+else
+  echo "picoo-camera.wxs: UnregisterVcamOnRemove must use Return=check"
+  fail=1
+fi
+if awk '/Id="UnregisterVcamOnRemove"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
+  echo "ok: uninstall removal uses the AllUsers administrator context"
+else
+  echo "picoo-camera.wxs: UnregisterVcamOnRemove must be non-impersonated"
+  fail=1
+fi
 # LAN QUIC and mDNS discovery firewall exception scaffolding (PRD §19.3 / DISCOVERY-001)
 need "$WXS" 'FirewallException'
 need "$WXS" 'xmlns:fw='
@@ -134,6 +161,30 @@ need "$VCAM_MANIFEST" 'crate-type = ["cdylib", "rlib"]'
 need "$VCAM_MANIFEST" 'windows-core = "0.62.2"'
 need "$VCAM_MANIFEST" 'windows = { version = "0.62.2"'
 need "$VCAM_RS" "$CLSID"
+if grep -R -qF 'AgileReference::' "$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source"; then
+  echo "MF Source must not wrap standard Media Foundation interfaces in RoGetAgileReference"
+  fail=1
+else
+  echo "ok: MF Source stores direct Media Foundation COM references"
+fi
+if grep -R -qF 'MF_VIRTUALCAMERA_PROVIDE_ASSOCIATED_CAMERA_SOURCES' \
+    "$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source"; then
+  echo "synthetic MF Source must not claim associated physical camera sources"
+  fail=1
+else
+  echo "ok: synthetic MF Source does not claim associated physical cameras"
+fi
+need "$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/media_source.rs" 'IKsControl'
+need "$VCAM_RS" 'MFEnumDeviceSources'
+need "$VCAM_RS" 'MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK'
+need "$VCAM_RS" 'MFVirtualCameraAccess_AllUsers'
+need "$VCAM_RS" 'vcam_symbolic_link'
+if awk '/Id="RegisterVcamOnInstall"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
+  echo "ok: per-machine VCam registration runs elevated for AllUsers access"
+else
+  echo "picoo-camera.wxs: RegisterVcamOnInstall must run non-impersonated"
+  fail=1
+fi
 
 if find "$ROOT/extensions/windows-virtual-camera/mf-source" \
     \( -name '*.cpp' -o -name '*.h' -o -name '*.vcxproj' -o -name 'CMakeLists.txt' \) \

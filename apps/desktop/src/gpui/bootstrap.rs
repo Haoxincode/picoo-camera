@@ -5,8 +5,6 @@ use gpui_component::*;
 use gpui_component_assets::Assets;
 use picoo_receiver::ReceiverError;
 
-#[cfg(any(test, all(windows, feature = "windows-vcam")))]
-use crate::model::VirtualCameraStatus;
 use crate::prefs::load_prefs;
 use crate::receiver_runtime::ReceiverRuntime;
 use crate::vcam_status::detect_vcam_status;
@@ -71,29 +69,6 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let runtime = ReceiverRuntime::from_prefs(&prefs)?;
     let mut runtime = runtime;
     runtime.set_virtual_camera_status(vcam_status);
-
-    // REQ-PICOO-VCAM-002: keep Session-lifetime MF virtual camera for the desktop process.
-    #[cfg(all(windows, feature = "windows-vcam"))]
-    let (vcam_status, _vcam_registration) = if should_auto_start_vcam(vcam_status) {
-        match crate::vcam_register::start_registered_on_worker() {
-            Ok(reg) => {
-                tracing::info!("Picoo Camera virtual camera started for this session");
-                runtime.set_virtual_camera_status(VirtualCameraStatus::Active);
-                (VirtualCameraStatus::Active, Some(reg))
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "MF virtual camera start deferred: {err} (open 虚拟摄像头 → 安装或修复…)"
-                );
-                (vcam_status, None)
-            }
-        }
-    } else {
-        tracing::info!(
-            "virtual camera is not installed; skip privileged startup repair and keep the explicit repair action available"
-        );
-        (vcam_status, None)
-    };
 
     let prefs_for_window = prefs.clone();
     app.run(move |cx| {
@@ -162,18 +137,9 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     Ok(())
 }
 
-#[cfg(any(test, all(windows, feature = "windows-vcam")))]
-fn should_auto_start_vcam(status: VirtualCameraStatus) -> bool {
-    matches!(
-        status,
-        VirtualCameraStatus::Installed | VirtualCameraStatus::Active
-    )
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{should_auto_start_vcam, PicooAssets};
-    use crate::model::VirtualCameraStatus;
+    use super::PicooAssets;
     use gpui::AssetSource;
 
     #[test]
@@ -193,22 +159,6 @@ mod tests {
             platform < receiver,
             "Windows OLE/STA must be initialized before Media Foundation"
         );
-    }
-
-    #[test]
-    fn only_an_installed_virtual_camera_is_started_automatically() {
-        assert!(should_auto_start_vcam(VirtualCameraStatus::Installed));
-        assert!(should_auto_start_vcam(VirtualCameraStatus::Active));
-        assert!(!should_auto_start_vcam(VirtualCameraStatus::NotInstalled));
-        assert!(!should_auto_start_vcam(VirtualCameraStatus::Bundled));
-        assert!(!should_auto_start_vcam(
-            VirtualCameraStatus::AwaitingApproval
-        ));
-        assert!(!should_auto_start_vcam(
-            VirtualCameraStatus::RestartRequired
-        ));
-        assert!(!should_auto_start_vcam(VirtualCameraStatus::Uninstalling));
-        assert!(!should_auto_start_vcam(VirtualCameraStatus::Unknown));
     }
 
     #[test]

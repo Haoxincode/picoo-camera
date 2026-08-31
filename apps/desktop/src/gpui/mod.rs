@@ -80,7 +80,4 @@ struct PicooDesktopApp {
     pairing_dialog_pending: Option<String>,
     pairing_dialog_visible: bool,
     pairing_locally_confirmed: bool,
-    /// Holds Session-lifetime MF virtual camera while the UI is open.
-    #[cfg(all(windows, feature = "windows-vcam"))]
-    vcam_registration: Option<crate::vcam_register::VirtualCameraSessionHost>,
 }

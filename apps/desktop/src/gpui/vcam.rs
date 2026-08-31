@@ -248,14 +248,19 @@ impl PicooDesktopApp {
             cx.notify();
 
             let repair = cx.background_executor().spawn_dedicated(|_| async move {
-                crate::vcam_register::repair_and_start_elevated()
+                crate::vcam_register::repair_system_registration_elevated()?;
+                match detect_vcam_status() {
+                    VirtualCameraStatus::Active => Ok(()),
+                    status => Err(format!(
+                        "修复进程已结束，但 Windows 摄像头枚举状态仍为 {status:?}"
+                    )),
+                }
             });
             cx.spawn(async move |this, cx| {
                 let repair_result = repair.await;
                 let _ = this.update(cx, |this, cx| {
                     match repair_result {
-                        Ok(registration) => {
-                            this.vcam_registration = Some(registration);
+                        Ok(()) => {
                             this.vcam_status = VirtualCameraStatus::Active;
                             this.runtime
                                 .set_virtual_camera_status(VirtualCameraStatus::Active);

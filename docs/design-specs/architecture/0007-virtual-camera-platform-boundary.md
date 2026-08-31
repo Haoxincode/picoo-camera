@@ -45,7 +45,9 @@ Windows 输出媒体类型由 Frame Server 客户端在 `Start` 的 presentation
 lifecycle revision 复核，并与 start/stop/shutdown 共用 lifecycle operation 锁后才可访问 allocator
 和提交 `MEMediaSample`，防止停流事件被旧请求反向越过。
 
-`PicooVirtualCameraSource.dll` 是 Windows-only Rust `cdylib`，使用 `windows-rs` 的类型化 Win32/COM 绑定实现 `IClassFactory`、`IMFActivate`、`IMFMediaSourceEx`、`IMFMediaStream2`、`IMFGetService` 与 `IMFSampleAllocatorControl`。它由 Cargo 在 Windows runner 上构建，不维护 C++、WRL、VCXPROJ 或 MSBuild 项目。DLL 可以复用 `picoo-frame-hub` 的 Shared Frame Ring 布局与占位帧实现，但不得依赖 Receiver、QUIC、解码或配对 crate。
+`PicooVirtualCameraSource.dll` 是 Windows-only Rust `cdylib`，使用 `windows-rs` 的类型化 Win32/COM 绑定实现 `IClassFactory`、`IMFActivate`、`IMFMediaSourceEx`、`IMFMediaStream2`、`IMFGetService`、`IKsControl` 与 `IMFSampleAllocatorControl`。它由 Cargo 在 Windows runner 上构建，不维护 C++、WRL、VCXPROJ 或 MSBuild 项目。DLL 可以复用 `picoo-frame-hub` 的 Shared Frame Ring 布局与占位帧实现，但不得依赖 Receiver、QUIC、解码或配对 crate。
+
+AllUsers + System-lifetime 摄像头由 per-machine MSI 或用户显式 UAC 修复时创建；普通桌面启动不得再创建一个重名的 Session-lifetime 摄像头。安装与卸载维护命令必须在非 impersonated 的管理员上下文中执行，使多用户枚举、静默部署、升级与清理使用同一身份。Windows 状态只能在 Media Foundation 枚举结果的 friendly name 与安装时持久化的 symbolic link 同时匹配时提升为 Active，DLL 与 COM 注册表存在或任意同名设备都不能冒充已注册成功。`IMFVirtualCamera::Start` 成功后必须取得并持久化 `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK`；仅当精确身份在操作前不存在时，Start/持久化失败才能 best-effort Remove，repair/upgrade 不得删除既有设备。卸载 Remove 不依赖 Source Start；成功 Remove 后的动态 identity 清理是 best-effort，声明式 COM 由 MSI 自身事务删除。rollback Custom Action 只在非升级的全新安装中预排，避免回滚破坏安装前已存在的设备。
 
 ### macOS
 
@@ -75,7 +77,7 @@ Rust Receiver Core
 
 ### 安装与修复
 
-- Windows 安装器：注册 COM/Media Foundation 组件、配置防火墙规则、卸载清理。
+- Windows 安装器：注册 COM/Media Foundation 组件、配置防火墙规则、卸载清理。per-machine 安装与显式 UAC 修复统一创建 AllUsers 设备，不把设备可见性绑定到执行安装的某个账户。
 - macOS 发布：签名、Hardened Runtime、Developer ID、Notarization、扩展激活引导。
 - 桌面“虚拟摄像头”页提供状态检查与修复入口；Windows 显式修复通过 UAC 提权的独立维护进程写系统注册，GPUI 进程只负责发起、等待与展示结果。
 
@@ -103,7 +105,7 @@ Rust Receiver Core
 - 会议软件关闭并重新打开后仍可选择 Picoo Camera。
 - 虚拟摄像头组件升级必须与 Desktop 主应用版本兼容，并通过安装器或应用内修复流程处理。
 - Rust COM DLL 的公开 ABI 不得让 panic 越过导出函数或 COM vtable；共享可变状态必须显式同步，DLL 仅在 Windows runner 上完成最终链接与加载验证。
-- Windows Media Foundation 组件必须满足 free-threaded/neutral 约束：对外实现 `IAgileObject`，跨调用线程保存的 COM 接口使用 `AgileReference`，其余共享状态由互斥锁串行化。
+- Windows Media Foundation 组件必须满足 free-threaded/neutral 约束：对外实现 `IAgileObject`，其余共享状态由互斥锁串行化。Media Foundation event queue、descriptor、allocator 等标准接口直接持有类型化 COM 引用；不得对这些接口调用 `RoGetAgileReference`，因为 Frame Server 环境中并不保证其 IID 存在代理注册，错误包装会让 Source 激活在注册阶段以 `REGDB_E_IIDNOTREG` 失败。
 
 ## 相关 Use Case
 

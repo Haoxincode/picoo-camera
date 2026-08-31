@@ -19,6 +19,11 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
+                "cargo clippy -p picoo-desktop --all-targets --features gpui-ui,windows-vcam -- -D warnings"
+            )
+            .run()?;
+            cmd!(
+                sh,
                 "cargo test -p picoo-frame-hub -p picoo-windows-vcam-source"
             )
             .run()?;
