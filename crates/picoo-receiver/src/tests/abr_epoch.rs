@@ -1,4 +1,13 @@
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
+use std::time::Duration;
+
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
+use picoo_sender::SenderSession;
+
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
+use crate::ReceiverSession;
+
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
 pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;

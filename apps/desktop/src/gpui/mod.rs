@@ -84,4 +84,3 @@ struct PicooDesktopApp {
     #[cfg(all(windows, feature = "windows-vcam"))]
     vcam_registration: Option<crate::vcam_register::VirtualCameraSessionHost>,
 }
-

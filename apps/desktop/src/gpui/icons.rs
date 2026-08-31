@@ -50,14 +50,17 @@ pub(super) fn reicon_named(name: &str, color: Hsla) -> Svg {
     reicon_svg(data, color)
 }
 
-pub(super) fn reicon_button_content(label: &'static str, icon: &'static str, color: Hsla) -> impl IntoElement {
+pub(super) fn reicon_button_content(
+    label: &'static str,
+    icon: &'static str,
+    color: Hsla,
+) -> impl IntoElement {
     div()
         .h_flex()
         .gap_2()
         .child(reicon_named(icon, color))
         .child(label)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -74,7 +77,8 @@ mod tests {
             ),
             (
                 "check-circle-filled",
-                include_bytes!("../../../../assets/icons/reicon/check_circle_filled.svg").as_slice(),
+                include_bytes!("../../../../assets/icons/reicon/check_circle_filled.svg")
+                    .as_slice(),
             ),
             (
                 "help-circle",
@@ -158,6 +162,5 @@ mod tests {
             assert!(svg.contains("viewBox=\"0 0 24 24\""));
             assert!(svg.contains("currentColor"));
         }
-
     }
 }

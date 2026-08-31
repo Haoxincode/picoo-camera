@@ -6,10 +6,13 @@ use bytes::Bytes;
 use picoo_frame_hub::{
     FrameSlot, PlaceholderMode, SharedFrameRingProducer, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
+#[cfg(test)]
 use picoo_media_decode::AccessUnitDecoder;
 
 use super::ReceiverSession;
-use crate::{ReceiverError, DEFAULT_SHARED_RING_NAME};
+use crate::ReceiverError;
+#[cfg(target_os = "macos")]
+use crate::DEFAULT_SHARED_RING_NAME;
 
 impl ReceiverSession {
     /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).

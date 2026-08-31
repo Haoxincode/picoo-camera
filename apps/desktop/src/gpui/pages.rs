@@ -516,7 +516,6 @@ fn default_diagnostics_path() -> PathBuf {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::DiagnosticsExportState;
@@ -537,5 +536,4 @@ mod tests {
         assert!(!state.can_reveal());
         assert!(state.path().is_none());
     }
-
 }

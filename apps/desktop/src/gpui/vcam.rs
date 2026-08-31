@@ -684,7 +684,6 @@ pub(super) fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -783,5 +782,4 @@ mod tests {
             (VirtualCameraStatus::Bundled, true, true)
         );
     }
-
 }

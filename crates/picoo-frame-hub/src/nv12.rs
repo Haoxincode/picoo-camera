@@ -237,7 +237,7 @@ mod tests {
         let height = 720;
         let mut nv12 = vec![81_u8; nv12_byte_size(width, height)];
         let uv_offset = (width * height) as usize;
-        for uv in nv12[uv_offset..].chunks_exact_mut(2) {
+        for uv in nv12[uv_offset..].as_chunks_mut::<2>().0 {
             uv.copy_from_slice(&[90, 240]);
         }
 

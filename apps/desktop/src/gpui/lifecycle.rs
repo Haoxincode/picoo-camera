@@ -372,4 +372,3 @@ impl Render for PicooDesktopApp {
             .child(content)
     }
 }
-

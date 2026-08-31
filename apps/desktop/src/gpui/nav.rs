@@ -50,7 +50,11 @@ impl PicooDesktopApp {
         TitleBar::new().border_b_0().bg(cx.theme().background)
     }
 
-    pub(super) fn render_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_sidebar(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let collapsed = self.sidebar_collapsed;
         let target_width = if collapsed {
             SIDEBAR_COLLAPSED_WIDTH
@@ -258,7 +262,11 @@ impl PicooDesktopApp {
             }))
     }
 
-    pub(super) fn render_section(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_section(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> gpui::AnyElement {
         let page = match self.section {
             DesktopSection::Connect => self.render_connect(snapshot, cx).into_any_element(),
             DesktopSection::VirtualCamera => self
@@ -343,7 +351,6 @@ impl PicooDesktopApp {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{SidebarWidthTransition, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_EXPANDED_WIDTH};
@@ -360,5 +367,4 @@ mod tests {
         assert_eq!(transition.from_width, SIDEBAR_COLLAPSED_WIDTH);
         assert_eq!(transition.target_width, SIDEBAR_EXPANDED_WIDTH);
     }
-
 }

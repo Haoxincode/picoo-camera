@@ -256,7 +256,10 @@ pub(super) fn placeholder_preview(
     }
 }
 
-pub(super) fn placeholder_choice_indicator(selected: bool, cx: &Context<PicooDesktopApp>) -> AnyElement {
+pub(super) fn placeholder_choice_indicator(
+    selected: bool,
+    cx: &Context<PicooDesktopApp>,
+) -> AnyElement {
     if selected {
         reicon_named("check-circle-filled", cx.theme().primary)
             .size_4()
@@ -520,7 +523,6 @@ pub(super) fn status_row(
         )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::connection_security_status;
@@ -541,5 +543,4 @@ mod tests {
             ("已验证", true)
         );
     }
-
 }

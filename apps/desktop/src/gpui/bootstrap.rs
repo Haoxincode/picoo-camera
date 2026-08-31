@@ -5,6 +5,7 @@ use gpui_component::*;
 use gpui_component_assets::Assets;
 use picoo_receiver::ReceiverError;
 
+#[cfg(any(test, all(windows, feature = "windows-vcam")))]
 use crate::model::VirtualCameraStatus;
 use crate::prefs::load_prefs;
 use crate::receiver_runtime::ReceiverRuntime;
@@ -169,7 +170,6 @@ fn should_auto_start_vcam(status: VirtualCameraStatus) -> bool {
     )
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::{should_auto_start_vcam, PicooAssets};
@@ -241,5 +241,4 @@ mod tests {
         assert!(iphone.contains("M415 343"), "right-side control is missing");
         assert!(iphone.contains("M0 151"), "left-side controls are missing");
     }
-
 }

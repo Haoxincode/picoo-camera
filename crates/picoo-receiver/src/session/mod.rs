@@ -22,8 +22,8 @@ use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
 use prost::Message;
 
-use pairing::{ActiveSender, PendingPairing};
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
+use pairing::{ActiveSender, PendingPairing};
 
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 

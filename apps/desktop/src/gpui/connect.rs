@@ -19,7 +19,11 @@ use super::widgets::{
 use super::{DesktopPage, PicooDesktopApp};
 
 impl PicooDesktopApp {
-    pub(super) fn render_connect(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn render_connect(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01: distribute all available
         // workspace width after the gap, instead of capping the page at 1160 px.
         div()
@@ -57,7 +61,11 @@ impl PicooDesktopApp {
             )
     }
 
-    pub(super) fn render_waiting(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn render_waiting(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let vcam_ready = matches!(
             snapshot.virtual_camera,
             VirtualCameraStatus::Installed | VirtualCameraStatus::Active
@@ -410,7 +418,11 @@ impl PicooDesktopApp {
         }
     }
 
-    pub(super) fn render_live(&self, snapshot: &ReceiverSnapshot, cx: &Context<Self>) -> impl IntoElement {
+    pub(super) fn render_live(
+        &self,
+        snapshot: &ReceiverSnapshot,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
         let res_label = snapshot
             .stream_config
             .as_ref()

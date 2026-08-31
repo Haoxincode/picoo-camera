@@ -1,8 +1,11 @@
 use std::time::Duration;
 
+#[cfg(target_os = "macos")]
 use picoo_pairing::TrustedDevice;
 use picoo_sender::SenderSession;
+#[cfg(target_os = "macos")]
 use picoo_session::ReceiverStatus;
+#[cfg(target_os = "macos")]
 use picoo_transport::{Endpoint, QuicSenderTransport};
 
 use crate::ReceiverSession;
