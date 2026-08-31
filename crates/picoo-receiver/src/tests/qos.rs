@@ -6,6 +6,8 @@ use picoo_transport::{Endpoint, QuicSenderTransport};
 
 use crate::ReceiverSession;
 
+#[cfg(all(not(windows), not(target_vendor = "apple")))]
+use super::abr_epoch::openh264_au;
 use super::use_stub_decoder;
 
 /// REQ-PICOO-SESSION-005 — paired loopback soak (default 60s; set `PICOO_SOAK_SECONDS`).

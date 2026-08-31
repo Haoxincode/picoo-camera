@@ -8,9 +8,6 @@ use picoo_sender::SenderSession;
 use crate::ReceiverSession;
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
-use super::abr_epoch::openh264_au;
-
-#[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn abr_downshift_updates_stream_config_and_framehub() {
     // REQ-PICOO-MEDIA-010: sustained congestion → DownshiftResolution → 720p StreamConfig → FrameHub.
