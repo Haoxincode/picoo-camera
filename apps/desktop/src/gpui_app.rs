@@ -3757,6 +3757,10 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     if let Err(err) = crate::startup::sync_launch_at_startup(prefs.launch_at_startup) {
         tracing::warn!("startup sync on launch: {err}");
     }
+    // GPUI's Windows platform calls OleInitialize (STA). It must own the UI
+    // thread apartment before ReceiverRuntime creates the Media Foundation
+    // decoder; otherwise an earlier MTA init makes platform construction panic.
+    let app = gpui_platform::application().with_assets(PicooAssets);
     let vcam_status = detect_vcam_status();
     let runtime = ReceiverRuntime::from_prefs(&prefs)?;
     let mut runtime = runtime;
@@ -3785,7 +3789,6 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
         (vcam_status, None)
     };
 
-    let app = gpui_platform::application().with_assets(PicooAssets);
     let prefs_for_window = prefs.clone();
     app.run(move |cx| {
         gpui_component::init(cx);
@@ -3874,6 +3877,25 @@ mod tests {
     use gpui::AssetSource;
     use picoo_session::ReceiverStatus;
     use std::path::PathBuf;
+
+    #[test]
+    fn gpui_platform_initializes_before_receiver_runtime() {
+        let source = include_str!("gpui_app.rs");
+        let start = source
+            .find("pub fn run_gpui_app()")
+            .expect("run_gpui_app source");
+        let body = &source[start..];
+        let platform = body
+            .find("let app = gpui_platform::application()")
+            .expect("GPUI platform initialization");
+        let receiver = body
+            .find("ReceiverRuntime::from_prefs")
+            .expect("receiver runtime initialization");
+        assert!(
+            platform < receiver,
+            "Windows OLE/STA must be initialized before Media Foundation"
+        );
+    }
 
     #[test]
     fn security_copy_distinguishes_encryption_from_completed_pairing() {

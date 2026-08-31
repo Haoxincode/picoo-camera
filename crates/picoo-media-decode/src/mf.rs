@@ -10,7 +10,8 @@ use std::mem::ManuallyDrop;
 use bytes::Bytes;
 use picoo_packet::{access_unit_to_annex_b, annex_b_parameter_sets};
 use picoo_protocol::control::StreamConfig;
-use windows::core::GUID;
+use windows::core::{GUID, HRESULT};
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::{
     CMSH264DecoderMFT, IMFMediaBuffer, IMFSample, IMFTransform, MFCreateAlignedMemoryBuffer,
     MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFVideoFormat_H264,
@@ -21,7 +22,7 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
 };
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 
 use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
@@ -41,23 +42,66 @@ pub struct MfH264Decoder {
     next_sample_time_100ns: i64,
     sequence_header: Vec<u8>,
     inject_sequence_header: bool,
+    // Declared last so the transform is released before MFShutdown/CoUninitialize.
+    _runtime: MfRuntimeGuard,
 }
 
 // IMFTransform is not automatically Send in windows-rs; receiver owns the decoder on one thread.
 unsafe impl Send for MfH264Decoder {}
 
-impl MfH264Decoder {
-    pub fn new() -> Result<Self, DecodeError> {
-        unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED)
-                .ok()
-                .map_err(|e| DecodeError::Platform(format!("CoInitializeEx: {e}")))?;
+struct MfRuntimeGuard {
+    owns_com_apartment: bool,
+}
+
+impl MfRuntimeGuard {
+    fn start() -> Result<Self, DecodeError> {
+        let com_result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let owns_com_apartment = com_initialization_ownership(com_result)?;
+        if let Err(error) = unsafe {
             windows::Win32::Media::MediaFoundation::MFStartup(
                 windows::Win32::Media::MediaFoundation::MF_VERSION,
                 Default::default(),
             )
-            .map_err(|e| DecodeError::Platform(format!("MFStartup: {e}")))?;
+        } {
+            if owns_com_apartment {
+                unsafe { CoUninitialize() };
+            }
+            return Err(DecodeError::Platform(format!("MFStartup: {error}")));
         }
+        Ok(Self { owns_com_apartment })
+    }
+}
+
+impl Drop for MfRuntimeGuard {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = windows::Win32::Media::MediaFoundation::MFShutdown();
+            if self.owns_com_apartment {
+                CoUninitialize();
+            }
+        }
+    }
+}
+
+fn com_initialization_ownership(result: HRESULT) -> Result<bool, DecodeError> {
+    if result.is_ok() {
+        // S_OK and S_FALSE both require a matching CoUninitialize.
+        Ok(true)
+    } else if result == RPC_E_CHANGED_MODE {
+        // GPUI initializes OLE/STA on its UI thread. MF's synchronous decoder
+        // can use that existing apartment; do not replace or uninitialize it.
+        Ok(false)
+    } else {
+        Err(DecodeError::Platform(format!(
+            "CoInitializeEx: {}",
+            result.message()
+        )))
+    }
+}
+
+impl MfH264Decoder {
+    pub fn new() -> Result<Self, DecodeError> {
+        let runtime = MfRuntimeGuard::start()?;
 
         let transform: IMFTransform =
             unsafe { CoCreateInstance(&CMSH264DecoderMFT, None, CLSCTX_INPROC_SERVER) }
@@ -78,6 +122,7 @@ impl MfH264Decoder {
             next_sample_time_100ns: 0,
             sequence_header: Vec::new(),
             inject_sequence_header: false,
+            _runtime: runtime,
         })
     }
 
@@ -165,14 +210,6 @@ impl MfH264Decoder {
                 Some(frame) => Ok(Some(frame)),
                 None => drain_output(&self.transform, self.width, self.height),
             }
-        }
-    }
-}
-
-impl Drop for MfH264Decoder {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = windows::Win32::Media::MediaFoundation::MFShutdown();
         }
     }
 }
@@ -462,5 +499,21 @@ mod tests {
         };
         let header = MfH264Decoder::sequence_header_from_config(Some(&cfg));
         assert_eq!(header, vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce]);
+    }
+
+    #[test]
+    fn existing_sta_apartment_is_borrowed_not_replaced() {
+        assert!(!com_initialization_ownership(RPC_E_CHANGED_MODE).expect("borrow STA"));
+        assert!(com_initialization_ownership(HRESULT(0)).expect("own successful init"));
+    }
+
+    #[test]
+    fn decoder_starts_inside_existing_sta_apartment() {
+        let initialized =
+            unsafe { CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
+        initialized.ok().expect("initialize fixture STA");
+        let decoder = MfH264Decoder::new().expect("create MF decoder inside GPUI-like STA");
+        drop(decoder);
+        unsafe { CoUninitialize() };
     }
 }
