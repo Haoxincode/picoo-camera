@@ -6,6 +6,7 @@ mod control;
 mod loopback;
 mod media;
 mod pairing;
+mod recovery;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -24,6 +25,8 @@ use prost::Message;
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use pairing::{ActiveSender, PendingPairing};
+use recovery::DecoderRecovery;
+use recovery::RecoveryReason;
 
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 
@@ -34,6 +37,7 @@ struct StatsReporter {
     window_packets: u64,
     window_bytes: u64,
     last_reassembly_drops: u64,
+    last_missing_fragments: u64,
     window_decoder_drops: u64,
 }
 
@@ -44,6 +48,7 @@ impl StatsReporter {
             window_packets: 0,
             window_bytes: 0,
             last_reassembly_drops: 0,
+            last_missing_fragments: 0,
             window_decoder_drops: 0,
         }
     }
@@ -59,6 +64,15 @@ impl StatsReporter {
 
     fn due(&self) -> bool {
         self.last_sent.elapsed() >= Duration::from_secs(1)
+    }
+}
+
+fn observed_fragment_loss_ratio(received_fragments: u64, missing_fragments: u64) -> f64 {
+    let observed_fragments = received_fragments.saturating_add(missing_fragments);
+    if observed_fragments == 0 {
+        0.0
+    } else {
+        missing_fragments as f64 / observed_fragments as f64
     }
 }
 
@@ -99,6 +113,7 @@ pub struct ReceiverSession {
     advertised_max_height: u32,
     /// Most recent production decode failure, cleared after a real frame lands.
     last_media_error: Option<String>,
+    decoder_recovery: DecoderRecovery,
 }
 
 impl Default for ReceiverSession {
@@ -136,6 +151,7 @@ impl ReceiverSession {
             last_stats: None,
             advertised_max_height: 1080,
             last_media_error: None,
+            decoder_recovery: DecoderRecovery::new(),
         }
     }
 
@@ -306,7 +322,7 @@ impl ReceiverSession {
                             && self.waiting_for_stream_config_epoch != Some(packet_epoch)
                         {
                             self.waiting_for_stream_config_epoch = Some(packet_epoch);
-                            self.send_request_keyframe(session)?;
+                            self.send_request_keyframe_now(session)?;
                         }
                         continue;
                     }
@@ -318,17 +334,26 @@ impl ReceiverSession {
                                 pts_us: access_unit.pts_us,
                                 data: access_unit.data,
                                 keyframe: access_unit.keyframe,
+                                discardable: access_unit.discardable,
                             });
                             match outcome {
                                 PushOutcome::Accepted if self.jitter_timeline.is_none() => {
                                     // Anchor media clock to this AU's PTS at wall arrival.
                                     self.jitter_timeline = Some((Instant::now(), pts_us));
                                 }
-                                PushOutcome::DroppedLate { keyframe: true } => {
-                                    self.send_request_keyframe(session)?;
+                                PushOutcome::AcceptedAfterReferenceDrop
+                                | PushOutcome::DroppedLate {
+                                    requires_refresh: true,
+                                } => {
+                                    self.enter_decoder_recovery(
+                                        RecoveryReason::ReferenceAccessUnitLate,
+                                        true,
+                                    )?;
                                 }
                                 PushOutcome::Accepted
-                                | PushOutcome::DroppedLate { keyframe: false } => {}
+                                | PushOutcome::DroppedLate {
+                                    requires_refresh: false,
+                                } => {}
                             }
                         }
                         Ok(None) => {}
@@ -338,8 +363,8 @@ impl ReceiverSession {
                         | Err(ReassemblyError::DuplicateFragment)
                         | Err(ReassemblyError::EpochMismatch) => {}
                     }
-                    if self.reassembly.take_keyframe_loss() {
-                        self.send_request_keyframe(session)?;
+                    if self.reassembly.take_reference_chain_loss() {
+                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
                     }
                 }
             }
@@ -351,6 +376,7 @@ impl ReceiverSession {
         self.expire_reassembly_deadline()?;
 
         self.drain_jitter()?;
+        self.maybe_request_recovery_keyframe()?;
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
 
@@ -360,10 +386,8 @@ impl ReceiverSession {
     fn expire_reassembly_deadline(&mut self) -> Result<(), ReceiverError> {
         self.reassembly
             .expire_incomplete_older_than(Instant::now(), REASSEMBLY_MAX_AGE);
-        if self.reassembly.take_keyframe_loss() {
-            if let Some(session) = self.transport.active_session() {
-                self.send_request_keyframe(session)?;
-            }
+        if self.reassembly.take_reference_chain_loss() {
+            self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
         }
         Ok(())
     }
@@ -387,9 +411,12 @@ impl ReceiverSession {
             return Ok(());
         }
         let now_us = self.jitter_media_now_us();
-        self.jitter.drop_incomplete_before(now_us);
+        if self.jitter.drop_expired_before(now_us) {
+            self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?;
+            return Ok(());
+        }
         while let Some(frame) = self.jitter.pop_ready(now_us) {
-            self.publish_access_unit(frame.data)?;
+            self.publish_access_unit(frame.data, frame.keyframe)?;
         }
         if self.jitter.is_empty() {
             self.jitter_timeline = None;
@@ -400,12 +427,13 @@ impl ReceiverSession {
     fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
         // Teardown must complete even if a platform decoder reports a flush
         // error; otherwise transport state from a dead peer can survive.
-        let decoder_flush = self.decoder.flush();
+        let decoder_reset = self.decoder.reset();
         let had_live_frame =
             self.status == ReceiverStatus::Streaming && self.frame_hub.latest_ready().is_some();
         self.active_sender = None;
         self.pending_pairing = None;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
+        self.stats_reporter = StatsReporter::new();
         self.jitter.clear();
         self.jitter_timeline = None;
         self.last_stats = None;
@@ -413,6 +441,7 @@ impl ReceiverSession {
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
         self.receiver_capabilities_sent = None;
+        self.decoder_recovery.reset_session();
 
         if had_live_frame && !self.last_frame_hold.is_zero() {
             // Briefly keep last frame for VCam/UI, then switch to placeholder.
@@ -427,7 +456,7 @@ impl ReceiverSession {
                 ReceiverStatus::Disconnected
             };
         }
-        decoder_flush?;
+        decoder_reset?;
         Ok(())
     }
 
@@ -476,6 +505,10 @@ impl ReceiverSession {
             .reassembly
             .drop_count()
             .saturating_sub(self.stats_reporter.last_reassembly_drops);
+        let missing_fragments = self
+            .reassembly
+            .missing_fragment_count()
+            .saturating_sub(self.stats_reporter.last_missing_fragments);
 
         let frame_age_ms = self
             .frame_hub
@@ -492,16 +525,12 @@ impl ReceiverSession {
         // REQ-PICOO-PROTOCOL-006: real RTT from Quinn path stats (via transport facade).
         let link = self.transport.link_stats().unwrap_or_default();
         let window_packets = self.stats_reporter.window_packets;
-        let app_loss = if window_packets + reassembly_drop == 0 {
-            0.0
-        } else {
-            reassembly_drop as f64 / (window_packets + reassembly_drop) as f64
-        };
         // Quinn's `lost_packets / sent_packets` describes packets sent by this
         // endpoint. On Receiver those are control-stream packets, not incoming
         // Android video datagrams, so feeding that ratio into Sender ABR causes
-        // false quality drops. Video health is measured at AU reassembly here.
-        let packet_loss = app_loss;
+        // false quality drops. Compare missing and received video fragments in
+        // the same unit instead (REQ-PICOO-PROTOCOL-009).
+        let packet_loss = observed_fragment_loss_ratio(window_packets, missing_fragments);
 
         let stats = ReceiverStatsMsg {
             rtt_ms: link.rtt_ms,
@@ -539,6 +568,7 @@ impl ReceiverSession {
         self.stats_reporter.window_bytes = 0;
         self.stats_reporter.window_decoder_drops = 0;
         self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
+        self.stats_reporter.last_missing_fragments = self.reassembly.missing_fragment_count();
 
         Ok(())
     }
@@ -574,7 +604,7 @@ impl ReceiverSession {
     pub fn close(&mut self) {
         // close is intentionally infallible for UI teardown, but decoder state
         // must never survive into a later session.
-        let _ = self.decoder.flush();
+        let _ = self.decoder.reset();
         if self.transport.is_connected() {
             self.transport
                 .close(picoo_transport::SessionId(1), CloseReason::LocalClose);
@@ -584,6 +614,7 @@ impl ReceiverSession {
         self.active_sender = None;
         self.pending_pairing = None;
         self.last_media_error = None;
+        self.decoder_recovery.reset_session();
         let _ = self.publish_waiting_placeholder();
     }
 
@@ -613,5 +644,17 @@ impl ReceiverSession {
             .active_session()
             .ok_or_else(|| ReceiverError::Protocol("no active session".into()))?;
         self.handle_control(session, msg)
+    }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::observed_fragment_loss_ratio;
+
+    #[test]
+    fn fragment_loss_compares_received_and_missing_fragments_in_the_same_unit() {
+        assert_eq!(observed_fragment_loss_ratio(0, 0), 0.0);
+        assert_eq!(observed_fragment_loss_ratio(9, 1), 0.1);
+        assert_eq!(observed_fragment_loss_ratio(0, 1), 1.0);
     }
 }

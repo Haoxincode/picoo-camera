@@ -115,6 +115,11 @@ pub extern "C" fn picoo_export_diagnostics_to_path_with_session(
         access_units,
         packets: packets_received,
         packets_dropped_unpaired,
+        decode_invocations: 0,
+        decoded_frames: 0,
+        recovery_dropped_access_units: 0,
+        decoder_resets: 0,
+        keyframe_requests: 0,
         hosts: Vec::new(),
     });
     match export_diagnostics_with_session(

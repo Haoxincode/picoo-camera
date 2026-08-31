@@ -219,10 +219,15 @@ impl AccessUnitDecoder for VideoToolboxDecoder {
     }
 
     fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
+        self.reset()?;
+        Ok(None)
+    }
+
+    fn reset(&mut self) -> Result<(), DecodeError> {
         self.reset_session();
         self.sps.clear();
         self.pps.clear();
-        Ok(None)
+        Ok(())
     }
 }
 

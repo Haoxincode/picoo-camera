@@ -12,6 +12,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use windows::core::{Error, Interface, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{E_POINTER, S_FALSE, S_OK};
+use windows::Win32::System::Diagnostics::Debug::OutputDebugStringW;
 
 use self::class_factory::ClassFactory;
 
@@ -67,6 +68,16 @@ pub(super) fn lock<T>(mutex: &Mutex<T>) -> Result<MutexGuard<'_, T>> {
     mutex
         .lock()
         .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))
+}
+
+pub(super) fn emit_debug_message(message: &str) {
+    let wide = message
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    unsafe {
+        OutputDebugStringW(windows::core::PCWSTR(wide.as_ptr()));
+    }
 }
 
 pub(super) unsafe fn query_interface<T: Interface>(

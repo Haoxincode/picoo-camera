@@ -71,6 +71,11 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_exportDiagnosticsTo
         access_units: access_units as u64,
         packets: packets as u64,
         packets_dropped_unpaired: packets_dropped_unpaired as u64,
+        decode_invocations: 0,
+        decoded_frames: 0,
+        recovery_dropped_access_units: 0,
+        decoder_resets: 0,
+        keyframe_requests: 0,
         hosts: Vec::new(),
     };
     match export_diagnostics_with_session(

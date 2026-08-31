@@ -32,6 +32,9 @@ decode, live frames appear at negotiated resolution (see
 COM/MF 接口通过 `windows-rs` 实现；仓库不维护 CMake、VCXPROJ 或等价 C++ Source。
 Frame Provider 每 250 ms 检查 Shared Frame Ring 的 Producer 代际；Receiver 重启或重建
 损坏映射后会自动重新附着，并允许新代际从 sequence 1 重新开始。
+Source 每秒通过 Windows debug output 输出 `requests_per_sec`、fresh/cached/placeholder/failed
+样本数与 delivery 平均/最大耗时。该指标用于识别 Frame Server 异常 request pump；当前
+不主动 sleep 或改变 pacing，是否限速以 Win11 会议软件真机记录为依据。
 详见 [ci-and-build.md](../../docs/development/ci-and-build.md)。
 
 ### Windows registration (Win11)

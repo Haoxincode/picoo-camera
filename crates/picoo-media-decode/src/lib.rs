@@ -55,6 +55,13 @@ pub trait AccessUnitDecoder: Send {
     fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
         Ok(None)
     }
+
+    /// Discard all queued output and prediction/reference state.
+    ///
+    /// Unlike [`Self::flush`], reset must not publish delayed frames. The next
+    /// accepted access unit is expected to establish a fresh decode chain
+    /// (normally an IDR with the active StreamConfig parameter sets).
+    fn reset(&mut self) -> Result<(), DecodeError>;
 }
 
 /// Select the native production decoder for desktop targets.
@@ -95,6 +102,10 @@ impl AccessUnitDecoder for UnavailableDecoder {
         _stream_config: Option<&StreamConfig>,
     ) -> Result<Option<DecodedFrame>, DecodeError> {
         Err(DecodeError::Platform(self.0.clone()))
+    }
+
+    fn reset(&mut self) -> Result<(), DecodeError> {
+        Ok(())
     }
 }
 

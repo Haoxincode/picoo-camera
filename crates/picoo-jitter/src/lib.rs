@@ -1,6 +1,6 @@
 //! Jitter buffer — REQ-PICOO-SESSION-002.
 //!
-//! `now_us` passed to [`JitterBuffer::pop_ready`] / [`JitterBuffer::drop_incomplete_before`]
+//! `now_us` passed to [`JitterBuffer::pop_ready`] / [`JitterBuffer::drop_expired_before`]
 //! must share the same timeline as [`Frame::pts_us`] (typically a media clock anchored at
 //! the first buffered AU). Do not pass wall-clock UNIX microseconds when PTS is relative.
 
@@ -12,6 +12,7 @@ pub struct Frame {
     pub pts_us: u64,
     pub data: Bytes,
     pub keyframe: bool,
+    pub discardable: bool,
 }
 
 #[derive(Debug)]
@@ -25,7 +26,8 @@ pub struct JitterBuffer {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PushOutcome {
     Accepted,
-    DroppedLate { keyframe: bool },
+    AcceptedAfterReferenceDrop,
+    DroppedLate { requires_refresh: bool },
 }
 
 impl JitterBuffer {
@@ -52,7 +54,7 @@ impl JitterBuffer {
             .is_some_and(|emitted| frame.pts_us <= emitted)
         {
             return PushOutcome::DroppedLate {
-                keyframe: frame.keyframe,
+                requires_refresh: !frame.discardable,
             };
         }
         // Complete AUs can themselves arrive out of order because their
@@ -64,8 +66,11 @@ impl JitterBuffer {
             .position(|buffered| buffered.pts_us > frame.pts_us)
             .unwrap_or(self.frames.len());
         self.frames.insert(index, frame);
-        self.enforce_limits();
-        PushOutcome::Accepted
+        if self.enforce_limits() {
+            PushOutcome::AcceptedAfterReferenceDrop
+        } else {
+            PushOutcome::Accepted
+        }
     }
 
     pub fn pop_ready(&mut self, now_us: u64) -> Option<Frame> {
@@ -78,9 +83,16 @@ impl JitterBuffer {
         None
     }
 
-    pub fn drop_incomplete_before(&mut self, deadline_us: u64) {
-        self.frames
-            .retain(|f| f.pts_us + self.max_ms * 1_000 >= deadline_us);
+    pub fn drop_expired_before(&mut self, deadline_us: u64) -> bool {
+        let mut reference_chain_broken = false;
+        self.frames.retain(|frame| {
+            let keep = frame.pts_us + self.max_ms * 1_000 >= deadline_us;
+            if !keep && !frame.discardable {
+                reference_chain_broken = true;
+            }
+            keep
+        });
+        reference_chain_broken
     }
 
     /// Approximate buffered depth in milliseconds (newest - oldest pts).
@@ -107,14 +119,28 @@ impl JitterBuffer {
         self.last_emitted_pts_us = None;
     }
 
-    fn enforce_limits(&mut self) {
+    fn enforce_limits(&mut self) -> bool {
+        let mut reference_chain_broken = false;
         while self.frames.len() > 8 {
             if let Some(idx) = self.frames.iter().position(|f| !f.keyframe) {
-                self.frames.remove(idx);
+                if self
+                    .frames
+                    .remove(idx)
+                    .is_some_and(|frame| !frame.discardable)
+                {
+                    reference_chain_broken = true;
+                }
             } else {
-                self.frames.pop_front();
+                if self
+                    .frames
+                    .pop_front()
+                    .is_some_and(|frame| !frame.discardable)
+                {
+                    reference_chain_broken = true;
+                }
             }
         }
+        reference_chain_broken
     }
 }
 
@@ -129,6 +155,7 @@ mod tests {
             pts_us: 0,
             data: Bytes::from_static(b"f"),
             keyframe: true,
+            discardable: false,
         });
         assert!(buf.pop_ready(40_000).is_none());
         assert!(buf.pop_ready(50_000).is_some());
@@ -141,6 +168,7 @@ mod tests {
             pts_us: 1_000_000,
             data: Bytes::from_static(b"f"),
             keyframe: false,
+            discardable: false,
         });
         assert!(buf.pop_ready(0).is_some());
     }
@@ -152,12 +180,13 @@ mod tests {
             pts_us: 1_000,
             data: Bytes::from_static(b"f"),
             keyframe: true,
+            discardable: false,
         });
         // Media clock just after PTS — must not drop (max 120ms).
-        buf.drop_incomplete_before(1_000);
+        assert!(!buf.drop_expired_before(1_000));
         assert_eq!(buf.len(), 1);
         // Far ahead of PTS+max → drop.
-        buf.drop_incomplete_before(1_000 + 120_000 + 1);
+        assert!(buf.drop_expired_before(1_000 + 120_000 + 1));
         assert!(buf.is_empty());
     }
 
@@ -168,11 +197,13 @@ mod tests {
             pts_us: 1_000,
             data: Bytes::from_static(b"a"),
             keyframe: true,
+            discardable: false,
         });
         buf.push(Frame {
             pts_us: 21_000,
             data: Bytes::from_static(b"b"),
             keyframe: false,
+            discardable: false,
         });
         assert!((buf.depth_ms() - 20.0).abs() < f64::EPSILON);
     }
@@ -184,11 +215,13 @@ mod tests {
             pts_us: 34_000,
             data: Bytes::from_static(b"newer"),
             keyframe: false,
+            discardable: false,
         });
         buf.push(Frame {
             pts_us: 1_000,
             data: Bytes::from_static(b"older"),
             keyframe: true,
+            discardable: false,
         });
         assert_eq!(buf.pop_ready(100_000).unwrap().data, b"older"[..]);
         assert_eq!(buf.pop_ready(100_000).unwrap().data, b"newer"[..]);
@@ -202,6 +235,7 @@ mod tests {
                 pts_us: 34_000,
                 data: Bytes::from_static(b"newer"),
                 keyframe: false,
+                discardable: false,
             }),
             PushOutcome::Accepted
         );
@@ -211,9 +245,25 @@ mod tests {
                 pts_us: 1_000,
                 data: Bytes::from_static(b"late-key"),
                 keyframe: true,
+                discardable: false,
             }),
-            PushOutcome::DroppedLate { keyframe: true }
+            PushOutcome::DroppedLate {
+                requires_refresh: true
+            }
         );
         assert!(buf.pop_ready(100_000).is_none());
+    }
+
+    #[test]
+    fn expired_discardable_frame_does_not_break_reference_chain() {
+        let mut buf = JitterBuffer::new(50, 120);
+        buf.push(Frame {
+            pts_us: 1_000,
+            data: Bytes::from_static(b"discardable"),
+            keyframe: false,
+            discardable: true,
+        });
+        assert!(!buf.drop_expired_before(121_001));
+        assert!(buf.is_empty());
     }
 }

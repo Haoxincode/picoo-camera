@@ -5,6 +5,8 @@
 mod format;
 #[cfg(any(windows, test))]
 mod frame_provider;
+#[cfg(any(windows, test))]
+mod metrics;
 
 #[cfg(windows)]
 mod windows_source;

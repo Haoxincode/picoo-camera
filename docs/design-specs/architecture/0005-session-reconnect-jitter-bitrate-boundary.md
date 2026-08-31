@@ -31,10 +31,30 @@ Receiver 与 Sender UI 必须能反映以下状态（至少）：
 
 ```text
 完整帧                 → 解码
-不完整非关键帧         → 丢弃
-不完整关键帧           → 丢弃并请求 IDR
+不完整 DISCARDABLE 帧  → 丢弃，不破坏参考链
+不完整非 DISCARDABLE 帧 → 丢弃、停止解码后续 delta 并请求 IDR
 解码器报错             → 清空当前 epoch 缓冲并请求 IDR
 ```
+
+Receiver 必须把预测链恢复建模为显式状态，而不是只在错误分支零散发送
+`RequestKeyframe`：
+
+```text
+Healthy
+  → 不完整/迟到的非 DISCARDABLE AU、Decoder error、Decoder reset、stream_epoch 变化
+AwaitingRefresh
+  → 清空当前 reassembly 与 jitter 中尚未播放的 AU
+  → reset Decoder，丢弃旧参考链和延迟输出
+  → 合并并限频发送 RequestKeyframe
+  → 丢弃普通 delta AU，不再反复喂给已知损坏的预测链
+  → 完整且匹配当前 StreamConfig/stream_epoch 的 IDR 被 Decoder 接受
+Healthy
+```
+
+`flush` 与 `reset` 语义必须分离：`flush` 可以排空 Decoder 已产生的延迟输出，
+`reset` 必须丢弃所有参考状态并准备从新 IDR 开始。平台 Decoder 不得用“排空残帧”
+冒充恢复重置。自动关键帧请求需要合并和限频；限频期间仍保持 `AwaitingRefresh`，
+不能因为请求被抑制而恢复输入 delta AU。用户主动“画面修复”可以强制发出一次新请求。
 
 ### 队列上限
 
@@ -58,10 +78,13 @@ Receiver 每秒向 Sender 发送 `ReceiverStats`：
 
 `RTT`、`packet_loss`、`jitter`、`reassembly_drop`、`decoder_drop`、`frame_age`、`receive_bitrate`、`jitter_buffer_depth`
 
-其中 `packet_loss` 描述 Receiver 入站视频重组损失。QUIC 路径的 `lost_packets / sent_packets` 只描述
-本端发出的包；在 Receiver 端它主要是控制流，不能作为 Android 视频丢包率反馈给 ABR。未建立双端
-时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；Receiver 解码完成后的本地 `frame_age` 不得与
-RTT 相加并标成端到端延迟。
+其中 `packet_loss` 描述 Receiver 能从不完整 AU 观察到的缺失视频 fragment 比例，分子是超时或
+淘汰 AU 中缺失的 fragment 数，分母是同一窗口内已收到与已确认缺失的 fragment 总数。不得把
+AU drop 数与 Datagram 数放入同一比率。没有任何 fragment 到达的完整 AU 在 PCP/2 增加独立
+packet sequence 前无法由该指标观察，因此该指标不是 transport-wide 精确丢包率。QUIC 路径的
+`lost_packets / sent_packets` 只描述本端发出的包；在 Receiver 端它主要是控制流，不能作为
+Android 视频丢包率反馈给 ABR。未建立双端时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；
+Receiver 解码完成后的本地 `frame_age` 不得与 RTT 相加并标成端到端延迟。
 
 控制策略：
 

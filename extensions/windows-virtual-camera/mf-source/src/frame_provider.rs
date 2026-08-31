@@ -20,6 +20,19 @@ pub(crate) struct OwnedNv12Frame {
     pub pixels: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FrameOrigin {
+    Fresh,
+    Cached,
+    Placeholder,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AcquiredNv12Frame {
+    pub frame: OwnedNv12Frame,
+    pub origin: FrameOrigin,
+}
+
 pub(crate) struct FrameProvider {
     ring_name: String,
     consumer: Option<SharedFrameRingConsumer>,
@@ -41,7 +54,7 @@ impl FrameProvider {
         }
     }
 
-    pub fn acquire(&mut self) -> OwnedNv12Frame {
+    pub fn acquire(&mut self) -> AcquiredNv12Frame {
         let now = Instant::now();
         if now >= self.next_generation_probe {
             self.next_generation_probe = now + GENERATION_PROBE_INTERVAL;
@@ -77,22 +90,31 @@ impl FrameProvider {
                     self.last_sequence = view.sequence;
                     self.last_live = Some(frame.clone());
                     self.last_live_at = Some(Instant::now());
-                    return frame;
+                    return AcquiredNv12Frame {
+                        frame,
+                        origin: FrameOrigin::Fresh,
+                    };
                 }
             }
         }
 
         if let (Some(frame), Some(at)) = (&self.last_live, self.last_live_at) {
             if at.elapsed() < LAST_FRAME_HOLD {
-                return frame.clone();
+                return AcquiredNv12Frame {
+                    frame: frame.clone(),
+                    origin: FrameOrigin::Cached,
+                };
             }
         }
 
-        OwnedNv12Frame {
-            width: PLACEHOLDER_WIDTH,
-            height: PLACEHOLDER_HEIGHT,
-            stride: PLACEHOLDER_WIDTH,
-            pixels: waiting_placeholder(),
+        AcquiredNv12Frame {
+            frame: OwnedNv12Frame {
+                width: PLACEHOLDER_WIDTH,
+                height: PLACEHOLDER_HEIGHT,
+                stride: PLACEHOLDER_WIDTH,
+                pixels: waiting_placeholder(),
+            },
+            origin: FrameOrigin::Placeholder,
         }
     }
 
@@ -127,7 +149,9 @@ mod tests {
     #[test]
     fn starts_with_shared_branded_placeholder() {
         let mut provider = FrameProvider::new();
-        let frame = provider.acquire();
+        let acquired = provider.acquire();
+        let frame = acquired.frame;
+        assert_eq!(acquired.origin, FrameOrigin::Placeholder);
         assert_eq!((frame.width, frame.height), (1280, 720));
         assert_eq!(frame.pixels, waiting_placeholder());
     }
@@ -152,18 +176,20 @@ mod tests {
             )
             .expect("first frame");
         let mut provider = FrameProvider::with_ring_name(ring_name.clone());
-        assert_eq!(provider.acquire().pixels, first_pixels);
+        let acquired = provider.acquire();
+        assert_eq!(acquired.origin, FrameOrigin::Fresh);
+        assert_eq!(acquired.frame.pixels, first_pixels);
 
         drop(first_producer);
         provider.next_generation_probe = Instant::now();
         assert_eq!(
-            provider.acquire().pixels,
+            provider.acquire().frame.pixels,
             first_pixels,
             "brief generation gap keeps the last complete frame"
         );
         provider.last_live_at = Some(Instant::now() - LAST_FRAME_HOLD);
         assert_eq!(
-            provider.acquire().pixels,
+            provider.acquire().frame.pixels,
             waiting_placeholder(),
             "an extended generation gap falls back to the placeholder"
         );
@@ -183,7 +209,9 @@ mod tests {
             .expect("second generation frame");
 
         provider.next_generation_probe = Instant::now();
-        assert_eq!(provider.acquire().pixels, second_pixels);
+        let acquired = provider.acquire();
+        assert_eq!(acquired.origin, FrameOrigin::Fresh);
+        assert_eq!(acquired.frame.pixels, second_pixels);
 
         drop((provider, second_producer));
         let _ = std::fs::remove_file(SharedFrameRingProducer::flink_path(&ring_name));

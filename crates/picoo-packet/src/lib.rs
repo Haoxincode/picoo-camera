@@ -33,6 +33,7 @@ pub struct AssembledAccessUnit {
     pub data: Bytes,
     pub pts_us: u64,
     pub keyframe: bool,
+    pub discardable: bool,
     pub stream_epoch: u32,
 }
 
@@ -55,6 +56,9 @@ pub struct ReassemblyMap {
     rejected_frames: HashSet<FrameKey>,
     terminal_frames: HashSet<FrameKey>,
     drops: u64,
+    missing_fragments: u64,
+    /// Set when a non-discardable AU is dropped and the prediction chain may be invalid.
+    reference_loss_pending: bool,
     /// Set when a partial KEYFRAME is discarded (REQ-PICOO-SESSION-003).
     keyframe_loss_pending: bool,
 }
@@ -70,6 +74,8 @@ impl ReassemblyMap {
             rejected_frames: HashSet::new(),
             terminal_frames: HashSet::new(),
             drops: 0,
+            missing_fragments: 0,
+            reference_loss_pending: false,
             keyframe_loss_pending: false,
         }
     }
@@ -78,10 +84,45 @@ impl ReassemblyMap {
         self.drops
     }
 
+    /// Fragments known to be absent when an incomplete AU is expired or evicted.
+    ///
+    /// This deliberately excludes an AU for which no fragment arrived at all;
+    /// observing that case requires a transport-wide packet sequence.
+    pub fn missing_fragment_count(&self) -> u64 {
+        self.missing_fragments
+    }
+
+    /// Discard pending media while preserving cumulative loss counters.
+    /// Used when a decoder reference chain is reset inside the same session.
+    pub fn clear_pending(&mut self) {
+        let pending = self
+            .frames
+            .drain()
+            .map(|(_, frame)| frame)
+            .collect::<Vec<_>>();
+        for frame in pending {
+            self.record_incomplete_drop(frame);
+        }
+        self.expired_through_frame_id = None;
+        self.rejected_frames.clear();
+        self.terminal_frames.clear();
+    }
+
     /// True if a keyframe was dropped since the last take (REQ-PICOO-SESSION-003).
     pub fn take_keyframe_loss(&mut self) -> bool {
         let pending = self.keyframe_loss_pending;
         self.keyframe_loss_pending = false;
+        pending
+    }
+
+    /// True when a non-discardable AU was discarded since the last take.
+    /// Receiver must stop feeding dependent delta AUs until a fresh IDR arrives.
+    pub fn take_reference_chain_loss(&mut self) -> bool {
+        let pending = self.reference_loss_pending;
+        self.reference_loss_pending = false;
+        if pending {
+            self.keyframe_loss_pending = false;
+        }
         pending
     }
 
@@ -111,10 +152,7 @@ impl ReassemblyMap {
             .collect::<Vec<_>>();
         for key in expired {
             if let Some(frame) = self.frames.remove(&key) {
-                if Self::is_keyframe(frame.flags) {
-                    self.keyframe_loss_pending = true;
-                }
-                self.drops += 1;
+                self.record_incomplete_drop(frame);
                 self.expired_through_frame_id = Some(
                     self.expired_through_frame_id
                         .map_or(key.frame_id, |expired| expired.max(key.frame_id)),
@@ -134,13 +172,8 @@ impl ReassemblyMap {
         }
 
         if packet.stream_epoch > self.current_epoch {
-            self.mark_keyframe_loss_in_pending();
-            self.drops += self.frames.len() as u64;
+            self.clear_pending();
             self.current_epoch = packet.stream_epoch;
-            self.expired_through_frame_id = None;
-            self.frames.clear();
-            self.rejected_frames.clear();
-            self.terminal_frames.clear();
         }
 
         let key = FrameKey {
@@ -165,6 +198,9 @@ impl ReassemblyMap {
             }
             if self.rejected_frames.insert(key) {
                 self.drops += 1;
+                if !packet.flags.contains(VideoPacketFlags::DISCARDABLE) {
+                    self.reference_loss_pending = true;
+                }
                 if Self::is_keyframe(packet.flags) {
                     self.keyframe_loss_pending = true;
                 }
@@ -189,12 +225,9 @@ impl ReassemblyMap {
         });
 
         if entry.fragment_count != packet.fragment_count {
-            if Self::is_keyframe(entry.flags) {
-                self.keyframe_loss_pending = true;
-            }
-            self.frames.remove(&key);
+            let frame = self.frames.remove(&key).expect("reassembly entry exists");
+            self.record_incomplete_drop(frame);
             self.remember_terminal(key);
-            self.drops += 1;
             return Ok(None);
         }
 
@@ -216,12 +249,9 @@ impl ReassemblyMap {
             if let Some(chunk) = entry.fragments.get(&index) {
                 assembled.extend_from_slice(chunk);
             } else {
-                if Self::is_keyframe(entry.flags) {
-                    self.keyframe_loss_pending = true;
-                }
-                self.frames.remove(&key);
+                let frame = self.frames.remove(&key).expect("reassembly entry exists");
+                self.record_incomplete_drop(frame);
                 self.remember_terminal(key);
-                self.drops += 1;
                 return Ok(None);
             }
         }
@@ -234,22 +264,13 @@ impl ReassemblyMap {
             data: assembled.freeze(),
             pts_us,
             keyframe: Self::is_keyframe(flags),
+            discardable: flags.contains(VideoPacketFlags::DISCARDABLE),
             stream_epoch: packet_epoch,
         }))
     }
 
     pub fn is_keyframe(flags: VideoPacketFlags) -> bool {
         flags.contains(VideoPacketFlags::KEYFRAME)
-    }
-
-    fn mark_keyframe_loss_in_pending(&mut self) {
-        if self
-            .frames
-            .values()
-            .any(|frame| Self::is_keyframe(frame.flags))
-        {
-            self.keyframe_loss_pending = true;
-        }
     }
 
     fn drop_oldest(&mut self) {
@@ -263,13 +284,25 @@ impl ReassemblyMap {
             .or_else(|| self.frames.keys().min_by_key(|key| key.frame_id).copied());
         if let Some(key) = oldest {
             if let Some(frame) = self.frames.remove(&key) {
-                if Self::is_keyframe(frame.flags) {
-                    self.keyframe_loss_pending = true;
-                }
+                self.record_incomplete_drop(frame);
             }
             self.remember_terminal(key);
-            self.drops += 1;
         }
+    }
+
+    fn record_incomplete_drop(&mut self, frame: PartialFrame) {
+        if !frame.flags.contains(VideoPacketFlags::DISCARDABLE) {
+            self.reference_loss_pending = true;
+        }
+        if Self::is_keyframe(frame.flags) {
+            self.keyframe_loss_pending = true;
+        }
+        self.missing_fragments = self.missing_fragments.saturating_add(u64::from(
+            frame
+                .fragment_count
+                .saturating_sub(frame.fragments.len() as u16),
+        ));
+        self.drops = self.drops.saturating_add(1);
     }
 
     fn remember_terminal(&mut self, key: FrameKey) {
@@ -332,6 +365,7 @@ mod tests {
             assembled.as_ref().map(|a| a.data.as_ref()),
             Some(&b"abcd"[..])
         );
+        assert_eq!(map.missing_fragment_count(), 0);
     }
 
     #[test]
@@ -379,6 +413,7 @@ mod tests {
 
         map.expire_incomplete_older_than(Instant::now(), Duration::ZERO);
         assert!(map.take_keyframe_loss());
+        assert_eq!(map.missing_fragment_count(), 1);
 
         let key_tail = VideoPacket {
             version: VideoPacket::VERSION,
@@ -393,6 +428,36 @@ mod tests {
         assert!(map.ingest(key_tail).unwrap().is_none());
         assert!(!map.take_keyframe_loss());
         assert_eq!(map.drop_count(), 1, "loss must be counted once");
+        assert_eq!(map.missing_fragment_count(), 1, "loss must be counted once");
+    }
+
+    #[test]
+    fn clearing_pending_preserves_same_unit_fragment_loss_counters() {
+        let mut map = ReassemblyMap::new(8, 16);
+        assert!(map.ingest(fragment(1, 1, 0, 3, b"a")).unwrap().is_none());
+        assert!(map.ingest(fragment(1, 1, 2, 3, b"c")).unwrap().is_none());
+
+        map.clear_pending();
+
+        assert_eq!(map.drop_count(), 1);
+        assert_eq!(map.missing_fragment_count(), 1);
+        assert!(map.take_reference_chain_loss());
+        assert!(map.ingest(fragment(1, 2, 0, 1, b"next")).unwrap().is_some());
+        assert_eq!(map.missing_fragment_count(), 1);
+    }
+
+    #[test]
+    fn incomplete_delta_requires_refresh_unless_marked_discardable() {
+        let mut map = ReassemblyMap::new(8, 16);
+        assert!(map.ingest(fragment(1, 1, 0, 2, b"p0")).unwrap().is_none());
+        map.expire_incomplete_older_than(Instant::now(), Duration::ZERO);
+        assert!(map.take_reference_chain_loss());
+
+        let mut discardable = fragment(1, 2, 0, 2, b"b0");
+        discardable.flags = VideoPacketFlags::DISCARDABLE;
+        assert!(map.ingest(discardable).unwrap().is_none());
+        map.expire_incomplete_older_than(Instant::now(), Duration::ZERO);
+        assert!(!map.take_reference_chain_loss());
     }
 
     #[test]

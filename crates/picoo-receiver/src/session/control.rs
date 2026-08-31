@@ -15,6 +15,7 @@ use picoo_transport::{CloseReason, SessionId};
 use prost::Message;
 
 use super::pairing::{PAIRING_COMMIT_MAGIC, PAIRING_COMMIT_PHASE};
+use super::recovery::RecoveryReason;
 use super::ReceiverSession;
 use crate::ReceiverError;
 
@@ -120,7 +121,7 @@ impl ReceiverSession {
             return Ok(());
         }
         // Finish protocol/session teardown before surfacing a decoder error.
-        let decoder_flush = self.decoder.flush();
+        let decoder_reset = self.decoder.reset();
         // Sender-initiated stop: tear down session video without auto-reconnect wait.
         self.active_sender = None;
         self.pending_pairing = None;
@@ -128,8 +129,10 @@ impl ReceiverSession {
         self.waiting_for_stream_config_epoch = None;
         self.receiver_capabilities_sent = None;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
+        self.stats_reporter = super::StatsReporter::new();
         self.jitter.clear();
         self.jitter_timeline = None;
+        self.decoder_recovery.reset_session();
         self.placeholder_after = None;
         let _ = self.publish_waiting_placeholder();
         self.transport.close(session, CloseReason::LocalClose);
@@ -138,7 +141,7 @@ impl ReceiverSession {
         } else {
             ReceiverStatus::Disconnected
         };
-        decoder_flush?;
+        decoder_reset?;
         Ok(())
     }
 
@@ -200,13 +203,12 @@ impl ReceiverSession {
         // StreamConfig and on every stream_epoch bump so decoders recover quickly.
         let needs_keyframe = self.video_allowed() && (previous_epoch.is_none() || epoch_bumped);
         if needs_keyframe {
-            if epoch_bumped {
-                self.jitter.clear();
-                self.jitter_timeline = None;
-                self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
-                self.decoder.flush()?;
-            }
-            self.send_request_keyframe(session)?;
+            let reason = if epoch_bumped {
+                RecoveryReason::EpochChanged
+            } else {
+                RecoveryReason::InitialConfig
+            };
+            self.enter_decoder_recovery(reason, epoch_bumped)?;
         }
         Ok(())
     }
@@ -240,27 +242,25 @@ impl ReceiverSession {
     }
 
     /// Ask Sender for an IDR after keyframe reassembly loss (REQ-PICOO-SESSION-003).
-    pub(crate) fn send_request_keyframe(
+    pub(crate) fn send_request_keyframe_now(
         &mut self,
         session: SessionId,
     ) -> Result<(), ReceiverError> {
         let command = EncoderCommand {
             command: picoo_protocol::control::encoder_command::Command::RequestKeyframe as i32,
         };
-        self.send_control_message(session, &command)
+        self.send_control_message(session, &command)?;
+        self.ingress.keyframe_requests = self.ingress.keyframe_requests.saturating_add(1);
+        Ok(())
     }
 
     /// UI-triggered IDR request (REQ-PICOO-UI-003 live page).
     pub fn request_keyframe(&mut self) -> Result<(), ReceiverError> {
-        let session = self
-            .transport
-            .active_session()
-            .ok_or(ReceiverError::NotListening)?;
         if !self.video_allowed() {
             return Err(ReceiverError::Protocol(
                 "RequestKeyframe requires paired streaming session".into(),
             ));
         }
-        self.send_request_keyframe(session)
+        self.force_decoder_recovery_request(RecoveryReason::ManualRepair)
     }
 }

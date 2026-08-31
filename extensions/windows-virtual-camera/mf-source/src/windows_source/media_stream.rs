@@ -31,6 +31,7 @@ use crate::format::{
     is_supported_output_size, nv12_len, FRAME_RATE_DEN, FRAME_RATE_NUM, SAMPLE_DURATION_100NS,
 };
 use crate::frame_provider::{FrameProvider, OwnedNv12Frame};
+use crate::metrics::{VcamMetrics, VcamMetricsSnapshot};
 
 use super::{lock, ObjectTracker};
 
@@ -43,6 +44,7 @@ pub(super) struct StreamState {
     current_type: Option<AgileReference<IMFMediaType>>,
     allocator: Option<AgileReference<IMFVideoSampleAllocator>>,
     frames: FrameProvider,
+    metrics: VcamMetrics,
     output_width: u32,
     output_height: u32,
     state: MF_STREAM_STATE,
@@ -84,6 +86,7 @@ impl MediaStream {
                 current_type: Some(AgileReference::new(&type_720)?),
                 allocator: None,
                 frames: FrameProvider::new(),
+                metrics: VcamMetrics::new(),
                 output_width: 1280,
                 output_height: 720,
                 state: MF_STREAM_STATE_STOPPED,
@@ -276,7 +279,18 @@ impl IMFMediaStream_Impl for MediaStream_Impl {
     }
 
     fn RequestSample(&self, token: Ref<'_, IUnknown>) -> Result<()> {
-        deliver_sample(&self.shared, token)
+        let delivery_started = std::time::Instant::now();
+        lock(&self.shared)?.metrics.record_request();
+        let result = deliver_sample(&self.shared, token, delivery_started);
+        if result.is_err() {
+            let snapshot = lock(&self.shared)?
+                .metrics
+                .record_failure(delivery_started.elapsed());
+            if let Some(snapshot) = snapshot {
+                emit_metrics(snapshot);
+            }
+        }
+        result
     }
 }
 
@@ -372,13 +386,19 @@ fn ensure_output_format(state: &mut StreamState, frame: &OwnedNv12Frame) -> Resu
     Ok(true)
 }
 
-fn deliver_sample(shared: &SharedStreamState, token: Ref<'_, IUnknown>) -> Result<()> {
-    let (sample, queue, format_changed, current_type) = {
+fn deliver_sample(
+    shared: &SharedStreamState,
+    token: Ref<'_, IUnknown>,
+    delivery_started: std::time::Instant,
+) -> Result<()> {
+    let (sample, queue, format_changed, current_type, frame_origin) = {
         let mut state = lock(shared)?;
         if state.state != MF_STREAM_STATE_RUNNING {
             return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
         }
-        let frame = state.frames.acquire();
+        let acquired = state.frames.acquire();
+        let frame_origin = acquired.origin;
+        let frame = acquired.frame;
         if nv12_len(frame.width, frame.height) != Some(frame.pixels.len()) {
             return Err(Error::from(E_FAIL));
         }
@@ -399,7 +419,7 @@ fn deliver_sample(shared: &SharedStreamState, token: Ref<'_, IUnknown>) -> Resul
             .as_ref()
             .map(AgileReference::resolve)
             .transpose()?;
-        (sample, queue, format_changed, current_type)
+        (sample, queue, format_changed, current_type, frame_origin)
     };
 
     unsafe {
@@ -419,7 +439,32 @@ fn deliver_sample(shared: &SharedStreamState, token: Ref<'_, IUnknown>) -> Resul
             &sample.cast::<IUnknown>()?,
         )?;
     }
+    let snapshot = lock(shared)?
+        .metrics
+        .record_delivery(frame_origin, delivery_started.elapsed());
+    if let Some(snapshot) = snapshot {
+        emit_metrics(snapshot);
+    }
     Ok(())
+}
+
+fn emit_metrics(snapshot: VcamMetricsSnapshot) {
+    let requests_per_second = if snapshot.elapsed_ms == 0 {
+        0.0
+    } else {
+        snapshot.requests as f64 * 1_000.0 / snapshot.elapsed_ms as f64
+    };
+    let message = format!(
+        "Picoo VCam metrics: requests_per_sec={requests_per_second:.1} requests={} fresh={} cached={} placeholder={} failed={} delivery_avg_us={} delivery_max_us={}\n",
+        snapshot.requests,
+        snapshot.fresh,
+        snapshot.cached,
+        snapshot.placeholder,
+        snapshot.failed,
+        snapshot.delivery_average_us,
+        snapshot.delivery_max_us,
+    );
+    super::emit_debug_message(&message);
 }
 
 fn create_sample(

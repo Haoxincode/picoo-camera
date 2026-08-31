@@ -92,8 +92,17 @@ impl ReceiverSession {
     }
 
     /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.
-    pub(crate) fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
+    pub(crate) fn publish_access_unit(
+        &mut self,
+        access_unit: Bytes,
+        keyframe: bool,
+    ) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
+        if !self.accepts_access_unit_for_decode(keyframe) {
+            self.ingress.recovery_dropped_access_units =
+                self.ingress.recovery_dropped_access_units.saturating_add(1);
+            return Ok(());
+        }
         self.ingress.decode_invocations += 1;
         let decoded = match self
             .decoder
@@ -104,9 +113,13 @@ impl ReceiverSession {
                 self.stats_reporter.record_decoder_drop();
                 self.last_media_error = Some(error.to_string());
                 tracing::warn!("H.264 access unit decode failed: {error}");
+                self.enter_decoder_recovery(super::recovery::RecoveryReason::DecoderError, true)?;
                 return Ok(());
             }
         };
+        if keyframe {
+            self.mark_decoder_refresh_accepted();
+        }
         match decoded {
             Some(frame) => {
                 // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).

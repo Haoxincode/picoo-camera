@@ -54,6 +54,9 @@ msiexec /i PicooCamera.msi /l*v "$env:TEMP\picoo-camera-install.log"
    - [ ] 画面来自手机（非笔记本内置头）
    - [ ] 直立、无 90° 错误旋转
    - [ ] 无明显卡顿（主观流畅）
+   - [ ] 用 DebugView/调试器记录 `Picoo VCam metrics` 至少 10 秒；声明 30 FPS 时
+         `requests_per_sec` 不应持续达到数百或上千，并保存 fresh/cached/placeholder
+         与 delivery 耗时
 5. **分辨率**：若应用可选 720p / 1080p，分别试一次
 6. **断线恢复**：Streaming 中关手机 Wi‑Fi 10s → 开回 → 会议内预览应恢复或短暂占位后恢复
 7. **占位**：停止 Streaming（手机 Disconnect）→ 会议内应显示品牌占位，**不崩溃**

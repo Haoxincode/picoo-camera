@@ -225,6 +225,13 @@ impl AccessUnitDecoder for MfH264Decoder {
     ) -> Result<Option<DecodedFrame>, DecodeError> {
         self.decode_h264_au(access_unit, stream_config)
     }
+
+    fn reset(&mut self) -> Result<(), DecodeError> {
+        unsafe { reset_transform(&self.transform)? };
+        self.next_sample_time_100ns = 0;
+        self.inject_sequence_header = !self.sequence_header.is_empty();
+        Ok(())
+    }
 }
 
 fn pack_frame_size(width: u32, height: u32) -> u64 {
@@ -303,6 +310,12 @@ unsafe fn configure_transform(
         .SetOutputType(0, &out_type, 0)
         .map_err(|e| DecodeError::Platform(format!("SetOutputType: {e}")))?;
 
+    reset_transform(transform)?;
+
+    Ok(())
+}
+
+unsafe fn reset_transform(transform: &IMFTransform) -> Result<(), DecodeError> {
     transform
         .ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0)
         .map_err(|e| DecodeError::Platform(format!("MFT flush: {e}")))?;
@@ -312,7 +325,6 @@ unsafe fn configure_transform(
     transform
         .ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)
         .map_err(|e| DecodeError::Platform(format!("MFT start of stream: {e}")))?;
-
     Ok(())
 }
 

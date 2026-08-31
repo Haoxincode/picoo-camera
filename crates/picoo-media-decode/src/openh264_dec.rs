@@ -189,4 +189,10 @@ impl AccessUnitDecoder for OpenH264Decoder {
             nv12: Bytes::from(nv12),
         }))
     }
+
+    fn reset(&mut self) -> Result<(), DecodeError> {
+        self.decoder = Decoder::new().map_err(|e| DecodeError::Platform(e.to_string()))?;
+        self.param_sets_fed = false;
+        Ok(())
+    }
 }

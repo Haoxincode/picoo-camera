@@ -60,4 +60,8 @@ impl AccessUnitDecoder for StubDecoder {
             nv12: Bytes::from(nv12),
         }))
     }
+
+    fn reset(&mut self) -> Result<(), DecodeError> {
+        Ok(())
+    }
 }

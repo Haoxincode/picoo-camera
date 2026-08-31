@@ -57,6 +57,11 @@ fn build_diagnostics_json(
             access_units: ingress.access_units,
             packets: ingress.packets_received,
             packets_dropped_unpaired: ingress.packets_dropped_unpaired,
+            decode_invocations: ingress.decode_invocations,
+            decoded_frames: ingress.decoded_frames,
+            recovery_dropped_access_units: ingress.recovery_dropped_access_units,
+            decoder_resets: ingress.decoder_resets,
+            keyframe_requests: ingress.keyframe_requests,
             hosts: Vec::new(),
         }),
         trusted_devices: store.list().cloned().collect(),
@@ -104,6 +109,9 @@ mod tests {
             packets_dropped_unpaired: 1,
             decode_invocations: 10,
             decoded_frames: 9,
+            recovery_dropped_access_units: 2,
+            decoder_resets: 3,
+            keyframe_requests: 1,
             control_rejected_unpaired: 0,
         };
         let result = export_diagnostics_to_file_with_hosts(
@@ -132,6 +140,12 @@ mod tests {
         assert!(
             on_disk.contains("192.168.xxx.xxx"),
             "expected redacted host form: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("\"recovery_dropped_access_units\": 2")
+                && on_disk.contains("\"decoder_resets\": 3")
+                && on_disk.contains("\"keyframe_requests\": 1"),
+            "expected decoder recovery counters: {on_disk}"
         );
     }
 }

@@ -42,6 +42,21 @@ pub struct DiagnosticSessionSnapshot {
     pub packets: u64,
     /// Receiver-only unpaired drops; sender exports 0.
     pub packets_dropped_unpaired: u64,
+    /// Receiver decoder invocations; 0 for senders and older producers.
+    #[serde(default)]
+    pub decode_invocations: u64,
+    /// Frames committed after decode.
+    #[serde(default)]
+    pub decoded_frames: u64,
+    /// Delta AUs intentionally discarded while waiting for a fresh IDR.
+    #[serde(default)]
+    pub recovery_dropped_access_units: u64,
+    /// Decoder state resets caused by epoch changes or recovery.
+    #[serde(default)]
+    pub decoder_resets: u64,
+    /// Reliable-stream IDR requests queued by Receiver.
+    #[serde(default)]
+    pub keyframe_requests: u64,
     /// Optional bind / peer hosts (IPv4), redacted when policy.redact_ips.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hosts: Vec<String>,
@@ -187,6 +202,11 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
             access_units: 0,
             packets: 0,
             packets_dropped_unpaired: 0,
+            decode_invocations: 0,
+            decoded_frames: 0,
+            recovery_dropped_access_units: 0,
+            decoder_resets: 0,
+            keyframe_requests: 0,
             hosts: input
                 .hosts
                 .iter()
@@ -282,6 +302,11 @@ mod tests {
                 access_units: 1,
                 packets: 2,
                 packets_dropped_unpaired: 0,
+                decode_invocations: 1,
+                decoded_frames: 1,
+                recovery_dropped_access_units: 0,
+                decoder_resets: 0,
+                keyframe_requests: 0,
                 hosts: vec!["192.168.1.42:4433".into()],
             }),
             hosts: vec!["10.0.0.7".into()],

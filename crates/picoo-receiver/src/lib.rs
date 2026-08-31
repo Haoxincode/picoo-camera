@@ -69,6 +69,12 @@ pub struct IngressStats {
     pub decode_invocations: u64,
     /// Frames successfully decoded and committed to FrameHub.
     pub decoded_frames: u64,
+    /// Delta AUs discarded while the decoder waits for a fresh IDR.
+    pub recovery_dropped_access_units: u64,
+    /// Decoder prediction-state resets after epoch changes or decode failures.
+    pub decoder_resets: u64,
+    /// Keyframe requests successfully queued on the reliable control stream.
+    pub keyframe_requests: u64,
     /// StartStream / CameraCommand rejected while unpaired (PAIRING-003).
     pub control_rejected_unpaired: u64,
 }
