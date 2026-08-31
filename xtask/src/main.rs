@@ -369,11 +369,6 @@ fn build(platform: BuildPlatform) -> Result<()> {
                 "cargo build -p picoo-desktop -p picoo-vcam-ring-reader -p picoo-windows-vcam-source --release --features gpui-ui,windows-vcam"
             )
             .run()?;
-            cmd!(
-                sh,
-                "cargo build -p picoo-media-decode --release --features windows-mf"
-            )
-            .run()?;
         }
     }
     Ok(())
@@ -1593,6 +1588,12 @@ fn test_suite(suite: TestSuite) -> Result<()> {
                 "cargo test -p picoo-frame-hub -p picoo-windows-vcam-source"
             )
             .run()?;
+            cmd!(sh, "cargo test -p picoo-media-decode --features windows-mf").run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --features windows-mf --lib paired_avcc_length_prefixed_au_reaches_frame_hub"
+            )
+            .run()?;
         }
         TestSuite::Protocol => {
             cmd!(
@@ -1944,6 +1945,22 @@ mod tests {
         assert!(windows_msi_version("256.1.0", None).is_err());
         assert!(windows_msi_version("1.256.0", None).is_err());
         assert!(windows_msi_version("1.2", None).is_err());
+    }
+
+    #[test]
+    fn windows_desktop_feature_graph_includes_mf_decoder() {
+        let desktop = std::fs::read_to_string(workspace_asset("apps/desktop/Cargo.toml"))
+            .expect("read desktop Cargo.toml");
+        let receiver = std::fs::read_to_string(workspace_asset("crates/picoo-receiver/Cargo.toml"))
+            .expect("read receiver Cargo.toml");
+        assert!(
+            desktop.contains("\"picoo-receiver/windows-mf\""),
+            "Windows desktop feature must propagate Media Foundation into Receiver"
+        );
+        assert!(
+            receiver.contains("windows-mf = [\"picoo-media-decode/windows-mf\"]"),
+            "Receiver feature must propagate Media Foundation into media decoder"
+        );
     }
 
     #[test]

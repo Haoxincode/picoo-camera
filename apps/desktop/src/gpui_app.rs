@@ -2334,6 +2334,13 @@ impl PicooDesktopApp {
             snapshot.stream_metrics.packet_loss,
             snapshot.stream_metrics.latency_ms,
         );
+        let frame_status = snapshot
+            .media_error
+            .as_ref()
+            .map(|error| format!("视频解码失败 · {error}"))
+            .or_else(|| {
+                (snapshot.ingress.decoded_frames == 0).then(|| "正在等待首个视频帧…".into())
+            });
 
         div()
             .v_flex()
@@ -2357,6 +2364,17 @@ impl PicooDesktopApp {
                         .bg(cx.theme().muted)
                         .overflow_hidden()
                         .child(self.video_surface.render_preview())
+                        .when_some(frame_status, |this, status| {
+                            this.child(
+                                div()
+                                    .absolute()
+                                    .inset_0()
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .child(live_hud_pill(status, cx)),
+                            )
+                        })
                         .child(
                             div()
                                 .absolute()

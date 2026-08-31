@@ -72,6 +72,7 @@ else
 fi
 # Post-build MSI check lives in verify_windows_bundle.ps1 (windows-latest only; no msiexec).
 need "$WXS" 'FirewallQuic'
+need "$WXS" 'FirewallMdns'
 need "$WXS" 'KeyPath="yes"'
 need "$WXS" 'MajorUpgrade'
 need "$WXS" 'StartMenuDesktop'
@@ -89,7 +90,7 @@ if grep -qE 'Version="[0-9]+\.[0-9]+\.[0-9]+"' "$WXS"; then
 else
   echo "ok: picoo-camera.wxs has no hard-coded ProductVersion"
 fi
-need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[1234]"'
+need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[12345]"'
 need "$WXS" 'Component Id="DesktopExe"'
 need "$WXS" 'Component Id="VcamDll"'
 need "$WXS" 'Component Id="RingReader"'

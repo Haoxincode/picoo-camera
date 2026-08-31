@@ -103,6 +103,7 @@ mod tests {
             packets_received: 20,
             packets_dropped_unpaired: 1,
             decode_invocations: 10,
+            decoded_frames: 9,
             control_rejected_unpaired: 0,
         };
         let result = export_diagnostics_to_file_with_hosts(

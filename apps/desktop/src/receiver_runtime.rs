@@ -79,6 +79,8 @@ pub struct ReceiverSnapshot {
     pub virtual_camera: crate::model::VirtualCameraStatus,
     /// None when Shared Frame Ring attach succeeded (REQ-PICOO-FRAME-003 / PUC-004).
     pub shared_ring_error: Option<String>,
+    /// Last production decoder failure; cleared after a real frame is committed.
+    pub media_error: Option<String>,
 }
 
 pub struct ReceiverRuntime {
@@ -294,6 +296,16 @@ impl ReceiverRuntime {
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
         self.receiver.pump()?;
+        if let Some(advertiser) = self.mdns.as_mut() {
+            let changed = advertiser.poll();
+            if changed {
+                if advertiser.is_registered() {
+                    tracing::info!("mDNS announcement is active");
+                } else if let Some(error) = advertiser.last_error() {
+                    tracing::warn!("mDNS announcement stopped: {error}");
+                }
+            }
+        }
         let trusted_count = self.receiver.trusted_devices().list().count();
         if trusted_count != self.advertised_trusted_count {
             self.refresh_mdns_advertisement();
@@ -314,7 +326,10 @@ impl ReceiverRuntime {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
             advertise_host: self.advertise_host.clone(),
-            discovery_available: self.mdns.is_some(),
+            discovery_available: self
+                .mdns
+                .as_ref()
+                .is_some_and(MdnsAdvertiser::is_registered),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
             link_jitter_ms: self
                 .receiver
@@ -354,6 +369,7 @@ impl ReceiverRuntime {
             active_sender,
             virtual_camera: self.virtual_camera,
             shared_ring_error: self.shared_ring_error.clone(),
+            media_error: self.receiver.last_media_error().map(str::to_string),
         }
     }
 

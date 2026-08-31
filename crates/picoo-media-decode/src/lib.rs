@@ -76,9 +76,25 @@ fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
             Box::new(decoder)
         }
         Err(err) => {
-            tracing::warn!("MF decoder unavailable, falling back to stub: {err}");
-            Box::new(StubDecoder::new())
+            tracing::error!("MF decoder unavailable: {err}");
+            Box::new(UnavailableDecoder(format!(
+                "Media Foundation initialization failed: {err}"
+            )))
         }
+    }
+}
+
+#[cfg(all(windows, feature = "windows-mf"))]
+struct UnavailableDecoder(String);
+
+#[cfg(all(windows, feature = "windows-mf"))]
+impl AccessUnitDecoder for UnavailableDecoder {
+    fn decode_access_unit(
+        &mut self,
+        _access_unit: &[u8],
+        _stream_config: Option<&StreamConfig>,
+    ) -> Result<Option<DecodedFrame>, DecodeError> {
+        Err(DecodeError::Platform(self.0.clone()))
     }
 }
 

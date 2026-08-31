@@ -12,7 +12,7 @@ path = "src/main.rs"
 [features]
 default = []
 gpui-ui = ["dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets", "dep:image", "dep:smallvec"]
-windows-vcam = ["dep:windows"]
+windows-vcam = ["dep:windows", "picoo-receiver/windows-mf"]
 
 [dependencies]
 picoo-discovery.workspace = true

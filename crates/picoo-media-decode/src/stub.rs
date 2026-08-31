@@ -1,7 +1,7 @@
 //! Placeholder decoder for fixtures and MF/OpenH264 fallback — maps test AUs into NV12.
 
 use bytes::Bytes;
-use picoo_frame_hub::waiting_placeholder;
+use picoo_frame_hub::waiting_placeholder_for_size;
 use picoo_protocol::control::StreamConfig;
 
 use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
@@ -42,13 +42,13 @@ impl AccessUnitDecoder for StubDecoder {
             // Exact NV12 payload (tests / passthrough).
             access_unit.to_vec()
         } else if access_unit.len() <= 64 {
-            let mut frame = waiting_placeholder();
+            let mut frame = waiting_placeholder_for_size(width, height);
             let copy_len = access_unit.len().min(frame.len());
             frame[..copy_len].copy_from_slice(&access_unit[..copy_len]);
             frame
         } else {
-            // Raw H.264 AU before MF lands: publish waiting placeholder so VCam/UI stay alive.
-            waiting_placeholder()
+            // Keep VCam/UI alive without violating the negotiated NV12 dimensions.
+            waiting_placeholder_for_size(width, height)
         };
 
         Ok(Some(DecodedFrame {

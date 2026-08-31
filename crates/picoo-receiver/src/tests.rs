@@ -59,6 +59,43 @@ fn decoder_is_flushed_at_every_session_teardown_boundary() {
     assert_eq!(flushes.load(Ordering::SeqCst), 3);
 }
 
+#[test]
+fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recovery() {
+    struct AlwaysFails;
+
+    impl picoo_media_decode::AccessUnitDecoder for AlwaysFails {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<Option<picoo_media_decode::DecodedFrame>, picoo_media_decode::DecodeError>
+        {
+            Err(picoo_media_decode::DecodeError::Platform(
+                "fixture failure".into(),
+            ))
+        }
+    }
+
+    let mut receiver = ReceiverSession::new();
+    receiver.set_decoder_for_test(Box::new(AlwaysFails));
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"broken-au"))
+        .expect("a media failure must not terminate the receiver pump");
+    assert_eq!(receiver.stats().access_units, 1);
+    assert_eq!(receiver.stats().decoded_frames, 0);
+    assert_eq!(
+        receiver.last_media_error(),
+        Some("platform decoder: fixture failure")
+    );
+
+    use_stub_decoder(&mut receiver);
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"recovered-au"))
+        .expect("decoder recovery");
+    assert_eq!(receiver.stats().decoded_frames, 1);
+    assert_eq!(receiver.last_media_error(), None);
+}
+
 fn pump_pair_for(
     receiver: &mut ReceiverSession,
     sender: &mut SenderSession<QuicSenderTransport>,
@@ -2946,7 +2983,6 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
     );
 }
 
-#[cfg(not(windows))]
 #[test]
 fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
     // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU reaches the

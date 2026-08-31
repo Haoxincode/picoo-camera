@@ -2,7 +2,7 @@
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
-| REQ-PICOO-DISCOVERY-001 | implemented | PUC-002 | Receiver 广播 `_picoocam._udp.local`，广播出口必须绑定所选局域网地址，不得漂移到 VPN/Hyper-V/WSL 虚拟接口；Windows 安装后必须允许局域网 mDNS 流量 | MdnsAdvertiser 注册/改名/信任变更后 re-advertise，并以 `IfKind::All` disable + LAN IP enable 限定 mDNS daemon；LAN `select_advertise_ipv4`（禁 loopback）；Windows WiX 同时放行 mDNS UDP `5353` 与默认 QUIC UDP `4433` |
+| REQ-PICOO-DISCOVERY-001 | implemented | PUC-002 | Receiver 广播 `_picoocam._udp.local`，广播出口必须绑定所选局域网地址，不得漂移到 VPN/Hyper-V/WSL 虚拟接口；桌面只有收到 mDNS daemon 的实际 Announce 后才能显示发现服务在线；Windows 新装与从旧版升级都必须允许局域网 mDNS 流量 | MdnsAdvertiser 注册/改名/信任变更后 re-advertise，并以 `IfKind::All` disable + LAN IP enable 限定 mDNS daemon；`DaemonEvent::Announce`/`Error`/`IpDel` 驱动真实状态；LAN `select_advertise_ipv4`（禁 loopback）；WiX 为 mDNS UDP `5353` 使用独立新 Component/KeyPath，QUIC UDP `4433` 使用原 Component，确保 MSI 升级不会跳过新增规则；注册测试等待真实 Announce |
 | REQ-PICOO-DISCOVERY-002 | implemented | ARCH-PICOO-DISCOVERY-001 | 广播仅含白名单字段；fingerprint_prefix 来自公钥 | TXT 白名单 + 指纹前缀测试 |
 | REQ-PICOO-DISCOVERY-005 | implemented | PUC-002 | Android 使用系统 NSD 浏览 Receiver，但 TXT 协议字段由 Rust Core 统一校验；API 33+ 发现明确绑定 Wi-Fi NetworkRequest，不随默认 VPN 路由漂移；系统浏览异常停止后自动恢复，网络切换或 Receiver 刷新 TXT 导致的瞬时 ServiceLost 不立即删除设备 | `NsdReceiverBrowser` 将原始 TXT 交给 JNI `parseDiscoveryTxt`；Rust `ReceiverAdvertisement::from_txt_properties` 强制完整字段、白名单与 pairing_state；Wi-Fi `NetworkRequest`；NSD 失败延迟重启、ServiceLost 设 10s 宽限且重新解析后取消；Devices 行展示 Ready/Paired |
 | REQ-PICOO-DISCOVERY-006 | implemented | PUC-002 / PRD §8.1 | 健康网络发现 P50&lt;2s；已配对连接建立 &lt;3s | `paired_connect_to_streaming_under_three_seconds`；`apply_resolved_txt`→list P50（`synthetic_advertise_to_list_p50_under_two_seconds`）；真 mDNS `--ignored` |

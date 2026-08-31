@@ -1,7 +1,6 @@
 //! Media Foundation H.264 decoder — REQ-PICOO-MEDIA-005.
 //!
 //! CMSH264DecoderMFT IMFTransform pipeline: H.264 access unit → NV12.
-//! Falls back to [`StubDecoder`] for short test AUs or MF errors.
 //! When StreamConfig carries SPS/PPS, they are applied as
 //! `MF_MT_MPEG_SEQUENCE_HEADER` and injected ahead of the first AU after
 //! (re)configure — REQ-PICOO-PROTOCOL-005 / REQ-PICOO-SESSION-004.
@@ -13,23 +12,23 @@ use picoo_packet::{access_unit_to_annex_b, annex_b_parameter_sets};
 use picoo_protocol::control::StreamConfig;
 use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::{
-    CMSH264DecoderMFT, IMFMediaBuffer, IMFSample, IMFTransform, MFCreateMediaType,
-    MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFVideoFormat_H264,
+    CMSH264DecoderMFT, IMFMediaBuffer, IMFSample, IMFTransform, MFCreateAlignedMemoryBuffer,
+    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFVideoFormat_H264,
     MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFT_MESSAGE_COMMAND_FLUSH,
     MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
-    MF_E_NOTACCEPTING, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-    MF_MT_MAJOR_TYPE, MF_MT_SUBTYPE,
+    MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MF_E_NOTACCEPTING,
+    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
+    MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 
-use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame, StubDecoder};
+use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodedFrame};
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
-const MIN_H264_AU_BYTES: usize = 65;
-
+const DEFAULT_FPS: u32 = 30;
 /// MF_MT_MPEG_SEQUENCE_HEADER — H.264 SPS/PPS with Annex-B start codes.
 const MF_MT_MPEG_SEQUENCE_HEADER: GUID = GUID::from_u128(0x05f4_6766_f1a9_44e5_b82a_e4df_c2ea_2873);
 
@@ -38,9 +37,10 @@ pub struct MfH264Decoder {
     configured: bool,
     width: u32,
     height: u32,
+    fps: u32,
+    next_sample_time_100ns: i64,
     sequence_header: Vec<u8>,
     inject_sequence_header: bool,
-    fallback: StubDecoder,
 }
 
 // IMFTransform is not automatically Send in windows-rs; receiver owns the decoder on one thread.
@@ -68,17 +68,19 @@ impl MfH264Decoder {
             configured: false,
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
+            fps: DEFAULT_FPS,
+            next_sample_time_100ns: 0,
             sequence_header: Vec::new(),
             inject_sequence_header: false,
-            fallback: StubDecoder::new(),
         })
     }
 
-    fn dimensions(stream_config: Option<&StreamConfig>) -> (u32, u32) {
+    fn stream_shape(stream_config: Option<&StreamConfig>) -> (u32, u32, u32) {
         stream_config
-            .map(|cfg| (cfg.width, cfg.height))
-            .filter(|(w, h)| *w > 0 && *h > 0)
-            .unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT))
+            .map(|cfg| (cfg.width, cfg.height, cfg.fps))
+            .filter(|(w, h, _)| *w > 0 && *h > 0)
+            .map(|(w, h, fps)| (w, h, fps.max(1)))
+            .unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS))
     }
 
     fn sequence_header_from_config(stream_config: Option<&StreamConfig>) -> Vec<u8> {
@@ -92,22 +94,31 @@ impl MfH264Decoder {
         &mut self,
         stream_config: Option<&StreamConfig>,
     ) -> Result<(), DecodeError> {
-        let (width, height) = Self::dimensions(stream_config);
+        let (width, height, fps) = Self::stream_shape(stream_config);
         let sequence_header = Self::sequence_header_from_config(stream_config);
         if self.configured
             && self.width == width
             && self.height == height
+            && self.fps == fps
             && self.sequence_header == sequence_header
         {
             return Ok(());
         }
 
         unsafe {
-            configure_transform(&self.transform, width, height, sequence_header.as_slice())?;
+            configure_transform(
+                &self.transform,
+                width,
+                height,
+                fps,
+                sequence_header.as_slice(),
+            )?;
         }
         self.configured = true;
         self.width = width;
         self.height = height;
+        self.fps = fps;
+        self.next_sample_time_100ns = 0;
         self.inject_sequence_header = !sequence_header.is_empty();
         self.sequence_header = sequence_header;
         Ok(())
@@ -134,8 +145,20 @@ impl MfH264Decoder {
             access_unit
         };
         unsafe {
-            feed_access_unit(&self.transform, payload)?;
-            drain_output(&self.transform, self.width, self.height)
+            let duration_100ns = 10_000_000i64 / i64::from(self.fps.max(1));
+            let pending = feed_access_unit(
+                &self.transform,
+                payload,
+                self.next_sample_time_100ns,
+                duration_100ns,
+                self.width,
+                self.height,
+            )?;
+            self.next_sample_time_100ns += duration_100ns;
+            match pending {
+                Some(frame) => Ok(Some(frame)),
+                None => drain_output(&self.transform, self.width, self.height),
+            }
         }
     }
 }
@@ -154,17 +177,7 @@ impl AccessUnitDecoder for MfH264Decoder {
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
     ) -> Result<Option<DecodedFrame>, DecodeError> {
-        if access_unit.len() < MIN_H264_AU_BYTES {
-            return self.fallback.decode_access_unit(access_unit, stream_config);
-        }
-
-        match self.decode_h264_au(access_unit, stream_config) {
-            Ok(frame) => Ok(frame),
-            Err(err) => {
-                tracing::warn!("MF decode failed, using stub placeholder: {err}");
-                self.fallback.decode_access_unit(access_unit, stream_config)
-            }
-        }
+        self.decode_h264_au(access_unit, stream_config)
     }
 }
 
@@ -176,6 +189,7 @@ unsafe fn configure_transform(
     transform: &IMFTransform,
     width: u32,
     height: u32,
+    fps: u32,
     sequence_header: &[u8],
 ) -> Result<(), DecodeError> {
     let in_type = MFCreateMediaType()
@@ -186,6 +200,18 @@ unsafe fn configure_transform(
     in_type
         .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)
         .map_err(|e| DecodeError::Platform(format!("input subtype: {e}")))?;
+    in_type
+        .SetUINT64(&MF_MT_FRAME_SIZE, pack_frame_size(width, height))
+        .map_err(|e| DecodeError::Platform(format!("input frame size: {e}")))?;
+    in_type
+        .SetUINT64(&MF_MT_FRAME_RATE, pack_frame_size(fps, 1))
+        .map_err(|e| DecodeError::Platform(format!("input frame rate: {e}")))?;
+    in_type
+        .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
+        .map_err(|e| DecodeError::Platform(format!("input interlace: {e}")))?;
+    in_type
+        .SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack_frame_size(1, 1))
+        .map_err(|e| DecodeError::Platform(format!("input pixel aspect: {e}")))?;
     if !sequence_header.is_empty() {
         in_type
             .SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, sequence_header)
@@ -207,8 +233,14 @@ unsafe fn configure_transform(
         .SetUINT64(&MF_MT_FRAME_SIZE, pack_frame_size(width, height))
         .map_err(|e| DecodeError::Platform(format!("output frame size: {e}")))?;
     out_type
+        .SetUINT64(&MF_MT_FRAME_RATE, pack_frame_size(fps, 1))
+        .map_err(|e| DecodeError::Platform(format!("output frame rate: {e}")))?;
+    out_type
         .SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)
         .map_err(|e| DecodeError::Platform(format!("output interlace: {e}")))?;
+    out_type
+        .SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack_frame_size(1, 1))
+        .map_err(|e| DecodeError::Platform(format!("output pixel aspect: {e}")))?;
     transform
         .SetOutputType(0, &out_type, 0)
         .map_err(|e| DecodeError::Platform(format!("SetOutputType: {e}")))?;
@@ -226,7 +258,11 @@ unsafe fn configure_transform(
     Ok(())
 }
 
-unsafe fn create_input_sample(data: &[u8]) -> Result<IMFSample, DecodeError> {
+unsafe fn create_input_sample(
+    data: &[u8],
+    sample_time_100ns: i64,
+    duration_100ns: i64,
+) -> Result<IMFSample, DecodeError> {
     let buffer = MFCreateMemoryBuffer(data.len() as u32)
         .map_err(|e| DecodeError::Platform(format!("MFCreateMemoryBuffer: {e}")))?;
 
@@ -253,27 +289,64 @@ unsafe fn create_input_sample(data: &[u8]) -> Result<IMFSample, DecodeError> {
     sample
         .AddBuffer(&buffer)
         .map_err(|e| DecodeError::Platform(format!("AddBuffer: {e}")))?;
+    sample
+        .SetSampleTime(sample_time_100ns)
+        .map_err(|e| DecodeError::Platform(format!("SetSampleTime: {e}")))?;
+    sample
+        .SetSampleDuration(duration_100ns)
+        .map_err(|e| DecodeError::Platform(format!("SetSampleDuration: {e}")))?;
     Ok(sample)
 }
 
 unsafe fn feed_access_unit(
     transform: &IMFTransform,
     access_unit: &[u8],
-) -> Result<(), DecodeError> {
-    let sample = create_input_sample(access_unit)?;
+    sample_time_100ns: i64,
+    duration_100ns: i64,
+    width: u32,
+    height: u32,
+) -> Result<Option<DecodedFrame>, DecodeError> {
+    let sample = create_input_sample(access_unit, sample_time_100ns, duration_100ns)?;
 
     match transform.ProcessInput(0, &sample, 0) {
-        Ok(()) => Ok(()),
+        Ok(()) => Ok(None),
         Err(e) if e.code() == MF_E_NOTACCEPTING => {
             // Drain pending output then retry once.
-            let _ = drain_output(transform, DEFAULT_WIDTH, DEFAULT_HEIGHT)?;
+            let pending = drain_output(transform, width, height)?;
             transform
                 .ProcessInput(0, &sample, 0)
                 .map_err(|e| DecodeError::Platform(format!("ProcessInput retry: {e}")))?;
-            Ok(())
+            Ok(pending)
         }
         Err(e) => Err(DecodeError::Platform(format!("ProcessInput: {e}"))),
     }
+}
+
+unsafe fn output_sample_for_transform(
+    transform: &IMFTransform,
+) -> Result<Option<IMFSample>, DecodeError> {
+    let info = transform
+        .GetOutputStreamInfo(0)
+        .map_err(|e| DecodeError::Platform(format!("GetOutputStreamInfo: {e}")))?;
+    let provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
+    let can_provide_samples = info.dwFlags & MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0 as u32 != 0;
+    if provides_samples || can_provide_samples {
+        return Ok(None);
+    }
+    if info.cbSize == 0 {
+        return Err(DecodeError::Platform(
+            "output stream requires a caller sample but reported cbSize=0".into(),
+        ));
+    }
+
+    let buffer = MFCreateAlignedMemoryBuffer(info.cbSize, info.cbAlignment)
+        .map_err(|e| DecodeError::Platform(format!("MFCreateAlignedMemoryBuffer: {e}")))?;
+    let sample =
+        MFCreateSample().map_err(|e| DecodeError::Platform(format!("MFCreateSample: {e}")))?;
+    sample
+        .AddBuffer(&buffer)
+        .map_err(|e| DecodeError::Platform(format!("Add output buffer: {e}")))?;
+    Ok(Some(sample))
 }
 
 unsafe fn copy_buffer_to_bytes(buffer: &IMFMediaBuffer) -> Result<Vec<u8>, DecodeError> {
@@ -304,14 +377,25 @@ unsafe fn sample_to_frame(
         .ConvertToContiguousBuffer()
         .map_err(|e| DecodeError::Platform(format!("ConvertToContiguousBuffer: {e}")))?;
     let nv12 = copy_buffer_to_bytes(&buffer)?;
-    if nv12.is_empty() {
-        return Err(DecodeError::UnsupportedAccessUnit);
+    let minimum_stride = width as usize;
+    let rows_times_two = height as usize * 3;
+    let doubled_len = nv12.len().saturating_mul(2);
+    let stride = if rows_times_two > 0 && doubled_len % rows_times_two == 0 {
+        doubled_len / rows_times_two
+    } else {
+        0
+    };
+    if stride < minimum_stride {
+        return Err(DecodeError::Platform(format!(
+            "short NV12 output: {} bytes for {width}x{height}",
+            nv12.len()
+        )));
     }
 
     Ok(DecodedFrame {
         width,
         height,
-        stride: width,
+        stride: stride as u32,
         rotation: 0,
         timestamp_us: now_timestamp_us(),
         nv12: Bytes::from(nv12),
@@ -324,17 +408,21 @@ unsafe fn drain_output(
     height: u32,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     loop {
+        let provided_sample = output_sample_for_transform(transform)?;
         let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
             dwStreamID: 0,
-            pSample: ManuallyDrop::new(None),
+            pSample: ManuallyDrop::new(provided_sample),
             dwStatus: 0,
             pEvents: ManuallyDrop::new(None),
         };
 
         let mut status = 0u32;
-        match transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status) {
+        let result =
+            transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status);
+        let sample = ManuallyDrop::take(&mut output_buffer.pSample);
+        let _events = ManuallyDrop::take(&mut output_buffer.pEvents);
+        match result {
             Ok(()) => {
-                let sample = ManuallyDrop::take(&mut output_buffer.pSample);
                 if let Some(sample) = sample {
                     return sample_to_frame(&sample, width, height).map(Some);
                 }

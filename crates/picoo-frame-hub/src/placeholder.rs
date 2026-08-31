@@ -65,6 +65,17 @@ pub fn waiting_placeholder() -> Vec<u8> {
     branded_status_placeholder(b"Waiting for phone...")
 }
 
+/// Waiting placeholder at the negotiated stream dimensions.
+///
+/// Decoder fallbacks must never label a fixed 720p buffer as 1080p; doing so
+/// makes downstream NV12 conversion reject the frame and leaves the preview
+/// frozen on its previous contents.
+pub fn waiting_placeholder_for_size(width: u32, height: u32) -> Vec<u8> {
+    let mut buf = nv12_black(width, height);
+    draw_branded_text(&mut buf, width, height, b"Video unavailable");
+    buf
+}
+
 /// Reconnect placeholder after last-frame hold (REQ-PICOO-FRAME-005 / FR-VCAM-004).
 pub fn reconnecting_placeholder() -> Vec<u8> {
     branded_status_placeholder(b"Reconnecting...")
@@ -226,6 +237,13 @@ mod tests {
             frame.len(),
             nv12_byte_size(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT)
         );
+    }
+
+    #[test]
+    fn negotiated_waiting_placeholder_matches_1080p_dimensions() {
+        let frame = waiting_placeholder_for_size(1920, 1080);
+        assert_eq!(frame.len(), nv12_byte_size(1920, 1080));
+        assert!(frame[..1920 * 1080].iter().any(|value| *value != 0));
     }
 
     #[test]

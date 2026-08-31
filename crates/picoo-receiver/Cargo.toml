@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# The Windows desktop binary must enable Media Foundation through this
+# dependency edge; a separate picoo-media-decode build cannot affect it.
+windows-mf = ["picoo-media-decode/windows-mf"]
+
 [dependencies]
 bytes.workspace = true
 picoo-frame-hub.workspace = true
@@ -19,6 +25,7 @@ picoo-sender.workspace = true
 picoo-transport.workspace = true
 prost.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 picoo-discovery.workspace = true

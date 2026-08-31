@@ -12,7 +12,8 @@ pub use nv12::{
 };
 pub use placeholder::{
     color_bars_placeholder, nv12_black, nv12_byte_size, reconnecting_placeholder,
-    waiting_placeholder, PlaceholderMode, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
+    waiting_placeholder, waiting_placeholder_for_size, PlaceholderMode, PLACEHOLDER_HEIGHT,
+    PLACEHOLDER_WIDTH,
 };
 #[cfg(target_os = "macos")]
 pub use shared_ring::{

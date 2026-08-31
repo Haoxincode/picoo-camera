@@ -3,7 +3,7 @@
 use std::net::IpAddr;
 use std::time::Duration;
 
-use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
+use mdns_sd::{DaemonEvent, IfKind, Receiver, ServiceDaemon, ServiceInfo};
 use thiserror::Error;
 
 use crate::types::{ReceiverAdvertisement, SERVICE_TYPE};
@@ -18,18 +18,27 @@ pub enum DiscoveryError {
 
 pub struct MdnsAdvertiser {
     daemon: ServiceDaemon,
+    monitor: Receiver<DaemonEvent>,
     /// Full DNS-SD instance name currently registered (`instance._picoocam._udp.local.`).
     fullname: Option<String>,
     registered: bool,
+    advertise_ip: Option<IpAddr>,
+    last_error: Option<String>,
 }
 
 impl MdnsAdvertiser {
     pub fn new() -> Result<Self, DiscoveryError> {
         let daemon = ServiceDaemon::new().map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+        let monitor = daemon
+            .monitor()
+            .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
         Ok(Self {
             daemon,
+            monitor,
             fullname: None,
             registered: false,
+            advertise_ip: None,
+            last_error: None,
         })
     }
 
@@ -45,6 +54,9 @@ impl MdnsAdvertiser {
         let ip: IpAddr = host_ip
             .parse()
             .map_err(|_| DiscoveryError::InvalidHost(host_ip.into()))?;
+        self.advertise_ip = Some(ip);
+        self.registered = false;
+        self.last_error = None;
 
         // Advertise only on the interface that owns the LAN address selected by
         // `local_advertise_ipv4`. Leaving the daemon on its all-interface default
@@ -77,8 +89,36 @@ impl MdnsAdvertiser {
             .register(info)
             .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
         self.fullname = Some(fullname);
-        self.registered = true;
         Ok(())
+    }
+
+    /// Drain daemon events and update the real announcement state.
+    ///
+    /// `ServiceDaemon::register` only queues work. Treating that return value as
+    /// an active broadcast made the desktop report discovery online even when
+    /// Windows Firewall or an interface error prevented any announcement.
+    pub fn poll(&mut self) -> bool {
+        let before = self.registered;
+        while let Ok(event) = self.monitor.try_recv() {
+            match event {
+                // This daemon owns one Picoo service, so a successful announce
+                // confirms that the current registration reached an interface.
+                DaemonEvent::Announce(_, _) => {
+                    self.registered = self.fullname.is_some();
+                    self.last_error = None;
+                }
+                DaemonEvent::Error(error) => {
+                    self.registered = false;
+                    self.last_error = Some(error.to_string());
+                }
+                DaemonEvent::IpDel(ip) if self.advertise_ip == Some(ip) => {
+                    self.registered = false;
+                    self.last_error = Some(format!("advertise interface {ip} disappeared"));
+                }
+                _ => {}
+            }
+        }
+        before != self.registered
     }
 
     /// Drop the current service registration without shutting down the daemon.
@@ -111,6 +151,10 @@ impl MdnsAdvertiser {
     pub fn fullname(&self) -> Option<&str> {
         self.fullname.as_deref()
     }
+
+    pub fn last_error(&self) -> Option<&str> {
+        self.last_error.as_deref()
+    }
 }
 
 impl Drop for MdnsAdvertiser {
@@ -132,7 +176,7 @@ mod tests {
         advertiser
             .register("127.0.0.1", &ad)
             .expect("register localhost");
-        assert!(advertiser.is_registered());
+        wait_until_announced(&mut advertiser);
         advertiser.unregister().expect("unregister");
         assert!(!advertiser.is_registered());
     }
@@ -153,7 +197,7 @@ mod tests {
         advertiser
             .register("127.0.0.1", &second)
             .expect("register renamed");
-        assert!(advertiser.is_registered());
+        wait_until_announced(&mut advertiser);
         let second_fullname = advertiser.fullname().unwrap();
         assert!(
             second_fullname.contains("New Name") || second_fullname.to_lowercase().contains("new"),
@@ -161,5 +205,17 @@ mod tests {
         );
         assert_ne!(first_fullname, second_fullname);
         advertiser.unregister().expect("unregister");
+    }
+
+    fn wait_until_announced(advertiser: &mut MdnsAdvertiser) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            advertiser.poll();
+            if advertiser.is_registered() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("mDNS was not announced: {:?}", advertiser.last_error());
     }
 }

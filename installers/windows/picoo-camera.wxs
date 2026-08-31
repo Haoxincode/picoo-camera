@@ -109,7 +109,7 @@
       <Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73">
         <File Id="PicooRingReader" Source="!(bindpath.Bundle)\picoo-vcam-ring-reader.exe" KeyPath="yes" />
       </Component>
-      <!-- REQ-PICOO-VCAM-004 / DISCOVERY-001: allow QUIC and DNS-SD discovery. -->
+      <!-- REQ-PICOO-VCAM-004: stable QUIC ingress rule. -->
       <Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74">
         <RegistryValue
             Root="HKLM"
@@ -125,13 +125,24 @@
             Port="4433"
             Scope="any"
             IgnoreFailure="yes" />
+      </Component>
+      <!-- REQ-PICOO-DISCOVERY-001: a new component/key path guarantees an
+           upgrade from installers that only carried the QUIC rule installs mDNS. -->
+      <Component Id="FirewallMdns" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E75">
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\Picoo\PicooCamera"
+            Name="firewall_mdns"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
         <fw:FirewallException
-            Id="PicooMdnsUdp"
-            Name="Picoo Camera Discovery"
-            Protocol="udp"
-            Port="5353"
-            Scope="any"
-            IgnoreFailure="yes" />
+          Id="PicooMdnsUdp"
+          Name="Picoo Camera Discovery"
+          Protocol="udp"
+          Port="5353"
+          Scope="any"
+          IgnoreFailure="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

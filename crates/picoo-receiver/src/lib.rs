@@ -83,6 +83,8 @@ pub struct IngressStats {
     pub packets_dropped_unpaired: u64,
     /// Times the decoder was invoked (REQ-PICOO-MEDIA-006: once per AU).
     pub decode_invocations: u64,
+    /// Frames successfully decoded and committed to FrameHub.
+    pub decoded_frames: u64,
     /// StartStream / CameraCommand rejected while unpaired (PAIRING-003).
     pub control_rejected_unpaired: u64,
 }
@@ -184,6 +186,8 @@ pub struct ReceiverSession {
     last_stats: Option<picoo_metrics::ReceiverStats>,
     /// Max height advertised in Capabilities (MEDIA-002); default both 720+1080.
     advertised_max_height: u32,
+    /// Most recent production decode failure, cleared after a real frame lands.
+    last_media_error: Option<String>,
 }
 
 impl Default for ReceiverSession {
@@ -220,6 +224,7 @@ impl ReceiverSession {
             jitter_timeline: None,
             last_stats: None,
             advertised_max_height: 1080,
+            last_media_error: None,
         }
     }
 
@@ -442,6 +447,10 @@ impl ReceiverSession {
 
     pub fn ingress_stats(&self) -> IngressStats {
         self.ingress
+    }
+
+    pub fn last_media_error(&self) -> Option<&str> {
+        self.last_media_error.as_deref()
     }
 
     /// Backward-compatible alias for ingress counters.
@@ -691,6 +700,7 @@ impl ReceiverSession {
         self.jitter.clear();
         self.jitter_timeline = None;
         self.last_stats = None;
+        self.last_media_error = None;
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
         self.receiver_capabilities_sent = None;
@@ -1341,6 +1351,7 @@ impl ReceiverSession {
         self.status = ReceiverStatus::Disconnected;
         self.active_sender = None;
         self.pending_pairing = None;
+        self.last_media_error = None;
         let _ = self.publish_waiting_placeholder();
     }
 
@@ -1383,10 +1394,19 @@ impl ReceiverSession {
     fn publish_access_unit(&mut self, access_unit: Bytes) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
         self.ingress.decode_invocations += 1;
-        match self
+        let decoded = match self
             .decoder
-            .decode_access_unit(&access_unit, self.current_stream_config.as_ref())?
+            .decode_access_unit(&access_unit, self.current_stream_config.as_ref())
         {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                self.stats_reporter.record_decoder_drop();
+                self.last_media_error = Some(error.to_string());
+                tracing::warn!("H.264 access unit decode failed: {error}");
+                return Ok(());
+            }
+        };
+        match decoded {
             Some(frame) => {
                 // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
                 let rotation = self
@@ -1402,6 +1422,8 @@ impl ReceiverSession {
                     frame.timestamp_us,
                     &frame.nv12,
                 )?;
+                self.ingress.decoded_frames += 1;
+                self.last_media_error = None;
             }
             None => {
                 self.stats_reporter.record_decoder_drop();
