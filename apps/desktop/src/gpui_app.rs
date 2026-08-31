@@ -260,8 +260,12 @@ pub struct PicooDesktopApp {
     diagnostics_error: Option<String>,
     diagnostics_export: DiagnosticsExportState,
     window_handle: AnyWindowHandle,
+    /// Pairing code whose dialog has been successfully opened.
     pairing_dialog_code: Option<String>,
+    /// Pairing code currently scheduled for dialog presentation.
+    pairing_dialog_pending: Option<String>,
     pairing_dialog_visible: bool,
+    pairing_locally_confirmed: bool,
     /// Holds Session-lifetime MF virtual camera while the UI is open.
     #[cfg(all(windows, feature = "windows-vcam"))]
     vcam_registration: Option<crate::vcam_register::VirtualCameraSessionHost>,
@@ -315,7 +319,9 @@ impl PicooDesktopApp {
             diagnostics_export: DiagnosticsExportState::default(),
             window_handle,
             pairing_dialog_code: None,
+            pairing_dialog_pending: None,
             pairing_dialog_visible: false,
+            pairing_locally_confirmed: false,
             #[cfg(all(windows, feature = "windows-vcam"))]
             vcam_registration: None,
         }
@@ -793,6 +799,7 @@ impl PicooDesktopApp {
                     let pairing_request = snapshot.pairing_short_code.as_ref().and_then(|code| {
                         if !matches!(snapshot.status, ReceiverStatus::Pairing)
                             || this.pairing_dialog_code.as_ref() == Some(code)
+                            || this.pairing_dialog_pending.as_ref() == Some(code)
                         {
                             return None;
                         }
@@ -820,28 +827,47 @@ impl PicooDesktopApp {
                             .map(|duration| duration.as_secs())
                             .unwrap_or(0);
 
-                        this.pairing_dialog_code = Some(code.clone());
-                        this.pairing_dialog_visible = true;
+                        this.pairing_dialog_pending = Some(code.clone());
+                        this.pairing_locally_confirmed = false;
                         Some((code.clone(), sender_name, first_time, ttl))
                     });
 
                     if let Some((code, sender_name, first_time, ttl)) = pairing_request {
                         let app = cx.entity().downgrade();
+                        let dialog_app = app.clone();
+                        let dialog_code = code.clone();
                         let window_handle = this.window_handle;
                         cx.spawn(async move |_, cx| {
                             cx.background_executor()
                                 .timer(Duration::from_millis(0))
                                 .await;
-                            let _ = window_handle.update(cx, move |_, window, cx| {
-                                PicooDesktopApp::open_pairing_dialog(
-                                    app,
-                                    code,
-                                    sender_name,
-                                    first_time,
-                                    ttl,
-                                    window,
-                                    cx,
-                                );
+                            let opened = window_handle
+                                .update(cx, move |_, window, cx| {
+                                    window.activate_window();
+                                    PicooDesktopApp::open_pairing_dialog(
+                                        dialog_app,
+                                        dialog_code,
+                                        sender_name,
+                                        first_time,
+                                        ttl,
+                                        window,
+                                        cx,
+                                    );
+                                })
+                                .is_ok();
+                            let _ = app.update(cx, move |this, cx| {
+                                if this.pairing_dialog_pending.as_ref() == Some(&code) {
+                                    this.pairing_dialog_pending = None;
+                                }
+                                if opened {
+                                    this.pairing_dialog_code = Some(code);
+                                    this.pairing_dialog_visible = true;
+                                } else {
+                                    tracing::warn!(
+                                        "pairing dialog could not reach the desktop window; inline confirmation remains available"
+                                    );
+                                }
+                                cx.notify();
                             });
                         })
                         .detach();
@@ -849,6 +875,8 @@ impl PicooDesktopApp {
 
                     if !matches!(snapshot.status, ReceiverStatus::Pairing) {
                         this.pairing_dialog_code = None;
+                        this.pairing_dialog_pending = None;
+                        this.pairing_locally_confirmed = false;
                         if this.pairing_dialog_visible {
                             this.pairing_dialog_visible = false;
                             let window_handle = this.window_handle;
@@ -1433,6 +1461,63 @@ impl PicooDesktopApp {
                                 "手机选择这台电脑后，配对短码将在此显示"
                             }),
                     )
+                    .when(snapshot.pairing_short_code.is_some(), |this| {
+                        this.child(
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Button::new("confirm-pairing-inline")
+                                        .primary()
+                                        .label(if self.pairing_locally_confirmed {
+                                            "已确认，等待手机"
+                                        } else {
+                                            "两端一致，确认配对"
+                                        })
+                                        .disabled(self.pairing_locally_confirmed)
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            match this.confirm_pairing_request(cx) {
+                                                Ok(()) => {
+                                                    if window.has_active_dialog(cx) {
+                                                        window.close_dialog(cx);
+                                                    }
+                                                    window.push_notification(
+                                                        (
+                                                            NotificationType::Success,
+                                                            "电脑端已确认，正在等待手机完成配对",
+                                                        ),
+                                                        cx,
+                                                    );
+                                                }
+                                                Err(message) => window.push_notification(
+                                                    (NotificationType::Error, message),
+                                                    cx,
+                                                ),
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    Button::new("reject-pairing-inline")
+                                        .outline()
+                                        .danger()
+                                        .label("拒绝")
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            match this.reject_pairing_request(cx) {
+                                                Ok(()) => {
+                                                    if window.has_active_dialog(cx) {
+                                                        window.close_dialog(cx);
+                                                    }
+                                                }
+                                                Err(message) => window.push_notification(
+                                                    (NotificationType::Error, message),
+                                                    cx,
+                                                ),
+                                            }
+                                        })),
+                                ),
+                        )
+                    })
                     .child(self.render_manual_endpoint_card(snapshot, cx)),
             )
             .child(
@@ -1525,7 +1610,7 @@ impl PicooDesktopApp {
                             .child(
                                 reicon_named("shield-check", cx.theme().primary).size(rems(0.875)),
                             )
-                            .child("安全直连已启用"),
+                            .child("连接后使用加密传输"),
                     ),
             )
     }
@@ -1980,10 +2065,7 @@ impl PicooDesktopApp {
         let network_ready = snapshot.bind_addr.is_some()
             && !snapshot.advertise_host.is_empty()
             && snapshot.advertise_host != "127.0.0.1";
-        let connected = !matches!(
-            snapshot.status,
-            ReceiverStatus::Disconnected | ReceiverStatus::Discovering
-        );
+        let (security_status, security_ready) = connection_security_status(snapshot.status);
         let latency = if snapshot.stream_metrics.latency_ms <= 30.0 {
             "低"
         } else if snapshot.stream_metrics.latency_ms <= 80.0 {
@@ -2043,15 +2125,29 @@ impl PicooDesktopApp {
             ))
             .child(network_status_row(
                 "shield",
-                "安全",
-                if connected {
-                    "已保护"
-                } else {
-                    "等待连接"
-                },
-                connected,
+                "连接保护",
+                security_status,
+                security_ready,
                 cx,
             ))
+    }
+
+    fn confirm_pairing_request(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        self.runtime
+            .confirm_pairing()
+            .map_err(|error| format!("配对确认失败：{error}"))?;
+        self.pairing_locally_confirmed = true;
+        cx.notify();
+        Ok(())
+    }
+
+    fn reject_pairing_request(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
+        self.runtime
+            .reject_pairing()
+            .map_err(|error| format!("拒绝配对失败：{error}"))?;
+        self.pairing_locally_confirmed = false;
+        cx.notify();
+        Ok(())
     }
 
     fn open_pairing_dialog(
@@ -2091,16 +2187,19 @@ impl PicooDesktopApp {
                 .on_ok({
                     let confirm_app = confirm_app.clone();
                     move |_, window, cx| {
-                        let outcome = confirm_app.update(cx, |this, cx| {
-                            let outcome = this
-                                .runtime
-                                .confirm_pairing()
-                                .map_err(|error| format!("配对确认失败：{error}"));
-                            cx.notify();
-                            outcome
-                        });
+                        let outcome =
+                            confirm_app.update(cx, |this, cx| this.confirm_pairing_request(cx));
                         match outcome {
-                            Ok(Ok(())) => true,
+                            Ok(Ok(())) => {
+                                window.push_notification(
+                                    (
+                                        NotificationType::Success,
+                                        "电脑端已确认，正在等待手机完成配对",
+                                    ),
+                                    cx,
+                                );
+                                true
+                            }
                             Ok(Err(message)) => {
                                 window.push_notification((NotificationType::Error, message), cx);
                                 false
@@ -2112,14 +2211,8 @@ impl PicooDesktopApp {
                 .on_cancel({
                     let cancel_app = cancel_app.clone();
                     move |_, window, cx| {
-                        let outcome = cancel_app.update(cx, |this, cx| {
-                            let outcome = this
-                                .runtime
-                                .reject_pairing()
-                                .map_err(|error| format!("拒绝配对失败：{error}"));
-                            cx.notify();
-                            outcome
-                        });
+                        let outcome =
+                            cancel_app.update(cx, |this, cx| this.reject_pairing_request(cx));
                         match outcome {
                             Ok(Ok(())) => true,
                             Ok(Err(message)) => {
@@ -3419,6 +3512,20 @@ fn onboarding_step(
         .child(div().text_sm().child(label))
 }
 
+fn connection_security_status(status: ReceiverStatus) -> (&'static str, bool) {
+    match status {
+        ReceiverStatus::Pairing => ("已加密 · 待确认", false),
+        ReceiverStatus::Connecting | ReceiverStatus::Negotiating => ("正在建立", false),
+        ReceiverStatus::Streaming
+        | ReceiverStatus::Reconnecting
+        | ReceiverStatus::NetworkUnstable => ("已验证", true),
+        ReceiverStatus::Disconnected
+        | ReceiverStatus::Discovering
+        | ReceiverStatus::PermissionRequired
+        | ReceiverStatus::VirtualCameraUnavailable => ("等待连接", false),
+    }
+}
+
 fn network_status_row(
     icon: &'static str,
     label: &'static str,
@@ -3739,14 +3846,32 @@ fn should_auto_start_vcam(status: VirtualCameraStatus) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        macos_activation_action_visible, macos_deactivation_action_visible,
-        resolve_pending_macos_vcam_status, should_auto_start_vcam, DiagnosticsExportState,
-        PicooAssets, SidebarWidthTransition, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_EXPANDED_WIDTH,
+        connection_security_status, macos_activation_action_visible,
+        macos_deactivation_action_visible, resolve_pending_macos_vcam_status,
+        should_auto_start_vcam, DiagnosticsExportState, PicooAssets, SidebarWidthTransition,
+        SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_EXPANDED_WIDTH,
     };
     use crate::model::VirtualCameraStatus;
     use crate::prefs::{MacosCameraExtensionIntent, PendingMacosCameraExtension};
     use gpui::AssetSource;
+    use picoo_session::ReceiverStatus;
     use std::path::PathBuf;
+
+    #[test]
+    fn security_copy_distinguishes_encryption_from_completed_pairing() {
+        assert_eq!(
+            connection_security_status(ReceiverStatus::Discovering),
+            ("等待连接", false)
+        );
+        assert_eq!(
+            connection_security_status(ReceiverStatus::Pairing),
+            ("已加密 · 待确认", false)
+        );
+        assert_eq!(
+            connection_security_status(ReceiverStatus::Streaming),
+            ("已验证", true)
+        );
+    }
 
     #[test]
     fn diagnostics_reveal_action_tracks_last_successful_export() {
