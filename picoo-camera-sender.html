@@ -2040,6 +2040,25 @@ body {
     #connect-right-col {
       transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
+
+    /* Tap Focus Reticle */
+    .focus-reticle {
+      position: absolute;
+      width: 44px;
+      height: 44px;
+      border: 2px solid #eab308;
+      border-radius: 6px;
+      transform: translate(-50%, -50%) scale(1.3);
+      transition: transform 0.15s ease-out, opacity 0.3s ease;
+      pointer-events: none;
+      z-index: 15;
+    }
+    .focus-reticle.active {
+      transform: translate(-50%, -50%) scale(0.85);
+    }
+    .focus-reticle.fade-out {
+      opacity: 0;
+    }
   </style>
 </head>
 <body class="flex items-center justify-center min-h-screen p-0 md:p-6 bg-background text-foreground">
@@ -2219,92 +2238,117 @@ body {
 
           </div>
 
-          <!-- ================= SCREEN B: 手机端取景与推流控制台 (Live Viewfinder) ================= -->
+          <!-- ================= SCREEN B: 手机端取景与推流控制台 (Live Viewfinder - 极简四角框与双排Dock) ================= -->
           <div id="phone-screen-live" class="flex-1 flex flex-col relative overflow-hidden bg-black hidden transition-all duration-300 select-none">
 
             <!-- Live Canvas Feed -->
             <canvas id="phone-live-canvas" class="absolute inset-0 w-full h-full object-cover cursor-crosshair z-0" onclick="handleTapToFocus(event)"></canvas>
 
-            <!-- 16:9 Safe Frame Guidelines -->
-            <div class="absolute inset-0 pointer-events-none z-10 flex items-center justify-center p-3">
-              <div class="w-full aspect-video border border-white/25 rounded-md shadow-2xl relative">
-                <div class="absolute top-1.5 left-1.5 text-[8px] font-mono text-white/50 tracking-wider">16:9 PC 裁切框</div>
-                <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-3 h-3">
-                  <div class="absolute top-1/2 left-0 right-0 h-px bg-white/30"></div>
-                  <div class="absolute top-0 bottom-0 left-1/2 w-px bg-white/30"></div>
+            <!-- Fixed 16:9 PC output reference; portrait phones show the centered visible crop. -->
+            <div class="absolute inset-0 pointer-events-none z-10 flex items-center justify-center p-6" id="framing-overlay">
+              <div class="w-full flex flex-col items-center gap-3">
+                <div id="framing-box" class="w-full max-w-[340px] aspect-[16/9] relative flex items-center justify-center">
+                  <!-- Top-Left Corner -->
+                  <div class="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-white/70 rounded-tl-[3px]"></div>
+                  <!-- Top-Right Corner -->
+                  <div class="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-white/70 rounded-tr-[3px]"></div>
+                  <!-- Bottom-Left Corner -->
+                  <div class="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-white/70 rounded-bl-[3px]"></div>
+                  <!-- Bottom-Right Corner -->
+                  <div class="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-white/70 rounded-br-[3px]"></div>
+
+                  <div class="select-none text-xs font-mono text-white/70 px-2 py-1 rounded bg-black/30 backdrop-blur-xs" id="framing-label">
+                    16:9 电脑端输出范围
+                  </div>
                 </div>
+                <p class="text-[11px] text-white/45 text-center">建议横屏使用，电脑端仅显示框内区域</p>
               </div>
             </div>
 
             <!-- Tap Focus Reticle -->
             <div id="phone-focus-reticle" class="focus-reticle hidden"></div>
 
-            <!-- Top HUD Bar -->
-            <div class="relative z-20 pt-1 px-3 flex items-center justify-between shrink-0">
-              <!-- Target Host & Latency -->
-              <div class="px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 flex items-center gap-1 text-[11px] text-white shadow-lg font-mono">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span class="font-bold text-[10px]" id="hud-host-title">Studio PC</span>
-                <span class="text-[9px] text-emerald-400 pl-1 border-l border-white/20">18ms</span>
+            <!-- Top HUD Bar: Centered 2-Row Minimal Telemetry -->
+            <div class="relative z-20 pt-4 px-4 flex flex-col items-center justify-center text-center shrink-0">
+              <!-- Row 1: Connection Status -->
+              <div class="flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-[#155dfc] animate-pulse"></span>
+                <span class="text-sm font-medium text-white tracking-wide" id="hud-connection-title">Picoo Camera 已连接</span>
               </div>
-
-              <!-- Tools (调光 / 镜像 / 锁定) -->
-              <div class="flex items-center gap-1 bg-black/60 backdrop-blur-md border border-white/15 rounded-full p-0.5 shadow-lg">
-                <button id="btn-exposure-toggle" class="w-6 h-6 rounded-full flex items-center justify-center text-white/80 hover:text-white transition-all cursor-pointer" onclick="togglePhoneExposureBar()" title="曝光补偿">
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-                </button>
-                <button id="btn-mirror-toggle" class="w-6 h-6 rounded-full flex items-center justify-center text-white/80 hover:text-white transition-all cursor-pointer" onclick="togglePhoneMirror()" title="水平镜像">
-                  <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M16 7l4 5-4 5V7zM8 7L4 12l4 5V7z"/></svg>
-                </button>
-                <button id="btn-lock-toggle" class="w-6 h-6 rounded-full flex items-center justify-center text-white/80 hover:text-white transition-all cursor-pointer" onclick="togglePhoneTouchLock()" title="防误触">
-                  <svg id="hud-lock-icon" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>
-                </button>
+              <!-- Row 2: Realtime Latency / Bitrate / Res Telemetry (Read-only) -->
+              <div class="flex items-center gap-2 mt-1.5 text-xs text-white/60 font-mono tracking-tight">
+                <span id="hud-rtt-val">63ms</span>
+                <span class="text-white/30">•</span>
+                <span id="hud-bitrate-val">1.9 Mbps</span>
+                <span class="text-white/30">•</span>
+                <span id="hud-res-val" class="text-white/80">720p / 30fps</span>
               </div>
-
-              <!-- Resolution Pill -->
-              <button class="px-2 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-white font-mono text-[10px] font-semibold hover:bg-white/20 transition-all cursor-pointer active:scale-95" onclick="cyclePhoneRes()">
-                <span id="hud-res-label">1080P · 30</span>
-              </button>
             </div>
 
-            <!-- Single Row Exposure Bar -->
-            <div id="phone-exposure-bar" class="relative z-20 mt-2 mx-auto px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md border border-white/20 flex items-center gap-2 shadow-xl hidden">
-              <button class="w-5 h-5 rounded-full bg-white/15 text-white font-bold text-[10px] flex items-center justify-center cursor-pointer" onclick="stepPhoneExposure(-1)">−</button>
-              <span class="text-[10px] font-mono font-bold text-primary" id="phone-exposure-val">☀️ 自动</span>
-              <button class="w-5 h-5 rounded-full bg-white/15 text-white font-bold text-[10px] flex items-center justify-center cursor-pointer" onclick="stepPhoneExposure(1)">＋</button>
-              <button class="text-muted-foreground hover:text-white cursor-pointer" onclick="resetPhoneExposure()" title="重置">
-                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              </button>
-            </div>
+            <!-- Bottom Dock: 2-Row Control Center -->
+            <div class="relative z-20 mt-auto pb-4 px-6 flex flex-col gap-3 bg-gradient-to-t from-black/80 via-black/40 to-transparent pt-6">
 
-            <!-- Bottom HUD Shutter & Controls -->
-            <div class="relative z-20 mt-auto pb-5 px-4 flex items-center justify-between">
+              <!-- Upper Row: Adjustments (亮度 | 镜像 | 锁定) -->
+              <div class="flex items-center justify-around">
+                <!-- 1. 亮度 (Exposure: Reicon sun) -->
+                <button id="btn-exposure" class="flex-1 flex flex-col items-center gap-1.5 py-1 text-white/85 hover:text-white transition-all cursor-pointer group" onclick="cyclePhoneExposure()" title="调节亮度">
+                  <div class="w-8 h-8 flex items-center justify-center text-white/85 group-hover:scale-110 transition-transform" id="icon-exposure-wrap">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M12 1.25C12.4142 1.25 12.75 1.58579 12.75 2V3C12.75 3.41421 12.4142 3.75 12 3.75C11.5858 3.75 11.25 3.41421 11.25 3V2C11.25 1.58579 11.5858 1.25 12 1.25ZM4.39861 4.39861C4.6915 4.10572 5.16638 4.10572 5.45927 4.39861L5.85211 4.79145C6.145 5.08434 6.145 5.55921 5.85211 5.85211C5.55921 6.145 5.08434 6.145 4.79145 5.85211L4.39861 5.45927C4.10572 5.16638 4.10572 4.6915 4.39861 4.39861ZM19.6011 4.39887C19.894 4.69176 19.894 5.16664 19.6011 5.45953L19.2083 5.85237C18.9154 6.14526 18.4405 6.14526 18.1476 5.85237C17.8547 5.55947 17.8547 5.0846 18.1476 4.79171L18.5405 4.39887C18.8334 4.10598 19.3082 4.10598 19.6011 4.39887ZM12 6.75C9.1005 6.75 6.75 9.1005 6.75 12C6.75 14.8995 9.1005 17.25 12 17.25C14.8995 17.25 17.25 14.8995 17.25 12C17.25 9.1005 14.8995 6.75 12 6.75ZM5.25 12C5.25 8.27208 8.27208 5.25 12 5.25C15.7279 5.25 18.75 8.27208 18.75 12C18.75 15.7279 15.7279 18.75 12 18.75C8.27208 18.75 5.25 15.7279 5.25 12ZM1.25 12C1.25 11.5858 1.58579 11.25 2 11.25H3C3.41421 11.25 3.75 11.5858 3.75 12C3.75 12.4142 3.41421 12.75 3 12.75H2C1.58579 12.75 1.25 12.4142 1.25 12ZM20.25 12C20.25 11.5858 20.5858 11.25 21 11.25H22C22.4142 11.25 22.75 11.5858 22.75 12C22.75 12.4142 22.4142 12.75 22 12.75H21C20.5858 12.75 20.25 12.4142 20.25 12ZM18.1476 18.1476C18.4405 17.8547 18.9154 17.8547 19.2083 18.1476L19.6011 18.5405C19.894 18.8334 19.894 19.3082 19.6011 19.6011C19.3082 19.894 18.8334 19.894 18.5405 19.6011L18.1476 19.2083C17.8547 18.9154 17.8547 18.4405 18.1476 18.1476ZM5.85211 18.1479C6.145 18.4408 6.145 18.9157 5.85211 19.2086L5.45927 19.6014C5.16638 19.8943 4.6915 19.8943 4.39861 19.6014C4.10572 19.3085 4.10572 18.8336 4.39861 18.5407L4.79145 18.1479C5.08434 17.855 5.55921 17.855 5.85211 18.1479ZM12 20.25C12.4142 20.25 12.75 20.5858 12.75 21V22C12.75 22.4142 12.4142 22.75 12 22.75C11.5858 22.75 11.25 22.4142 11.25 22V21C11.25 20.5858 11.5858 20.25 12 20.25Z" fill="currentColor"/>
+                    </svg>
+                  </div>
+                  <span class="text-xs font-medium tracking-wide text-white/80" id="label-exposure-text">亮度</span>
+                </button>
 
-              <!-- Telemetry -->
-              <div class="flex flex-col gap-0.5 text-[10px] font-mono text-white/90 drop-shadow-md">
-                <div class="flex items-center gap-1 font-bold">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                  <span>5.2 Mbps</span>
-                </div>
-                <div class="text-[9px] text-white/70">30.0 FPS · 0% 丢包</div>
-              </div>
+                <!-- Divider 1 -->
+                <div class="h-7 w-px bg-white/15"></div>
 
-              <!-- 64px Big Shutter Stop Button -->
-              <div class="flex items-center justify-center">
-                <button id="btn-phone-stop" class="w-14 h-14 rounded-full border-[3px] border-white/85 bg-black/40 backdrop-blur-md flex items-center justify-center transition-all duration-200 cursor-pointer hover:scale-105 active:scale-95 shadow-2xl group" onclick="handlePhoneStopTap()">
-                  <div id="phone-stop-square" class="w-5 h-5 rounded-[4px] bg-destructive group-hover:scale-90 transition-transform"></div>
+                <!-- 2. 镜像 (Mirror: Reicon flip_horizontal) -->
+                <button id="btn-mirror" class="flex-1 flex flex-col items-center gap-1.5 py-1 text-white/85 hover:text-white transition-all cursor-pointer group" onclick="togglePhoneMirror()" title="水平镜像">
+                  <div class="w-8 h-8 flex items-center justify-center text-white/85 group-hover:scale-110 transition-transform" id="icon-mirror-wrap">
+                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M12 1.25C12.4142 1.25 12.75 1.58579 12.75 2V6C12.75 6.41421 12.4142 6.75 12 6.75C11.5858 6.75 11.25 6.41421 11.25 6V2C11.25 1.58579 11.5858 1.25 12 1.25ZM5.54956 3.61372C5.56578 3.62531 5.58207 3.63694 5.59841 3.64861L7.20388 4.79538C7.4911 5.00051 7.74578 5.18241 7.94651 5.35512C8.16426 5.54247 8.35817 5.75126 8.50063 6.02808C8.64309 6.30491 8.70028 6.58406 8.72617 6.87014C8.75004 7.13387 8.75002 7.44684 8.75001 7.7998V16.2002C8.75002 16.5532 8.75004 16.8661 8.72617 17.1299C8.70027 17.4159 8.64309 17.6951 8.50063 17.9719C8.35817 18.2487 8.16426 18.4575 7.94651 18.6449C7.74579 18.8176 7.49113 18.9995 7.20392 19.2046L5.54956 20.3863C4.89882 20.8512 4.3423 21.2487 3.87881 21.4865C3.40614 21.729 2.80484 21.9245 2.19924 21.6129C1.59364 21.3012 1.40321 20.6983 1.32581 20.1727C1.24992 19.6573 1.24996 18.9734 1.25 18.1736L1.25 5.88638C1.25 5.8663 1.25 5.84629 1.25 5.82635C1.24996 5.02661 1.24992 4.34268 1.32581 3.82731C1.40321 3.30172 1.59364 2.6988 2.19924 2.38715C2.80484 2.07549 3.40614 2.27097 3.87881 2.51348C4.3423 2.75128 4.89882 3.14884 5.54956 3.61372ZM2.85693 3.72867C2.85649 3.72801 2.86043 3.72687 2.87005 3.72722C2.86218 3.7295 2.85737 3.72933 2.85693 3.72867ZM2.88991 3.72926C2.93375 3.73599 3.02598 3.76183 3.19408 3.84808C3.54719 4.02924 4.01324 4.3597 4.72655 4.86921L6.30779 5.99867C6.62652 6.22633 6.82504 6.369 6.96817 6.49215C7.09992 6.60551 7.14309 6.66823 7.16688 6.71446C7.19067 6.76068 7.21661 6.83227 7.23228 7.00536C7.2493 7.19342 7.25 7.43789 7.25 7.82957V16.1704C7.25 16.5621 7.2493 16.8066 7.23228 16.9946C7.21661 17.1677 7.19067 17.2393 7.16688 17.2855C7.14309 17.3318 7.09992 17.3945 6.96817 17.5078C6.82504 17.631 6.62652 17.7737 6.30779 18.0013L4.72655 19.1308C4.01324 19.6403 3.54719 19.9708 3.19408 20.1519C3.02598 20.2382 2.93375 20.264 2.88991 20.2707C2.8699 20.2312 2.83733 20.1411 2.8098 19.9542C2.75199 19.5615 2.75 18.9902 2.75 18.1136V5.88638C2.75 5.00979 2.75199 4.43847 2.8098 4.04584C2.83733 3.85891 2.8699 3.76884 2.88991 3.72926ZM2.85693 20.2713C2.85737 20.2707 2.86218 20.2705 2.87005 20.2728C2.86043 20.2731 2.85649 20.272 2.85693 20.2713ZM2.8998 20.2881C2.90623 20.2932 2.90888 20.2972 2.9086 20.2979C2.90832 20.2987 2.90511 20.2961 2.8998 20.2881ZM2.8998 3.71191C2.90511 3.70388 2.90832 3.70134 2.9086 3.70208C2.90888 3.70281 2.90623 3.70683 2.8998 3.71191ZM20.8059 3.84808C20.4528 4.02924 19.9868 4.3597 19.2735 4.86921L17.6922 5.99867C17.3735 6.22633 17.175 6.369 17.0318 6.49215C16.9001 6.60551 16.8569 6.66823 16.8331 6.71446C16.8093 6.76068 16.7834 6.83227 16.7677 7.00536C16.7507 7.19342 16.75 7.43789 16.75 7.82957V16.1704C16.75 16.5621 16.7507 16.8066 16.7677 16.9946C16.7834 17.1677 17.1906 17.2393 17.1668 17.2855C17.143 17.3318 17.0999 17.3945 17.0318 17.5078C17.175 17.631 17.3735 17.7737 17.6922 18.0013L19.2735 19.1308C19.9868 19.6403 20.4528 19.9708 20.8059 20.1519C20.974 20.2382 21.0663 20.264 21.1101 20.2707C21.1301 20.2312 21.1627 20.1411 21.1902 19.9542C21.248 19.5615 21.25 18.9902 21.25 18.1136V5.88638C21.25 5.00979 21.248 4.43847 21.1902 4.04584C21.1627 3.85892 21.1301 3.76885 21.1101 3.72926C21.0663 3.73599 20.974 3.76183 20.8059 3.84808ZM21.1431 3.72867C21.1426 3.72933 21.1378 3.7295 21.13 3.72722C21.1396 3.72687 21.1435 3.72801 21.1431 3.72867ZM21.1002 3.71191C21.0938 3.70683 21.0911 3.70281 21.0914 3.70208C21.0917 3.70134 21.0949 3.70388 21.1002 3.71191ZM21.0914 20.2979C21.0911 20.2972 21.0938 20.2932 21.1002 20.2881C21.0949 20.2961 21.0917 20.2987 21.0914 20.2979ZM21.13 20.2728C21.1378 20.2705 21.1426 20.2707 21.1431 20.2713C21.1435 20.272 21.1396 20.2731 21.13 20.2728ZM20.1212 2.51348C20.5939 2.27097 21.1952 2.07549 21.8008 2.38715C22.4064 2.6988 22.5968 3.30172 22.6742 3.82731C22.7501 4.34268 22.7501 5.02661 22.75 5.82634V18.1737C22.7501 18.9734 22.7501 19.6573 22.6742 20.1727C22.5968 20.6983 22.4064 21.3012 21.8008 21.6129C21.1952 21.9245 20.5939 21.729 20.1212 21.4865C19.6577 21.2487 19.1012 20.8512 18.4505 20.3863L16.7961 19.2046C16.5089 18.9995 16.2542 18.8176 16.0535 18.6449C15.8358 18.4575 15.6418 18.2487 15.4994 17.9719C15.3569 17.6951 15.2997 17.4159 15.2738 17.1299C15.25 16.8661 15.25 16.5532 15.25 16.2002V7.79978C15.25 7.44683 15.25 7.13387 15.2738 6.87014C15.2997 6.58406 15.3569 6.30491 15.4994 6.02808C15.6418 5.75126 15.8358 5.54247 16.0535 5.35512C16.2542 5.18241 16.5089 5.00051 16.7961 4.79538L18.4504 3.61373C19.1012 3.14885 19.6577 2.75128 20.1212 2.51348ZM12 9.25C12.4142 9.25 12.75 9.58579 12.75 10V14C12.75 14.4142 12.4142 14.75 12 14.75C11.5858 14.75 11.25 14.4142 11.25 14V10C11.25 9.58579 11.5858 9.25 12 9.25ZM12 17.25C12.4142 17.25 12.75 17.5858 12.75 18V22C12.75 22.4142 12.4142 22.75 12 22.75C11.5858 22.75 11.25 22.4142 11.25 22V18C11.25 17.5858 11.5858 17.25 12 17.25Z" fill="currentColor"/>
+                    </svg>
+                  </div>
+                  <span class="text-xs font-medium tracking-wide text-white/80" id="label-mirror-text">镜像</span>
+                </button>
+
+                <!-- Divider 2 -->
+                <div class="h-7 w-px bg-white/15"></div>
+
+                <!-- 3. 锁定 (Touch Lock: Reicon unlock/lock) -->
+                <button id="btn-lock" class="flex-1 flex flex-col items-center gap-1.5 py-1 text-white/85 hover:text-white transition-all cursor-pointer group" onclick="togglePhoneTouchLock()" title="锁定屏幕防误触">
+                  <div class="w-8 h-8 flex items-center justify-center text-white/85 group-hover:scale-110 transition-transform" id="icon-lock-wrap">
+                    <svg id="hud-lock-svg" class="w-6 h-6" viewBox="0 0 24 24" fill="none">
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M12 1.25C9.10051 1.25 6.75 3.6005 6.75 6.5V8.2949C6.21103 8.34018 5.73673 8.43495 5.29754 8.65873C4.59193 9.01825 4.01825 9.59193 3.65873 10.2975C3.43239 10.7418 3.33803 11.2219 3.29336 11.7685C3.24999 12.2994 3.24999 12.9551 3.25 13.7679V17.2321C3.24999 18.0449 3.24999 18.7006 3.29336 19.2315C3.33803 19.7781 3.43239 20.2582 3.65873 20.7025C4.01825 21.4081 4.59193 21.9818 5.29754 22.3413C5.74175 22.5676 6.2219 22.662 6.76853 22.7066C7.29944 22.75 7.95505 22.75 8.76788 22.75H15.2321C16.045 22.75 16.7006 22.75 17.2315 22.7066C17.7781 22.662 18.2582 22.5676 18.7025 22.3413C19.4081 21.9818 19.9818 21.4081 20.3413 20.7025C20.5676 20.2582 20.662 19.7781 20.7066 19.2315C20.75 18.7006 20.75 18.045 20.75 17.2321V13.7679C20.75 12.955 20.75 12.2994 20.7066 11.7685C20.662 11.2219 20.5676 10.7418 20.3413 10.2975C19.9818 9.59193 19.4081 9.01825 18.7025 8.65873C18.2582 8.43239 17.7781 8.33803 17.2315 8.29336C16.7006 8.24999 16.045 8.24999 15.2321 8.25H8.7679C8.58766 8.25 8.41513 8.25 8.25 8.25047V6.5C8.25 4.42893 9.92893 2.75 12 2.75C13.6316 2.75 15.0217 3.79243 15.5368 5.24993C15.6748 5.64047 16.1033 5.84517 16.4939 5.70713C16.8844 5.56909 17.0891 5.1406 16.9511 4.75007C16.2307 2.71199 14.2871 1.25 12 1.25ZM5.97852 9.99524C6.17604 9.8946 6.43681 9.82547 6.89068 9.78838C7.35331 9.75058 7.94755 9.75 8.8 9.75H15.2C16.0525 9.75 16.6467 9.75058 17.1093 9.78838C17.5632 9.82547 17.824 9.8946 18.0215 9.99524C18.4448 10.211 18.789 10.5552 19.0048 10.9785C19.1054 11.176 19.1745 11.4368 19.2116 11.8907C19.2494 12.3533 19.25 12.9475 19.25 13.8V17.2C19.25 18.0525 19.2494 18.6467 19.2116 19.1093C19.1745 19.5632 19.1054 19.824 19.0048 20.0215C18.789 20.4448 18.4448 20.789 18.0215 21.0048C17.824 21.1054 17.5632 21.1745 17.1093 21.2116C16.6467 21.2494 16.0525 21.25 15.2 21.25H8.8C7.94755 21.25 7.35331 21.2494 6.89068 21.2116C6.43681 21.1745 6.17604 21.1054 5.97852 21.0048C5.55516 20.789 5.21095 20.4448 4.99524 20.0215C4.8946 19.824 4.82547 19.5632 4.78838 19.1093C4.75058 18.6467 4.75 18.0525 4.75 17.2V13.8C4.75 12.9475 4.75058 12.3533 4.78838 11.8907C4.82547 11.4368 4.8946 11.176 4.99524 10.9785C5.21095 10.5552 5.55516 10.211 5.97852 9.99524Z" fill="currentColor"/>
+                    </svg>
+                  </div>
+                  <span class="text-xs font-medium tracking-wide text-white/80" id="label-lock-text">锁定</span>
                 </button>
               </div>
 
-              <!-- Flip Camera Button (180deg animated) -->
-              <div class="flex items-center justify-end">
-                <button id="btn-phone-flip" class="w-10 h-10 rounded-full bg-black/60 backdrop-blur-md border border-white/20 text-white flex items-center justify-center hover:bg-white/20 transition-all duration-300 cursor-pointer shadow-lg active:scale-90" onclick="flipPhoneCamera()" title="翻转镜头">
-                  <svg id="icon-phone-flip" class="w-4.5 h-4.5 text-white transition-transform duration-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M20 16v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-4"/>
-                    <path d="M4 8V4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v4"/>
-                    <polyline points="16 12 12 8 8 12"/>
-                    <polyline points="8 12 12 16 16 12"/>
-                  </svg>
+              <!-- Lower Row: Primary Actions (断开连接 | 翻转镜头) -->
+              <div class="flex items-center justify-around pt-2 border-t border-white/10" id="dock-action-row">
+                <!-- 1. 断开连接 (Disconnect: Reicon phone_off) -->
+                <button id="btn-disconnect" class="flex-1 flex items-center justify-center py-2 text-red-500 hover:text-red-400 transition-all cursor-pointer active:scale-95 group" onclick="handlePhoneDisconnect()" title="断开连接">
+                  <div class="w-9 h-9 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg class="w-6 h-6 text-red-500" viewBox="0 0 24 24" fill="none">
+                      <path d="M6.4224 1.64111C5.88547 1.20561 5.14217 1.12674 4.526 1.44007L4.52336 1.44142C4.32496 1.5433 4.14301 1.70313 3.96269 1.86152L3.92173 1.89748L3.24268 2.49179C3.20776 2.52233 3.17711 2.54915 3.15008 2.57397C1.55936 4.00723 0.898456 6.20567 1.43158 8.27843L1.43293 8.28352L1.48064 8.46031L1.49404 8.50834C1.96723 10.238 2.71448 11.8799 3.70757 13.3721L3.7391 13.4189L3.74003 13.4203C4.09987 13.9595 4.48124 14.484 4.88105 14.991C5.13755 15.3163 5.60914 15.372 5.93438 15.1155C6.25963 14.859 6.31536 14.3874 6.05887 14.0622C5.68302 13.5856 5.3247 13.0926 4.98682 12.5863L4.95633 12.5411L4.95514 12.5393C4.0512 11.1806 3.37106 9.6857 2.94041 8.11078L2.92831 8.06743L2.88366 7.90221C2.49035 6.36913 2.98035 4.74442 4.15661 3.68622L4.16367 3.6797C4.17578 3.66852 4.18775 3.65804 4.21797 3.63159L4.91019 3.02572C5.0272 2.92321 5.09826 2.86141 5.15299 2.81757C5.18877 2.7889 5.20545 2.77793 5.20977 2.77521C5.29582 2.7333 5.39908 2.74422 5.47479 2.80391C5.47827 2.80731 5.49206 2.82133 5.52063 2.85642C5.56481 2.91068 5.6211 2.9859 5.71387 3.1108L9.06502 7.60987L6.99007 9.77004C6.77103 9.99808 6.71853 10.339 6.85882 10.6224C7.11872 11.1473 7.3831 11.6339 7.65934 12.0876C7.87473 12.4414 8.33616 12.5536 8.68997 12.3382C9.04377 12.1228 9.15597 11.6614 8.94058 11.3076C8.77214 11.0309 8.60649 10.7373 8.4416 10.4242L10.1324 8.66396C10.2041 8.58936 10.2835 8.50664 10.3475 8.42918C10.422 8.33894 10.5104 8.21564 10.5691 8.05138C10.6486 7.82973 10.6641 7.58908 10.6117 7.35719C10.5739 7.18784 10.5016 7.05485 10.4394 6.95665C10.3844 6.86978 10.3145 6.77608 10.2512 6.69137L6.91782 2.21609L6.88509 2.17193C6.7428 1.9798 6.59769 1.78387 6.42358 1.64206L6.4224 1.64111Z" fill="currentColor"/>
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M9.55965 13.3798C9.5453 13.3923 9.53131 13.4054 9.51772 13.4192C9.50681 13.4303 9.49631 13.4416 9.48623 13.4532L6.85284 16.0866C6.84292 16.0955 6.83318 16.1047 6.82363 16.1143C6.81408 16.1238 6.80484 16.1336 6.79592 16.1435L1.46973 21.4697C1.17684 21.7626 1.17684 22.2374 1.46973 22.5303C1.76262 22.8232 2.2375 22.8232 2.53039 22.5303L7.36273 17.698C8.35974 18.6365 9.43489 19.4929 10.5795 20.2567L10.5807 20.2575L10.6238 20.2866L10.6274 20.289C12.1198 21.2821 13.7617 22.0294 15.4915 22.5026L15.4931 22.503L15.532 22.5139C15.6147 22.537 15.6656 22.5504 15.6983 22.559C15.705 22.5607 15.7108 22.5622 15.716 22.5636L15.7208 22.5649C17.794 23.0993 19.9924 22.437 21.4254 20.8476C21.4503 20.8206 21.4771 20.7899 21.5077 20.7549L22.1046 20.0722L22.1517 20.0181C22.3035 19.844 22.4608 19.6636 22.5601 19.4702L22.5619 19.4668C22.8732 18.8528 22.7961 18.1141 22.3643 17.5774L22.3615 17.574C22.2207 17.4011 22.0263 17.2557 21.8339 17.1118L21.791 17.0796L17.2104 13.6407L17.2003 13.6331C17.1099 13.5649 17.0109 13.4903 16.919 13.4319C16.8162 13.3665 16.6771 13.2912 16.4998 13.2538L16.4964 13.2531C16.2558 13.2034 16.005 13.2253 15.7753 13.3185C15.6072 13.3865 15.4835 13.4851 15.3937 13.5676C15.3142 13.6405 15.2306 13.7305 15.1544 13.8124L13.552 15.5335C12.5855 15.0038 11.8041 14.4856 11.1384 13.9223L22.5304 2.53033C22.8233 2.23744 22.8233 1.76256 22.5304 1.46967C22.2375 1.17678 21.7626 1.17678 21.4697 1.46967L9.55965 13.3798ZM10.0745 14.9862L8.42391 16.6368C9.35168 17.5067 10.3508 18.3009 11.4132 19.0097L11.4161 19.0116L11.4585 19.0402L11.4601 19.0413C12.8189 19.9453 14.3138 20.6255 15.8888 21.0562L15.8925 21.0572L15.9355 21.0692C16.0061 21.0889 16.0464 21.0995 16.0787 21.108L16.0971 21.1128C17.6299 21.5071 19.255 21.0166 20.3136 19.8408L20.3198 19.8339C20.331 19.8217 20.3415 19.8098 20.3679 19.7797L20.4061 19.736L20.9735 19.087L20.9753 19.085L20.9769 19.0831C21.0778 18.9668 21.1393 18.896 21.1837 18.8406C21.2122 18.8051 21.2235 18.7882 21.2265 18.7835C21.2675 18.6981 21.2571 18.5974 21.1989 18.5219C21.1951 18.518 21.1806 18.5037 21.1449 18.4744C21.0905 18.4297 21.0151 18.3727 20.891 18.2796L16.3087 14.8394L16.2728 14.8124L14.2569 16.9777C14.0272 17.2243 13.6613 17.2875 13.3623 17.1322C12.0501 16.4506 10.9842 15.7725 10.0745 14.9862Z" fill="currentColor"/>
+                    </svg>
+                  </div>
+                </button>
+
+                <!-- Divider -->
+                <div class="h-7 w-px bg-white/15"></div>
+
+                <!-- 2. 翻转镜头 (Switch Camera: Reicon camera_rotate) -->
+                <button id="btn-flip" class="flex-1 flex items-center justify-center py-2 text-white/85 hover:text-white transition-all cursor-pointer active:scale-95 group" onclick="flipPhoneCamera()" title="翻转前后摄像头">
+                  <div class="w-9 h-9 flex items-center justify-center group-hover:scale-110 transition-transform">
+                    <svg id="icon-flip-camera" class="w-6 h-6 text-white transition-transform duration-500" viewBox="0 0 24 24" fill="none">
+                      <path fill-rule="evenodd" clip-rule="evenodd" d="M7.59843 4.48666C7.86525 3.17678 9.03088 2.25 10.3663 2.25H13.6337C14.9691 2.25 16.1347 3.17678 16.4016 4.48666C16.4632 4.78904 16.7371 5.01086 17.022 5.01086C17.0329 5.01086 17.0439 5.0111 17.0548 5.01157C18.4582 5.07294 19.5362 5.24517 20.4362 5.83558C21.0032 6.20757 21.4909 6.68617 21.871 7.24464C22.3439 7.93947 22.5524 8.73694 22.6524 9.70145C22.75 10.6438 22.75 11.825 22.75 13.3211V13.4062C22.75 14.9023 22.75 16.0835 22.6524 17.0258C22.5524 17.9903 22.3439 18.7878 21.871 19.4826C21.4909 20.0411 21.0032 20.5197 20.4362 20.8917C19.7327 21.3532 18.9262 21.5567 17.948 21.6544C16.9903 21.75 15.789 21.75 14.2634 21.75H9.73657C8.21098 21.75 7.00967 21.75 6.05196 21.6544C5.07379 21.5567 4.26731 21.3532 3.56385 20.8917C2.99682 20.5197 2.50905 20.0411 2.12899 19.4826C1.65612 18.7878 1.44756 17.9903 1.34762 17.0258C1.24998 16.0835 1.24999 14.9023 1.25 13.4062V13.3211C1.24999 11.825 1.24998 10.6438 1.34762 9.70145C1.44756 8.73694 1.65612 7.93947 2.12899 7.24464C2.50905 6.68617 2.99682 6.20757 3.56385 5.83558C4.46383 5.24517 5.5418 5.07294 6.94523 5.01157C6.95615 5.0111 6.96707 5.01086 6.978 5.01086C7.26288 5.01086 7.53683 4.78905 7.59843 4.48666ZM10.3663 3.75C9.72522 3.75 9.18905 4.19299 9.06824 4.78607C8.87258 5.74659 8.021 6.50186 6.99633 6.51078C5.64772 6.57069 4.92536 6.73636 4.38664 7.08978C3.98309 7.35452 3.63752 7.6941 3.36906 8.08857C3.09291 8.49435 2.92696 9.01325 2.83963 9.85604C2.75094 10.7121 2.75 11.8156 2.75 13.3636C2.75 14.9117 2.75094 16.0152 2.83963 16.8712C2.92696 17.714 3.09291 18.2329 3.36906 18.6387C3.63752 19.0332 3.98309 19.3728 4.38664 19.6375C4.80417 19.9114 5.33844 20.0756 6.20104 20.1618C7.07549 20.2491 8.20193 20.25 9.77778 20.25H14.2222C15.7981 20.25 16.9245 20.2491 17.799 20.1618C18.6616 20.0756 19.1958 19.9114 19.6134 19.6375C20.0169 19.3728 20.3625 19.0332 20.6309 18.6387C20.9071 18.2329 21.073 17.714 21.1604 16.8712C21.2491 16.0152 21.25 14.9117 21.25 13.3636C21.25 11.8156 21.2491 10.7121 21.1604 9.85604C21.073 9.01325 20.9071 8.49435 20.6309 8.08857C20.3625 7.6941 20.0169 7.35452 19.6134 7.08978C19.0746 6.73636 18.3523 6.57069 17.0037 6.51078C15.979 6.50186 15.1274 5.74659 14.9318 4.78607C14.8109 4.19299 14.2748 3.75 13.6337 3.75H10.3663ZM14.5197 8.25C14.9339 8.25 15.2697 8.58579 15.2697 9V10.6799C15.2697 11.0346 15.0213 11.3408 14.6742 11.4138L13.1545 11.7339C12.7492 11.8193 12.3514 11.5599 12.2661 11.1546C12.1928 10.8065 12.3737 10.4641 12.6828 10.3202C11.8617 10.0792 10.9379 10.2825 10.2902 10.9303C9.34597 11.8745 9.34597 13.4053 10.2902 14.3495C11.2343 15.2937 12.7652 15.2937 13.7094 14.3495C14.112 13.9469 14.3422 13.4396 14.4019 12.9152C14.4487 12.5037 14.8203 12.208 15.2319 12.2548C15.6434 12.3016 15.9391 12.6732 15.8923 13.0848C15.7957 13.9341 15.421 14.7592 14.77 15.4101C13.24 16.9401 10.7595 16.9401 9.2295 15.4101C7.69953 13.8802 7.69953 11.3996 9.2295 9.86963C10.4581 8.64105 12.2996 8.39903 13.7697 9.14355V9C13.7697 8.58579 14.1055 8.25 14.5197 8.25Z" fill="currentColor"/>
+                    </svg>
+                  </div>
                 </button>
               </div>
 
@@ -2380,10 +2424,10 @@ body {
         <div class="bg-card text-card-foreground border border-border rounded-[calc(var(--radius)+8px)] p-5 shadow-lg flex flex-col gap-3">
           <div class="flex items-center gap-2">
             <svg class="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-            <h3 class="text-sm font-semibold text-card-foreground">手机端架构指引 (REQ-UI-0001)</h3>
+            <h3 class="text-sm font-semibold text-card-foreground">手机端架构指引 (REQ-PICOO-UI-0001)</h3>
           </div>
           <p class="text-xs text-muted-foreground leading-relaxed">
-            手机发送端作为专业取景相机，采用无感直连与沉浸取景设计，首屏 0 权限侵扰，推流时支持 16:9 电脑裁切框、触控对焦环与双击防误触快门。
+            手机发送端作为专业取景相机，采用极简沉浸取景设计，首屏 0 权限侵扰；推流时采用顶部极简居中遥测、四角直角裁切框与双排 Dock 操作台，支持一键档位调光、水平镜像与全屏防误触锁定。
           </p>
         </div>
 
@@ -2400,23 +2444,23 @@ body {
   <div id="phone-modal-pin" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="w-full max-w-sm bg-card border border-border rounded-[calc(var(--radius)+12px)] p-6 shadow-2xl flex flex-col gap-4">
       <div class="flex items-center justify-between pb-2 border-b border-border">
-        <div>
-          <h3 class="text-sm font-bold text-foreground">核对 6 位配对短码</h3>
-          <p class="text-[11px] text-muted-foreground mt-0.5">确认手机与电脑屏幕显示相同数字</p>
-        </div>
+        <h3 class="text-sm font-bold text-foreground">首次连接配对确认</h3>
         <button class="w-6 h-6 rounded-full text-muted-foreground hover:text-foreground cursor-pointer" onclick="closePinSheet()">
           <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
-
-      <div class="flex flex-col items-center justify-center gap-2 my-2">
-        <div class="connection-code-text font-mono text-4xl font-extrabold text-primary tracking-[0.22em]">482 917</div>
-        <span class="text-[11px] font-mono text-muted-foreground">60 秒内有效</span>
+      <p class="text-xs text-muted-foreground">请在电脑端确认是否显示相同的 6 位安全短码：</p>
+      <div class="py-4 px-6 rounded-[var(--radius)] bg-secondary/80 border border-primary/40 text-center">
+        <span class="font-mono text-2xl font-black text-primary tracking-widest connection-code-text select-all">482 917</span>
       </div>
-
-      <button class="w-full py-2.5 rounded-[var(--radius)] bg-primary text-primary-foreground font-bold text-xs shadow-md hover:opacity-90 transition-all cursor-pointer" onclick="closePinSheet(); startPhoneStreaming('Studio PC', '192.168.1.108:4433')">
-        两端数字一致，确认配对
-      </button>
+      <div class="flex items-center gap-2">
+        <button class="flex-1 py-2.5 rounded-[var(--radius)] bg-secondary hover:bg-secondary/80 text-foreground border border-border text-xs font-semibold cursor-pointer transition-all" onclick="closePinSheet()">
+          取消
+        </button>
+        <button class="flex-1 py-2.5 rounded-[var(--radius)] bg-primary text-primary-foreground text-xs font-bold shadow-md hover:opacity-90 transition-all cursor-pointer" onclick="closePinSheet(); startPhoneStreaming('Studio PC', '192.168.1.108:4433')">
+          两端一致，确认推流
+        </button>
+      </div>
     </div>
   </div>
 
@@ -2425,7 +2469,7 @@ body {
     <div class="w-full max-w-sm bg-card border border-border rounded-[calc(var(--radius)+12px)] p-6 shadow-2xl flex flex-col gap-4">
       <div class="flex items-center justify-between pb-2 border-b border-border">
         <div>
-          <h3 class="text-sm font-bold text-foreground">输入电脑局域网地址</h3>
+          <h3 class="text-sm font-bold text-foreground">输入电脑 IP 直连</h3>
           <p class="text-[11px] text-muted-foreground mt-0.5">仅在自动发现不可用时使用</p>
         </div>
         <button class="w-6 h-6 rounded-full text-muted-foreground hover:text-foreground cursor-pointer" onclick="closeManualSheet()">
@@ -2454,8 +2498,8 @@ body {
 
       <div class="flex flex-col gap-3 text-xs">
         <div class="flex items-center justify-between p-2.5 rounded-[var(--radius)] bg-secondary/50 border border-border">
-          <span>默认分辨率</span>
-          <span class="font-mono text-primary font-bold">1080P · 30 FPS</span>
+          <span>默认分辨率 (电脑端可动态调整)</span>
+          <span class="font-mono text-primary font-bold">720P · 30 FPS</span>
         </div>
         <div class="flex items-center justify-between p-2.5 rounded-[var(--radius)] bg-secondary/50 border border-border">
           <span>硬件编码</span>
@@ -2480,11 +2524,8 @@ body {
       isFrontCamera: false,
       isMirrored: false,
       isLocked: false,
-      exposureStep: 0,
-      resolutions: ["1080P · 30", "720P · 30"],
-      resIdx: 0,
-      stopArmed: false,
-      stopTimer: null,
+      exposureSteps: [0, 1, 2, -1, -2],
+      exposureIdx: 0,
       animId: null
     };
 
@@ -2523,8 +2564,8 @@ body {
       setTimeout(() => {
         t.style.opacity = "0";
         t.style.transform = "translateY(-8px)";
-        setTimeout(() => t.remove(), 200);
-      }, 2500);
+        setTimeout(() => t.remove(), 2400);
+      }, 2400);
     }
 
     // Streaming Control
@@ -2533,43 +2574,33 @@ body {
       document.getElementById("phone-screen-discovery").classList.add("hidden");
       document.getElementById("phone-screen-live").classList.remove("hidden");
 
+      const titleEl = document.getElementById("hud-connection-title");
+      if (titleEl) titleEl.textContent = (hostName || "Picoo Camera") + " 已连接";
+
       const wbBadge = document.getElementById("workbench-status-badge");
       if (wbBadge) {
-        wbBadge.textContent = "实时推流中 (1080p 30fps)";
+        wbBadge.textContent = "实时推流中 (720p 30fps)";
         wbBadge.className = "text-[11px] font-mono text-emerald-500 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20";
       }
 
       startPhoneCanvasStream();
-      showToast("已连接 " + hostName + " · 实时视频流已建立");
+      showToast("已连接 " + (hostName || "Picoo Camera") + " · 实时视频流已建立");
     }
 
-    function handlePhoneStopTap() {
-      const btn = document.getElementById("btn-phone-stop");
-      const square = document.getElementById("phone-stop-square");
-
-      if (!senderState.stopArmed) {
-        senderState.stopArmed = true;
-        if (btn) btn.classList.add("border-destructive", "animate-pulse");
-        if (square) square.style.transform = "scale(1.2)";
-        showToast("再次点击确认断开视频流");
-
-        clearTimeout(senderState.stopTimer);
-        senderState.stopTimer = setTimeout(() => {
-          senderState.stopArmed = false;
-          if (btn) btn.classList.remove("border-destructive", "animate-pulse");
-          if (square) square.style.transform = "scale(1)";
-        }, 3000);
-      } else {
-        clearTimeout(senderState.stopTimer);
-        senderState.stopArmed = false;
-        if (btn) btn.classList.remove("border-destructive", "animate-pulse");
-        if (square) square.style.transform = "scale(1)";
-        stopPhoneStreaming();
+    // Disconnect Handle (Red link button)
+    function handlePhoneDisconnect() {
+      if (senderState.isLocked) {
+        showToast("屏幕已锁定，请点击“锁定”解除");
+        return;
       }
+      stopPhoneStreaming();
     }
 
     function stopPhoneStreaming() {
       senderState.isStreaming = false;
+      if (senderState.isLocked) {
+        togglePhoneTouchLock();
+      }
       stopPhoneCanvasStream();
 
       document.getElementById("phone-screen-live").classList.add("hidden");
@@ -2583,10 +2614,14 @@ body {
       showToast("已断开视频推流 · 恢复待机模式");
     }
 
-    // Flip Camera Lens
+    // Flip Camera Lens (180deg animated)
     function flipPhoneCamera() {
+      if (senderState.isLocked) {
+        showToast("屏幕已锁定，请点击“锁定”解除");
+        return;
+      }
       senderState.isFrontCamera = !senderState.isFrontCamera;
-      const icon = document.getElementById("icon-phone-flip");
+      const icon = document.getElementById("icon-flip-camera");
       if (icon) {
         icon.style.transform = icon.style.transform === "rotate(180deg)" ? "rotate(0deg)" : "rotate(180deg)";
       }
@@ -2595,72 +2630,99 @@ body {
 
     // Mirror Toggle
     function togglePhoneMirror() {
-      senderState.isMirrored = !senderState.isMirrored;
-      const btn = document.getElementById("btn-mirror-toggle");
-      if (btn) {
-        btn.classList.toggle("text-primary", senderState.isMirrored);
-        btn.classList.toggle("bg-primary/20", senderState.isMirrored);
+      if (senderState.isLocked) {
+        showToast("屏幕已锁定，请点击“锁定”解除");
+        return;
       }
-      showToast(senderState.isMirrored ? "已开启水平镜像" : "已关闭镜像");
+      senderState.isMirrored = !senderState.isMirrored;
+      const iconWrap = document.getElementById("icon-mirror-wrap");
+      const labelText = document.getElementById("label-mirror-text");
+
+      if (senderState.isMirrored) {
+        if (iconWrap) iconWrap.className = "w-8 h-8 flex items-center justify-center text-[#2b7fff] group-hover:scale-110 transition-transform";
+        if (labelText) labelText.className = "text-xs font-medium tracking-wide text-[#2b7fff]";
+        showToast("已开启水平镜像");
+      } else {
+        if (iconWrap) iconWrap.className = "w-8 h-8 flex items-center justify-center text-white/85 group-hover:scale-110 transition-transform";
+        if (labelText) labelText.className = "text-xs font-medium tracking-wide text-white/80";
+        showToast("已关闭水平镜像");
+      }
     }
 
-    // Touch Lock
+    // Touch Lock (Locks all controls & canvas focus)
     function togglePhoneTouchLock() {
       senderState.isLocked = !senderState.isLocked;
-      const icon = document.getElementById("hud-lock-icon");
-      const btn = document.getElementById("btn-lock-toggle");
+      const iconWrap = document.getElementById("icon-lock-wrap");
+      const svg = document.getElementById("hud-lock-svg");
+      const labelText = document.getElementById("label-lock-text");
+
+      const btnExp = document.getElementById("btn-exposure");
+      const btnMirror = document.getElementById("btn-mirror");
+      const btnDisc = document.getElementById("btn-disconnect");
+      const btnFlip = document.getElementById("btn-flip");
       if (senderState.isLocked) {
-        if (icon) icon.innerHTML = '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>';
-        if (btn) btn.classList.add("text-primary", "bg-primary/20");
-        showToast("已开启防误触锁定");
+        if (iconWrap) iconWrap.className = "w-8 h-8 flex items-center justify-center text-[#2b7fff] group-hover:scale-110 transition-transform";
+        if (labelText) {
+          labelText.textContent = "已锁定";
+          labelText.className = "text-xs font-medium tracking-wide text-[#2b7fff]";
+        }
+        if (svg) svg.innerHTML = '<path fill-rule="evenodd" clip-rule="evenodd" d="M5.25 9.30277V8C5.25 4.27208 8.27208 1.25 12 1.25C15.7279 1.25 18.75 4.27208 18.75 8V9.30277C18.9768 9.31872 19.1906 9.33948 19.3918 9.36652C20.2919 9.48754 21.0497 9.74643 21.6517 10.3483C22.2536 10.9503 22.5125 11.7081 22.6335 12.6082C22.75 13.4752 22.75 14.5775 22.75 15.9451V16.0549C22.75 17.4225 22.75 18.5248 22.6335 19.3918C22.5125 20.2919 22.2536 21.0497 21.6517 21.6516C21.0497 22.2536 20.2919 22.5125 19.3918 22.6335C18.5248 22.75 17.4225 22.75 16.0549 22.75H7.94513C6.57754 22.75 5.47522 22.75 4.60825 22.6335C3.70814 22.5125 2.95027 22.2536 2.34835 21.6516C1.74643 21.0497 1.48754 20.2919 1.36652 19.3918C1.24996 18.5248 1.24998 17.4225 1.25 16.0549V15.9451C1.24998 14.5775 1.24996 13.4752 1.36652 12.6082C1.48754 11.7081 1.74643 10.9503 2.34835 10.3483C2.95027 9.74643 3.70814 9.48754 4.60825 9.36652C4.80938 9.33948 5.02317 9.31872 5.25 9.30277ZM6.75 8C6.75 5.10051 9.10051 2.75 12 2.75C14.8995 2.75 17.25 5.10051 17.25 8V9.25344C16.8765 9.24999 16.4784 9.24999 16.0549 9.25H7.94513C7.52161 9.24999 7.12353 9.24999 6.75 9.25344V8ZM3.40901 11.409C3.68577 11.1322 4.07435 10.9518 4.80812 10.8531C5.56347 10.7516 6.56459 10.75 8 10.75H16C17.4354 10.75 18.4365 10.7516 19.1919 10.8531C19.9257 10.9518 20.3142 11.1322 20.591 11.409C20.8678 11.6858 21.0482 12.0743 21.1469 12.8081C21.2484 13.5635 21.25 14.5646 21.25 16C21.25 17.4354 21.2484 18.4365 21.1469 19.1919C21.0482 19.9257 20.8678 20.3142 20.591 20.591C20.3142 20.8678 19.9257 21.0482 19.1919 21.1469C18.4365 21.2484 17.4354 21.25 16 21.25H8C6.56459 21.25 5.56347 21.2484 4.80812 21.1469C4.07435 21.0482 3.68577 20.8678 3.40901 20.591C3.13225 20.3142 2.9518 19.9257 2.85315 19.1919C2.75159 18.4365 2.75 17.4354 2.75 16C2.75 14.5646 2.75159 13.5635 2.85315 12.8081C2.9518 12.0743 3.13225 11.6858 3.40901 11.409Z" fill="currentColor"/>';
+
+        [btnExp, btnMirror, btnDisc, btnFlip].forEach(el => {
+          if (el) el.classList.add("opacity-35", "pointer-events-none");
+        });
+
+        showToast("已开启防误触锁定（再次点击锁定解除）");
       } else {
-        if (icon) icon.innerHTML = '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>';
-        if (btn) btn.classList.remove("text-primary", "bg-primary/20");
+        if (iconWrap) iconWrap.className = "w-8 h-8 flex items-center justify-center text-white/85 group-hover:scale-110 transition-transform";
+        if (labelText) {
+          labelText.textContent = "锁定";
+          labelText.className = "text-xs font-medium tracking-wide text-white/80";
+        }
+        if (svg) svg.innerHTML = '<path fill-rule="evenodd" clip-rule="evenodd" d="M12 1.25C9.10051 1.25 6.75 3.6005 6.75 6.5V8.2949C6.21103 8.34018 5.73673 8.43495 5.29754 8.65873C4.59193 9.01825 4.01825 9.59193 3.65873 10.2975C3.43239 10.7418 3.33803 11.2219 3.29336 11.7685C3.24999 12.2994 3.24999 12.9551 3.25 13.7679V17.2321C3.24999 18.0449 3.24999 18.7006 3.29336 19.2315C3.33803 19.7781 3.43239 20.2582 3.65873 20.7025C4.01825 21.4081 4.59193 21.9818 5.29754 22.3413C5.74175 22.5676 6.2219 22.662 6.76853 22.7066C7.29944 22.75 7.95505 22.75 8.76788 22.75H15.2321C16.045 22.75 16.7006 22.75 17.2315 22.7066C17.7781 22.662 18.2582 22.5676 18.7025 22.3413C19.4081 21.9818 19.9818 21.4081 20.3413 20.7025C20.5676 20.2582 20.662 19.7781 20.7066 19.2315C20.75 18.7006 20.75 18.045 20.75 17.2321V13.7679C20.75 12.955 20.75 12.2994 20.7066 11.7685C20.662 11.2219 20.5676 10.7418 20.3413 10.2975C19.9818 9.59193 19.4081 9.01825 18.7025 8.65873C18.2582 8.43239 17.7781 8.33803 17.2315 8.29336C16.7006 8.24999 16.045 8.24999 15.2321 8.25H8.7679C8.58766 8.25 8.41513 8.25 8.25 8.25047V6.5C8.25 4.42893 9.92893 2.75 12 2.75C13.6316 2.75 15.0217 3.79243 15.5368 5.24993C15.6748 5.64047 16.1033 5.84517 16.4939 5.70713C16.8844 5.56909 17.0891 5.1406 16.9511 4.75007C16.2307 2.71199 14.2871 1.25 12 1.25ZM5.97852 9.99524C6.17604 9.8946 6.43681 9.82547 6.89068 9.78838C7.35331 9.75058 7.94755 9.75 8.8 9.75H15.2C16.0525 9.75 16.6467 9.75058 17.1093 9.78838C17.5632 9.82547 17.824 9.8946 18.0215 9.99524C18.4448 10.211 18.789 10.5552 19.0048 10.9785C19.1054 11.176 19.1745 11.4368 19.2116 11.8907C19.2494 12.3533 19.25 12.9475 19.25 13.8V17.2C19.25 18.0525 19.2494 18.6467 19.2116 19.1093C19.1745 19.5632 19.1054 19.824 19.0048 20.0215C18.789 20.4448 18.4448 20.789 18.0215 21.0048C17.824 21.1054 17.5632 21.1745 17.1093 21.2116C16.6467 21.2494 16.0525 21.25 15.2 21.25H8.8C7.94755 21.25 7.35331 21.2494 6.89068 21.2116C6.43681 21.1745 6.17604 21.1054 5.97852 21.0048C5.55516 20.789 5.21095 20.4448 4.99524 20.0215C4.8946 19.824 4.82547 19.5632 4.78838 19.1093C4.75058 18.6467 4.75 18.0525 4.75 17.2V13.8C4.75 12.9475 4.75058 12.3533 4.78838 11.8907C4.82547 11.4368 4.8946 11.176 4.99524 10.9785C5.21095 10.5552 5.55516 10.211 5.97852 9.99524Z" fill="currentColor"/>';
+
+        [btnExp, btnMirror, btnDisc, btnFlip].forEach(el => {
+          if (el) el.classList.remove("opacity-35", "pointer-events-none");
+        });
+
         showToast("已解除防误触锁定");
       }
     }
 
-    // Resolution Cycle
-    function cyclePhoneRes() {
-      senderState.resIdx = (senderState.resIdx + 1) % senderState.resolutions.length;
-      const current = senderState.resolutions[senderState.resIdx];
-      const lbl = document.getElementById("hud-res-label");
-      if (lbl) lbl.textContent = current;
-      showToast("推流分辨率切换为 " + current);
-    }
+    // Exposure Controls (Cycle presets: 自动 ➔ 提亮+1 ➔ 提亮+2 ➔ 压暗-1 ➔ 压暗-2 ➔ 自动)
+    function cyclePhoneExposure() {
+      if (senderState.isLocked) {
+        showToast("屏幕已锁定，请点击“锁定”解除");
+        return;
+      }
+      senderState.exposureIdx = (senderState.exposureIdx + 1) % senderState.exposureSteps.length;
+      const step = senderState.exposureSteps[senderState.exposureIdx];
 
-    // Exposure Controls
-    function togglePhoneExposureBar() {
-      const bar = document.getElementById("phone-exposure-bar");
-      if (bar) bar.classList.toggle("hidden");
-    }
+      const iconWrap = document.getElementById("icon-exposure-wrap");
+      const labelText = document.getElementById("label-exposure-text");
 
-    function stepPhoneExposure(delta) {
-      senderState.exposureStep = Math.max(-2, Math.min(2, senderState.exposureStep + delta));
-      updatePhoneExposureUI();
-    }
-
-    function resetPhoneExposure() {
-      senderState.exposureStep = 0;
-      updatePhoneExposureUI();
-      showToast("已重置为自动测光");
-    }
-
-    function updatePhoneExposureUI() {
-      const labels = {
-        "-2": "☀️ 压暗 -2",
-        "-1": "☀️ 压暗 -1",
-        "0": "☀️ 自动",
-        "1": "☀️ 提亮 +1",
-        "2": "☀️ 提亮 +2"
+      const stepNames = {
+        "0": "自动",
+        "1": "提亮 +1",
+        "2": "提亮 +2",
+        "-1": "压暗 -1",
+        "-2": "压暗 -2"
       };
-      const text = document.getElementById("phone-exposure-val");
-      if (text) text.textContent = labels[String(senderState.exposureStep)];
 
-      const btn = document.getElementById("btn-exposure-toggle");
-      if (btn) {
-        btn.classList.toggle("text-primary", senderState.exposureStep !== 0);
-        btn.classList.toggle("bg-primary/20", senderState.exposureStep !== 0);
+      if (step === 0) {
+        if (iconWrap) iconWrap.className = "w-8 h-8 flex items-center justify-center text-white/85 group-hover:scale-110 transition-transform";
+        if (labelText) {
+          labelText.textContent = "亮度";
+          labelText.className = "text-xs font-medium tracking-wide text-white/80";
+        }
+        showToast("曝光：已恢复自动测光");
+      } else {
+        if (iconWrap) iconWrap.className = "w-8 h-8 flex items-center justify-center text-[#2b7fff] group-hover:scale-110 transition-transform";
+        if (labelText) {
+          labelText.textContent = stepNames[String(step)];
+          labelText.className = "text-xs font-medium tracking-wide text-[#2b7fff]";
+        }
+        showToast("曝光补偿：" + stepNames[String(step)]);
       }
     }
 
@@ -2778,9 +2840,10 @@ body {
         ctx.stroke();
 
         // Exposure Filter
-        if (senderState.exposureStep !== 0) {
-          const alpha = Math.abs(senderState.exposureStep) * 0.12;
-          ctx.fillStyle = senderState.exposureStep > 0 ? "rgba(255, 255, 255, " + alpha + ")" : "rgba(0, 0, 0, " + alpha + ")";
+        const curStep = senderState.exposureSteps[senderState.exposureIdx];
+        if (curStep !== 0) {
+          const alpha = Math.abs(curStep) * 0.15;
+          ctx.fillStyle = curStep > 0 ? "rgba(255, 255, 255, " + alpha + ")" : "rgba(0, 0, 0, " + alpha + ")";
           ctx.fillRect(0, 0, w, h);
         }
 

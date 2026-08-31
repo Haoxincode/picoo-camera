@@ -3,6 +3,7 @@ package com.picoo.camera
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.Surface
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -38,10 +39,12 @@ import com.picoo.camera.discovery.PairedAutoConnect
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncoderReconfigurationCoordinator
+import com.picoo.camera.media.ExposureCompensation
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.StreamResolution
+import com.picoo.camera.media.StreamOrientation
 import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.network.WifiNetworkInfo
@@ -204,6 +207,7 @@ private fun SenderHomeScreen(
     onRequestNotifications: () -> Unit,
 ) {
     val context = LocalContext.current
+    val senderView = LocalView.current
     val uiState = sessionModel.uiState
     var encoderState by uiState::encoderState
     var errorText by uiState::errorText
@@ -338,6 +342,13 @@ private fun SenderHomeScreen(
     var previewTransformInfo by remember { mutableStateOf(encoder.previewTransformInfo) }
     val encoderReconfiguration = sessionModel.encoderReconfiguration
 
+    fun displayRotationDegrees(): Int = when (senderView.display?.rotation) {
+        Surface.ROTATION_90 -> 90
+        Surface.ROTATION_180 -> 180
+        Surface.ROTATION_270 -> 270
+        else -> 0
+    }
+
     fun applyStreamConfigToSender() {
         val width = encoder.profile.resolution.width
         val height = encoder.profile.resolution.height
@@ -355,7 +366,11 @@ private fun SenderHomeScreen(
             fps = 30,
             bitrateBps = bitrate,
             mirrored = remoteMirrored,
-            rotation = encoder.sensorOrientationDegrees(),
+            rotation = StreamOrientation.relativeRotationDegrees(
+                sensorOrientationDegrees = encoder.sensorOrientationDegrees(),
+                displayRotationDegrees = displayRotationDegrees(),
+                frontFacing = encoder.profile.lensFacing == LensFacing.Front,
+            ),
             sps = sets?.first,
             pps = sets?.second,
         )
@@ -1019,7 +1034,6 @@ private fun SenderHomeScreen(
                 linkQualityChip = linkQualityChip,
                 resolutionLabel = resolutionLabel,
                 bitrateMbps = bitrateMbps,
-                lensFacing = encoder.profile.lensFacing,
                 previewBufferWidth = previewTransformInfo.bufferSize.width,
                 previewBufferHeight = previewTransformInfo.bufferSize.height,
                 previewSensorOrientationDegrees =
@@ -1084,21 +1098,12 @@ private fun SenderHomeScreen(
                     }
                 },
                 onToggleMirror = { localPreviewMirrored = !localPreviewMirrored },
-                onEvMinus = {
+                onCycleExposure = {
                     val range = encoder.exposureCompensationRange
                     if (range.isEmpty()) return@StreamingScreen
-                    encoder.setExposureCompensation((exposureEv - 1).coerceAtLeast(range.first.coerceAtLeast(-2)))
-                    exposureEv = encoder.exposureCompensation
-                },
-                onEvPlus = {
-                    val range = encoder.exposureCompensationRange
-                    if (range.isEmpty()) return@StreamingScreen
-                    encoder.setExposureCompensation((exposureEv + 1).coerceAtMost(range.last.coerceAtMost(2)))
-                    exposureEv = encoder.exposureCompensation
-                },
-                onEvReset = {
-                    if (encoder.exposureCompensationRange.isEmpty()) return@StreamingScreen
-                    encoder.setExposureCompensation(0)
+                    encoder.setExposureCompensation(
+                        ExposureCompensation.nextControlPreset(exposureEv, range),
+                    )
                     exposureEv = encoder.exposureCompensation
                 },
                 exposureEv = exposureEv,
@@ -1126,6 +1131,7 @@ private fun SenderHomeScreen(
                 },
                 onPreviewDisplayChanged = {
                     previewTransformInfo = encoder.refreshPreviewTransformInfo()
+                    streamConfigDirty.set(true)
                 },
             )
         }

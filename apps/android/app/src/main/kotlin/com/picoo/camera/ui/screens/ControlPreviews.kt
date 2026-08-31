@@ -1,9 +1,14 @@
 package com.picoo.camera.ui.screens
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import com.picoo.camera.jni.PicooNative
+import com.picoo.camera.ui.theme.PicooCameraColors
 import com.picoo.camera.ui.theme.PicooCameraTheme
 
 @Preview(name = "Phone", device = Devices.PHONE, showBackground = true)
@@ -134,6 +139,42 @@ private fun DevicesFoundScreenPreview() {
             onOpenSettings = {},
             onRestartDiscovery = {},
             onStopDiscovery = {},
+        )
+    }
+}
+
+@Preview(name = "Connected · Portrait", widthDp = 393, heightDp = 852)
+@Preview(name = "Connected · Landscape", widthDp = 852, heightDp = 393)
+@Composable
+private fun StreamingScreenPreview() {
+    PicooCameraTheme {
+        StreamingScreenContent(
+            cameraGranted = true,
+            receiverName = "Picoo Camera",
+            linkQualityChip = "稳定 · 63ms",
+            resolutionLabel = "720p",
+            bitrateMbps = "1.9 Mbps",
+            localPreviewMirrored = false,
+            thermalForced720 = false,
+            powerHint = "",
+            reconnecting = false,
+            packetLossLabel = "0% 丢包",
+            onRequestCamera = {},
+            onFlipCamera = {},
+            onToggleResolution = {},
+            onToggleMirror = {},
+            onCycleExposure = {},
+            exposureEv = 0,
+            evSupported = true,
+            onDisconnect = {},
+            onStopReconnect = {},
+            previewContent = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(PicooCameraColors.SurfaceRaised),
+                )
+            },
         )
     }
 }

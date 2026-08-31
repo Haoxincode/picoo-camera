@@ -145,6 +145,141 @@ pub fn nv12_rotate_clockwise(
     Some((out_w, out_h, out_stride, out))
 }
 
+/// Center-crop an upright NV12 frame to the target aspect ratio and scale it to
+/// the target dimensions (REQ-PICOO-MEDIA-013). The crop prefers the largest
+/// exact even-sized rectangle; formats such as 854×480 fall back to the nearest
+/// chroma-aligned ratio because that geometry cannot be represented exactly.
+///
+/// Returns `None` when the source already matches the requested geometry or an
+/// valid chroma-aligned crop is impossible.
+pub fn nv12_center_crop_scale(
+    width: u32,
+    height: u32,
+    stride: u32,
+    target_width: u32,
+    target_height: u32,
+    nv12: &[u8],
+) -> Option<(u32, u32, u32, Vec<u8>)> {
+    if width < 2
+        || height < 2
+        || target_width < 2
+        || target_height < 2
+        || !width.is_multiple_of(2)
+        || !height.is_multiple_of(2)
+        || !target_width.is_multiple_of(2)
+        || !target_height.is_multiple_of(2)
+        || stride < width
+    {
+        return None;
+    }
+    let expected = (stride as usize) * (height as usize) * 3 / 2;
+    if nv12.len() < expected {
+        return None;
+    }
+    if width == target_width && height == target_height && stride == width {
+        return None;
+    }
+
+    let aspect_gcd = gcd(target_width, target_height);
+    let aspect_width = target_width / aspect_gcd;
+    let aspect_height = target_height / aspect_gcd;
+    let max_scale = (width / aspect_width).min(height / aspect_height);
+    let even_scale = max_scale - (max_scale % 2);
+    let (crop_width, crop_height) = if even_scale > 0 {
+        (aspect_width * even_scale, aspect_height * even_scale)
+    } else if width as u64 * target_height as u64 > height as u64 * target_width as u64 {
+        (
+            nearest_even_ratio(
+                height as u64 * target_width as u64,
+                target_height as u64,
+                width,
+            ),
+            height,
+        )
+    } else {
+        (
+            width,
+            nearest_even_ratio(
+                width as u64 * target_height as u64,
+                target_width as u64,
+                height,
+            ),
+        )
+    };
+    if crop_width < 2 || crop_height < 2 {
+        return None;
+    }
+    let crop_x = ((width - crop_width) / 2) & !1;
+    let crop_y = ((height - crop_height) / 2) & !1;
+
+    let out_stride = target_width;
+    let mut out = vec![0u8; nv12_byte_size(target_width, target_height)];
+    let src_stride = stride as usize;
+    let dst_stride = out_stride as usize;
+    let src_y_plane = src_stride * height as usize;
+    let dst_y_plane = dst_stride * target_height as usize;
+
+    let x_map: Vec<usize> = (0..target_width)
+        .map(|x| (crop_x + x * crop_width / target_width) as usize)
+        .collect();
+    let y_map: Vec<usize> = (0..target_height)
+        .map(|y| (crop_y + y * crop_height / target_height) as usize)
+        .collect();
+    for (dst_y, &src_y) in y_map.iter().enumerate() {
+        let src_row = src_y * src_stride;
+        let dst_row = dst_y * dst_stride;
+        for (dst_x, &src_x) in x_map.iter().enumerate() {
+            out[dst_row + dst_x] = nv12[src_row + src_x];
+        }
+    }
+
+    let target_uv_width = target_width / 2;
+    let target_uv_height = target_height / 2;
+    let crop_uv_width = crop_width / 2;
+    let crop_uv_height = crop_height / 2;
+    let crop_uv_x = crop_x / 2;
+    let crop_uv_y = crop_y / 2;
+    for dst_y in 0..target_uv_height {
+        let src_y = crop_uv_y + dst_y * crop_uv_height / target_uv_height;
+        let src_row = src_y_plane + src_y as usize * src_stride;
+        let dst_row = dst_y_plane + dst_y as usize * dst_stride;
+        for dst_x in 0..target_uv_width {
+            let src_x = crop_uv_x + dst_x * crop_uv_width / target_uv_width;
+            let src = src_row + src_x as usize * 2;
+            let dst = dst_row + dst_x as usize * 2;
+            out[dst] = nv12[src];
+            out[dst + 1] = nv12[src + 1];
+        }
+    }
+
+    Some((target_width, target_height, out_stride, out))
+}
+
+fn gcd(mut left: u32, mut right: u32) -> u32 {
+    while right != 0 {
+        let remainder = left % right;
+        left = right;
+        right = remainder;
+    }
+    left
+}
+
+fn nearest_even_ratio(numerator: u64, denominator: u64, limit: u32) -> u32 {
+    let rounded = ((numerator + denominator / 2) / denominator).min(limit as u64) as u32;
+    if rounded.is_multiple_of(2) {
+        return rounded;
+    }
+    let lower = rounded.saturating_sub(1);
+    let upper = rounded.saturating_add(1).min(limit);
+    let lower_error = numerator.abs_diff(lower as u64 * denominator);
+    let upper_error = numerator.abs_diff(upper as u64 * denominator);
+    if upper.is_multiple_of(2) && upper_error < lower_error {
+        upper
+    } else {
+        lower
+    }
+}
+
 /// Downscaled RGBA preview suitable for GPUI `RenderImage` (max width 640 by default).
 pub fn nv12_preview_rgba(
     width: u32,
@@ -286,5 +421,44 @@ mod tests {
         assert_eq!(normalize_rotation_degrees(180), 180);
         assert_eq!(normalize_rotation_degrees(270), 270);
         assert_eq!(normalize_rotation_degrees(360), 0);
+    }
+
+    #[test]
+    fn portrait_frame_is_center_cropped_and_scaled_to_landscape() {
+        // 36×64 portrait input can hold an exact 32×18 center crop.
+        let width = 36u32;
+        let height = 64u32;
+        let mut nv12 = vec![128u8; nv12_byte_size(width, height)];
+        for y in 0..height {
+            let row = y as usize * width as usize;
+            nv12[row..row + width as usize].fill(y as u8);
+        }
+
+        let (out_width, out_height, out_stride, out) =
+            nv12_center_crop_scale(width, height, width, 64, 36, &nv12).expect("center crop");
+
+        assert_eq!((out_width, out_height, out_stride), (64, 36, 64));
+        assert_eq!(out.len(), nv12_byte_size(64, 36));
+        // Center crop is rows 22..39 (the exact center is chroma-aligned).
+        assert_eq!(out[0], 22);
+        assert_eq!(out[(35 * 64) as usize], 39);
+    }
+
+    #[test]
+    fn matching_geometry_avoids_an_extra_copy() {
+        let nv12 = nv12_black(64, 36);
+        assert!(nv12_center_crop_scale(64, 36, 64, 64, 36, &nv12).is_none());
+    }
+
+    #[test]
+    fn portrait_480p_uses_nearest_chroma_aligned_crop() {
+        let width = 480;
+        let height = 854;
+        let nv12 = nv12_black(width, height);
+        let (out_width, out_height, out_stride, out) =
+            nv12_center_crop_scale(width, height, width, 854, 480, &nv12)
+                .expect("480p center crop");
+        assert_eq!((out_width, out_height, out_stride), (854, 480, 854));
+        assert_eq!(out.len(), nv12_byte_size(854, 480));
     }
 }

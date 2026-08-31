@@ -1,32 +1,28 @@
 package com.picoo.camera.ui.screens
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,43 +36,44 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
-import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
-import com.picoo.camera.media.LensFacing
 import com.picoo.camera.ui.CameraPreviewSurface
 import com.picoo.camera.ui.ExposurePreview
-import com.picoo.camera.ui.components.PicooGhostButton
+import com.picoo.camera.ui.ReconnectBackoffFormat
 import com.picoo.camera.ui.components.PicooButtonSize
-import com.picoo.camera.ui.components.PicooIconButton
+import com.picoo.camera.ui.components.PicooGhostButton
 import com.picoo.camera.ui.components.PicooPrimaryButton
 import com.picoo.camera.ui.components.PicooVisualContext
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
-import com.picoo.camera.ui.ReconnectBackoffFormat
 import com.picoo.camera.ui.theme.PicooCameraColors
 import com.picoo.camera.ui.theme.PicooCameraDimensions
 import com.picoo.camera.ui.theme.PicooCameraTypography
 import com.picoo.camera.ui.theme.PicooFont
 import com.picoo.camera.ui.theme.PicooTheme
+import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 
-/** REQ-PICOO-UI-003 / REQ-PICOO-UI-005 — 传输页，对齐 m-screen-streaming。 */
+/** REQ-PICOO-UI-003 / REQ-PICOO-UI-012 — 连接后的沉浸式相机控制台。 */
 @Composable
 fun StreamingScreen(
     cameraGranted: Boolean,
@@ -84,7 +81,6 @@ fun StreamingScreen(
     linkQualityChip: String,
     resolutionLabel: String,
     bitrateMbps: String,
-    lensFacing: LensFacing,
     previewBufferWidth: Int,
     previewBufferHeight: Int,
     previewSensorOrientationDegrees: Int,
@@ -98,9 +94,7 @@ fun StreamingScreen(
     onFlipCamera: () -> Unit,
     onToggleResolution: () -> Unit,
     onToggleMirror: () -> Unit,
-    onEvMinus: () -> Unit,
-    onEvPlus: () -> Unit,
-    onEvReset: () -> Unit,
+    onCycleExposure: () -> Unit,
     exposureEv: Int,
     evSupported: Boolean,
     onDisconnect: () -> Unit,
@@ -113,11 +107,77 @@ fun StreamingScreen(
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
 ) {
-    val dimensions = PicooTheme.dimensions
+    StreamingScreenContent(
+        cameraGranted = cameraGranted,
+        receiverName = receiverName,
+        linkQualityChip = linkQualityChip,
+        resolutionLabel = resolutionLabel,
+        bitrateMbps = bitrateMbps,
+        localPreviewMirrored = localPreviewMirrored,
+        thermalForced720 = thermalForced720,
+        powerHint = powerHint,
+        reconnecting = reconnecting,
+        packetLossLabel = packetLossLabel,
+        onRequestCamera = onRequestCamera,
+        onFlipCamera = onFlipCamera,
+        onToggleResolution = onToggleResolution,
+        onToggleMirror = onToggleMirror,
+        onCycleExposure = onCycleExposure,
+        exposureEv = exposureEv,
+        evSupported = evSupported,
+        onDisconnect = onDisconnect,
+        onStopReconnect = onStopReconnect,
+        modifier = modifier,
+        networkUnstable = networkUnstable,
+        reconnectAttempt = reconnectAttempt,
+        reconnectDelayMs = reconnectDelayMs,
+        previewContent = {
+            CameraPreviewSurface(
+                modifier = Modifier.fillMaxSize(),
+                bufferWidth = previewBufferWidth,
+                bufferHeight = previewBufferHeight,
+                sensorOrientationDegrees = previewSensorOrientationDegrees,
+                frontFacing = previewFrontFacing,
+                mirrorLocal = localPreviewMirrored,
+                onSurfaceAvailable = onPreviewSurfaceAvailable,
+                onSurfaceDestroyed = onPreviewSurfaceDestroyed,
+                onDisplayChanged = onPreviewDisplayChanged,
+            )
+        },
+    )
+}
+
+/** Plain rendering boundary; the caller supplies the real or deterministic preview surface. */
+@Composable
+internal fun StreamingScreenContent(
+    cameraGranted: Boolean,
+    receiverName: String,
+    linkQualityChip: String,
+    resolutionLabel: String,
+    bitrateMbps: String,
+    localPreviewMirrored: Boolean,
+    thermalForced720: Boolean,
+    powerHint: String,
+    reconnecting: Boolean,
+    packetLossLabel: String,
+    onRequestCamera: () -> Unit,
+    onFlipCamera: () -> Unit,
+    onToggleResolution: () -> Unit,
+    onToggleMirror: () -> Unit,
+    onCycleExposure: () -> Unit,
+    exposureEv: Int,
+    evSupported: Boolean,
+    onDisconnect: () -> Unit,
+    onStopReconnect: () -> Unit,
+    previewContent: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+    networkUnstable: Boolean = false,
+    reconnectAttempt: Int = 0,
+    reconnectDelayMs: Long = 0L,
+) {
     val motion = PicooTheme.motion
     var uiLocked by remember { mutableStateOf(false) }
-    var showEvPanel by remember { mutableStateOf(false) }
-    var shutterArmed by remember { mutableStateOf(false) }
+    var disconnectArmed by remember { mutableStateOf(false) }
     var flipRotationTarget by remember { mutableFloatStateOf(0f) }
     var flipBlurActive by remember { mutableStateOf(false) }
     var thermalToast by remember { mutableStateOf(false) }
@@ -130,65 +190,48 @@ fun StreamingScreen(
         label = "flipRotation",
     )
 
-    LaunchedEffect(shutterArmed) {
-        if (shutterArmed) {
-            delay(3_000)
-            shutterArmed = false
+    LaunchedEffect(disconnectArmed) {
+        if (disconnectArmed) {
+            delay(PicooCameraDimensions.DisconnectConfirmMillis)
+            disconnectArmed = false
         }
     }
-
     LaunchedEffect(focusRingActive) {
         if (focusRingActive) {
-            delay(800)
+            delay(PicooCameraDimensions.FocusRingVisibleMillis)
             focusRingActive = false
         }
     }
-
     LaunchedEffect(flipBlurActive) {
         if (flipBlurActive) {
-            delay(280)
+            delay(PicooCameraDimensions.FlipBlurMillis)
             flipBlurActive = false
         }
     }
-
     LaunchedEffect(thermalToast) {
         if (thermalToast) {
-            delay(2_400)
+            delay(PicooCameraDimensions.ToastVisibleMillis)
             thermalToast = false
         }
     }
 
-    LaunchedEffect(uiLocked) {
-        if (uiLocked) {
-            immersive = false
-        }
-    }
-
-    val showChrome = !uiLocked && !immersive
-
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(PicooCameraColors.Surface),
     ) {
+        val portraitWindow = maxHeight > maxWidth
+
         if (cameraGranted) {
-            CameraPreviewSurface(
-                modifier = Modifier.fillMaxSize(),
-                bufferWidth = previewBufferWidth,
-                bufferHeight = previewBufferHeight,
-                sensorOrientationDegrees = previewSensorOrientationDegrees,
-                frontFacing = previewFrontFacing,
-                mirrorLocal = localPreviewMirrored,
-                onSurfaceAvailable = onPreviewSurfaceAvailable,
-                onSurfaceDestroyed = onPreviewSurfaceDestroyed,
-                onDisplayChanged = onPreviewDisplayChanged,
-            )
-            val evAlpha = ExposurePreview.overlayAlpha(exposureEv)
-            if (evAlpha > 0f) {
+            previewContent()
+            val overlayAlpha = ExposurePreview.overlayAlpha(exposureEv)
+            if (overlayAlpha > 0f) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(ExposurePreview.overlayColor(exposureEv).copy(alpha = evAlpha)),
+                        .background(
+                            ExposurePreview.overlayColor(exposureEv).copy(alpha = overlayAlpha),
+                        ),
                 )
             }
             if (flipBlurActive) {
@@ -200,34 +243,14 @@ fun StreamingScreen(
                 )
             }
         } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(PicooCameraColors.SurfaceRaised),
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = "需要相机权限才能预览与推流",
-                        color = PicooCameraColors.ContentMuted,
-                        style = PicooCameraTypography.Status,
-                    )
-                    Spacer(modifier = Modifier.height(dimensions.space12))
-                    PicooPrimaryButton(
-                        text = "启用相机",
-                        onClick = onRequestCamera,
-                        modifier = Modifier.padding(horizontal = dimensions.space32),
-                        context = PicooVisualContext.Camera,
-                    )
-                }
-            }
+            CameraPermissionPlaceholder(onRequestCamera = onRequestCamera)
         }
 
         if (cameraGranted && !uiLocked) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(Unit) {
+                    .pointerInput(immersive) {
                         detectTapGestures(
                             onTap = { offset ->
                                 focusRingCenter = offset
@@ -239,282 +262,59 @@ fun StreamingScreen(
             )
         }
 
-        if (showChrome) {
-            SafeFrameOverlay()
-        }
-
-        if (focusRingActive) {
-            FocusRing(center = focusRingCenter)
-        }
-
-        if (showChrome) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(
-                        start = dimensions.space12,
-                        end = dimensions.space12,
-                        top = dimensions.space8,
-                    ),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                HudBadge {
-                    Box(
-                        modifier = Modifier
-                            .size(PicooCameraDimensions.StatusDot)
-                            .background(PicooCameraColors.Success, CircleShape),
-                    )
-                    Text(
-                        text = receiverName.ifBlank { "电脑" },
-                        color = PicooCameraColors.Content,
-                        style = PicooCameraTypography.Caption,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    val latency = linkQualityChip.substringAfter(" · ", "")
-                    if (latency.isNotEmpty()) {
-                        Text(
-                            text = latency,
-                            color = PicooCameraColors.Success,
-                            style = PicooCameraTypography.Label.copy(fontFamily = PicooFont.Mono),
-                        )
+        if (!immersive) {
+            OutputGuideOverlay(portraitWindow = portraitWindow)
+            ConnectionHud(
+                receiverName = receiverName,
+                linkQualityChip = linkQualityChip,
+                bitrateMbps = bitrateMbps,
+                resolutionLabel = resolutionLabel,
+                packetLossLabel = packetLossLabel,
+                thermalForced720 = thermalForced720,
+                enabled = !uiLocked,
+                onToggleResolution = {
+                    if (thermalForced720 && resolutionLabel.contains("720", ignoreCase = true)) {
+                        thermalToast = true
+                    } else {
+                        onToggleResolution()
                     }
-                }
-
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(PicooCameraDimensions.PillRadius))
-                        .background(PicooCameraColors.ToolbarOverlay)
-                        .border(
-                            PicooCameraDimensions.Border,
-                            PicooCameraColors.ControlBorderMuted,
-                            RoundedCornerShape(PicooCameraDimensions.PillRadius),
-                        )
-                        .padding(horizontal = dimensions.space4, vertical = dimensions.space2),
-                    horizontalArrangement = Arrangement.spacedBy(dimensions.space2),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CamToolButton(
-                        onClick = { showEvPanel = !showEvPanel },
-                        enabled = evSupported,
-                        active = showEvPanel,
-                        contentDescription = "曝光补偿",
-                    ) {
-                        ReiconIcon(
-                            icon = Reicon.Exposure,
-                            contentDescription = null,
-                            tint = if (showEvPanel) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
-                            modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
-                        )
-                    }
-                    CamToolButton(
-                        onClick = onToggleMirror,
-                        active = localPreviewMirrored,
-                        contentDescription = "预览镜像",
-                    ) {
-                        ReiconIcon(
-                            icon = Reicon.Mirror,
-                            contentDescription = null,
-                            tint = if (localPreviewMirrored) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
-                            modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
-                        )
-                    }
-                    CamToolButton(
-                        onClick = { uiLocked = !uiLocked },
-                        active = uiLocked,
-                        contentDescription = "防误触锁定",
-                    ) {
-                        ReiconIcon(
-                            icon = if (uiLocked) Reicon.InteractionLock else Reicon.InteractionUnlock,
-                            contentDescription = null,
-                            tint = if (uiLocked) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
-                            modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
-                        )
-                    }
-                }
-
-                ResPill(
-                    text = "${resolutionLabel.uppercase()} · 30",
-                    throttled = thermalForced720,
-                    onClick = {
-                        if (thermalForced720 &&
-                            resolutionLabel.contains("720", ignoreCase = true)
-                        ) {
-                            thermalToast = true
-                        } else {
-                            onToggleResolution()
-                        }
-                    },
-                )
-            }
-        }
-
-        if (showChrome) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                PicooCameraColors.Surface.copy(alpha = 0f),
-                                PicooCameraColors.BottomScrim,
-                            ),
-                        ),
-                    )
-                    .navigationBarsPadding()
-                    .padding(
-                        start = dimensions.space16,
-                        end = dimensions.space16,
-                        top = dimensions.space8,
-                        bottom = dimensions.space24,
-                    ),
-            ) {
-                if (thermalForced720) {
-                    ThermalBanner()
-                    Spacer(modifier = Modifier.height(dimensions.space8))
-                } else if (powerHint.isNotEmpty()) {
-                    Text(
-                        text = powerHint,
-                        color = PicooCameraColors.Warning,
-                        style = PicooCameraTypography.Status,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(dimensions.radiusControl))
-                            .background(PicooCameraColors.WarningSurface)
-                            .border(
-                                PicooCameraDimensions.Border,
-                                PicooCameraColors.WarningBorder,
-                                RoundedCornerShape(dimensions.radiusControl),
-                            )
-                            .padding(dimensions.space8),
-                    )
-                    Spacer(modifier = Modifier.height(dimensions.space8))
-                }
-
-                if (showEvPanel && evSupported) {
-                    EvPanel(
-                        exposureEv = exposureEv,
-                        onEvMinus = onEvMinus,
-                        onEvPlus = onEvPlus,
-                        onEvReset = onEvReset,
-                    )
-                    Spacer(modifier = Modifier.height(dimensions.space8))
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    StatPill(bitrate = bitrateMbps, packetLossLabel = packetLossLabel)
-
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        val infinite = rememberInfiniteTransition(label = "shutterPulse")
-                        val pulseScale by infinite.animateFloat(
-                            initialValue = 1f,
-                            targetValue = if (shutterArmed) 1.06f else 1f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(durationMillis = motion.deliberateMillis),
-                                repeatMode = RepeatMode.Reverse,
-                            ),
-                            label = "shutterScale",
-                        )
-                        Box(
-                            modifier = Modifier
-                                .size(dimensions.cameraStopTarget)
-                                .scale(if (shutterArmed) pulseScale else 1f)
-                                .clip(CircleShape)
-                                .border(
-                                    width = dimensions.cameraStopStroke,
-                                    color = if (shutterArmed) PicooCameraColors.Danger else PicooCameraColors.StopBorder,
-                                    shape = CircleShape,
-                                )
-                                .background(PicooCameraColors.StopSurface)
-                                .semantics {
-                                    contentDescription = "断开连接"
-                                    stateDescription = if (shutterArmed) "等待再次确认" else "未确认"
-                                    role = Role.Button
-                                }
-                                .clickable(role = Role.Button) {
-                                    if (shutterArmed) {
-                                        onDisconnect()
-                                    } else {
-                                        shutterArmed = true
-                                    }
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            ReiconIcon(
-                                icon = Reicon.StopStream,
-                                contentDescription = null,
-                                tint = if (shutterArmed) PicooCameraColors.DangerEmphasis else PicooCameraColors.Danger,
-                                modifier = Modifier.size(dimensions.iconEmphasis),
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(dimensions.space4))
-                        Text(
-                            text = if (shutterArmed) "再次点击确认断开" else "断开连接",
-                            color = if (shutterArmed) PicooCameraColors.DangerContent else PicooCameraColors.ContentMuted,
-                            style = PicooCameraTypography.Label,
-                            fontWeight = if (shutterArmed) FontWeight.Bold else FontWeight.SemiBold,
-                        )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .size(dimensions.touchTarget)
-                            .clip(CircleShape)
-                            .border(
-                                PicooCameraDimensions.Border,
-                                PicooCameraColors.ControlBorder,
-                                CircleShape,
-                            )
-                            .background(PicooCameraColors.ControlSurfaceSubtle)
-                            .semantics {
-                                contentDescription = "切换前后摄像头"
-                                role = Role.Button
-                            }
-                            .clickable(role = Role.Button) {
-                                flipRotationTarget += 180f
-                                flipBlurActive = true
-                                onFlipCamera()
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        ReiconIcon(
-                            icon = Reicon.SwitchCamera,
-                            contentDescription = null,
-                            tint = PicooCameraColors.Content,
-                            modifier = Modifier
-                                .size(dimensions.iconEmphasis)
-                                .rotate(flipRotation),
-                        )
-                    }
-                }
-            }
-        }
-
-        if (thermalToast) {
-            Text(
-                text = "设备偏热保护中，1080P 暂不可选",
-                color = PicooCameraColors.WarningContent,
-                style = PicooCameraTypography.Status,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = PicooCameraDimensions.ToastTopInset)
-                    .clip(RoundedCornerShape(dimensions.radiusControl))
-                    .background(PicooCameraColors.WarningToastSurface)
-                    .border(
-                        PicooCameraDimensions.Border,
-                        PicooCameraColors.WarningBorder,
-                        RoundedCornerShape(dimensions.radiusControl),
-                    )
-                    .padding(horizontal = dimensions.space12, vertical = dimensions.space8),
+                },
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+            CameraControlDock(
+                exposureEv = exposureEv,
+                evSupported = evSupported,
+                localPreviewMirrored = localPreviewMirrored,
+                uiLocked = uiLocked,
+                disconnectArmed = disconnectArmed,
+                flipRotation = flipRotation,
+                thermalForced720 = thermalForced720,
+                powerHint = powerHint,
+                onCycleExposure = onCycleExposure,
+                onToggleMirror = onToggleMirror,
+                onToggleLock = {
+                    uiLocked = !uiLocked
+                    disconnectArmed = false
+                },
+                onDisconnect = {
+                    if (disconnectArmed) onDisconnect() else disconnectArmed = true
+                },
+                onFlipCamera = {
+                    flipRotationTarget += 180f
+                    flipBlurActive = true
+                    onFlipCamera()
+                },
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
 
+        if (focusRingActive) FocusRing(center = focusRingCenter)
+        if (thermalToast) {
+            CameraToast(
+                text = "设备偏热保护中，1080P 暂不可选",
+                modifier = Modifier.align(Alignment.TopCenter),
+            )
+        }
         if (reconnecting) {
             ReconnectOverlay(
                 networkUnstable = networkUnstable,
@@ -527,10 +327,567 @@ fun StreamingScreen(
 }
 
 @Composable
+private fun CameraPermissionPlaceholder(onRequestCamera: () -> Unit) {
+    val dimensions = PicooTheme.dimensions
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(PicooCameraColors.SurfaceRaised),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "需要相机权限才能预览与推流",
+                color = PicooCameraColors.ContentMuted,
+                style = PicooCameraTypography.Status,
+            )
+            Spacer(modifier = Modifier.height(dimensions.space12))
+            PicooPrimaryButton(
+                text = "启用相机",
+                onClick = onRequestCamera,
+                modifier = Modifier.padding(horizontal = dimensions.space32),
+                context = PicooVisualContext.Camera,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ConnectionHud(
+    receiverName: String,
+    linkQualityChip: String,
+    bitrateMbps: String,
+    resolutionLabel: String,
+    packetLossLabel: String,
+    thermalForced720: Boolean,
+    enabled: Boolean,
+    onToggleResolution: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dimensions = PicooTheme.dimensions
+    val latency = linkQualityChip.substringAfter(" · ", missingDelimiterValue = "--ms")
+    val displayName = receiverName.ifBlank { "Picoo Camera" }
+    Column(
+        modifier = modifier
+            .statusBarsPadding()
+            .widthIn(max = dimensions.controlContentWidth)
+            .fillMaxWidth()
+            .padding(
+                start = dimensions.space24,
+                end = dimensions.space24,
+                top = dimensions.space16,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Row(
+            modifier = Modifier.semantics(mergeDescendants = true) {
+                contentDescription = "$displayName 已连接"
+                stateDescription = "$latency，$bitrateMbps，$packetLossLabel"
+            },
+            horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(PicooCameraDimensions.ConnectionDot)
+                    .background(PicooCameraColors.Selected, CircleShape),
+            )
+            Text(
+                text = "$displayName 已连接",
+                color = PicooCameraColors.Content,
+                style = PicooCameraTypography.HudTitle,
+            )
+        }
+        Spacer(modifier = Modifier.height(dimensions.space4))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+        ) {
+            TelemetryText(text = latency)
+            TelemetrySeparator()
+            TelemetryText(text = bitrateMbps)
+            TelemetrySeparator()
+            ResolutionMetric(
+                resolutionLabel = resolutionLabel,
+                thermalForced720 = thermalForced720,
+                enabled = enabled,
+                onClick = onToggleResolution,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TelemetryText(text: String) {
+    Text(
+        text = text,
+        color = PicooCameraColors.ContentMuted,
+        style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
+    )
+}
+
+@Composable
+private fun TelemetrySeparator() {
+    Text(
+        text = "•",
+        color = PicooCameraColors.ContentSubtle,
+        style = PicooCameraTypography.Telemetry,
+    )
+}
+
+@Composable
+private fun ResolutionMetric(
+    resolutionLabel: String,
+    thermalForced720: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val dimensions = PicooTheme.dimensions
+    Row(
+        modifier = Modifier
+            .height(dimensions.touchTarget)
+            .alpha(if (enabled) 1f else PicooCameraDimensions.DisabledAlpha)
+            .semantics {
+                contentDescription = "切换画质，当前 $resolutionLabel 30fps"
+                stateDescription = if (thermalForced720) "设备偏热，已限制为 720p" else "可切换"
+                role = Role.Button
+                if (!enabled) disabled()
+            }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (thermalForced720) {
+            ReiconIcon(
+                icon = Reicon.Overheat,
+                contentDescription = null,
+                tint = PicooCameraColors.Warning,
+                modifier = Modifier.size(dimensions.iconCompact),
+            )
+        }
+        Text(
+            text = resolutionLabel.lowercase(),
+            color = if (thermalForced720) PicooCameraColors.Warning else PicooCameraColors.ContentMuted,
+            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
+        )
+        Text(
+            text = "/",
+            color = PicooCameraColors.Selected,
+            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
+        )
+        Text(
+            text = "30fps",
+            color = PicooCameraColors.ContentMuted,
+            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
+        )
+    }
+}
+
+@Composable
+private fun OutputGuideOverlay(portraitWindow: Boolean) {
+    val dimensions = PicooTheme.dimensions
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val widthLimit = maxWidth * if (portraitWindow) {
+            PicooCameraDimensions.GuidePortraitWidthFraction
+        } else {
+            PicooCameraDimensions.GuideLandscapeWidthFraction
+        }
+        val heightLimit = maxHeight * if (portraitWindow) {
+            PicooCameraDimensions.GuidePortraitHeightFraction
+        } else {
+            PicooCameraDimensions.GuideLandscapeHeightFraction
+        }
+        val widthFromHeight = heightLimit * PicooCameraDimensions.VideoAspectRatio
+        val frameWidth = if (widthFromHeight < widthLimit) widthFromHeight else widthLimit
+        val frameHeight = frameWidth / PicooCameraDimensions.VideoAspectRatio
+
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(frameWidth)
+                    .height(frameHeight)
+                    .semantics {
+                        contentDescription = "16:9 电脑端输出范围"
+                        stateDescription = if (portraitWindow) {
+                            "竖屏中央裁切，建议横屏使用"
+                        } else {
+                            "横屏输出范围"
+                        }
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                GuideCorners()
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    GuideLabelLine()
+                    Text(
+                        text = "16:9 电脑端输出范围",
+                        color = PicooCameraColors.ContentMuted,
+                        style = PicooCameraTypography.Guide.copy(fontFamily = PicooFont.Mono),
+                    )
+                    GuideLabelLine()
+                }
+            }
+            if (portraitWindow) {
+                Spacer(modifier = Modifier.height(dimensions.space12))
+                Text(
+                    text = "建议横屏使用，电脑端仅显示框内区域",
+                    color = PicooCameraColors.ContentSubtle,
+                    style = PicooCameraTypography.GuideHint,
+                    textAlign = TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GuideCorners() {
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val corner = PicooCameraDimensions.GuideCornerLength.toPx()
+        val stroke = PicooCameraDimensions.GuideStroke.toPx()
+        val right = size.width
+        val bottom = size.height
+        val color = PicooCameraColors.SafeFrame
+        drawLine(color, Offset.Zero, Offset(corner, 0f), stroke, StrokeCap.Round)
+        drawLine(color, Offset.Zero, Offset(0f, corner), stroke, StrokeCap.Round)
+        drawLine(color, Offset(right, 0f), Offset(right - corner, 0f), stroke, StrokeCap.Round)
+        drawLine(color, Offset(right, 0f), Offset(right, corner), stroke, StrokeCap.Round)
+        drawLine(color, Offset(0f, bottom), Offset(corner, bottom), stroke, StrokeCap.Round)
+        drawLine(color, Offset(0f, bottom), Offset(0f, bottom - corner), stroke, StrokeCap.Round)
+        drawLine(color, Offset(right, bottom), Offset(right - corner, bottom), stroke, StrokeCap.Round)
+        drawLine(color, Offset(right, bottom), Offset(right, bottom - corner), stroke, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun GuideLabelLine() {
+    Box(
+        modifier = Modifier
+            .width(PicooCameraDimensions.GuideLabelLineWidth)
+            .height(PicooCameraDimensions.GuideLabelLineHeight)
+            .background(PicooCameraColors.ContentSubtle),
+    )
+}
+
+@Composable
+private fun CameraControlDock(
+    exposureEv: Int,
+    evSupported: Boolean,
+    localPreviewMirrored: Boolean,
+    uiLocked: Boolean,
+    disconnectArmed: Boolean,
+    flipRotation: Float,
+    thermalForced720: Boolean,
+    powerHint: String,
+    onCycleExposure: () -> Unit,
+    onToggleMirror: () -> Unit,
+    onToggleLock: () -> Unit,
+    onDisconnect: () -> Unit,
+    onFlipCamera: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dimensions = PicooTheme.dimensions
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        PicooCameraColors.Surface.copy(alpha = 0f),
+                        PicooCameraColors.BottomScrim,
+                    ),
+                ),
+            )
+            .navigationBarsPadding()
+            .padding(
+                start = dimensions.space24,
+                end = dimensions.space24,
+                top = dimensions.space32,
+                bottom = dimensions.space16,
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Column(
+            modifier = Modifier
+                .widthIn(max = dimensions.controlContentWidth)
+                .fillMaxWidth(),
+        ) {
+            if (thermalForced720) {
+                ThermalBanner()
+                Spacer(modifier = Modifier.height(dimensions.space8))
+            } else if (powerHint.isNotEmpty()) {
+                PowerHint(text = powerHint)
+                Spacer(modifier = Modifier.height(dimensions.space8))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DockControlButton(
+                    icon = Reicon.Exposure,
+                    label = exposureControlLabel(exposureEv),
+                    contentDescription = "调节亮度",
+                    stateDescription = exposureStateDescription(exposureEv, evSupported),
+                    selected = exposureEv != 0,
+                    enabled = !uiLocked && evSupported,
+                    onClick = onCycleExposure,
+                    modifier = Modifier.weight(1f),
+                )
+                DockDivider()
+                DockControlButton(
+                    icon = Reicon.Mirror,
+                    label = "镜像",
+                    contentDescription = "切换本机预览镜像",
+                    stateDescription = if (localPreviewMirrored) "已开启" else "已关闭",
+                    selected = localPreviewMirrored,
+                    enabled = !uiLocked,
+                    onClick = onToggleMirror,
+                    modifier = Modifier.weight(1f),
+                )
+                DockDivider()
+                DockControlButton(
+                    icon = if (uiLocked) Reicon.InteractionLock else Reicon.InteractionUnlock,
+                    label = if (uiLocked) "已锁定" else "锁定",
+                    contentDescription = "防误触锁定",
+                    stateDescription = if (uiLocked) "已锁定，再次点击解锁" else "未锁定",
+                    selected = uiLocked,
+                    enabled = true,
+                    onClick = onToggleLock,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+
+            Spacer(modifier = Modifier.height(dimensions.space8))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(PicooCameraDimensions.DockHairline)
+                    .background(PicooCameraColors.ControlBorderSubtle),
+            )
+            if (disconnectArmed) {
+                Text(
+                    text = "再次点击确认断开",
+                    color = PicooCameraColors.DangerContent,
+                    style = PicooCameraTypography.GuideHint,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = dimensions.space8),
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DockActionButton(
+                    icon = Reicon.Disconnect,
+                    contentDescription = "断开连接",
+                    stateDescription = if (disconnectArmed) "等待再次确认" else "未确认",
+                    tint = if (disconnectArmed) {
+                        PicooCameraColors.DangerEmphasis
+                    } else {
+                        PicooCameraColors.Danger
+                    },
+                    enabled = !uiLocked,
+                    onClick = onDisconnect,
+                    modifier = Modifier.weight(1f),
+                )
+                DockDivider()
+                DockActionButton(
+                    icon = Reicon.SwitchCamera,
+                    contentDescription = "切换前后摄像头",
+                    stateDescription = "可用",
+                    tint = PicooCameraColors.Content,
+                    enabled = !uiLocked,
+                    iconRotation = flipRotation,
+                    onClick = onFlipCamera,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DockControlButton(
+    icon: Reicon,
+    label: String,
+    contentDescription: String,
+    stateDescription: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val dimensions = PicooTheme.dimensions
+    val tint = if (selected) PicooCameraColors.Selected else PicooCameraColors.Content
+    Column(
+        modifier = modifier
+            .height(PicooCameraDimensions.DockControlHeight)
+            .alpha(if (enabled) 1f else PicooCameraDimensions.DisabledAlpha)
+            .semantics {
+                this.contentDescription = contentDescription
+                this.stateDescription = stateDescription
+                this.selected = selected
+                role = Role.Button
+                if (!enabled) disabled()
+            }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        ReiconIcon(
+            icon = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(dimensions.iconEmphasis),
+        )
+        Spacer(modifier = Modifier.height(dimensions.space4))
+        Text(
+            text = label,
+            color = tint,
+            style = PicooCameraTypography.ControlLabel,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun DockActionButton(
+    icon: Reicon,
+    contentDescription: String,
+    stateDescription: String,
+    tint: Color,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    iconRotation: Float = 0f,
+) {
+    val dimensions = PicooTheme.dimensions
+    Box(
+        modifier = modifier
+            .height(PicooCameraDimensions.DockActionHeight)
+            .alpha(if (enabled) 1f else PicooCameraDimensions.DisabledAlpha)
+            .semantics {
+                this.contentDescription = contentDescription
+                this.stateDescription = stateDescription
+                role = Role.Button
+                if (!enabled) disabled()
+            }
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        ReiconIcon(
+            icon = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier
+                .size(dimensions.iconEmphasis)
+                .rotate(iconRotation),
+        )
+    }
+}
+
+@Composable
+private fun DockDivider() {
+    Box(
+        modifier = Modifier
+            .width(PicooCameraDimensions.DockHairline)
+            .height(PicooCameraDimensions.DockDividerHeight)
+            .background(PicooCameraColors.ControlBorder),
+    )
+}
+
+private fun exposureControlLabel(exposureEv: Int): String = when (exposureEv) {
+    0 -> "亮度"
+    1 -> "提亮 +1"
+    2 -> "提亮 +2"
+    -1 -> "压暗 -1"
+    -2 -> "压暗 -2"
+    else -> "EV $exposureEv"
+}
+
+private fun exposureStateDescription(exposureEv: Int, supported: Boolean): String = when {
+    !supported -> "当前设备不支持曝光补偿"
+    exposureEv == 0 -> "自动测光"
+    else -> exposureControlLabel(exposureEv)
+}
+
+@Composable
+private fun PowerHint(text: String) {
+    val dimensions = PicooTheme.dimensions
+    Text(
+        text = text,
+        color = PicooCameraColors.Warning,
+        style = PicooCameraTypography.Status,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(dimensions.radiusControl))
+            .background(PicooCameraColors.WarningSurface)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.WarningBorder,
+                RoundedCornerShape(dimensions.radiusControl),
+            )
+            .padding(dimensions.space8),
+    )
+}
+
+@Composable
+private fun ThermalBanner() {
+    val dimensions = PicooTheme.dimensions
+    Text(
+        text = "设备偏热保护：已自动降至 720P 稳住帧率，1080P 暂不可选",
+        color = PicooCameraColors.WarningContent,
+        style = PicooCameraTypography.Status,
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(dimensions.radiusControl))
+            .background(PicooCameraColors.WarningSurface)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.WarningBorder,
+                RoundedCornerShape(dimensions.radiusControl),
+            )
+            .padding(dimensions.space8),
+    )
+}
+
+@Composable
+private fun CameraToast(text: String, modifier: Modifier = Modifier) {
+    val dimensions = PicooTheme.dimensions
+    Text(
+        text = text,
+        color = PicooCameraColors.WarningContent,
+        style = PicooCameraTypography.Status,
+        modifier = modifier
+            .statusBarsPadding()
+            .padding(top = PicooCameraDimensions.ToastTopInset)
+            .clip(RoundedCornerShape(dimensions.radiusControl))
+            .background(PicooCameraColors.WarningToastSurface)
+            .border(
+                PicooCameraDimensions.Border,
+                PicooCameraColors.WarningBorder,
+                RoundedCornerShape(dimensions.radiusControl),
+            )
+            .padding(horizontal = dimensions.space12, vertical = dimensions.space8),
+    )
+}
+
+@Composable
 private fun FocusRing(center: Offset) {
     val dimensions = PicooTheme.dimensions
     val shrink by animateFloatAsState(
-        targetValue = 0.82f,
+        targetValue = PicooCameraDimensions.FocusRingTargetScale,
         animationSpec = tween(durationMillis = PicooTheme.motion.fastMillis),
         label = "focusShrink",
     )
@@ -551,34 +908,6 @@ private fun FocusRing(center: Offset) {
                 RoundedCornerShape(dimensions.radiusControl),
             ),
     )
-}
-
-@Composable
-private fun SafeFrameOverlay() {
-    val dimensions = PicooTheme.dimensions
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val frameWidth = maxWidth * PicooCameraDimensions.SafeFrameWidthFraction
-        val frameHeight = frameWidth / PicooCameraDimensions.VideoAspectRatio
-        Box(
-            modifier = Modifier
-                .width(frameWidth)
-                .height(frameHeight)
-                .align(Alignment.Center)
-                .border(
-                    width = PicooCameraDimensions.BorderEmphasis,
-                    color = PicooCameraColors.SafeFrame,
-                    shape = RoundedCornerShape(dimensions.radiusControl),
-                ),
-        )
-        Text(
-            text = "电脑端画面 16:9 裁切框",
-            color = PicooCameraColors.ContentSubtle,
-            style = PicooCameraTypography.Micro,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(y = (-frameHeight / 2) - dimensions.space12),
-        )
-    }
 }
 
 @Composable
@@ -632,229 +961,4 @@ private fun ReconnectOverlay(
             )
         }
     }
-}
-
-@Composable
-private fun EvPanel(
-    exposureEv: Int,
-    onEvMinus: () -> Unit,
-    onEvPlus: () -> Unit,
-    onEvReset: () -> Unit,
-) {
-    val dimensions = PicooTheme.dimensions
-    val label = when (exposureEv) {
-        0 -> "自动"
-        1 -> "提亮 +1"
-        2 -> "提亮 +2"
-        -1 -> "压暗 -1"
-        -2 -> "压暗 -2"
-        else -> "EV $exposureEv"
-    }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(dimensions.radiusControl))
-            .background(PicooCameraColors.PanelOverlay)
-            .border(
-                PicooCameraDimensions.Border,
-                PicooCameraColors.ControlBorder,
-                RoundedCornerShape(dimensions.radiusControl),
-            )
-            .padding(horizontal = dimensions.space12, vertical = dimensions.space8),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        PicooIconButton(
-            onClick = onEvMinus,
-            contentDescription = "降低曝光",
-            context = PicooVisualContext.Camera,
-        ) {
-            Text(text = "−", color = PicooCameraColors.Content, style = PicooCameraTypography.Action)
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
-        ) {
-            ReiconIcon(
-                icon = Reicon.Exposure,
-                contentDescription = null,
-                tint = PicooCameraColors.Selected,
-                modifier = Modifier.size(dimensions.iconCompact),
-            )
-            Text(
-                text = label,
-                color = PicooCameraColors.Content,
-                style = PicooCameraTypography.Status.copy(fontFamily = PicooFont.Mono),
-            )
-        }
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
-        ) {
-            PicooIconButton(
-                onClick = onEvPlus,
-                contentDescription = "提高曝光",
-                context = PicooVisualContext.Camera,
-            ) {
-                Text(text = "＋", color = PicooCameraColors.Content, style = PicooCameraTypography.Action)
-            }
-            PicooIconButton(
-                onClick = onEvReset,
-                contentDescription = "恢复自动测光",
-                context = PicooVisualContext.Camera,
-            ) {
-                ReiconIcon(
-                    icon = Reicon.ResetExposure,
-                    contentDescription = null,
-                    tint = if (exposureEv == 0) PicooCameraColors.ContentMuted else PicooCameraColors.Selected,
-                    modifier = Modifier.size(PicooCameraDimensions.ToolIcon),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun HudBadge(content: @Composable RowScope.() -> Unit) {
-    val dimensions = PicooTheme.dimensions
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(PicooCameraDimensions.PillRadius))
-            .background(PicooCameraColors.HudOverlay)
-            .border(
-                PicooCameraDimensions.Border,
-                PicooCameraColors.HudBorder,
-                RoundedCornerShape(PicooCameraDimensions.PillRadius),
-            )
-            .padding(horizontal = dimensions.space8, vertical = dimensions.space4),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
-        verticalAlignment = Alignment.CenterVertically,
-        content = content,
-    )
-}
-
-@Composable
-private fun CamToolButton(
-    onClick: () -> Unit,
-    contentDescription: String,
-    enabled: Boolean = true,
-    active: Boolean = false,
-    content: @Composable () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(PicooTheme.dimensions.touchTarget)
-            .clip(CircleShape)
-            .background(
-                if (active) PicooCameraColors.SelectedSurface
-                else PicooCameraColors.Surface.copy(alpha = 0f),
-            )
-            .semantics {
-                this.contentDescription = contentDescription
-                selected = active
-                stateDescription = if (active) "已开启" else "已关闭"
-                role = Role.Button
-            }
-            .clickable(enabled = enabled, role = Role.Button, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        content()
-    }
-}
-
-@Composable
-private fun ResPill(text: String, throttled: Boolean, onClick: () -> Unit) {
-    val dimensions = PicooTheme.dimensions
-    // AC-M-LIVE-02: thermal warn styling (no emoji — anti-pattern §5).
-    val border = if (throttled) PicooCameraColors.WarningBorderStrong else PicooCameraColors.ControlBorder
-    val bg = if (throttled) PicooCameraColors.WarningSurfaceStrong else PicooCameraColors.Overlay
-    val fg = if (throttled) PicooCameraColors.Warning else PicooCameraColors.Content
-    val label = if (throttled) "热降档 · $text" else text
-    Row(
-        modifier = Modifier
-            .defaultMinSize(minHeight = PicooTheme.dimensions.touchTarget)
-            .clip(RoundedCornerShape(PicooCameraDimensions.PillRadius))
-            .background(bg)
-            .border(
-                PicooCameraDimensions.Border,
-                border,
-                RoundedCornerShape(PicooCameraDimensions.PillRadius),
-            )
-            .semantics {
-                contentDescription = "切换画质，当前 $label"
-                role = Role.Button
-            }
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = dimensions.space8, vertical = dimensions.space4),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
-    ) {
-        if (throttled) {
-            ReiconIcon(
-                icon = Reicon.Overheat,
-                contentDescription = "过热降档",
-                tint = PicooCameraColors.Warning,
-                modifier = Modifier.size(PicooCameraDimensions.ThermalIcon),
-            )
-        }
-        Text(
-            text = label,
-            color = fg,
-            style = PicooCameraTypography.Label.copy(
-                fontFamily = PicooFont.Mono,
-                fontWeight = FontWeight.Bold,
-            ),
-        )
-    }
-}
-
-@Composable
-private fun StatPill(bitrate: String, packetLossLabel: String) {
-    val dimensions = PicooTheme.dimensions
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(dimensions.radiusControl))
-            .background(PicooCameraColors.StatSurface)
-            .border(
-                PicooCameraDimensions.Border,
-                PicooCameraColors.ControlBorderSubtle,
-                RoundedCornerShape(dimensions.radiusControl),
-            )
-            .padding(horizontal = dimensions.space8, vertical = dimensions.space4),
-        horizontalAlignment = Alignment.Start,
-    ) {
-        Text(
-            text = bitrate,
-            color = PicooCameraColors.Content,
-            style = PicooCameraTypography.Status.copy(
-                fontFamily = PicooFont.Mono,
-                fontWeight = FontWeight.Bold,
-            ),
-        )
-        Text(
-            text = "30 FPS · $packetLossLabel",
-            color = PicooCameraColors.Success,
-            style = PicooCameraTypography.Micro.copy(fontFamily = PicooFont.Mono),
-        )
-    }
-}
-
-@Composable
-private fun ThermalBanner() {
-    val dimensions = PicooTheme.dimensions
-    Text(
-        text = "设备偏热保护：已自动降至 720P 稳住帧率，1080P 暂不可选",
-        color = PicooCameraColors.WarningContent,
-        style = PicooCameraTypography.Status,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(dimensions.radiusControl))
-            .background(PicooCameraColors.WarningSurface)
-            .border(
-                PicooCameraDimensions.Border,
-                PicooCameraColors.WarningBorder,
-                RoundedCornerShape(dimensions.radiusControl),
-            )
-            .padding(dimensions.space8),
-    )
 }

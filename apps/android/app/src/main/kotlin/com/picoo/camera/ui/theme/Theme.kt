@@ -212,13 +212,29 @@ object PicooCameraDimensions {
     val PillRadius = 999.dp
     val FocusRingSize = 56.dp
     val ProgressSize = 40.dp
-    val StatusDot = 6.dp
-    val ToolIcon = 20.dp
+    val ConnectionDot = 10.dp
     val ThermalIcon = 12.dp
     val FlipBlur = 14.dp
     val ToastTopInset = 96.dp
-    const val SafeFrameWidthFraction = 0.9f
+    val GuideCornerLength = 28.dp
+    val GuideStroke = 2.dp
+    val GuideLabelLineWidth = 24.dp
+    val GuideLabelLineHeight = 1.dp
+    val DockControlHeight = 72.dp
+    val DockActionHeight = 64.dp
+    val DockDividerHeight = 48.dp
+    val DockHairline = 1.dp
+    const val GuidePortraitWidthFraction = 0.84f
+    const val GuidePortraitHeightFraction = 0.42f
+    const val GuideLandscapeWidthFraction = 0.72f
+    const val GuideLandscapeHeightFraction = 0.56f
     const val VideoAspectRatio = 16f / 9f
+    const val DisabledAlpha = 0.35f
+    const val FocusRingTargetScale = 0.82f
+    const val DisconnectConfirmMillis = 3_000L
+    const val FocusRingVisibleMillis = 800L
+    const val FlipBlurMillis = 280L
+    const val ToastVisibleMillis = 2_400L
 }
 
 object PicooCameraTypography {
@@ -242,6 +258,34 @@ object PicooCameraTypography {
         fontFamily = PicooFont.Body,
         fontSize = 13.sp,
         lineHeight = 20.sp,
+    )
+    val HudTitle = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 16.sp,
+        lineHeight = 22.sp,
+        fontWeight = FontWeight.Medium,
+    )
+    val Telemetry = TextStyle(
+        fontFamily = PicooFont.Mono,
+        fontSize = 13.sp,
+        lineHeight = 18.sp,
+    )
+    val Guide = TextStyle(
+        fontFamily = PicooFont.Mono,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
+    )
+    val GuideHint = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 11.sp,
+        lineHeight = 16.sp,
+    )
+    val ControlLabel = TextStyle(
+        fontFamily = PicooFont.Body,
+        fontSize = 12.sp,
+        lineHeight = 16.sp,
+        fontWeight = FontWeight.Medium,
     )
     val Action = TextStyle(
         fontFamily = PicooFont.Body,

@@ -7,7 +7,7 @@ mod shared_ring;
 
 pub use hub::{FrameHub, FrameHubError, FrameSlot, ReadyState, SLOT_COUNT};
 pub use nv12::{
-    normalize_rotation_degrees, nv12_mirror_horizontal, nv12_preview_rgba,
+    normalize_rotation_degrees, nv12_center_crop_scale, nv12_mirror_horizontal, nv12_preview_rgba,
     nv12_preview_rgba_max_width, nv12_rotate_clockwise,
 };
 pub use placeholder::{

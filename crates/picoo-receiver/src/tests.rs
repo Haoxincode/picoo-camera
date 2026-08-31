@@ -1641,13 +1641,13 @@ fn remote_mirrored_flips_framehub_nv12() {
 }
 
 #[test]
-fn stream_config_rotation_overrides_decoder_rotation() {
-    // REQ-PICOO-MEDIA-009 / PUC-005: FrameHub publishes Sender StreamConfig.rotation.
+fn stream_config_rotation_normalizes_portrait_frame_to_landscape_output() {
+    // REQ-PICOO-MEDIA-009 / MEDIA-013: rotate upright, then retain negotiated 16:9 output.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_sender::StreamConfigParams;
 
-    let width = 4u32;
-    let height = 2u32;
+    let width = 64u32;
+    let height = 36u32;
     let pattern = vec![42u8; nv12_byte_size(width, height)];
 
     let mut receiver = ReceiverSession::new();
@@ -1724,7 +1724,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         sender.pump().ok();
         if receiver
             .latest_frame()
-            .is_some_and(|frame| frame.width == height && frame.height == width)
+            .is_some_and(|frame| frame.width == width && frame.height == height)
         {
             break;
         }
@@ -1734,8 +1734,8 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     let frame = receiver.latest_frame().expect("frame");
     // Pixels are upright; metadata cleared after apply (REQ-PICOO-MEDIA-009).
     assert_eq!(frame.rotation, 0);
-    assert_eq!(frame.width, height); // 90° swaps dims
-    assert_eq!(frame.height, width);
+    assert_eq!(frame.width, width);
+    assert_eq!(frame.height, height);
 }
 
 #[test]
