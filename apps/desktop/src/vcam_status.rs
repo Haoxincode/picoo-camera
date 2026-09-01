@@ -70,6 +70,7 @@ fn detect_non_macos_vcam_status() -> VirtualCameraStatus {
     )
 }
 
+#[cfg(any(windows, test))]
 fn windows_registration_status_from_probe(
     identity_persisted: bool,
     enumeration: Result<bool, String>,
