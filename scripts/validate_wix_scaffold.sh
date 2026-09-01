@@ -75,7 +75,7 @@ then
 else
   fail=1
 fi
-# Post-build MSI check lives in verify_windows_bundle.ps1 (windows-latest only; no msiexec).
+# Post-build MSI table and ICE checks live on windows-latest; no msiexec install.
 need "$WXS" 'FirewallQuic'
 need "$WXS" 'FirewallMdns'
 need "$WXS" 'KeyPath="yes"'
@@ -92,6 +92,7 @@ need "$WXS" 'PicooCamera.ico'
 need "$BUILD_MSI" 'wix build $Wxs -arch x64'
 need "$BUILD_MSI" '$env:PICOO_WINDOWS_MSI_VERSION'
 need "$BUILD_MSI" '-d "PicooMsiVersion=$MsiVersion"'
+need "$BUILD_MSI" 'wix msi validate $Msi -ice ICE27 -ice ICE63 -ice ICE77'
 need "$BUILD_MSI" 'PicooCamera.version'
 need "$CI_WORKFLOW" 'PICOO_BUILD_NUMBER: ${{ github.run_number }}'
 if grep -qE 'Version="[0-9]+\.[0-9]+\.[0-9]+"' "$WXS"; then
@@ -127,10 +128,12 @@ need "$WXS" 'UnregisterVcamOnRemove'
 need "$WXS" '--unregister-vcam'
 need "$WXS" 'RollbackVcamRegistration'
 need "$WXS" 'Execute="rollback"'
+need "$WXS" 'Execute="commit"'
 need "$WXS" 'Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED"'
-need "$WXS" 'Custom Action="RegisterVcamOnInstall" After="RemoveExistingProducts" Condition="NOT REMOVE"'
+need "$WXS" 'Custom Action="RegisterVcamOnInstall" Before="InstallExecute" Condition="NOT REMOVE"'
 need "$WXS" 'RestoreVcamOnUpgradeRollback'
-need "$WXS" 'Custom Action="RestoreVcamOnUpgradeRollback" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED"'
+need "$WXS" 'Custom Action="RollbackVcamRegistration" Before="RestoreVcamOnUpgradeRollback" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED"'
+need "$WXS" 'Custom Action="RestoreVcamOnUpgradeRollback" Before="RegisterVcamOnInstall" Condition="WIX_UPGRADE_DETECTED"'
 need "$WXS" 'Custom Action="UnregisterVcamOnRemove" Before="RemoveRegistryValues" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"'
 if awk '/Id="RollbackVcamRegistration"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
   echo "ok: rollback removal uses the AllUsers administrator context"

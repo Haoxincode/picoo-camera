@@ -209,18 +209,30 @@ foreach ($fileId in $expectedVersionedFiles.Keys) {
     Write-Host "ok: $fileId PE/MSI FileVersion is $ExpectedFileVersion"
 }
 
-foreach ($action in @('InstallExecute', 'RemoveExistingProducts', 'RegisterVcamOnInstall', 'InstallFinalize', 'RestoreVcamOnUpgradeRollback', 'UnregisterVcamOnRemove', 'RemoveRegistryValues')) {
+foreach ($action in @('InstallFiles', 'InstallExecute', 'RemoveExistingProducts', 'RegisterVcamOnInstall', 'InstallFinalize', 'RollbackVcamRegistration', 'RestoreVcamOnUpgradeRollback', 'UnregisterVcamOnRemove', 'RemoveRegistryValues')) {
     if (-not $ExecuteSequence.ContainsKey($action)) {
         Write-Error "MSI InstallExecuteSequence is missing '$action'"
     }
 }
-if (-not ($ExecuteSequence.InstallExecute -lt $ExecuteSequence.RemoveExistingProducts -and
-          $ExecuteSequence.RemoveExistingProducts -lt $ExecuteSequence.RegisterVcamOnInstall -and
-          $ExecuteSequence.RegisterVcamOnInstall -lt $ExecuteSequence.InstallFinalize)) {
-    Write-Error "MajorUpgrade order must be InstallExecute < RemoveExistingProducts < RegisterVcamOnInstall < InstallFinalize"
+if (-not ($ExecuteSequence.InstallFiles -lt $ExecuteSequence.RollbackVcamRegistration -and
+          $ExecuteSequence.RollbackVcamRegistration -lt $ExecuteSequence.RestoreVcamOnUpgradeRollback -and
+          $ExecuteSequence.RestoreVcamOnUpgradeRollback -lt $ExecuteSequence.RegisterVcamOnInstall -and
+          $ExecuteSequence.RegisterVcamOnInstall -lt $ExecuteSequence.InstallExecute -and
+          $ExecuteSequence.InstallExecute -lt $ExecuteSequence.RemoveExistingProducts -and
+          $ExecuteSequence.RemoveExistingProducts -lt $ExecuteSequence.InstallFinalize)) {
+    Write-Error "MajorUpgrade must queue rollback/commit actions before InstallExecute, then run InstallExecute < RemoveExistingProducts < InstallFinalize"
 }
-if ($ExecuteSequence.RestoreVcamOnUpgradeRollback -ge $ExecuteSequence.RemoveExistingProducts) {
-    Write-Error "RestoreVcamOnUpgradeRollback must be scheduled before RemoveExistingProducts"
+$lateUpgradeWindow = @(
+    $ExecuteSequence.GetEnumerator() |
+        Where-Object {
+            $_.Value -gt $ExecuteSequence.InstallExecute -and
+            $_.Value -lt $ExecuteSequence.InstallFinalize
+        } |
+        Sort-Object Value, Key |
+        ForEach-Object Key
+)
+if ($lateUpgradeWindow.Count -ne 1 -or $lateUpgradeWindow[0] -ne 'RemoveExistingProducts') {
+    Write-Error "Late MajorUpgrade window must contain only RemoveExistingProducts; found: $($lateUpgradeWindow -join ', ')"
 }
 if ($ExecuteConditions.UnregisterVcamOnRemove -ne 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE') {
     Write-Error "UnregisterVcamOnRemove has unsafe condition '$($ExecuteConditions.UnregisterVcamOnRemove)'"
@@ -228,24 +240,36 @@ if ($ExecuteConditions.UnregisterVcamOnRemove -ne 'REMOVE~="ALL" AND NOT UPGRADI
 if ($ExecuteSequence.UnregisterVcamOnRemove -ge $ExecuteSequence.RemoveRegistryValues) {
     Write-Error "UnregisterVcamOnRemove must run before RemoveRegistryValues"
 }
-foreach ($action in @('RegisterVcamOnInstall', 'UnregisterVcamOnRemove')) {
-    $type = $CustomActionTypes[$action]
-    if (($type -band 0x400) -eq 0 -or ($type -band 0x800) -eq 0) {
-        Write-Error "$action must be deferred and non-impersonated; CustomAction.Type=$type"
-    }
+$registerType = $CustomActionTypes.RegisterVcamOnInstall
+if (($registerType -band 0x200) -eq 0 -or ($registerType -band 0x400) -eq 0 -or
+    ($registerType -band 0x800) -eq 0 -or ($registerType -band 0x100) -ne 0) {
+    Write-Error "RegisterVcamOnInstall must be commit, in-script, and non-impersonated; CustomAction.Type=$registerType"
+}
+$unregisterType = $CustomActionTypes.UnregisterVcamOnRemove
+if (($unregisterType -band 0x400) -eq 0 -or ($unregisterType -band 0x800) -eq 0 -or
+    ($unregisterType -band 0x100) -ne 0 -or ($unregisterType -band 0x200) -ne 0) {
+    Write-Error "UnregisterVcamOnRemove must be deferred and non-impersonated; CustomAction.Type=$unregisterType"
 }
 $restoreType = $CustomActionTypes.RestoreVcamOnUpgradeRollback
 if (($restoreType -band 0x100) -eq 0 -or ($restoreType -band 0x400) -eq 0 -or
-    ($restoreType -band 0x800) -eq 0) {
+    ($restoreType -band 0x800) -eq 0 -or ($restoreType -band 0x200) -ne 0) {
     Write-Error "RestoreVcamOnUpgradeRollback must be rollback, in-script, and non-impersonated; CustomAction.Type=$restoreType"
+}
+$freshRollbackType = $CustomActionTypes.RollbackVcamRegistration
+if (($freshRollbackType -band 0x100) -eq 0 -or ($freshRollbackType -band 0x400) -eq 0 -or
+    ($freshRollbackType -band 0x800) -eq 0 -or ($freshRollbackType -band 0x200) -ne 0) {
+    Write-Error "RollbackVcamRegistration must be rollback, in-script, and non-impersonated; CustomAction.Type=$freshRollbackType"
 }
 if ($ExecuteConditions.RestoreVcamOnUpgradeRollback -ne 'WIX_UPGRADE_DETECTED') {
     Write-Error "RestoreVcamOnUpgradeRollback has unsafe condition '$($ExecuteConditions.RestoreVcamOnUpgradeRollback)'"
 }
+if ($ExecuteConditions.RollbackVcamRegistration -ne 'NOT Installed AND NOT WIX_UPGRADE_DETECTED') {
+    Write-Error "RollbackVcamRegistration has unsafe condition '$($ExecuteConditions.RollbackVcamRegistration)'"
+}
 if ($ExecuteConditions.RegisterVcamOnInstall -ne 'NOT REMOVE') {
     Write-Error "RegisterVcamOnInstall has unexpected condition '$($ExecuteConditions.RegisterVcamOnInstall)'"
 }
-Write-Host "ok: MSI late MajorUpgrade and VCam maintenance sequence is transactionally ordered"
+Write-Host "ok: MSI late MajorUpgrade queues commit/rollback work before the restricted execution window"
 
 # Post-build MSI smoke (REQ-PICOO-VCAM-004): COM registration is declarative WiX data.
 # The Rust cdylib does not expose or require self-registration through regsvr32.

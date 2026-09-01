@@ -73,5 +73,11 @@ if (-not (Test-Path $Msi)) {
     Write-Error "MSI was not produced at $Msi"
 }
 
+Write-Host "Validating MSI execution sequencing with ICE27/ICE63/ICE77"
+& wix msi validate $Msi -ice ICE27 -ice ICE63 -ice ICE77
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "wix msi validate failed with exit code $LASTEXITCODE"
+}
+
 [System.IO.File]::WriteAllText($VersionFile, $MsiVersion)
 Write-Host "MSI ready: $Msi (ProductVersion $MsiVersion)"

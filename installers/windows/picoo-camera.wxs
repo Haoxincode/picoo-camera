@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Picoo Camera Windows installer — REQ-PICOO-VCAM-004 (WiX v4 scaffold) -->
+<!-- Picoo Camera Windows installer — REQ-PICOO-VCAM-004 (WiX 5, v4 schema) -->
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
      xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall"
      xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
@@ -12,8 +12,9 @@
     <!-- Install the new, monotonically versioned maintenance executable before
          removing the related product. Released installers may invoke their own
          legacy uninstall command during RemoveExistingProducts; late scheduling
-         makes that command resolve to the fixed executable while preserving MSI
-         rollback semantics through strict, stable component GUIDs. -->
+         makes that command resolve to the fixed executable. All in-script custom
+         actions are queued before InstallExecute so the restricted late-upgrade
+         window remains InstallExecute -> RemoveExistingProducts -> InstallFinalize. -->
     <MajorUpgrade
         Schedule="afterInstallExecute"
         DowngradeErrorMessage="A newer version of Picoo Camera is already installed." />
@@ -48,7 +49,7 @@
         Id="RegisterVcamOnInstall"
         BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
         DllEntry="WixQuietExec"
-        Execute="deferred"
+        Execute="commit"
         Impersonate="no"
         Return="check" />
 
@@ -92,13 +93,12 @@
         Return="check" />
 
     <InstallExecuteSequence>
-      <Custom Action="RollbackVcamRegistration" Before="RegisterVcamOnInstall" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
-      <!-- If late removal or final registration fails, restore a usable camera
-           before MSI rolls the maintenance executable back to the old product. -->
-      <Custom Action="RestoreVcamOnUpgradeRollback" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
-      <!-- Register after an old product has finished its upgrade-uninstall so
-           that the legacy cleanup cannot remove the newly published camera. -->
-      <Custom Action="RegisterVcamOnInstall" After="RemoveExistingProducts" Condition="NOT REMOVE" />
+      <!-- Rollback and commit actions must be written into their scripts before
+           InstallExecute. The commit action itself runs only after the old product
+           has completed RemoveExistingProducts and InstallFinalize commits. -->
+      <Custom Action="RollbackVcamRegistration" Before="RestoreVcamOnUpgradeRollback" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
+      <Custom Action="RestoreVcamOnUpgradeRollback" Before="RegisterVcamOnInstall" Condition="WIX_UPGRADE_DETECTED" />
+      <Custom Action="RegisterVcamOnInstall" Before="InstallExecute" Condition="NOT REMOVE" />
       <!-- A major upgrade owns the final registration transaction. Only an
            explicit product uninstall removes the system-lifetime camera. -->
       <Custom Action="UnregisterVcamOnRemove" Before="RemoveRegistryValues" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />

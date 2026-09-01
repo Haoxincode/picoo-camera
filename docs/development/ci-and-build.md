@@ -49,7 +49,7 @@ GitHub Actions
 
 - `android` / `windows` / `macos` / `ios` 与 `rust-and-docs` **并行**：平台产物不等待通用测试矩阵；同一 ref 的新 push 仍由 concurrency 取消旧 run。
 - 各 job 通过 `actions/upload-artifact` 上传产物（APK、MSI、DLL 等），供人工验证或后续 release workflow 消费。
-- 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File` 与执行序列表，证明 late MajorUpgrade 会先覆盖新版维护二进制、再移除旧产品并最终注册摄像头。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。macOS 签名发布仍可用经过校验的 `PICOO_RELEASE_BUILD_NUMBER` 显式覆盖普通 CI 构建号。
+- 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File`、`InstallExecuteSequence` 与 `CustomAction` 表，强制 late MajorUpgrade 的受限窗口只包含 `RemoveExistingProducts`，并运行 ICE27/ICE63/ICE77。最终虚拟摄像头注册在 `InstallExecute` 前写入 commit script，于旧产品移除并成功提交后执行。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。macOS 签名发布仍可用经过校验的 `PICOO_RELEASE_BUILD_NUMBER` 显式覆盖普通 CI 构建号。
 - **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
 

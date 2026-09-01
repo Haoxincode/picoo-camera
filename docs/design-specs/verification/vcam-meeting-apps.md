@@ -48,7 +48,7 @@ $p.ExitCode
 ```
 
 - [ ] 升级退出码为 `0`；日志没有 `Return value 3`、`0xc0000005` 或 rollback
-- [ ] 日志顺序为新版 `InstallFiles` / `InstallExecute` → `RemoveExistingProducts` → `RegisterVcamOnInstall`
+- [ ] 日志显示新版文件先安装；rollback/commit actions 在 `InstallExecute` 前排队，执行窗口为 `InstallExecute` → `RemoveExistingProducts` → `InstallFinalize`，随后 commit `RegisterVcamOnInstall`
 - [ ] ARP 只保留新版本；旧 ProductCode 查询为空
 - [ ] `picoo-desktop.exe`、`PicooVirtualCameraSource.dll`、`picoo-vcam-ring-reader.exe` 的 PE FileVersion 与新 MSI build 一致，哈希均来自新包
 - [ ] 64 位 COM `InprocServer32` 指向当前安装目录中的 DLL
