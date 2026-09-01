@@ -39,6 +39,72 @@ struct StatsReporter {
     last_missing_fragments: u64,
     last_resolved_fragments: u64,
     window_decoder_drops: u64,
+    window_decoded_frames: u64,
+}
+
+/// RFC 3550-style inter-arrival jitter estimate without requiring synchronized
+/// sender/receiver wall clocks. Both deltas are durations, so clock offset cancels.
+#[derive(Default)]
+struct InterarrivalJitter {
+    last: Option<(Instant, u64)>,
+    estimate_us: f64,
+}
+
+impl InterarrivalJitter {
+    fn observe(&mut self, arrived_at: Instant, pts_us: u64) {
+        let Some((last_arrival, last_pts_us)) = self.last else {
+            self.last = Some((arrived_at, pts_us));
+            return;
+        };
+        // Ignore an older AU that completed after a newer one. It will still be
+        // ordered/dropped by JitterBuffer, but must not corrupt this estimator.
+        if pts_us <= last_pts_us {
+            return;
+        }
+        let arrival_delta_us = arrived_at.duration_since(last_arrival).as_micros() as f64;
+        let pts_delta_us = pts_us.saturating_sub(last_pts_us) as f64;
+        let variation_us = (arrival_delta_us - pts_delta_us).abs();
+        self.estimate_us += (variation_us - self.estimate_us) / 16.0;
+        self.last = Some((arrived_at, pts_us));
+    }
+
+    fn milliseconds(&self) -> f64 {
+        self.estimate_us / 1_000.0
+    }
+
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+}
+
+#[cfg(test)]
+mod interarrival_jitter_tests {
+    use super::InterarrivalJitter;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn stable_arrivals_have_zero_jitter_and_variation_uses_ewma() {
+        let start = Instant::now();
+        let mut jitter = InterarrivalJitter::default();
+        jitter.observe(start, 1_000_000);
+        jitter.observe(start + Duration::from_millis(33), 1_033_000);
+        assert_eq!(jitter.milliseconds(), 0.0);
+
+        jitter.observe(start + Duration::from_millis(86), 1_066_000);
+        // 20ms variation / RFC-style gain 16 = 1.25ms.
+        assert!((jitter.milliseconds() - 1.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn late_older_access_unit_does_not_corrupt_estimate() {
+        let start = Instant::now();
+        let mut jitter = InterarrivalJitter::default();
+        jitter.observe(start, 100_000);
+        jitter.observe(start + Duration::from_millis(40), 90_000);
+        assert_eq!(jitter.milliseconds(), 0.0);
+        jitter.observe(start + Duration::from_millis(33), 133_000);
+        assert_eq!(jitter.milliseconds(), 0.0);
+    }
 }
 
 impl StatsReporter {
@@ -50,6 +116,7 @@ impl StatsReporter {
             last_missing_fragments: 0,
             last_resolved_fragments: 0,
             window_decoder_drops: 0,
+            window_decoded_frames: 0,
         }
     }
 
@@ -59,6 +126,10 @@ impl StatsReporter {
 
     fn record_decoder_drop(&mut self) {
         self.window_decoder_drops += 1;
+    }
+
+    fn record_decoded_frame(&mut self) {
+        self.window_decoded_frames += 1;
     }
 
     fn due(&self) -> bool {
@@ -102,11 +173,15 @@ pub struct ReceiverSession {
     placeholder_after: Option<Instant>,
     /// Complete-AU jitter buffer before decode (REQ-PICOO-SESSION-002).
     jitter: JitterBuffer,
+    /// Network arrival variation, distinct from buffered media depth.
+    interarrival_jitter: InterarrivalJitter,
     /// Maps wall time onto the media PTS timeline for jitter scheduling.
     /// `(wall_anchor, pts_anchor)` — set on the first buffered AU of a burst.
     jitter_timeline: Option<(Instant, u64)>,
     /// Last ReceiverStats payload sent to the sender (REQ-PICOO-PROTOCOL-006).
     last_stats: Option<picoo_metrics::ReceiverStats>,
+    /// Measured decoded FrameHub output rate over the latest stats window.
+    last_decoded_fps: u32,
     /// Max height advertised in Capabilities (MEDIA-002); default both 720+1080.
     advertised_max_height: u32,
     /// Most recent production decode failure, cleared after a real frame lands.
@@ -145,8 +220,10 @@ impl ReceiverSession {
             last_frame_hold: Duration::from_millis(500),
             placeholder_after: None,
             jitter: JitterBuffer::new(50, 120),
+            interarrival_jitter: InterarrivalJitter::default(),
             jitter_timeline: None,
             last_stats: None,
+            last_decoded_fps: 0,
             advertised_max_height: 1080,
             last_media_error: None,
             decoder_recovery: DecoderRecovery::new(),
@@ -266,6 +343,10 @@ impl ReceiverSession {
         self.last_stats.as_ref()
     }
 
+    pub fn decoded_fps(&self) -> u32 {
+        self.last_decoded_fps
+    }
+
     pub fn is_connected(&self) -> bool {
         self.transport.is_connected()
     }
@@ -340,6 +421,7 @@ impl ReceiverSession {
                     match self.reassembly.ingest(packet) {
                         Ok(Some(access_unit)) => {
                             let pts_us = access_unit.pts_us;
+                            self.interarrival_jitter.observe(Instant::now(), pts_us);
                             let outcome = self.jitter.push(JitterFrame {
                                 pts_us: access_unit.pts_us,
                                 data: access_unit.data,
@@ -445,8 +527,10 @@ impl ReceiverSession {
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
         self.stats_reporter = StatsReporter::new();
         self.jitter.clear();
+        self.interarrival_jitter.reset();
         self.jitter_timeline = None;
         self.last_stats = None;
+        self.last_decoded_fps = 0;
         self.last_media_error = None;
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
@@ -511,6 +595,8 @@ impl ReceiverSession {
             .as_secs_f64()
             .max(0.001);
         let receive_bitrate = ((self.stats_reporter.window_bytes as f64 * 8.0) / elapsed) as u32;
+        self.last_decoded_fps =
+            (self.stats_reporter.window_decoded_frames as f64 / elapsed).round() as u32;
         let reassembly_drop = self
             .reassembly
             .drop_count()
@@ -548,7 +634,7 @@ impl ReceiverSession {
         let stats = ReceiverStatsMsg {
             rtt_ms: link.rtt_ms,
             packet_loss,
-            jitter_ms: self.jitter.depth_ms(),
+            jitter_ms: self.interarrival_jitter.milliseconds(),
             reassembly_drop,
             decoder_drop: self.stats_reporter.window_decoder_drops,
             frame_age_ms,
@@ -579,6 +665,7 @@ impl ReceiverSession {
         self.stats_reporter.last_sent = Instant::now();
         self.stats_reporter.window_bytes = 0;
         self.stats_reporter.window_decoder_drops = 0;
+        self.stats_reporter.window_decoded_frames = 0;
         self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
         self.stats_reporter.last_missing_fragments = self.reassembly.missing_fragment_count();
         self.stats_reporter.last_resolved_fragments = self.reassembly.resolved_fragment_count();

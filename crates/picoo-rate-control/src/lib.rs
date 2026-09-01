@@ -63,6 +63,7 @@ pub struct BitrateController {
     min_bps: u32,
     max_bps: u32,
     stable_seconds: u32,
+    stale_frame_ticks: u32,
     congested_at_floor_ticks: u32,
     downshift_armed: bool,
     upshift_armed: bool,
@@ -81,6 +82,7 @@ impl BitrateController {
             min_bps,
             max_bps,
             stable_seconds: 0,
+            stale_frame_ticks: 0,
             congested_at_floor_ticks: 0,
             downshift_armed: true,
             upshift_armed: false,
@@ -241,7 +243,15 @@ impl BitrateController {
     }
 
     pub fn update(&mut self, stats: &ReceiverStats) -> BitrateAction {
-        let congested = stats.packet_loss > 0.03 || stats.frame_age_ms > 200.0;
+        // ARCH-PICOO-SESSION-001 requires frame age to be *sustained* before
+        // reducing quality. A single decoder/UI scheduling spike is not proof
+        // that the LAN is congested.
+        if stats.frame_age_ms > 200.0 {
+            self.stale_frame_ticks = self.stale_frame_ticks.saturating_add(1);
+        } else {
+            self.stale_frame_ticks = 0;
+        }
+        let congested = stats.packet_loss > 0.03 || self.stale_frame_ticks >= 3;
         if congested {
             self.stable_seconds = 0;
             if self.current_bitrate_bps <= self.min_bps {
@@ -263,7 +273,10 @@ impl BitrateController {
         }
 
         self.congested_at_floor_ticks = 0;
-        if stats.packet_loss < 0.01 && stats.jitter_buffer_depth_ms < 80.0 {
+        if stats.packet_loss < 0.01
+            && stats.jitter_buffer_depth_ms < 80.0
+            && stats.frame_age_ms < 200.0
+        {
             self.downshift_armed = self.active_height > 480;
             self.stable_seconds += 1;
             let near_max = self.current_bitrate_bps >= (self.max_bps * 9) / 10;
@@ -318,6 +331,23 @@ mod tests {
         });
         assert_eq!(action, BitrateAction::Decrease);
         assert!(ctrl.current_bitrate_bps() < 6_000_000);
+    }
+
+    #[test]
+    fn ignores_one_frame_age_spike_but_decreases_when_stale_is_sustained() {
+        let mut ctrl = BitrateController::for_height(720);
+        let stale = ReceiverStats {
+            frame_age_ms: 250.0,
+            ..Default::default()
+        };
+        assert_eq!(ctrl.update(&stale), BitrateAction::Hold);
+        assert_eq!(ctrl.update(&ReceiverStats::default()), BitrateAction::Hold);
+        assert_eq!(ctrl.current_bitrate_bps(), LADDER_720_INITIAL_BPS);
+
+        assert_eq!(ctrl.update(&stale), BitrateAction::Hold);
+        assert_eq!(ctrl.update(&stale), BitrateAction::Hold);
+        assert_eq!(ctrl.update(&stale), BitrateAction::Decrease);
+        assert!(ctrl.current_bitrate_bps() < LADDER_720_INITIAL_BPS);
     }
 
     #[test]

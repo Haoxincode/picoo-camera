@@ -78,6 +78,10 @@ Receiver 每秒向 Sender 发送 `ReceiverStats`：
 
 `RTT`、`packet_loss`、`jitter`、`reassembly_drop`、`decoder_drop`、`frame_age`、`receive_bitrate`、`jitter_buffer_depth`
 
+`jitter` 表示完整 AU 的到达间隔相对 PTS 间隔的 EWMA 变化量，不依赖两端墙钟同步；
+`jitter_buffer_depth` 表示 Receiver 当前已缓冲媒体的 PTS 跨度。两者不得复用同一数值，
+桌面端也不得把缓冲深度标成网络抖动。
+
 其中 `packet_loss` 描述 Receiver 能从已决 AU 观察到的缺失视频 fragment 比例。完整 AU 在完成时、
 不完整 AU 在超时或淘汰时整体归入一个统计窗口；分子是这些 AU 中确认缺失的 fragment 数，分母是
 这些 AU 的期望 fragment 总数（收到 + 确认缺失）。不得把同一 AU 的收到片与缺片拆到两个窗口，

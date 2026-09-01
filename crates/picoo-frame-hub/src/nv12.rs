@@ -1,4 +1,4 @@
-//! NV12 → RGBA conversion for GPUI preview — REQ-PICOO-UI-004.
+//! NV12 → BGRA conversion for GPUI preview — REQ-PICOO-UI-004.
 //! Horizontal mirror helper — REQ-PICOO-MEDIA-004 (remote output).
 //! Clockwise rotation helper — REQ-PICOO-MEDIA-009 (upright pixels for VCam).
 
@@ -10,15 +10,15 @@ fn clamp_u8(v: i32) -> u8 {
     v.clamp(0, 255) as u8
 }
 
-/// BT.709 limited-range YUV → RGBA, matching the V1 stream color contract.
-fn yuv_to_rgba(y: i32, u: i32, v: i32) -> [u8; 4] {
+/// BT.709 limited-range YUV → BGRA, matching GPUI's raw `RenderImage` contract.
+fn yuv_to_bgra(y: i32, u: i32, v: i32) -> [u8; 4] {
     let c = (y - 16).max(0);
     let d = u - 128;
     let e = v - 128;
     let r = (298 * c + 459 * e + 128) >> 8;
     let g = (298 * c - 55 * d - 136 * e + 128) >> 8;
     let b = (298 * c + 541 * d + 128) >> 8;
-    [clamp_u8(r), clamp_u8(g), clamp_u8(b), 255]
+    [clamp_u8(b), clamp_u8(g), clamp_u8(r), 255]
 }
 
 /// Horizontally mirror an NV12 frame in place (Y plane + interleaved UV).
@@ -145,17 +145,17 @@ pub fn nv12_rotate_clockwise(
     Some((out_w, out_h, out_stride, out))
 }
 
-/// Downscaled RGBA preview suitable for GPUI `RenderImage` (max width 640 by default).
-pub fn nv12_preview_rgba(
+/// Downscaled BGRA preview suitable for GPUI `RenderImage` (max width 640 by default).
+pub fn nv12_preview_bgra(
     width: u32,
     height: u32,
     stride: u32,
     nv12: &[u8],
 ) -> Option<(u32, u32, Vec<u8>)> {
-    nv12_preview_rgba_max_width(width, height, stride, nv12, PREVIEW_MAX_WIDTH)
+    nv12_preview_bgra_max_width(width, height, stride, nv12, PREVIEW_MAX_WIDTH)
 }
 
-pub fn nv12_preview_rgba_max_width(
+pub fn nv12_preview_bgra_max_width(
     width: u32,
     height: u32,
     stride: u32,
@@ -185,7 +185,7 @@ pub fn nv12_preview_rgba_max_width(
     let out_h = ((height as f32 * scale).round() as u32).max(1);
     let y_stride = stride as usize;
     let uv_offset = y_stride * height as usize;
-    let mut rgba = vec![0u8; (out_w * out_h * 4) as usize];
+    let mut bgra = vec![0u8; (out_w * out_h * 4) as usize];
 
     for oy in 0..out_h {
         let sy = ((oy as f32 / out_h as f32) * height as f32) as u32;
@@ -199,13 +199,13 @@ pub fn nv12_preview_rgba_max_width(
             let y = nv12[y_idx] as i32;
             let u = nv12.get(uv_idx).copied().unwrap_or(128) as i32;
             let v = nv12.get(uv_idx + 1).copied().unwrap_or(128) as i32;
-            let px = yuv_to_rgba(y, u, v);
+            let px = yuv_to_bgra(y, u, v);
             let dst = ((oy * out_w + ox) * 4) as usize;
-            rgba[dst..dst + 4].copy_from_slice(&px);
+            bgra[dst..dst + 4].copy_from_slice(&px);
         }
     }
 
-    Some((out_w, out_h, rgba))
+    Some((out_w, out_h, bgra))
 }
 
 #[cfg(test)]
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn preview_from_placeholder_nv12() {
         let nv12 = nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT);
-        let (w, h, rgba) = nv12_preview_rgba(
+        let (w, h, bgra) = nv12_preview_bgra(
             PLACEHOLDER_WIDTH,
             PLACEHOLDER_HEIGHT,
             PLACEHOLDER_WIDTH,
@@ -225,10 +225,10 @@ mod tests {
         .expect("preview");
         assert!(w <= PREVIEW_MAX_WIDTH);
         assert!(h > 0);
-        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        assert_eq!(bgra.len(), (w * h * 4) as usize);
         // Black frame → near-zero RGB (alpha is 255)
-        assert!(rgba[0] <= 16 && rgba[1] <= 16 && rgba[2] <= 16);
-        assert_eq!(rgba[3], 255);
+        assert!(bgra[0] <= 16 && bgra[1] <= 16 && bgra[2] <= 16);
+        assert_eq!(bgra[3], 255);
     }
 
     #[test]
@@ -241,9 +241,10 @@ mod tests {
             uv.copy_from_slice(&[90, 240]);
         }
 
-        let (_, _, rgba) =
-            nv12_preview_rgba_max_width(width, height, width, &nv12, 1).expect("preview");
-        assert_eq!(&rgba[..4], &[255, 24, 0, 255]);
+        let (_, _, bgra) =
+            nv12_preview_bgra_max_width(width, height, width, &nv12, 1).expect("preview");
+        // This fixture is red in RGB; GPUI requires the raw bytes in BGRA order.
+        assert_eq!(&bgra[..4], &[0, 24, 255, 255]);
     }
 
     #[test]

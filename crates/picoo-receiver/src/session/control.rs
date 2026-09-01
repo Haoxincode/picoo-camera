@@ -131,7 +131,10 @@ impl ReceiverSession {
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
         self.stats_reporter = super::StatsReporter::new();
         self.jitter.clear();
+        self.interarrival_jitter.reset();
         self.jitter_timeline = None;
+        self.last_stats = None;
+        self.last_decoded_fps = 0;
         self.decoder_recovery.reset_session();
         self.placeholder_after = None;
         let _ = self.publish_waiting_placeholder();

@@ -162,7 +162,7 @@ impl PicooDesktopApp {
                     .child(network_detail_row(
                         "activity",
                         "传输质量",
-                        "RTT 延迟 · 丢包率 · 抖动",
+                        "RTT 延迟 · 丢包率 · 网络抖动",
                         format!(
                             "{:.0} ms · {:.1}% · {:.1} ms",
                             snapshot.stream_metrics.latency_ms,

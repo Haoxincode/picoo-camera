@@ -94,14 +94,15 @@ fn receiver_sends_stats_to_paired_sender() {
 
     let stats = sender.last_receiver_stats().expect("receiver stats");
     assert!(stats.receive_bitrate > 0);
-    // 1s stats interval with a static frame ⇒ high frame_age ⇒ bitrate decrease.
+    // One idle stats interval produces a stale frame, but ARCH-PICOO-SESSION-001
+    // requires sustained age growth before sacrificing quality.
     assert!(stats.frame_age_ms > 200.0);
     // REQ-PICOO-PROTOCOL-006: RTT comes from transport link stats (loopback ≥ 0).
     assert!(stats.rtt_ms >= 0.0);
     assert!(stats.rtt_ms < 5_000.0);
     // Healthy loopback should not report pathological loss.
     assert!(stats.packet_loss < 0.5);
-    assert_eq!(sender.last_bitrate_action(), BitrateAction::Decrease);
+    assert_eq!(sender.last_bitrate_action(), BitrateAction::Hold);
 }
 
 #[test]

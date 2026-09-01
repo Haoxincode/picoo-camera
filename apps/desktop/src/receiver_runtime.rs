@@ -67,6 +67,8 @@ pub struct ReceiverSnapshot {
     pub pairing_short_code: Option<String>,
     /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
     pub link_jitter_ms: f64,
+    /// Complete-AU playout buffer depth; not a network jitter measurement.
+    pub jitter_buffer_depth_ms: f64,
     pub ingress: IngressStats,
     pub stream_config: Option<StreamConfig>,
     pub stream_metrics: picoo_metrics::StreamMetrics,
@@ -336,6 +338,11 @@ impl ReceiverRuntime {
                 .last_stats()
                 .map(|s| finite_metric(s.jitter_ms))
                 .unwrap_or(0.0),
+            jitter_buffer_depth_ms: self
+                .receiver
+                .last_stats()
+                .map(|s| finite_metric(s.jitter_buffer_depth_ms))
+                .unwrap_or(0.0),
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
             stream_metrics: {
@@ -344,7 +351,7 @@ impl ReceiverRuntime {
                 picoo_metrics::StreamMetrics {
                     width: cfg.map(|c| c.width).unwrap_or(0),
                     height: cfg.map(|c| c.height).unwrap_or(0),
-                    fps: 30,
+                    fps: self.receiver.decoded_fps(),
                     bitrate_bps: stats.map(|s| s.receive_bitrate).unwrap_or(0),
                     // `frame_age_ms` starts when decode completes; adding it to
                     // RTT double-counts local display residency and is not an

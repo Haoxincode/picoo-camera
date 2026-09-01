@@ -422,7 +422,12 @@ impl PicooDesktopApp {
         let res_label = snapshot
             .stream_config
             .as_ref()
-            .map(|config| format!("{}p · {} FPS", config.height, config.fps))
+            .map(|config| {
+                format!(
+                    "{}p · {} FPS 实测",
+                    config.height, snapshot.stream_metrics.fps
+                )
+            })
             .unwrap_or_else(|| "—".into());
         let sender_name = snapshot
             .active_sender

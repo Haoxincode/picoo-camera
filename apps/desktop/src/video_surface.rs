@@ -22,13 +22,14 @@ impl VideoSurface {
             return false;
         }
         self.last_sequence = slot.sequence;
-        if let Some((width, height, rgba)) = picoo_frame_hub::nv12_preview_rgba(
+        if let Some((width, height, bgra)) = picoo_frame_hub::nv12_preview_bgra(
             slot.width,
             slot.height,
             slot.stride,
             slot.pixel_data.as_ref(),
         ) {
-            if let Some(buffer) = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, rgba) {
+            // GPUI's RenderImage stores `image::Frame`, but its raw upload contract is BGRA.
+            if let Some(buffer) = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, bgra) {
                 let frame = Frame::new(buffer);
                 self.render_image = Some(Arc::new(RenderImage::new(smallvec![frame])));
                 return true;

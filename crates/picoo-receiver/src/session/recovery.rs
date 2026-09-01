@@ -98,6 +98,7 @@ impl ReceiverSession {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
             self.jitter.clear();
+            self.interarrival_jitter.reset();
             self.jitter_timeline = None;
             tracing::warn!(reason = reason.label(), "decoder awaiting fresh IDR");
         }
@@ -147,6 +148,7 @@ impl ReceiverSession {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
             self.jitter.clear();
+            self.interarrival_jitter.reset();
             self.jitter_timeline = None;
         }
         let session = self

@@ -137,6 +137,7 @@ impl ReceiverSession {
                     &frame.nv12,
                 )?;
                 self.ingress.decoded_frames += 1;
+                self.stats_reporter.record_decoded_frame();
                 self.last_media_error = None;
             }
             None => {

@@ -176,18 +176,26 @@ impl PicooDesktopApp {
                                         .stream_config
                                         .as_ref()
                                         .map(|config| {
-                                            format!("{}p · {} FPS", config.height, config.fps)
+                                            format!(
+                                                "{}p · {} FPS 实测",
+                                                config.height, snapshot.stream_metrics.fps
+                                            )
                                         })
                                         .unwrap_or_else(|| "—".into()),
                                     cx,
                                 ))
                                 .child(metric_row("接收码率", format!("{bitrate:.1} Mbps"), cx))
                                 .child(metric_row(
-                                    "RTT / 抖动",
+                                    "RTT / 网络抖动",
                                     format!(
                                         "{:.0} ms · {:.1} ms",
                                         snapshot.stream_metrics.latency_ms, snapshot.link_jitter_ms
                                     ),
+                                    cx,
+                                ))
+                                .child(metric_row(
+                                    "播放缓冲",
+                                    format!("{:.1} ms", snapshot.jitter_buffer_depth_ms),
                                     cx,
                                 )),
                         )
