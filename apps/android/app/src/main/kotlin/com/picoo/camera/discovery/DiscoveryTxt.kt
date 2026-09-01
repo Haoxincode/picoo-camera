@@ -10,6 +10,11 @@ import com.picoo.camera.jni.PicooNative
 object DiscoveryTxt {
     const val SERVICE_TYPE: String = "_picoocam._udp"
 
+    internal data class JniAttributes(
+        val keys: Array<String>,
+        val values: Array<ByteArray>,
+    )
+
     data class Parsed(
         val receiverId: String,
         val displayName: String,
@@ -20,11 +25,10 @@ object DiscoveryTxt {
     )
 
     fun parseAttributes(raw: Map<String, ByteArray?>): Parsed? {
-        if (raw.isEmpty() || raw.values.any { it == null }) return null
-        val entries = raw.entries.toList()
+        val attributes = copyForJni(raw) ?: return null
         val fields = PicooNative.parseDiscoveryTxt(
-            keys = entries.map { it.key }.toTypedArray(),
-            values = entries.map { requireNotNull(it.value) }.toTypedArray(),
+            keys = attributes.keys,
+            values = attributes.values,
         ) ?: return null
         if (fields.size < 6) return null
         return Parsed(
@@ -34,6 +38,31 @@ object DiscoveryTxt {
             quicPort = fields[3].toInt(),
             pairingState = fields[4],
             fingerprintPrefix = fields[5],
+        )
+    }
+
+    /**
+     * Copy Android's platform-owned NSD attribute map without using Collection.toArray().
+     *
+     * Some Android ArrayMap-backed unmodifiable entry sets, including Xiaomi 15's HyperOS
+     * implementation, support iteration but throw UnsupportedOperationException from toArray().
+     * Kotlin's Collection.toList() delegates to that method and would terminate ConnectivityThread.
+     */
+    internal fun copyForJni(raw: Map<String, ByteArray?>): JniAttributes? {
+        if (raw.isEmpty()) return null
+        val keys = ArrayList<String>(raw.size)
+        val values = ArrayList<ByteArray>(raw.size)
+        val iterator = raw.entries.iterator()
+        while (iterator.hasNext()) {
+            val entry = iterator.next()
+            val value = entry.value ?: return null
+            keys.add(entry.key)
+            values.add(value)
+        }
+        if (keys.isEmpty()) return null
+        return JniAttributes(
+            keys = keys.toTypedArray(),
+            values = values.toTypedArray(),
         )
     }
 }
