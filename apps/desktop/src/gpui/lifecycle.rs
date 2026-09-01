@@ -186,7 +186,7 @@ impl PicooDesktopApp {
                                     cx.background_executor()
                                         .timer(Duration::from_millis(0))
                                         .await;
-                                    let _ = cx.update(|cx| cx.activate(true));
+                                    cx.update(|cx| cx.activate(true));
                                 })
                                 .detach();
                             }

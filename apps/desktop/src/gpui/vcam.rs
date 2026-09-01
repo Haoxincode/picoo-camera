@@ -30,6 +30,9 @@ pub(super) enum VcamSetupState {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+// These operations are constructed only by the macOS extension lifecycle, but
+// remain in the shared state enum so its rendering and unit tests stay common.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(super) enum VcamSetupOperation {
     Activate,
     Deactivate,
@@ -53,6 +56,7 @@ fn macos_deactivation_action_visible(status: VirtualCameraStatus) -> bool {
     )
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn resolve_pending_macos_vcam_status(
     status: VirtualCameraStatus,
     pending: Option<&PendingMacosCameraExtension>,
@@ -88,6 +92,7 @@ fn resolve_pending_macos_vcam_status(
     }
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn pending_macos_vcam_display_status(
     pending: Option<&PendingMacosCameraExtension>,
     fallback: VirtualCameraStatus,

@@ -458,9 +458,10 @@ fn read_registry_string(key: &str, name: Option<&str>) -> Option<String> {
         return None;
     }
     bytes.truncate(size as usize);
-    let wide_path: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let wide_path: Vec<u16> = pairs
+        .iter()
+        .map(|&pair| u16::from_le_bytes(pair))
         .take_while(|&c| c != 0)
         .collect();
     if wide_path.is_empty() {

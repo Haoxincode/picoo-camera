@@ -101,7 +101,7 @@ fn vcam_dll_present() -> bool {
 fn candidate_vcam_dll_paths() -> Vec<PathBuf> {
     #[cfg(all(windows, feature = "windows-vcam"))]
     {
-        return crate::vcam_register::candidate_vcam_dll_paths();
+        crate::vcam_register::candidate_vcam_dll_paths()
     }
     #[cfg(not(all(windows, feature = "windows-vcam")))]
     {
