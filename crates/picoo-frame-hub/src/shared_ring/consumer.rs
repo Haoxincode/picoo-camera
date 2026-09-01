@@ -41,39 +41,17 @@ impl SharedFrameRingConsumer {
         Ok(consumer)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub fn open_file(
         path: impl AsRef<std::path::Path>,
         max_frame_bytes: usize,
     ) -> Result<Self, SharedRingError> {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        use memmap2::MmapOptions;
-
-        use super::lock::map_file_err;
-        use super::macos_file::{validate_file_size, FileMapping};
-
         let path = path.as_ref();
-        let size = layout_size(max_frame_bytes);
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_NONBLOCK)
-            .open(path)
-            .map_err(|error| map_file_err(path, error))?;
-        validate_file_size(path, &file, size)?;
-        // SAFETY: The file size is validated. Consumers only mutate the
-        // per-slot reader lease counter; frame metadata and pixels are read-only.
-        let mapping = unsafe { MmapOptions::new().len(size).map_mut(&file) }
-            .map_err(|error| map_file_err(path, error))?;
+        let mapping = super::file_mapping::open_file_mapping(path, max_frame_bytes)?;
         let consumer = Self {
-            mapping: ConsumerMapping::File(FileMapping {
-                mapping,
-                path: path.to_path_buf(),
-            }),
+            mapping: ConsumerMapping::File(mapping),
             max_frame_bytes,
         };
-        consumer.validate_header()?;
         Ok(consumer)
     }
 
@@ -87,8 +65,8 @@ impl SharedFrameRingConsumer {
     pub fn is_current_generation(&self) -> bool {
         match &self.mapping {
             ConsumerMapping::Shared(mapping) => mapping.is_current_generation(),
-            #[cfg(target_os = "macos")]
-            ConsumerMapping::File(_) => true,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            ConsumerMapping::File(mapping) => mapping.is_current_generation(),
         }
     }
 

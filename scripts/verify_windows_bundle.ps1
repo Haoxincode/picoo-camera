@@ -84,6 +84,12 @@ $sequenceView = $null
 $sequenceRecord = $null
 $customActionView = $null
 $customActionRecord = $null
+$sharedRingDirectoryView = $null
+$sharedRingDirectoryRecord = $null
+$sharedRingAclView = $null
+$sharedRingAclRecord = $null
+$sharedRingComponentView = $null
+$sharedRingComponentRecord = $null
 $FileVersions = @{}
 $ExecuteSequence = @{}
 $ExecuteConditions = @{}
@@ -148,7 +154,59 @@ try {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($customActionRecord)
         $customActionRecord = $null
     }
+
+    $sharedRingDirectoryView = $database.OpenView(
+        "SELECT ``Directory_Parent``, ``DefaultDir`` FROM ``Directory`` WHERE ``Directory`` = 'PicooFrameDataFolder'"
+    )
+    $sharedRingDirectoryView.Execute()
+    $sharedRingDirectoryRecord = $sharedRingDirectoryView.Fetch()
+    if ($null -eq $sharedRingDirectoryRecord) {
+        Write-Error "PicooCamera.msi does not provision PicooFrameDataFolder"
+    }
+    $SharedRingDirectoryParent = [string]$sharedRingDirectoryRecord.StringData(1)
+    $SharedRingDirectoryName = [string]$sharedRingDirectoryRecord.StringData(2)
+
+    $sharedRingAclView = $database.OpenView(
+        "SELECT ``LockObject``, ``Table``, ``SDDLText`` FROM ``MsiLockPermissionsEx`` WHERE ``MsiLockPermissionsEx`` = 'SharedRingDirectoryAcl'"
+    )
+    $sharedRingAclView.Execute()
+    $sharedRingAclRecord = $sharedRingAclView.Fetch()
+    if ($null -eq $sharedRingAclRecord) {
+        Write-Error "PicooCamera.msi does not contain the SharedRingDirectoryAcl permission row"
+    }
+    $SharedRingAclObject = [string]$sharedRingAclRecord.StringData(1)
+    $SharedRingAclTable = [string]$sharedRingAclRecord.StringData(2)
+    $SharedRingAclSddl = [string]$sharedRingAclRecord.StringData(3)
+
+    $sharedRingComponentView = $database.OpenView(
+        "SELECT ``Directory_``, ``KeyPath`` FROM ``Component`` WHERE ``Component`` = 'SharedRingDirectory'"
+    )
+    $sharedRingComponentView.Execute()
+    $sharedRingComponentRecord = $sharedRingComponentView.Fetch()
+    if ($null -eq $sharedRingComponentRecord) {
+        Write-Error "PicooCamera.msi does not contain the SharedRingDirectory component"
+    }
+    $SharedRingComponentDirectory = [string]$sharedRingComponentRecord.StringData(1)
+    $SharedRingComponentKeyPath = [string]$sharedRingComponentRecord.StringData(2)
 } finally {
+    if ($null -ne $sharedRingComponentRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sharedRingComponentRecord)
+    }
+    if ($null -ne $sharedRingComponentView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sharedRingComponentView)
+    }
+    if ($null -ne $sharedRingAclRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sharedRingAclRecord)
+    }
+    if ($null -ne $sharedRingAclView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sharedRingAclView)
+    }
+    if ($null -ne $sharedRingDirectoryRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sharedRingDirectoryRecord)
+    }
+    if ($null -ne $sharedRingDirectoryView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sharedRingDirectoryView)
+    }
     if ($null -ne $customActionRecord) {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($customActionRecord)
     }
@@ -189,6 +247,23 @@ if ($ProductVersion -ne $ExpectedMsiVersion) {
     Write-Error "MSI ProductVersion '$ProductVersion' does not match generated version '$ExpectedMsiVersion'"
 }
 Write-Host "ok: PicooCamera.msi ProductVersion is $ProductVersion"
+
+if ($SharedRingDirectoryParent -ne 'CommonAppDataFolder' -or
+    -not $SharedRingDirectoryName.EndsWith('Picoo Camera', [StringComparison]::OrdinalIgnoreCase)) {
+    Write-Error "Shared ring directory must resolve below CommonAppDataFolder as Picoo Camera; got parent='$SharedRingDirectoryParent' name='$SharedRingDirectoryName'"
+}
+if ($SharedRingAclObject -ne 'PicooFrameDataFolder' -or $SharedRingAclTable -ne 'CreateFolder') {
+    Write-Error "SharedRingDirectoryAcl must target the PicooFrameDataFolder CreateFolder row"
+}
+if ($SharedRingComponentDirectory -ne 'PicooFrameDataFolder' -or $SharedRingComponentKeyPath) {
+    Write-Error "SharedRingDirectory must use PicooFrameDataFolder itself as the MSI component key path"
+}
+foreach ($requiredAce in @(';;;LS)', ';;;BU)')) {
+    if (-not $SharedRingAclSddl.Contains($requiredAce)) {
+        Write-Error "SharedRingDirectoryAcl is missing required ACE '$requiredAce': $SharedRingAclSddl"
+    }
+}
+Write-Host "ok: MSI provisions ProgramData\Picoo Camera for Receiver and Local Service shared-ring access"
 
 # REQ-PICOO-VCAM-009: the late MajorUpgrade bridge only works if Windows
 # Installer can replace all maintenance binaries before the old product runs.

@@ -3,6 +3,154 @@ use crate::shared_ring::layout::{meta_at, slot_meta_at, WRITER_LEASE};
 use crate::shared_ring::mapping::{ProducerMapping, SlotLockAttempt};
 use std::sync::atomic::Ordering;
 
+fn file_ring_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("{}.bin", test_ring_name()))
+}
+
+fn cleanup_file_ring(path: &std::path::Path) {
+    for index in 0..crate::SLOT_COUNT {
+        let _ = std::fs::remove_file(crate::shared_ring::lock::slot_lock_path(path, index));
+    }
+    let _ = std::fs::remove_file(crate::shared_ring::lock::producer_lock_path(path));
+    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn windows_machine_file_ring_roundtrips_and_reopens() {
+    let path = file_ring_path();
+    let max = nv12_byte_size(64, 64);
+    let frame = nv12_black(64, 64);
+    let mut producer =
+        SharedFrameRingProducer::open_or_create_file(&path, max).expect("file producer");
+    producer
+        .publish_nv12(64, 64, 64, 0, 42, &frame)
+        .expect("file publish");
+    let consumer = SharedFrameRingConsumer::open_file(&path, max).expect("file consumer");
+    let view = consumer.latest_frame().expect("file frame");
+    assert_eq!(view.timestamp_us, 42);
+    assert_eq!(view.nv12, frame);
+    drop(view);
+    drop((consumer, producer));
+
+    let mut reopened =
+        SharedFrameRingProducer::open_or_create_file(&path, max).expect("reopened producer");
+    reopened
+        .publish_nv12(64, 64, 64, 0, 43, &frame)
+        .expect("reopened publish");
+    let consumer = SharedFrameRingConsumer::open_file(&path, max).expect("reopened consumer");
+    assert_eq!(
+        consumer
+            .latest_frame()
+            .expect("reopened frame")
+            .timestamp_us,
+        43
+    );
+
+    drop((consumer, reopened));
+    cleanup_file_ring(&path);
+}
+
+#[test]
+fn windows_machine_file_ring_rejects_a_second_producer() {
+    let path = file_ring_path();
+    let max = nv12_byte_size(64, 64);
+    let producer = SharedFrameRingProducer::open_or_create_file(&path, max).expect("file producer");
+    let error = match SharedFrameRingProducer::open_or_create_file(&path, max) {
+        Ok(_) => panic!("second file producer must fail"),
+        Err(error) => error,
+    };
+    assert!(matches!(
+        error,
+        SharedRingError::ProducerAlreadyRunning(ref locked_path) if locked_path == &path
+    ));
+
+    drop(producer);
+    cleanup_file_ring(&path);
+}
+
+#[test]
+fn windows_machine_file_ring_replaces_an_invalid_generation() {
+    let path = file_ring_path();
+    let max = nv12_byte_size(64, 64);
+    let invalid =
+        SharedFrameRingProducer::open_or_create_file(&path, max).expect("invalid file producer");
+    let old_consumer = SharedFrameRingConsumer::open_file(&path, max).expect("old consumer");
+    unsafe {
+        (&mut *meta_at(invalid.mapping.as_ptr())).magic = 0;
+    }
+    drop(invalid);
+
+    let mut replacement =
+        SharedFrameRingProducer::open_or_create_file(&path, max).expect("replacement producer");
+    assert!(!old_consumer.is_current_generation());
+    let frame = nv12_black(64, 64);
+    replacement
+        .publish_nv12(64, 64, 64, 0, 44, &frame)
+        .expect("replacement publish");
+    let new_consumer = SharedFrameRingConsumer::open_file(&path, max).expect("new consumer");
+    assert_eq!(
+        new_consumer
+            .latest_frame()
+            .expect("replacement frame")
+            .timestamp_us,
+        44
+    );
+
+    drop((new_consumer, old_consumer, replacement));
+    cleanup_file_ring(&path);
+}
+
+#[test]
+#[ignore = "helper process for windows_machine_file_ring_recovers_after_process_exit"]
+fn windows_crash_file_producer_helper() {
+    let Some(path) = std::env::var_os("PICOO_TEST_CRASH_FILE_RING_PATH") else {
+        return;
+    };
+    let max = nv12_byte_size(64, 64);
+    let frame = nv12_black(64, 64);
+    let mut producer =
+        SharedFrameRingProducer::open_or_create_file(path, max).expect("crash file producer");
+    producer
+        .publish_nv12(64, 64, 64, 0, 1, &frame)
+        .expect("crash file frame");
+    std::process::exit(0);
+}
+
+#[test]
+fn windows_machine_file_ring_recovers_after_process_exit() {
+    let path = file_ring_path();
+    let status = std::process::Command::new(std::env::current_exe().expect("test executable"))
+        .args([
+            "--ignored",
+            "--exact",
+            "shared_ring::tests::windows::windows_crash_file_producer_helper",
+            "--nocapture",
+        ])
+        .env("PICOO_TEST_CRASH_FILE_RING_PATH", &path)
+        .status()
+        .expect("crash file helper");
+    assert!(status.success());
+
+    let max = nv12_byte_size(64, 64);
+    let frame = nv12_black(64, 64);
+    let mut recovered =
+        SharedFrameRingProducer::open_or_create_file(&path, max).expect("recovered file producer");
+    recovered
+        .publish_nv12(64, 64, 64, 0, 2, &frame)
+        .expect("post-crash file frame");
+    let consumer = SharedFrameRingConsumer::open_file(&path, max).expect("file consumer");
+    assert_eq!(
+        consumer
+            .latest_frame()
+            .expect("post-crash file frame")
+            .timestamp_us,
+        2
+    );
+
+    drop((consumer, recovered));
+    cleanup_file_ring(&path);
+}
+
 #[test]
 fn windows_kernel_lock_recovers_reader_lease_after_consumer_termination() {
     let name = test_ring_name();
@@ -84,7 +232,9 @@ fn windows_open_or_create_replaces_an_invalid_persisted_generation() {
     unsafe {
         (&mut *meta_at(invalid.mapping.as_ptr())).magic = 0;
     }
-    let ProducerMapping::Shared(mapping) = &mut invalid.mapping;
+    let ProducerMapping::Shared(mapping) = &mut invalid.mapping else {
+        panic!("named test ring must use shared mapping");
+    };
     mapping.mapping.set_owner(false);
     drop(invalid);
 

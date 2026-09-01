@@ -34,6 +34,9 @@ MFCreateVirtualCamera
 - Shared Frame Ring
 
 Media Source 作为独立组件安装并注册，由 Windows Frame Server 加载。
+Frame Server 会在 Local Service / Session 0 边界加载 Source，因此 Source 与交互用户 Receiver
+通过 MSI 预置 ACL 的 `%ProgramData%\Picoo Camera` mmap 文件环交接帧；用户 `%TEMP%`、Profile
+路径和 session-local named mapping 都不得作为生产数据面。Source 只打开固定环文件，不创建权限边界。
 
 Windows 输出媒体类型由 Frame Server 客户端在 `Start` 的 presentation descriptor 中选择，
 并在该次运行周期内保持稳定。Shared Frame Ring 的 producer 分辨率不是重新协商信号；MF Source
@@ -79,7 +82,7 @@ Rust Receiver Core
 
 ### 安装与修复
 
-- Windows 安装器：注册 COM/Media Foundation 组件、配置防火墙规则、卸载清理。per-machine 安装与显式 UAC 修复统一创建 AllUsers 设备，不把设备可见性绑定到执行安装的某个账户。
+- Windows 安装器：注册 COM/Media Foundation 组件、配置防火墙规则、创建带继承 ACL 的 ProgramData 共享环目录、卸载清理。per-machine 安装与显式 UAC 修复统一创建 AllUsers 设备，不把设备可见性或实时帧访问绑定到执行安装的某个账户。
 - macOS 发布：签名、Hardened Runtime、Developer ID、Notarization、扩展激活引导。
 - 桌面“虚拟摄像头”页提供状态检查与修复入口；Windows 显式修复通过 UAC 提权的独立维护进程写系统注册，GPUI 进程只负责发起、等待与展示结果。
 

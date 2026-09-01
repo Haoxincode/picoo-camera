@@ -106,6 +106,12 @@ need "$WXS" 'Component Id="VcamDll" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E72"'
 need "$WXS" 'Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73"'
 need "$WXS" 'Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74"'
 need "$WXS" 'Component Id="FirewallMdns" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E75"'
+need "$WXS" 'Id="SharedRingDirectory"'
+need "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E76"'
+need "$WXS" 'Id="PicooFrameDataFolder" Name="Picoo Camera"'
+need "$WXS" 'Id="SharedRingDirectoryAcl"'
+need "$WXS" ';;;LS)'
+need "$WXS" ';;;BU)'
 # COM registration is declarative; self-registration is intentionally absent.
 for forbidden in RegisterVcamDll RegisterVcamComDll regsvr32.exe DllRegisterServer; do
   if grep -qF "$forbidden" "$WXS"; then

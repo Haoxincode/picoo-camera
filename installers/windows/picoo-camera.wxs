@@ -112,6 +112,9 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="ApplicationProgramsFolder" Name="Picoo Camera" />
     </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="PicooFrameDataFolder" Name="Picoo Camera" />
+    </StandardDirectory>
   </Fragment>
 
   <Fragment>
@@ -159,6 +162,20 @@
       </Component>
       <Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73">
         <File Id="PicooRingReader" Source="!(bindpath.Bundle)\picoo-vcam-ring-reader.exe" KeyPath="yes" />
+      </Component>
+      <!-- REQ-PICOO-FRAME-003: Frame Server loads the source as Local Service
+           in Session 0. Provision one machine-wide file-ring directory whose
+           inherited ACL lets the interactive Receiver publish and the service
+           consumer read/lock the same files. -->
+      <Component
+          Id="SharedRingDirectory"
+          Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E76"
+          Directory="PicooFrameDataFolder">
+        <CreateFolder>
+          <PermissionEx
+              Id="SharedRingDirectoryAcl"
+              Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;GRGWGX;;;LS)(A;OICI;GRGWGX;;;BU)" />
+        </CreateFolder>
       </Component>
       <!-- REQ-PICOO-VCAM-004: stable QUIC ingress rule. -->
       <Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74">

@@ -13,10 +13,12 @@ mod lock;
 mod mapping;
 mod producer;
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod file_mapping;
 #[cfg(target_os = "macos")]
 mod macos_app_group;
-#[cfg(target_os = "macos")]
-mod macos_file;
+#[cfg(target_os = "windows")]
+mod windows_machine;
 
 #[cfg(test)]
 mod tests;
@@ -32,6 +34,8 @@ pub use macos_app_group::{
     MACOS_UNSIGNED_BUILD_INFO_KEY,
 };
 pub use producer::SharedFrameRingProducer;
+#[cfg(target_os = "windows")]
+pub use windows_machine::{windows_shared_ring_path, WINDOWS_SHARED_RING_DIRECTORY};
 
 #[derive(Debug, Error)]
 pub enum SharedRingError {

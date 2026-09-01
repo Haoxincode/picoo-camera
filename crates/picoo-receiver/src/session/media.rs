@@ -11,12 +11,21 @@ use picoo_media_decode::AccessUnitDecoder;
 
 use super::ReceiverSession;
 use crate::ReceiverError;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::DEFAULT_SHARED_RING_NAME;
 
 impl ReceiverSession {
     /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
     pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
+        #[cfg(target_os = "windows")]
+        let ring = if name == DEFAULT_SHARED_RING_NAME {
+            SharedFrameRingProducer::open_or_create_file(
+                picoo_frame_hub::windows_shared_ring_path(name),
+                picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+            )?
+        } else {
+            SharedFrameRingProducer::open_or_create(name, picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES)?
+        };
         #[cfg(target_os = "macos")]
         let ring = if name == DEFAULT_SHARED_RING_NAME {
             let path = picoo_frame_hub::macos_app_group_ring_path(name)?;
@@ -27,7 +36,7 @@ impl ReceiverSession {
         } else {
             SharedFrameRingProducer::open_or_create(name, picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES)?
         };
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         let ring = SharedFrameRingProducer::open_or_create(
             name,
             picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,

@@ -66,7 +66,7 @@ $p.ExitCode
 1. [ ] 启动 **picoo-desktop**，确认托盘图标存在
 2. [ ] **设置 → 蓝牙和设备 → 摄像头**（或 **Windows 相机**）→ 下拉选择名称中包含 **Picoo Camera** 的设备；Windows 可能显示为 `Picoo Camera (Windows Virtual Camera)`
 3. [ ] **未开 Streaming**：预览为占位（Waiting for phone…）
-4. [ ] **Android 已 Streaming**：预览为手机画面，方向直立、无明显撕裂
+4. [ ] **Android 已 Streaming**：预览为手机画面，方向直立、无明显撕裂；安装目录运行 `picoo-vcam-ring-reader.exe` 时应显示附着到 `%ProgramData%\Picoo Camera\frame-ring-*.bin` 并持续递增 `seq`
 5. [ ] 若列表无 Picoo Camera：重装 MSI → 重启「Windows Camera Frame Server」服务或重启 PC
 
 记录预检截图：`vcam-win11-system-camera.png`
@@ -86,6 +86,7 @@ $p.ExitCode
 5. **分辨率**：若应用可选 720p / 1080p，分别试一次
 6. **断线恢复**：Streaming 中关手机 Wi‑Fi 10s → 开回 → 会议内预览应恢复或短暂占位后恢复
 7. **占位**：停止 Streaming（手机 Disconnect）→ 会议内应显示品牌占位，**不崩溃**
+8. **磁盘 I/O**：任务管理器/资源监视器观察 `picoo-desktop.exe` 直播 60 秒；ProgramData temporary mmap 不应出现与 30 FPS 等比例的持续磁盘写入
 
 ## 3. 会议 / 采集软件矩阵
 
@@ -95,6 +96,7 @@ $p.ExitCode
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Zoom | | [ ] | [ ] | [ ] | [ ] | [ ] | 设置 → 视频 → 摄像头 |
 | Microsoft Teams | | [ ] | [ ] | [ ] | [ ] | [ ] | 设置 → 设备 → 摄像头 |
+| 飞书会议 | | [ ] | [ ] | [ ] | [ ] | [ ] | 摄像头菜单 → Picoo Camera；不能停留在 Disconnected 占位 |
 | 腾讯会议 | | [ ] | [ ] | [ ] | [ ] | [ ] | 设置 → 视频 → 选择摄像头 |
 | OBS Studio | | [ ] | [ ] | [ ] | [ ] | [ ] | 来源 → 视频采集设备 |
 | 浏览器 | | [ ] | [ ] | [ ] | [ ] | [ ] | 见 §4 |
@@ -141,7 +143,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 
 | 条件 | 要求 |
 | --- | --- |
-| 矩阵 | 上表 **5 应用 × 6 列** 全部 ✅ |
+| 矩阵 | 上表 **6 应用 × 6 列** 全部 ✅ |
 | 负面 | §5 全部 ✅ |
 | 证据 | 每应用至少 1 张设备选择器截图 + 1 段 10s 预览录屏（可打码人脸） |
 | 存放 | `docs/design-specs/verification/artifacts/` 或 PR #10 附件 |
@@ -162,7 +164,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 | 现象 | 处理 |
 | --- | --- |
 | MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log` 搜索 `RegisterVcamOnInstall` / `WixQuietExec`；若文件已复制到 Program Files，按 §0 手动运行安装目录中的 `picoo-desktop --register-vcam --no-wait` |
-| 列表有 Picoo Camera 但黑屏 | 确认 desktop Streaming；运行 `picoo-vcam-ring-reader.exe` |
+| 列表有 Picoo Camera 但仍显示 Disconnected 占位 | 确认 desktop Streaming；运行安装目录的 `picoo-vcam-ring-reader.exe`，应附着到 `%ProgramData%\Picoo Camera\frame-ring-*.bin` 且 `seq` 持续递增；用 `icacls "$env:ProgramData\Picoo Camera"` 确认 `LOCAL SERVICE` 与 `Users` 有继承的读写权限；否则 repair/重装当前 MSI |
 | 只有 Integrated Camera | 重启应用；检查 MSI 安装；系统相机是否可见 Picoo |
 | Zoom 报摄像头被占用 | 关闭 Windows 相机 App 与其他占用 VCam 的程序 |
 | Teams 缓存旧设备 | 退出 Teams → `%appdata%\Microsoft\Teams` 清缓存（可选）→ 重登 |

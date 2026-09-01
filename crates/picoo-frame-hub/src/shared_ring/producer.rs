@@ -21,9 +21,7 @@ use super::SharedRingError;
 pub struct SharedFrameRingProducer {
     pub(super) mapping: ProducerMapping,
     pub(super) max_frame_bytes: usize,
-    #[cfg(target_os = "windows")]
-    pub(super) _producer_lock: KernelLockGuard,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(super) _producer_lock: Option<KernelLockGuard>,
 }
 
@@ -38,7 +36,7 @@ impl SharedFrameRingProducer {
         Self {
             mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
             max_frame_bytes,
-            _producer_lock: producer_lock,
+            _producer_lock: Some(producer_lock),
         }
     }
 

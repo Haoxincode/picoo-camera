@@ -100,5 +100,5 @@
 | 两端短码不一致或已过期 | 是否连错 PC、是否跨连接保留了旧挑战、两端是否显示同一次握手的短码 |
 | VCam 列表无 Picoo Camera | 重装 MSI（管理员）；日志无 `0x80040154`；或“虚拟摄像头”页 → **安装或修复…**，由桌面端通过 UAC 修复 COM 注册并执行 MF 注册 |
 | 日志 `0x80040154` / 类未注册 | 确认 MSI tip ≥ `83ca647`；管理员安装；DLL 与 exe 同目录；见 [vcam-meeting-apps.md](vcam-meeting-apps.md) §0 |
-| VCam 有设备但黑屏 | Shared Frame Ring；桌面是否在 Streaming；`picoo-vcam-ring-reader.exe` |
+| VCam 有设备但仍是 Disconnected 占位 | 桌面是否在 Streaming；`picoo-vcam-ring-reader.exe` 是否附着 `%ProgramData%\Picoo Camera\frame-ring-*.bin` 且 `seq` 递增；`icacls "$env:ProgramData\Picoo Camera"` 是否包含 `LOCAL SERVICE` / `Users` 继承读写 ACL |
 | Android 安装后闪退 | 16KB 页设备需 CI 绿 run 的 APK（含 16KB 对齐 `.so`） |

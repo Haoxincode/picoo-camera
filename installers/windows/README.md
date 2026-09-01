@@ -21,7 +21,10 @@ powershell -ExecutionPolicy Bypass -File installers/windows/build-msi.ps1
 `InprocServer32` values declaratively, then commits
 `picoo-desktop --register-vcam --no-wait` for system-lifetime MF registration. Late major
 upgrades keep `InstallExecute -> RemoveExistingProducts -> InstallFinalize` free of other
-in-script actions; the build runs ICE27/ICE63/ICE77 in addition to direct MSI table checks.
+in-script actions. It also provisions `%ProgramData%\Picoo Camera` with inherited access for
+the interactive Receiver and the Local Service Frame Server so both processes open the same
+file-backed Shared Frame Ring. The build runs ICE27/ICE63/ICE77 in addition to direct MSI table
+checks, including the ProgramData directory and `MsiLockPermissionsEx` row.
 
 At runtime, ordinary `picoo-desktop` startup only reads the installed COM registration. The
 explicit “安装或修复…” action invokes the installed maintenance command through Windows UAC.

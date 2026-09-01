@@ -20,6 +20,8 @@ pub use shared_ring::{
     macos_app_group_identifier, macos_app_group_ring_path, MACOS_APP_GROUP_INFO_KEY,
     MACOS_UNSIGNED_BUILD_INFO_KEY,
 };
+#[cfg(target_os = "windows")]
+pub use shared_ring::{windows_shared_ring_path, WINDOWS_SHARED_RING_DIRECTORY};
 pub use shared_ring::{
     SharedFrameRingConsumer, SharedFrameRingProducer, SharedFrameView, SharedRingError,
     DEFAULT_MAX_FRAME_BYTES, PIXEL_FORMAT_NV12, RING_MAGIC, RING_META_SIZE, RING_READY_DONE,

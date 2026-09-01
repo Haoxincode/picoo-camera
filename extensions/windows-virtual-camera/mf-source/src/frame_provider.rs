@@ -100,8 +100,7 @@ impl FrameProvider {
                 self.last_sequence = 0;
             }
             if self.consumer.is_none() {
-                self.consumer =
-                    SharedFrameRingConsumer::open(&self.ring_name, DEFAULT_MAX_FRAME_BYTES).ok();
+                self.consumer = self.open_consumer().ok();
             }
         }
 
@@ -135,6 +134,17 @@ impl FrameProvider {
             return FrameOrigin::Cached;
         }
         FrameOrigin::Placeholder
+    }
+
+    fn open_consumer(&self) -> Result<SharedFrameRingConsumer, picoo_frame_hub::SharedRingError> {
+        #[cfg(windows)]
+        if self.ring_name == DEFAULT_RING_NAME {
+            return SharedFrameRingConsumer::open_file(
+                picoo_frame_hub::windows_shared_ring_path(&self.ring_name),
+                DEFAULT_MAX_FRAME_BYTES,
+            );
+        }
+        SharedFrameRingConsumer::open(&self.ring_name, DEFAULT_MAX_FRAME_BYTES)
     }
 
     /// Return a stable negotiated output shape. Producer dimensions never

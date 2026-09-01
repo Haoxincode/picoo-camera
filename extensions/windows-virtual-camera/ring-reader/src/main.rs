@@ -15,16 +15,22 @@ fn main() {
     let ring_name =
         std::env::var("PICOO_RING_NAME").unwrap_or_else(|_| DEFAULT_SHARED_RING_NAME.into());
     let consumer = loop {
-        match SharedFrameRingConsumer::open(&ring_name, DEFAULT_MAX_FRAME_BYTES) {
+        match open_ring(&ring_name) {
             Ok(consumer) => break consumer,
             Err(err) => {
-                eprintln!("Waiting for Shared Frame Ring `{ring_name}`: {err}");
+                eprintln!(
+                    "Waiting for {ring_identity}: {err}",
+                    ring_identity = ring_identity(&ring_name)
+                );
                 thread::sleep(Duration::from_millis(500));
             }
         }
     };
 
-    println!("Attached to Shared Frame Ring `{ring_name}` — polling latest NV12 frames");
+    println!(
+        "Attached to {ring_identity} — polling latest NV12 frames",
+        ring_identity = ring_identity(&ring_name)
+    );
 
     let mut last_sequence = 0u64;
     loop {
@@ -45,4 +51,26 @@ fn main() {
         }
         thread::sleep(Duration::from_millis(16));
     }
+}
+
+fn open_ring(ring_name: &str) -> Result<SharedFrameRingConsumer, picoo_frame_hub::SharedRingError> {
+    #[cfg(target_os = "windows")]
+    if ring_name == DEFAULT_SHARED_RING_NAME {
+        return SharedFrameRingConsumer::open_file(
+            picoo_frame_hub::windows_shared_ring_path(ring_name),
+            DEFAULT_MAX_FRAME_BYTES,
+        );
+    }
+    SharedFrameRingConsumer::open(ring_name, DEFAULT_MAX_FRAME_BYTES)
+}
+
+fn ring_identity(ring_name: &str) -> String {
+    #[cfg(target_os = "windows")]
+    if ring_name == DEFAULT_SHARED_RING_NAME {
+        return format!(
+            "Shared Frame Ring `{}`",
+            picoo_frame_hub::windows_shared_ring_path(ring_name).display()
+        );
+    }
+    format!("Shared Frame Ring `{ring_name}`")
 }

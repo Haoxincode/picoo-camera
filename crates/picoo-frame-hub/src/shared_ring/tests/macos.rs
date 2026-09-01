@@ -1,10 +1,10 @@
 use super::*;
 use crate::hub::SLOT_COUNT;
+use crate::shared_ring::file_mapping::open_file_mapping;
 use crate::shared_ring::layout::{
     const_slot_meta_at, layout_size, meta_at, slot_meta_at, WRITER_LEASE,
 };
 use crate::shared_ring::lock::{producer_lock_path, slot_lock_path};
-use crate::shared_ring::macos_file::open_file_mapping;
 use crate::shared_ring::mapping::SlotLockAttempt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;

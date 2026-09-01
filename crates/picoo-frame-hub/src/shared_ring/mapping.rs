@@ -3,22 +3,22 @@ use std::path::PathBuf;
 use shared_memory::{Shmem, ShmemError};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
+use super::file_mapping::FileMapping;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::lock::KernelLockGuard;
 #[cfg(target_os = "windows")]
 use super::lock::{slot_lock_path, try_windows_file_lock};
-#[cfg(target_os = "macos")]
-use super::macos_file::FileMapping;
 use super::SharedRingError;
 
 pub(super) enum ProducerMapping {
     Shared(SharedMapping),
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     File(FileMapping),
 }
 
 pub(super) enum ConsumerMapping {
     Shared(SharedMapping),
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     File(FileMapping),
 }
 
@@ -65,7 +65,7 @@ impl ProducerMapping {
     pub(super) fn as_ptr(&self) -> *mut u8 {
         match self {
             Self::Shared(mapping) => mapping.mapping.as_ptr(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             Self::File(mapping) => mapping.mapping.as_ptr().cast_mut(),
         }
     }
@@ -75,7 +75,7 @@ impl ConsumerMapping {
     pub(super) fn as_ptr(&self) -> *const u8 {
         match self {
             Self::Shared(mapping) => mapping.mapping.as_ptr().cast_const(),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             Self::File(mapping) => mapping.mapping.as_ptr(),
         }
     }
@@ -92,7 +92,7 @@ impl ProducerMapping {
                 Some(lock) => SlotLockAttempt::Acquired(lock),
                 None => SlotLockAttempt::Busy,
             }),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             Self::File(mapping) => Ok(match mapping.try_slot_lock(index, true)? {
                 Some(lock) => SlotLockAttempt::Acquired(lock),
                 None => SlotLockAttempt::Busy,
@@ -112,7 +112,7 @@ impl ConsumerMapping {
                 Some(lock) => SlotLockAttempt::Acquired(lock),
                 None => SlotLockAttempt::Busy,
             }),
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             Self::File(mapping) => Ok(match mapping.try_slot_lock(index, false)? {
                 Some(lock) => SlotLockAttempt::Acquired(lock),
                 None => SlotLockAttempt::Busy,
