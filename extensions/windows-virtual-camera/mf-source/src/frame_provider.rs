@@ -43,6 +43,7 @@ pub(crate) struct FrameProvider {
     last_live_at: Option<Instant>,
     output_cache: Option<OutputFrameCache>,
     next_generation_probe: Instant,
+    producer_alive: bool,
 }
 
 struct OutputFrameCache {
@@ -63,6 +64,7 @@ impl FrameProvider {
             last_live_at: None,
             output_cache: None,
             next_generation_probe: Instant::now(),
+            producer_alive: false,
         }
     }
 
@@ -98,9 +100,21 @@ impl FrameProvider {
                 // sequence at one, so detach must reset deduplication.
                 self.consumer = None;
                 self.last_sequence = 0;
+                self.producer_alive = false;
             }
             if self.consumer.is_none() {
                 self.consumer = self.open_consumer().ok();
+            }
+            #[cfg(windows)]
+            {
+                self.producer_alive = self
+                    .consumer
+                    .as_ref()
+                    .is_some_and(SharedFrameRingConsumer::has_live_producer);
+            }
+            #[cfg(not(windows))]
+            {
+                self.producer_alive = self.consumer.is_some();
             }
         }
 
@@ -126,12 +140,18 @@ impl FrameProvider {
             }
         }
 
-        if self.last_live.is_some()
-            && self
-                .last_live_at
-                .is_some_and(|at| at.elapsed() < LAST_FRAME_HOLD)
-        {
-            return FrameOrigin::Cached;
+        if self.last_live.is_some() {
+            // REQ-PICOO-FRAME-005: Receiver owns connection semantics and
+            // publishes an explicit reconnect/idle frame into the ring. A
+            // live Producer with a temporarily unchanged sequence is not a
+            // disconnect and must retain the last complete frame.
+            if self.producer_alive
+                || self
+                    .last_live_at
+                    .is_some_and(|at| at.elapsed() < LAST_FRAME_HOLD)
+            {
+                return FrameOrigin::Cached;
+            }
         }
         FrameOrigin::Placeholder
     }
@@ -208,6 +228,7 @@ impl FrameProvider {
             last_live_at: None,
             output_cache: None,
             next_generation_probe: Instant::now(),
+            producer_alive: false,
         }
     }
 }
@@ -361,6 +382,15 @@ mod tests {
         let acquired = provider.acquire();
         assert_eq!(acquired.origin, FrameOrigin::Fresh);
         assert_eq!(acquired.frame.pixels, first_pixels);
+
+        provider.last_live_at = Some(Instant::now() - LAST_FRAME_HOLD);
+        let acquired = provider.acquire();
+        assert_eq!(acquired.origin, FrameOrigin::Cached);
+        assert_eq!(
+            acquired.frame.pixels, first_pixels,
+            "a live producer with an unchanged sequence is not disconnected"
+        );
+        provider.last_live_at = Some(Instant::now());
 
         drop(first_producer);
         provider.next_generation_probe = Instant::now();

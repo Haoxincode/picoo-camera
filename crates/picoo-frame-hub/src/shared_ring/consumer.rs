@@ -70,6 +70,14 @@ impl SharedFrameRingConsumer {
         }
     }
 
+    /// Whether the Windows Receiver still owns this ring generation's
+    /// lifecycle lock. Frame consumers use this signal instead of treating a
+    /// short pause in new frame sequences as a disconnected Sender.
+    #[cfg(target_os = "windows")]
+    pub fn has_live_producer(&self) -> bool {
+        self.mapping.has_live_producer()
+    }
+
     pub fn latest_frame(&self) -> Option<SharedFrameView<'_>> {
         let base = self.mapping.as_ptr();
         unsafe {

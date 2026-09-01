@@ -6,7 +6,7 @@ use super::layout::{layout_size, validate_ring_header};
 #[cfg(target_os = "macos")]
 use super::lock::{acquire_macos_producer_lock, try_macos_file_lock};
 #[cfg(target_os = "windows")]
-use super::lock::{acquire_producer_lock, try_windows_file_lock};
+use super::lock::{acquire_producer_lock, producer_lock_path, try_windows_file_lock};
 use super::lock::{map_file_err, slot_lock_path, KernelLockGuard};
 use super::mapping::ProducerMapping;
 use super::producer::SharedFrameRingProducer;
@@ -36,10 +36,28 @@ impl FileMapping {
     }
 
     pub(super) fn is_current_generation(&self) -> bool {
-        std::fs::File::open(&self.path)
-            .ok()
-            .and_then(|file| file_identity(&file))
-            .is_some_and(|identity| identity == self.identity)
+        let Ok(file) = std::fs::File::open(&self.path) else {
+            // Replacement briefly renames the pathname before publishing the
+            // next generation. Keep the complete mapped generation during
+            // that gap; a later probe will compare the new file identity.
+            return true;
+        };
+        file_identity(&file)
+            .map(|identity| identity == self.identity)
+            .unwrap_or(true)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn has_live_producer(&self) -> bool {
+        match try_windows_file_lock(&producer_lock_path(&self.path), false) {
+            // The Producer owns an exclusive byte-range lock for its complete
+            // lifetime. A shared probe can only succeed after it exits.
+            Ok(Some(_unused_probe)) => false,
+            Ok(None) => true,
+            // A transient sidecar access error must not turn a live meeting
+            // frame into a disconnected placeholder.
+            Err(_) => true,
+        }
     }
 }
 

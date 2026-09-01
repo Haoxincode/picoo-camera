@@ -7,7 +7,7 @@ use super::file_mapping::FileMapping;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::lock::KernelLockGuard;
 #[cfg(target_os = "windows")]
-use super::lock::{slot_lock_path, try_windows_file_lock};
+use super::lock::{producer_lock_path, slot_lock_path, try_windows_file_lock};
 use super::SharedRingError;
 
 pub(super) enum ProducerMapping {
@@ -51,6 +51,14 @@ impl SharedMapping {
     ) -> Result<Option<KernelLockGuard>, SharedRingError> {
         try_windows_file_lock(&slot_lock_path(&self.flink_path, index), exclusive)
     }
+
+    fn has_live_producer(&self) -> bool {
+        match try_windows_file_lock(&producer_lock_path(&self.flink_path), false) {
+            Ok(Some(_unused_probe)) => false,
+            Ok(None) => true,
+            Err(_) => true,
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -77,6 +85,14 @@ impl ConsumerMapping {
             Self::Shared(mapping) => mapping.mapping.as_ptr().cast_const(),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             Self::File(mapping) => mapping.mapping.as_ptr(),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn has_live_producer(&self) -> bool {
+        match self {
+            Self::Shared(mapping) => mapping.has_live_producer(),
+            Self::File(mapping) => mapping.has_live_producer(),
         }
     }
 }

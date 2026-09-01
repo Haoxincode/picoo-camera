@@ -69,6 +69,21 @@ fn windows_machine_file_ring_rejects_a_second_producer() {
 }
 
 #[test]
+fn windows_machine_file_ring_reports_producer_lifecycle() {
+    let path = file_ring_path();
+    let max = nv12_byte_size(64, 64);
+    let producer = SharedFrameRingProducer::open_or_create_file(&path, max).expect("file producer");
+    let consumer = SharedFrameRingConsumer::open_file(&path, max).expect("file consumer");
+
+    assert!(consumer.has_live_producer());
+    drop(producer);
+    assert!(!consumer.has_live_producer());
+
+    drop(consumer);
+    cleanup_file_ring(&path);
+}
+
+#[test]
 fn windows_machine_file_ring_replaces_an_invalid_generation() {
     let path = file_ring_path();
     let max = nv12_byte_size(64, 64);
