@@ -101,6 +101,9 @@ fn pending_macos_vcam_display_status(
 
 impl PicooDesktopApp {
     pub(super) fn refresh_vcam_status(&mut self, cx: &mut Context<Self>) {
+        #[cfg(not(target_os = "macos"))]
+        let _ = cx;
+
         #[cfg(target_os = "macos")]
         {
             if self.vcam_setup_state.is_running() {
@@ -606,9 +609,9 @@ impl PicooDesktopApp {
                                     .outline()
                                     .label("停用 Camera Extension")
                                     .disabled(self.vcam_setup_state.is_running())
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                    .on_click(cx.listener(|_this, _, _, _cx| {
                                         #[cfg(target_os = "macos")]
-                                        this.deactivate_vcam(cx);
+                                        _this.deactivate_vcam(_cx);
                                     })),
                             )
                         },

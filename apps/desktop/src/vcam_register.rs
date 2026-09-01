@@ -592,14 +592,18 @@ struct EnumerationComInit {
 
 impl EnumerationComInit {
     fn new() -> Result<Self, String> {
-        match unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) } {
-            Ok(()) => Ok(Self {
+        let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        if result.is_ok() {
+            Ok(Self {
                 initialized_here: true,
-            }),
-            Err(err) if err.code() == RPC_E_CHANGED_MODE => Ok(Self {
+            })
+        } else if result == RPC_E_CHANGED_MODE {
+            Ok(Self {
                 initialized_here: false,
-            }),
-            Err(err) => Err(format!("摄像头枚举 COM 初始化失败：{err}")),
+            })
+        } else {
+            let err = windows::core::Error::from_hresult(result);
+            Err(format!("摄像头枚举 COM 初始化失败：{err}"))
         }
     }
 }
