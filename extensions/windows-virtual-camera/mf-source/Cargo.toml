@@ -23,3 +23,6 @@ windows = { version = "0.62.2", features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Variant",
 ] }
+
+[build-dependencies]
+winresource = "0.1.31"

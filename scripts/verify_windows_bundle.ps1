@@ -8,6 +8,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Bundle = Join-Path $Root "target/release/bundle"
 $Dll = Join-Path $Bundle "PicooVirtualCameraSource.dll"
 $Exe = Join-Path $Bundle "picoo-desktop.exe"
+$RingReader = Join-Path $Bundle "picoo-vcam-ring-reader.exe"
 $ProductIcon = Join-Path $Bundle "PicooCamera.ico"
 $Msi = Join-Path $Bundle "msi/PicooCamera.msi"
 $MsiVersionFile = Join-Path $Bundle "msi/PicooCamera.version"
@@ -15,7 +16,7 @@ $MsiVersionFile = Join-Path $Bundle "msi/PicooCamera.version"
 Write-Host "Repo root: $Root"
 Write-Host "Bundle:    $Bundle"
 
-foreach ($path in @($Exe, $Dll, $ProductIcon)) {
+foreach ($path in @($Exe, $Dll, $RingReader, $ProductIcon)) {
     if (-not (Test-Path $path)) {
         Write-Error "Missing required bundle file: $path"
     }
@@ -77,6 +78,16 @@ $database = $null
 $summaryInfo = $null
 $productVersionView = $null
 $productVersionRecord = $null
+$fileVersionView = $null
+$fileVersionRecord = $null
+$sequenceView = $null
+$sequenceRecord = $null
+$customActionView = $null
+$customActionRecord = $null
+$FileVersions = @{}
+$ExecuteSequence = @{}
+$ExecuteConditions = @{}
+$CustomActionTypes = @{}
 try {
     # Open the package read-only, then obtain its SummaryInformation stream from
     # the Database object. Database.SummaryInformation requires maxProperties=0
@@ -111,7 +122,51 @@ try {
         Write-Error "PicooCamera.msi does not contain ProductVersion"
     }
     $ProductVersion = [string]$productVersionRecord.StringData(1)
+
+    $fileVersionView = $database.OpenView('SELECT `File`, `Version` FROM `File`')
+    $fileVersionView.Execute()
+    while ($null -ne ($fileVersionRecord = $fileVersionView.Fetch())) {
+        $FileVersions[[string]$fileVersionRecord.StringData(1)] = [string]$fileVersionRecord.StringData(2)
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($fileVersionRecord)
+        $fileVersionRecord = $null
+    }
+
+    $sequenceView = $database.OpenView('SELECT `Action`, `Condition`, `Sequence` FROM `InstallExecuteSequence`')
+    $sequenceView.Execute()
+    while ($null -ne ($sequenceRecord = $sequenceView.Fetch())) {
+        $action = [string]$sequenceRecord.StringData(1)
+        $ExecuteConditions[$action] = [string]$sequenceRecord.StringData(2)
+        $ExecuteSequence[$action] = [int]$sequenceRecord.IntegerData(3)
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sequenceRecord)
+        $sequenceRecord = $null
+    }
+
+    $customActionView = $database.OpenView('SELECT `Action`, `Type` FROM `CustomAction`')
+    $customActionView.Execute()
+    while ($null -ne ($customActionRecord = $customActionView.Fetch())) {
+        $CustomActionTypes[[string]$customActionRecord.StringData(1)] = [int]$customActionRecord.IntegerData(2)
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($customActionRecord)
+        $customActionRecord = $null
+    }
 } finally {
+    if ($null -ne $customActionRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($customActionRecord)
+    }
+    if ($null -ne $customActionView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($customActionView)
+    }
+    if ($null -ne $sequenceRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sequenceRecord)
+    }
+    if ($null -ne $sequenceView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($sequenceView)
+    }
+    if ($null -ne $fileVersionRecord) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($fileVersionRecord)
+    }
+    if ($null -ne $fileVersionView) {
+        [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($fileVersionView)
+    }
     if ($null -ne $productVersionRecord) {
         [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($productVersionRecord)
     }
@@ -135,6 +190,63 @@ if ($ProductVersion -ne $ExpectedMsiVersion) {
 }
 Write-Host "ok: PicooCamera.msi ProductVersion is $ProductVersion"
 
+# REQ-PICOO-VCAM-009: the late MajorUpgrade bridge only works if Windows
+# Installer can replace all maintenance binaries before the old product runs.
+$ExpectedFileVersion = "$ExpectedMsiVersion.0"
+$expectedVersionedFiles = @{
+    PicooDesktop = $Exe
+    PicooVcamDll = $Dll
+    PicooRingReader = $RingReader
+}
+foreach ($fileId in $expectedVersionedFiles.Keys) {
+    if ($FileVersions[$fileId] -ne $ExpectedFileVersion) {
+        Write-Error "MSI File version for '$fileId' is '$($FileVersions[$fileId])', expected '$ExpectedFileVersion'"
+    }
+    $peVersion = (Get-Item $expectedVersionedFiles[$fileId]).VersionInfo.FileVersion.Trim()
+    if ($peVersion -ne $ExpectedFileVersion) {
+        Write-Error "PE FileVersion for '$fileId' is '$peVersion', expected '$ExpectedFileVersion'"
+    }
+    Write-Host "ok: $fileId PE/MSI FileVersion is $ExpectedFileVersion"
+}
+
+foreach ($action in @('InstallExecute', 'RemoveExistingProducts', 'RegisterVcamOnInstall', 'InstallFinalize', 'RestoreVcamOnUpgradeRollback', 'UnregisterVcamOnRemove', 'RemoveRegistryValues')) {
+    if (-not $ExecuteSequence.ContainsKey($action)) {
+        Write-Error "MSI InstallExecuteSequence is missing '$action'"
+    }
+}
+if (-not ($ExecuteSequence.InstallExecute -lt $ExecuteSequence.RemoveExistingProducts -and
+          $ExecuteSequence.RemoveExistingProducts -lt $ExecuteSequence.RegisterVcamOnInstall -and
+          $ExecuteSequence.RegisterVcamOnInstall -lt $ExecuteSequence.InstallFinalize)) {
+    Write-Error "MajorUpgrade order must be InstallExecute < RemoveExistingProducts < RegisterVcamOnInstall < InstallFinalize"
+}
+if ($ExecuteSequence.RestoreVcamOnUpgradeRollback -ge $ExecuteSequence.RemoveExistingProducts) {
+    Write-Error "RestoreVcamOnUpgradeRollback must be scheduled before RemoveExistingProducts"
+}
+if ($ExecuteConditions.UnregisterVcamOnRemove -ne 'REMOVE~="ALL" AND NOT UPGRADINGPRODUCTCODE') {
+    Write-Error "UnregisterVcamOnRemove has unsafe condition '$($ExecuteConditions.UnregisterVcamOnRemove)'"
+}
+if ($ExecuteSequence.UnregisterVcamOnRemove -ge $ExecuteSequence.RemoveRegistryValues) {
+    Write-Error "UnregisterVcamOnRemove must run before RemoveRegistryValues"
+}
+foreach ($action in @('RegisterVcamOnInstall', 'UnregisterVcamOnRemove')) {
+    $type = $CustomActionTypes[$action]
+    if (($type -band 0x400) -eq 0 -or ($type -band 0x800) -eq 0) {
+        Write-Error "$action must be deferred and non-impersonated; CustomAction.Type=$type"
+    }
+}
+$restoreType = $CustomActionTypes.RestoreVcamOnUpgradeRollback
+if (($restoreType -band 0x100) -eq 0 -or ($restoreType -band 0x400) -eq 0 -or
+    ($restoreType -band 0x800) -eq 0) {
+    Write-Error "RestoreVcamOnUpgradeRollback must be rollback, in-script, and non-impersonated; CustomAction.Type=$restoreType"
+}
+if ($ExecuteConditions.RestoreVcamOnUpgradeRollback -ne 'WIX_UPGRADE_DETECTED') {
+    Write-Error "RestoreVcamOnUpgradeRollback has unsafe condition '$($ExecuteConditions.RestoreVcamOnUpgradeRollback)'"
+}
+if ($ExecuteConditions.RegisterVcamOnInstall -ne 'NOT REMOVE') {
+    Write-Error "RegisterVcamOnInstall has unexpected condition '$($ExecuteConditions.RegisterVcamOnInstall)'"
+}
+Write-Host "ok: MSI late MajorUpgrade and VCam maintenance sequence is transactionally ordered"
+
 # Post-build MSI smoke (REQ-PICOO-VCAM-004): COM registration is declarative WiX data.
 # The Rust cdylib does not expose or require self-registration through regsvr32.
 # Limitation: CI cannot run msiexec /i (perMachine admin + Win11 GUI); install acceptance
@@ -153,6 +265,7 @@ $required = @(
     '--register-vcam --no-wait',
     'WixQuietExec',
     'RegisterVcamOnInstall',
+    'RestoreVcamOnUpgradeRollback',
     'PicooProductIcon'
 )
 foreach ($needle in $required) {

@@ -9,10 +9,27 @@
       Version="$(PicooMsiVersion)"
       UpgradeCode="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E70"
       Scope="perMachine">
-    <MajorUpgrade DowngradeErrorMessage="A newer version of Picoo Camera is already installed." />
+    <!-- Install the new, monotonically versioned maintenance executable before
+         removing the related product. Released installers may invoke their own
+         legacy uninstall command during RemoveExistingProducts; late scheduling
+         makes that command resolve to the fixed executable while preserving MSI
+         rollback semantics through strict, stable component GUIDs. -->
+    <MajorUpgrade
+        Schedule="afterInstallExecute"
+        DowngradeErrorMessage="A newer version of Picoo Camera is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="PicooProductIcon" SourceFile="!(bindpath.Bundle)\PicooCamera.ico" />
     <Property Id="ARPPRODUCTICON" Value="PicooProductIcon" />
+
+    <!-- Deterministic bridge from installers whose versioned desktop resource
+         did not yet follow ProductVersion. Scope forced file replacement to a
+         detected major upgrade; fresh installs and repairs keep MSI defaults. -->
+    <SetProperty
+        Id="REINSTALLMODE"
+        Value="amus"
+        Before="CostFinalize"
+        Sequence="execute"
+        Condition="WIX_UPGRADE_DETECTED" />
 
     <Feature Id="ProductFeature" Title="Picoo Camera" Level="1">
       <ComponentGroupRef Id="ProductComponents" />
@@ -49,6 +66,19 @@
         Return="ignore" />
 
     <SetProperty
+        Id="RestoreVcamOnUpgradeRollback"
+        Value="&quot;[#PicooDesktop]&quot; --register-vcam --no-wait"
+        Before="RestoreVcamOnUpgradeRollback"
+        Sequence="execute" />
+    <CustomAction
+        Id="RestoreVcamOnUpgradeRollback"
+        BinaryRef="Wix4UtilCA_$(sys.BUILDARCHSHORT)"
+        DllEntry="WixQuietExec"
+        Execute="rollback"
+        Impersonate="no"
+        Return="ignore" />
+
+    <SetProperty
         Id="UnregisterVcamOnRemove"
         Value="&quot;[#PicooDesktop]&quot; --unregister-vcam"
         Before="UnregisterVcamOnRemove"
@@ -63,8 +93,15 @@
 
     <InstallExecuteSequence>
       <Custom Action="RollbackVcamRegistration" Before="RegisterVcamOnInstall" Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED" />
-      <Custom Action="RegisterVcamOnInstall" After="InstallFiles" Condition="NOT REMOVE" />
-      <Custom Action="UnregisterVcamOnRemove" Before="RemoveFiles" Condition="REMOVE~=&quot;ALL&quot;" />
+      <!-- If late removal or final registration fails, restore a usable camera
+           before MSI rolls the maintenance executable back to the old product. -->
+      <Custom Action="RestoreVcamOnUpgradeRollback" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
+      <!-- Register after an old product has finished its upgrade-uninstall so
+           that the legacy cleanup cannot remove the newly published camera. -->
+      <Custom Action="RegisterVcamOnInstall" After="RemoveExistingProducts" Condition="NOT REMOVE" />
+      <!-- A major upgrade owns the final registration transaction. Only an
+           explicit product uninstall removes the system-lifetime camera. -->
+      <Custom Action="UnregisterVcamOnRemove" Before="RemoveRegistryValues" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
   </Package>
 

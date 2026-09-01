@@ -9,6 +9,11 @@ CI_WORKFLOW="$ROOT/.github/workflows/ci.yml"
 VCAM_IDS="$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/mod.rs"
 VCAM_MANIFEST="$ROOT/extensions/windows-virtual-camera/mf-source/Cargo.toml"
 VCAM_RS="$ROOT/apps/desktop/src/vcam_register.rs"
+WINDOWS_RESOURCE="$ROOT/build-support/windows_resource.rs"
+DESKTOP_BUILD="$ROOT/apps/desktop/build.rs"
+MF_SOURCE_BUILD="$ROOT/extensions/windows-virtual-camera/mf-source/build.rs"
+RING_READER_BUILD="$ROOT/extensions/windows-virtual-camera/ring-reader/build.rs"
+XTASK_WINDOWS="$ROOT/xtask/src/windows.rs"
 CLSID="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F"
 CLSID_RUST="0xa7c4e2f1_8b3d_4c6a_9e5f_1d2c3b4a5e6f"
 fail=0
@@ -75,6 +80,11 @@ need "$WXS" 'FirewallQuic'
 need "$WXS" 'FirewallMdns'
 need "$WXS" 'KeyPath="yes"'
 need "$WXS" 'MajorUpgrade'
+need "$WXS" 'Schedule="afterInstallExecute"'
+need "$WXS" 'Id="REINSTALLMODE"'
+need "$WXS" 'Value="amus"'
+need "$WXS" 'Before="CostFinalize"'
+need "$WXS" 'Condition="WIX_UPGRADE_DETECTED"'
 need "$WXS" 'StartMenuDesktop'
 need "$WXS" 'Icon Id="PicooProductIcon"'
 need "$WXS" 'ARPPRODUCTICON'
@@ -90,10 +100,11 @@ if grep -qE 'Version="[0-9]+\.[0-9]+\.[0-9]+"' "$WXS"; then
 else
   echo "ok: picoo-camera.wxs has no hard-coded ProductVersion"
 fi
-need_re "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E7[12345]"'
-need "$WXS" 'Component Id="DesktopExe"'
-need "$WXS" 'Component Id="VcamDll"'
-need "$WXS" 'Component Id="RingReader"'
+need "$WXS" 'Component Id="DesktopExe" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E71"'
+need "$WXS" 'Component Id="VcamDll" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E72"'
+need "$WXS" 'Component Id="RingReader" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E73"'
+need "$WXS" 'Component Id="FirewallQuic" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E74"'
+need "$WXS" 'Component Id="FirewallMdns" Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E75"'
 # COM registration is declarative; self-registration is intentionally absent.
 for forbidden in RegisterVcamDll RegisterVcamComDll regsvr32.exe DllRegisterServer; do
   if grep -qF "$forbidden" "$WXS"; then
@@ -117,6 +128,10 @@ need "$WXS" '--unregister-vcam'
 need "$WXS" 'RollbackVcamRegistration'
 need "$WXS" 'Execute="rollback"'
 need "$WXS" 'Condition="NOT Installed AND NOT WIX_UPGRADE_DETECTED"'
+need "$WXS" 'Custom Action="RegisterVcamOnInstall" After="RemoveExistingProducts" Condition="NOT REMOVE"'
+need "$WXS" 'RestoreVcamOnUpgradeRollback'
+need "$WXS" 'Custom Action="RestoreVcamOnUpgradeRollback" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED"'
+need "$WXS" 'Custom Action="UnregisterVcamOnRemove" Before="RemoveRegistryValues" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"'
 if awk '/Id="RollbackVcamRegistration"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
   echo "ok: rollback removal uses the AllUsers administrator context"
 else
@@ -181,6 +196,17 @@ need "$VCAM_RS" 'MFVirtualCameraAccess_AllUsers'
 need "$VCAM_RS" 'vcam_symbolic_link'
 need "$VCAM_RS" 'camera_identity_matches'
 need "$VCAM_RS" 'wait_for_registered_camera'
+need "$VCAM_RS" 'self.camera.Shutdown()'
+
+# Late major upgrades depend on new PE versions replacing the old maintenance
+# binaries before the cached related product runs its uninstall command.
+need "$WINDOWS_RESOURCE" 'PICOO_WINDOWS_FILE_VERSION'
+need "$WINDOWS_RESOURCE" 'VersionInfo::FILEVERSION'
+need "$WINDOWS_RESOURCE" 'VersionInfo::PRODUCTVERSION'
+need "$DESKTOP_BUILD" 'windows_resource::apply_package_version'
+need "$MF_SOURCE_BUILD" 'windows_resource::apply_package_version'
+need "$RING_READER_BUILD" 'windows_resource::apply_package_version'
+need "$XTASK_WINDOWS" 'PICOO_WINDOWS_FILE_VERSION'
 if awk '/Id="RegisterVcamOnInstall"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
   echo "ok: per-machine VCam registration runs elevated for AllUsers access"
 else

@@ -3,20 +3,25 @@ use std::path::Path;
 use xshell::{cmd, Shell};
 
 pub(crate) fn build(sh: &Shell) -> Result<()> {
+    let package_version = resolved_windows_package_version()?;
+    build_with_file_version(sh, &package_version)
+}
+
+fn build_with_file_version(sh: &Shell, package_version: &str) -> Result<()> {
     cmd!(
         sh,
         "cargo build -p picoo-desktop -p picoo-vcam-ring-reader -p picoo-windows-vcam-source --release --features gpui-ui,windows-vcam"
     )
+    .env("PICOO_WINDOWS_FILE_VERSION", package_version)
     .run()?;
     Ok(())
 }
 
 pub(crate) fn package() -> Result<()> {
     let sh = Shell::new()?;
-    build(&sh)?;
+    let msi_version = resolved_windows_package_version()?;
+    build_with_file_version(&sh, &msi_version)?;
     let sh = Shell::new()?;
-    let build_number = std::env::var("PICOO_BUILD_NUMBER").ok();
-    let msi_version = windows_msi_version(env!("CARGO_PKG_VERSION"), build_number.as_deref())?;
     let stage_script = Path::new("installers/windows/stage.ps1");
     if stage_script.exists() {
         cmd!(
@@ -30,6 +35,11 @@ pub(crate) fn package() -> Result<()> {
         eprintln!("windows package: stage.ps1 not found");
     }
     Ok(())
+}
+
+fn resolved_windows_package_version() -> Result<String> {
+    let build_number = std::env::var("PICOO_BUILD_NUMBER").ok();
+    windows_msi_version(env!("CARGO_PKG_VERSION"), build_number.as_deref())
 }
 
 /// Resolve the three-field version Windows Installer actually compares.

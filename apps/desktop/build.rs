@@ -1,5 +1,9 @@
 // REQ-PICOO-UI-013: embed the full-color app icon and the compact tray symbol.
+#[path = "../../build-support/windows_resource.rs"]
+mod windows_resource;
+
 fn main() {
+    println!("cargo:rerun-if-changed=../../build-support/windows_resource.rs");
     println!("cargo:rerun-if-changed=../../assets/brand/windows/PicooCamera.ico");
     println!("cargo:rerun-if-changed=../../assets/brand/windows/PicooCameraTray.ico");
 
@@ -15,6 +19,7 @@ fn main() {
     }
 
     let mut resource = winresource::WindowsResource::new();
+    windows_resource::apply_package_version(&mut resource, 1);
     resource
         .set_icon("../../assets/brand/windows/PicooCamera.ico")
         .set_icon_with_id("../../assets/brand/windows/PicooCameraTray.ico", "2")

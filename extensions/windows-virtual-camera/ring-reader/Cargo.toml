@@ -14,3 +14,6 @@ picoo-frame-hub.workspace = true
 picoo-receiver.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+winresource = "0.1.31"

@@ -1,10 +1,10 @@
-# REQ-PICOO-VCAM-005：会议软件兼容验收清单（Win11）
+# REQ-PICOO-VCAM-005/009：会议软件与 MSI 升级验收清单（Win11）
 
 本清单用于在 **Windows 11 x86_64** 真机上验证 PUC-004 / PRD §21：安装后可在目标会议软件中选用「Picoo Camera」。
 
-> 状态：`proposed` → 全部勾选并附截图/录屏后改为 `verified`，并更新 [vcam.md](../requirements/vcam.md) 中 REQ-PICOO-VCAM-005。
+> 状态：`proposed/planned` → 对应部分全部勾选并附日志/截图后更新 [vcam.md](../requirements/vcam.md) 中 REQ-PICOO-VCAM-005/009。
 >
-> **CI 不能替代本清单。** `windows-latest` 仅验证 MSI/DLL 产物与友好名称字符串嵌入（`scripts/verify_windows_bundle.ps1`）；会议软件枚举与画面必须在真机完成。
+> **CI 不能替代本清单。** `windows-latest` 验证 MSI/DLL 产物、PE/MSI FileVersion、安装动作表与友好名称字符串嵌入（`scripts/verify_windows_bundle.ps1`）；真实 major upgrade、会议软件枚举与画面必须在真机完成。
 
 **前置 E2E**：请先完成 [device-e2e-android-win11.md](device-e2e-android-win11.md) 的 A–H，确保 Android→Windows Streaming 与桌面预览正常，再测会议软件。
 
@@ -30,8 +30,34 @@ cd "C:\Program Files\Picoo Camera"
 
 ```powershell
 msiexec /i PicooCamera.msi /l*v "$env:TEMP\picoo-camera-install.log"
-# 在日志中搜索 Return value 3、Error 1722、FirewallQuic
+# 在日志中搜索 Return value 3、Error 1722、UnregisterVcamOnRemove、
+# 0xc0000005、RemoveExistingProducts、RegisterVcamOnInstall
 ```
+
+若日志含 `MsiSystemRebootPending = 1`，先重启 Windows，再执行安装/升级验收；该状态本身不是已确认的 0.1.491 `1603` 根因，但会污染复测环境。
+
+## 0.1 从 0.1.490 原位升级（REQ-PICOO-VCAM-009，必做）
+
+此项必须从已安装的 `0.1.490` ProductCode `{2EA538DD-3324-4768-8367-FB78632D0E72}` 起步，不能用全新安装替代。
+
+```powershell
+$msi = (Resolve-Path .\PicooCamera.msi).Path
+$log = "$env:USERPROFILE\Desktop\PicooCamera-upgrade.log"
+$p = Start-Process msiexec.exe -ArgumentList @("/i", "`"$msi`"", "/L*V", "`"$log`"") -Wait -PassThru
+$p.ExitCode
+```
+
+- [ ] 升级退出码为 `0`；日志没有 `Return value 3`、`0xc0000005` 或 rollback
+- [ ] 日志顺序为新版 `InstallFiles` / `InstallExecute` → `RemoveExistingProducts` → `RegisterVcamOnInstall`
+- [ ] ARP 只保留新版本；旧 ProductCode 查询为空
+- [ ] `picoo-desktop.exe`、`PicooVirtualCameraSource.dll`、`picoo-vcam-ring-reader.exe` 的 PE FileVersion 与新 MSI build 一致，哈希均来自新包
+- [ ] 64 位 COM `InprocServer32` 指向当前安装目录中的 DLL
+- [ ] Media Foundation 只枚举一个持久化 exact symbolic link，桌面状态为 Active，会议软件可选用
+- [ ] 再运行同版 repair 后 identity 不消失、不重复
+- [ ] 管理员终端连续执行三次 `picoo-desktop.exe --unregister-vcam`，均不崩溃且 exit `0`；随后执行一次 `--register-vcam --no-wait` 恢复设备
+- [ ] 显式卸载新版本 exit `0`，设备、COM、文件与 ARP 项均清理
+
+升级失败路径需保留完整 verbose log；应能看到 `RestoreVcamOnUpgradeRollback` 在新版文件回滚前尝试恢复旧产品 identity。该动作是 best-effort，若底层 MF 故障仍然存在，MSI 必须恢复旧产品文件与注册，设备再由显式修复收敛。
 
 ## 1. 系统级预检（必做）
 

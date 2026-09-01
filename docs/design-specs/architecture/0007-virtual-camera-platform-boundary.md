@@ -47,7 +47,9 @@ lifecycle revision 复核，并与 start/stop/shutdown 共用 lifecycle operatio
 
 `PicooVirtualCameraSource.dll` 是 Windows-only Rust `cdylib`，使用 `windows-rs` 的类型化 Win32/COM 绑定实现 `IClassFactory`、`IMFActivate`、`IMFMediaSourceEx`、`IMFMediaStream2`、`IMFGetService`、`IKsControl` 与 `IMFSampleAllocatorControl`。它由 Cargo 在 Windows runner 上构建，不维护 C++、WRL、VCXPROJ 或 MSBuild 项目。DLL 可以复用 `picoo-frame-hub` 的 Shared Frame Ring 布局与占位帧实现，但不得依赖 Receiver、QUIC、解码或配对 crate。
 
-AllUsers + System-lifetime 摄像头由 per-machine MSI 或用户显式 UAC 修复时创建；普通桌面启动不得再创建一个重名的 Session-lifetime 摄像头。安装与卸载维护命令必须在非 impersonated 的管理员上下文中执行，使多用户枚举、静默部署、升级与清理使用同一身份。Windows 会在产品提供的 base friendly name 后追加并本地化 `Windows Virtual Camera` 标识，因此状态不得把显示名精确等于 `Picoo Camera` 作为身份条件；只有 Media Foundation 枚举到安装时持久化的精确 symbolic link 才能提升为 Active，DLL、COM 注册表存在或任意同名设备都不能冒充已注册成功。`IMFVirtualCamera::Start` 成功后必须取得并持久化 `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK`，并以有界重试等待 Software Device 发布到 Media Foundation，不能用一次立即枚举判定失败；仅当精确身份在操作前不存在时，Start/持久化失败才能 best-effort Remove，repair/upgrade 不得删除既有设备。卸载 Remove 不依赖 Source Start；成功 Remove 后的动态 identity 清理是 best-effort，声明式 COM 由 MSI 自身事务删除。rollback Custom Action 只在非升级的全新安装中预排，避免回滚破坏安装前已存在的设备。
+AllUsers + System-lifetime 摄像头由 per-machine MSI 或用户显式 UAC 修复时创建；普通桌面启动不得再创建一个重名的 Session-lifetime 摄像头。安装与卸载维护命令必须在非 impersonated 的管理员上下文中执行，使多用户枚举、静默部署、升级与清理使用同一身份。Windows 会在产品提供的 base friendly name 后追加并本地化 `Windows Virtual Camera` 标识，因此状态不得把显示名精确等于 `Picoo Camera` 作为身份条件；只有 Media Foundation 枚举到安装时持久化的精确 symbolic link 才能提升为 Active，DLL、COM 注册表存在或任意同名设备都不能冒充已注册成功。`IMFVirtualCamera::Start` 成功后必须取得并持久化 `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK`，并以有界重试等待 Software Device 发布到 Media Foundation，不能用一次立即枚举判定失败；仅当精确身份在操作前不存在时，Start/持久化失败才能 best-effort Remove，repair 不得删除操作前已存在的设备。卸载 Remove 不依赖 Source Start；identity 不存在时是幂等成功。维护进程必须先调用 `IMFVirtualCamera::Shutdown` 并 Release camera，再执行 `MFShutdown` 与 `CoUninitialize`；任何返回路径都不得颠倒该所有权顺序。成功 Remove 后的动态 identity 清理是 best-effort，声明式 COM 由 MSI 自身事务删除。
+
+Windows major upgrade 是独立事务边界。仍受支持的旧 MSI 可能在 `RemoveExistingProducts` 中执行其已发布且不可修改的卸载命令，因此升级包必须先以单调递增的 PE FileVersion 安装新版维护程序，再移除旧产品，最后重新注册摄像头；成功事务结束时只允许保留新 ProductCode 与单一 exact identity。新包的升级卸载条件必须排除 `UPGRADINGPRODUCTCODE`，防止该桥接成为常态。新注册失败时，rollback Custom Action 必须在文件回滚前 best-effort 恢复旧产品可用的 identity；全新安装仍使用反向 Remove 回滚。组件 GUID、KeyPath 与安装目录在 late upgrade 下必须保持严格稳定，CI 直接查询 MSI 数据库验证动作顺序和 FileVersion，真机仍须验证受支持的旧版到新版升级。
 
 ### macOS
 
@@ -119,4 +121,4 @@ Rust Receiver Core
 
 ## 相关 Requirements
 
-- [REQ-PICOO-VCAM-001..008](../requirements/vcam.md)
+- [REQ-PICOO-VCAM-001..009](../requirements/vcam.md)

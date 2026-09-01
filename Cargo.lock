@@ -5370,6 +5370,7 @@ dependencies = [
  "picoo-receiver",
  "tracing",
  "tracing-subscriber",
+ "winresource",
 ]
 
 [[package]]
@@ -5379,6 +5380,7 @@ dependencies = [
  "picoo-frame-hub",
  "windows 0.62.2",
  "windows-core 0.62.2",
+ "winresource",
 ]
 
 [[package]]

@@ -6,22 +6,16 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use windows::core::{GUID, HRESULT, PCWSTR};
-use windows::Win32::Foundation::{
-    CloseHandle, ERROR_CANCELLED, ERROR_SUCCESS, RPC_E_CHANGED_MODE, WAIT_OBJECT_0,
-};
+use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, ERROR_SUCCESS, WAIT_OBJECT_0};
 use windows::Win32::Media::MediaFoundation::{
     IMFActivate, IMFAttributes, IMFVirtualCamera, MFCreateAttributes, MFCreateVirtualCamera,
-    MFEnumDeviceSources, MFShutdown, MFStartup, MFVirtualCameraAccess_AllUsers,
-    MFVirtualCameraAccess_CurrentUser, MFVirtualCameraLifetime_Session,
-    MFVirtualCameraLifetime_System, MFVirtualCameraType_SoftwareCameraSource,
-    MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE,
-    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
-    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK, MF_VERSION,
+    MFEnumDeviceSources, MFVirtualCameraAccess_AllUsers, MFVirtualCameraAccess_CurrentUser,
+    MFVirtualCameraLifetime_Session, MFVirtualCameraLifetime_System,
+    MFVirtualCameraType_SoftwareCameraSource, MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE, MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_GUID,
+    MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
 };
-use windows::Win32::System::Com::{
-    CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
-    COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
     HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
@@ -32,6 +26,10 @@ use windows::Win32::UI::Shell::{
     SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+#[path = "vcam_register/runtime.rs"]
+mod runtime;
+use runtime::{ComInit, EnumerationComInit, MfInit, ShellComInit};
 
 /// CLSID for the Rust `PicooVirtualCameraSource.dll` COM server.
 pub const PICOO_VCAM_CLSID: GUID = GUID::from_u128(0xa7c4e2f1_8b3d_4c6a_9e5f_1d2c3b4a5e6f);
@@ -46,6 +44,9 @@ const ENUMERATION_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const ENUMERATION_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct VirtualCameraRegistration {
+    // Keep the camera first: after `Drop::drop` calls Shutdown, Rust releases
+    // fields in declaration order, so IMFVirtualCamera is released before
+    // MFShutdown and CoUninitialize tear down the runtimes it depends on.
     camera: IMFVirtualCamera,
     _symbolic_link: String,
     _mf: MfInit,
@@ -88,13 +89,21 @@ impl VirtualCameraRegistration {
 
     /// Remove a system-lifetime virtual camera registration (used by MSI uninstall).
     pub fn remove_system() -> Result<(), String> {
+        // A failed/rolled-back registration has no owned device identity. Treat
+        // removal as idempotent instead of asking MF to synthesize and remove an
+        // identity that Picoo never committed. This is also the forward-upgrade
+        // bridge for installers affected by the legacy uninstall crash.
+        if read_registry_string(PRODUCT_KEY, Some(SYMBOLIC_LINK_VALUE)).is_none() {
+            return Ok(());
+        }
         repair_installed_com_server()?;
-        let (camera, _mf, _com) = create_virtual_camera_identity(
+        let registration = create_virtual_camera_identity(
             MFVirtualCameraLifetime_System,
             MFVirtualCameraAccess_AllUsers,
         )?;
         unsafe {
-            camera
+            registration
+                .camera
                 .Remove()
                 .map_err(|err| format!("IMFVirtualCamera::Remove failed: {err}"))?;
         }
@@ -110,6 +119,17 @@ impl VirtualCameraRegistration {
             self.camera
                 .Remove()
                 .map_err(|e| format!("IMFVirtualCamera::Remove failed: {e}"))
+        }
+    }
+}
+
+impl Drop for VirtualCameraRegistration {
+    fn drop(&mut self) {
+        // Microsoft requires Shutdown before releasing IMFVirtualCamera. Keep
+        // teardown best-effort so every success and early-error path still
+        // releases the COM object before MfInit and ComInit are dropped.
+        unsafe {
+            let _ = self.camera.Shutdown();
         }
     }
 }
@@ -369,26 +389,26 @@ fn start_virtual_camera(
     access: windows::Win32::Media::MediaFoundation::MFVirtualCameraAccess,
     remove_on_failure: bool,
 ) -> Result<VirtualCameraRegistration, String> {
-    let (camera, mf, com) = create_virtual_camera_identity(lifetime, access)?;
+    let mut registration = create_virtual_camera_identity(lifetime, access)?;
 
-    if let Err(err) = unsafe { camera.Start(None) } {
+    if let Err(err) = unsafe { registration.camera.Start(None) } {
         if remove_on_failure {
             unsafe {
-                let _ = camera.Remove();
+                let _ = registration.camera.Remove();
             }
         }
         return Err(format!("IMFVirtualCamera::Start failed: {err}"));
     }
 
     let symbolic_link = mf_attribute_string(
-        &camera,
+        &registration.camera,
         &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
     )
     .filter(|value| !value.is_empty());
     let Some(symbolic_link) = symbolic_link else {
         if remove_on_failure {
             unsafe {
-                let _ = camera.Remove();
+                let _ = registration.camera.Remove();
             }
         }
         return Err(
@@ -396,18 +416,14 @@ fn start_virtual_camera(
         );
     };
 
-    Ok(VirtualCameraRegistration {
-        camera,
-        _symbolic_link: symbolic_link,
-        _mf: mf,
-        _com: com,
-    })
+    registration._symbolic_link = symbolic_link;
+    Ok(registration)
 }
 
 fn create_virtual_camera_identity(
     lifetime: windows::Win32::Media::MediaFoundation::MFVirtualCameraLifetime,
     access: windows::Win32::Media::MediaFoundation::MFVirtualCameraAccess,
-) -> Result<(IMFVirtualCamera, MfInit, ComInit), String> {
+) -> Result<VirtualCameraRegistration, String> {
     let com = ComInit::new()?;
     let mf = MfInit::new()?;
     let friendly = wide(FRIENDLY_NAME);
@@ -424,7 +440,17 @@ fn create_virtual_camera_identity(
         )
     }
     .map_err(|e| format!("MFCreateVirtualCamera failed: {e}"))?;
-    Ok((camera, mf, com))
+    // Field declaration order on `VirtualCameraRegistration` is intentional:
+    // release the COM camera before MFShutdown and CoUninitialize. Returning a
+    // tuple here previously let the maintenance path tear those runtimes down
+    // first and then release `IMFVirtualCamera`, which can access-violate during
+    // MSI uninstall.
+    Ok(VirtualCameraRegistration {
+        camera,
+        _symbolic_link: String::new(),
+        _mf: mf,
+        _com: com,
+    })
 }
 
 fn mf_attribute_string(attributes: &IMFAttributes, key: &GUID) -> Option<String> {
@@ -622,103 +648,6 @@ fn write_registry_string(key: &str, name: Option<&str>, value: &str) -> Result<(
         ));
     }
     Ok(())
-}
-
-struct ComInit;
-
-impl ComInit {
-    fn new() -> Result<Self, String> {
-        unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED)
-                .ok()
-                .map_err(|e| format!("CoInitializeEx failed: {e}"))?;
-        }
-        Ok(Self)
-    }
-}
-
-/// Initializes COM when the caller has no apartment yet, while accepting the
-/// GPUI thread's existing STA apartment. Only a successful initialization is
-/// paired with `CoUninitialize`.
-struct EnumerationComInit {
-    initialized_here: bool,
-}
-
-impl EnumerationComInit {
-    fn new() -> Result<Self, String> {
-        let result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        if result.is_ok() {
-            Ok(Self {
-                initialized_here: true,
-            })
-        } else if result == RPC_E_CHANGED_MODE {
-            Ok(Self {
-                initialized_here: false,
-            })
-        } else {
-            let err = windows::core::Error::from_hresult(result);
-            Err(format!("摄像头枚举 COM 初始化失败：{err}"))
-        }
-    }
-}
-
-impl Drop for EnumerationComInit {
-    fn drop(&mut self) {
-        if self.initialized_here {
-            unsafe {
-                windows::Win32::System::Com::CoUninitialize();
-            }
-        }
-    }
-}
-
-impl Drop for ComInit {
-    fn drop(&mut self) {
-        unsafe {
-            windows::Win32::System::Com::CoUninitialize();
-        }
-    }
-}
-
-struct ShellComInit;
-
-impl ShellComInit {
-    fn new() -> Result<Self, String> {
-        unsafe {
-            CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE)
-                .ok()
-                .map_err(|e| format!("Shell COM initialization failed: {e}"))?;
-        }
-        Ok(Self)
-    }
-}
-
-impl Drop for ShellComInit {
-    fn drop(&mut self) {
-        unsafe {
-            windows::Win32::System::Com::CoUninitialize();
-        }
-    }
-}
-
-struct MfInit;
-
-impl MfInit {
-    fn new() -> Result<Self, String> {
-        unsafe {
-            MFStartup(MF_VERSION, Default::default())
-                .map_err(|e| format!("MFStartup failed: {e}"))?;
-        }
-        Ok(Self)
-    }
-}
-
-impl Drop for MfInit {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = MFShutdown();
-        }
-    }
 }
 
 fn wide(text: &str) -> Vec<u16> {
