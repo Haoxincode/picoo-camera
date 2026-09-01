@@ -27,6 +27,11 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
                 "cargo test -p picoo-frame-hub -p picoo-windows-vcam-source"
             )
             .run()?;
+            cmd!(
+                sh,
+                "cargo test -p picoo-desktop --features gpui-ui,windows-vcam"
+            )
+            .run()?;
             cmd!(sh, "cargo test -p picoo-media-decode --features windows-mf").run()?;
             cmd!(
                 sh,

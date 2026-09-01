@@ -66,10 +66,14 @@ impl PicooDesktopApp {
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let vcam_ready = matches!(
-            snapshot.virtual_camera,
-            VirtualCameraStatus::Installed | VirtualCameraStatus::Active
-        );
+        let vcam_ready = snapshot.virtual_camera == VirtualCameraStatus::Active;
+        let vcam_status_label = if vcam_ready {
+            "接收端已就绪"
+        } else if snapshot.virtual_camera == VirtualCameraStatus::Installed {
+            "等待系统发布"
+        } else {
+            "需要修复"
+        };
         let pairing_code = snapshot
             .pairing_short_code
             .as_deref()
@@ -119,15 +123,7 @@ impl PicooDesktopApp {
                                     .font_weight(FontWeight::BOLD)
                                     .child(snapshot.display_name.clone()),
                             )
-                            .child(status_badge(
-                                if vcam_ready {
-                                    "接收端已就绪"
-                                } else {
-                                    "需要修复"
-                                },
-                                vcam_ready,
-                                cx,
-                            )),
+                            .child(status_badge(vcam_status_label, vcam_ready, cx)),
                     ),
             )
             .child(

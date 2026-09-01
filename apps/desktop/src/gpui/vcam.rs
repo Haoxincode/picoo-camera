@@ -258,7 +258,9 @@ impl PicooDesktopApp {
             let repair = cx.background_executor().spawn_dedicated(|_| async move {
                 crate::vcam_register::repair_system_registration_elevated()?;
                 match detect_vcam_status() {
-                    VirtualCameraStatus::Active => Ok(()),
+                    status @ (VirtualCameraStatus::Active | VirtualCameraStatus::Installed) => {
+                        Ok(status)
+                    }
                     status => Err(format!(
                         "修复进程已结束，但 Windows 摄像头枚举状态仍为 {status:?}"
                     )),
@@ -268,12 +270,15 @@ impl PicooDesktopApp {
                 let repair_result = repair.await;
                 let _ = this.update(cx, |this, cx| {
                     match repair_result {
-                        Ok(()) => {
-                            this.vcam_status = VirtualCameraStatus::Active;
-                            this.runtime
-                                .set_virtual_camera_status(VirtualCameraStatus::Active);
-                            this.vcam_setup_state =
-                                VcamSetupState::Succeeded("虚拟摄像头已修复并激活。".into());
+                        Ok(status) => {
+                            this.vcam_status = status;
+                            this.runtime.set_virtual_camera_status(status);
+                            let message = if status == VirtualCameraStatus::Active {
+                                "虚拟摄像头已修复并可枚举。"
+                            } else {
+                                "虚拟摄像头已注册，正在等待 Windows 发布设备；请重启会议应用后重新检测。"
+                            };
+                            this.vcam_setup_state = VcamSetupState::Succeeded(message.into());
                         }
                         Err(err) => {
                             tracing::warn!("Install or repair Virtual Camera failed: {err}");
@@ -541,10 +546,7 @@ impl PicooDesktopApp {
                             )
                             .child(status_badge(
                                 vcam_label_zh(snapshot.virtual_camera),
-                                matches!(
-                                    snapshot.virtual_camera,
-                                    VirtualCameraStatus::Installed | VirtualCameraStatus::Active
-                                ),
+                                matches!(snapshot.virtual_camera, VirtualCameraStatus::Active),
                                 cx,
                             )),
                     )
@@ -691,7 +693,7 @@ pub(super) fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
         VirtualCameraStatus::AwaitingApproval => "等待系统批准",
         VirtualCameraStatus::RestartRequired => "重启后生效",
         VirtualCameraStatus::Uninstalling => "正在移除",
-        VirtualCameraStatus::Installed => "就绪 (Ready)",
+        VirtualCameraStatus::Installed => "已注册 · 等待系统发布",
         VirtualCameraStatus::NotInstalled => "未安装 (Not Installed)",
         VirtualCameraStatus::Active => "就绪 (Active)",
     }

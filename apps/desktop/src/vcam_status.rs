@@ -58,16 +58,31 @@ fn detect_non_macos_vcam_status() -> VirtualCameraStatus {
     }
 
     #[cfg(all(windows, feature = "windows-vcam"))]
-    match crate::vcam_register::registered_camera_symbolic_link() {
-        Ok(Some(symbolic_link)) => {
-            tracing::debug!(%symbolic_link, "Picoo Camera is visible to Media Foundation");
-            VirtualCameraStatus::Active
+    let enumeration = crate::vcam_register::registered_camera_symbolic_link();
+    if let Ok(Some(symbolic_link)) = &enumeration {
+        tracing::debug!(%symbolic_link, "Picoo Camera is visible to Media Foundation");
+    } else if let Err(err) = &enumeration {
+        tracing::warn!("Media Foundation camera enumeration failed: {err}");
+    }
+    windows_registration_status_from_probe(
+        crate::vcam_register::system_registration_identity_persisted(),
+        enumeration.map(|link| link.is_some()),
+    )
+}
+
+fn windows_registration_status_from_probe(
+    identity_persisted: bool,
+    enumeration: Result<bool, String>,
+) -> VirtualCameraStatus {
+    match enumeration {
+        Ok(true) => VirtualCameraStatus::Active,
+        Ok(false) if identity_persisted => {
+            // Start succeeded and committed an exact identity, but this user
+            // session has not observed Software Device publication yet.
+            VirtualCameraStatus::Installed
         }
-        Ok(None) => VirtualCameraStatus::NotInstalled,
-        Err(err) => {
-            tracing::warn!("Media Foundation camera enumeration failed: {err}");
-            VirtualCameraStatus::Unknown
-        }
+        Ok(false) => VirtualCameraStatus::NotInstalled,
+        Err(_) => VirtualCameraStatus::Unknown,
     }
 }
 
@@ -164,8 +179,11 @@ fn current_platform() -> VcamPlatform {
 fn vcam_repair_hint_for(platform: VcamPlatform, status: VirtualCameraStatus) -> &'static str {
     match platform {
         VcamPlatform::Windows => match status {
-            VirtualCameraStatus::Installed | VirtualCameraStatus::Active => {
-                "虚拟摄像头已注册。若会议软件中不可见，请重启会议应用或重新运行安装程序。"
+            VirtualCameraStatus::Active => {
+                "虚拟摄像头已注册并可枚举。若会议软件中不可见，请完全退出并重启会议应用。"
+            }
+            VirtualCameraStatus::Installed => {
+                "虚拟摄像头注册已提交，但 Windows 尚未向当前会话发布设备。请先完全退出并重启会议应用；若仍不可见，请重启 Windows 后重新检测。"
             }
             VirtualCameraStatus::Bundled
             | VirtualCameraStatus::AwaitingApproval
@@ -231,6 +249,26 @@ mod tests {
                 | VirtualCameraStatus::NotInstalled
                 | VirtualCameraStatus::Active
         ));
+    }
+
+    #[test]
+    fn windows_registration_requires_interactive_enumeration_for_active() {
+        assert_eq!(
+            windows_registration_status_from_probe(false, Ok(false)),
+            VirtualCameraStatus::NotInstalled
+        );
+        assert_eq!(
+            windows_registration_status_from_probe(true, Ok(false)),
+            VirtualCameraStatus::Installed
+        );
+        assert_eq!(
+            windows_registration_status_from_probe(true, Ok(true)),
+            VirtualCameraStatus::Active
+        );
+        assert_eq!(
+            windows_registration_status_from_probe(true, Err("probe failed".into())),
+            VirtualCameraStatus::Unknown
+        );
     }
 
     #[test]

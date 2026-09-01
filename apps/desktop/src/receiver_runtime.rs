@@ -267,11 +267,11 @@ impl ReceiverRuntime {
             | crate::model::VirtualCameraStatus::AwaitingApproval
             | crate::model::VirtualCameraStatus::RestartRequired
             | crate::model::VirtualCameraStatus::Uninstalling
+            | crate::model::VirtualCameraStatus::Installed
             | crate::model::VirtualCameraStatus::NotInstalled => {
                 self.receiver.mark_virtual_camera_unavailable();
             }
-            crate::model::VirtualCameraStatus::Installed
-            | crate::model::VirtualCameraStatus::Active => {
+            crate::model::VirtualCameraStatus::Active => {
                 self.receiver.clear_virtual_camera_unavailable();
             }
         }

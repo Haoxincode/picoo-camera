@@ -200,6 +200,12 @@ need "$VCAM_RS" 'vcam_symbolic_link'
 need "$VCAM_RS" 'camera_identity_matches'
 need "$VCAM_RS" 'wait_for_registered_camera'
 need "$VCAM_RS" 'self.camera.Shutdown()'
+if sed -n '/pub fn register_system()/,/^    }/p' "$VCAM_RS" | grep -q 'wait_for_registered_camera'; then
+  echo "register_system must not make MSI success depend on service-session camera enumeration"
+  fail=1
+else
+  echo "ok: MSI registration trusts Start + persisted identity, not service-session enumeration"
+fi
 
 # Late major upgrades depend on new PE versions replacing the old maintenance
 # binaries before the cached related product runs its uninstall command.

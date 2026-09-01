@@ -16,7 +16,7 @@
 | --- | --- |
 | `PicooCamera.msi` | 推荐：安装文件 + COM 注册（WiX 注册表）+ 防火墙规则 + **安装结束时自动 MF 注册**（`--register-vcam --no-wait`） |
 
-**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 与 `InprocServer32` 由 WiX 声明式写入；`InstallFiles` 后调用 `picoo-desktop --register-vcam --no-wait` 注册 MF（system lifetime）。若仍见 `0x80040154`（类未注册），桌面端“虚拟摄像头”页的“安装或修复…”操作会通过 UAC 检查并修复同一组 COM 注册表值；也可手动：
+**MSI 安装要求**：Windows 11 x64、**以管理员身份**运行安装程序（perMachine 包）。COM CLSID 与 `InprocServer32` 由 WiX 声明式写入；`InstallFiles` 后调用 `picoo-desktop --register-vcam --no-wait` 注册 MF（system lifetime）。该维护命令以 `IMFVirtualCamera::Start` 成功并取得、持久化 symbolic link 作为成功条件；Windows Installer 服务会话中的摄像头枚举不是安装事务条件。桌面端在交互用户上下文精确枚举同一 symbolic link 后才显示 Active；若显示“已注册 · 等待系统发布”，先完全退出并重启会议软件，必要时重启 Windows 后重新检测。若仍见 `0x80040154`（类未注册），桌面端“虚拟摄像头”页的“安装或修复…”操作会通过 UAC 检查并修复同一组 COM 注册表值；也可手动：
 
 ```powershell
 # 若 MSI 自动 MF 注册失败时的补救（管理员 PowerShell，路径按实际安装目录）

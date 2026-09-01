@@ -40,7 +40,10 @@ const INPROC_SERVER_KEY: &str =
     r"SOFTWARE\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32";
 const PRODUCT_KEY: &str = r"SOFTWARE\Picoo\PicooCamera";
 const SYMBOLIC_LINK_VALUE: &str = "vcam_symbolic_link";
-const ENUMERATION_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+// Microsoft’s own virtual-camera manager allows up to 20 seconds for the
+// interactive user's device enumeration. This is a convergence probe, not
+// part of the authoritative IMFVirtualCamera::Start transaction.
+const ENUMERATION_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
 const ENUMERATION_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct VirtualCameraRegistration {
@@ -67,7 +70,10 @@ impl VirtualCameraRegistration {
     /// Register an all-users, system-lifetime virtual camera (MSI/UAC only).
     pub fn register_system() -> Result<Self, String> {
         repair_installed_com_server()?;
-        let existed_before_attempt = registered_camera_symbolic_link()?.is_some();
+        // Ownership is established by a previously committed symbolic link,
+        // not by whether the Windows Installer service account can enumerate
+        // the device in its non-interactive session.
+        let existed_before_attempt = system_registration_identity_persisted();
         let registration = start_virtual_camera(
             MFVirtualCameraLifetime_System,
             MFVirtualCameraAccess_AllUsers,
@@ -83,7 +89,10 @@ impl VirtualCameraRegistration {
             }
             return Err(format!("虚拟摄像头已创建，但无法保存设备身份：{err}"));
         }
-        wait_for_registered_camera(ENUMERATION_WAIT_TIMEOUT)?;
+        // Start() is the documented create/register operation. Device
+        // enumeration is asynchronous and session-scoped, so the MSI service
+        // must not roll back a successful registration merely because its own
+        // MFEnumDeviceSources probe cannot see the interactive user's device.
         Ok(registration)
     }
 
@@ -147,6 +156,15 @@ pub fn com_server_registered() -> bool {
         (Some(expected), Some(registered)) => paths_equivalent(&expected, &registered),
         _ => false,
     }
+}
+
+/// Whether a successful system registration committed its stable identity.
+///
+/// This does not claim that the current user can already enumerate the camera;
+/// callers must use `registered_camera_symbolic_link` for the Active verdict.
+pub fn system_registration_identity_persisted() -> bool {
+    read_registry_string(PRODUCT_KEY, Some(SYMBOLIC_LINK_VALUE))
+        .is_some_and(|value| !value.is_empty())
 }
 
 /// Return the symbolic link only when Media Foundation can enumerate the
@@ -219,7 +237,9 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
 }
 
 fn camera_identity_matches(expected_link: &str, actual_link: Option<&str>) -> bool {
-    actual_link == Some(expected_link)
+    // Windows device-interface paths are case-insensitive. MF may return a
+    // canonicalized casing different from the value exposed by Start().
+    actual_link.is_some_and(|actual| actual.eq_ignore_ascii_case(expected_link))
 }
 
 /// Wait for the software-device registration to propagate into Media
@@ -333,16 +353,17 @@ pub fn repair_system_registration_elevated() -> Result<(), String> {
             "管理员修复进程结束（退出代码 {exit_code}），但 COM 注册仍不可用；请重新运行 PicooCamera.msi"
         ));
     }
-    if let Err(err) = wait_for_registered_camera(ENUMERATION_WAIT_TIMEOUT) {
+    if exit_code != 0 {
         return Err(format!(
-            "管理员修复进程结束（退出代码 {exit_code}），但设备发布未完成：{err}"
+            "管理员修复进程失败（退出代码 {exit_code}）；请重新运行 PicooCamera.msi"
         ));
     }
-    if exit_code != 0 {
-        tracing::warn!(
-            exit_code,
-            "elevated maintenance reported failure after the authoritative camera identity became enumerable"
-        );
+    if let Err(err) = wait_for_registered_camera(ENUMERATION_WAIT_TIMEOUT) {
+        // The elevated command already completed the authoritative Start and
+        // persisted its identity. Keep this as a non-fatal publishing state so
+        // users can restart a cached meeting app (or Windows) without undoing
+        // the valid system registration.
+        tracing::warn!(%err, "virtual camera registered but is not yet enumerable for the interactive user");
     }
     Ok(())
 }
@@ -697,6 +718,10 @@ mod tests {
     fn camera_identity_uses_symbolic_link_not_windows_owned_display_name() {
         let expected = r"\\?\swd#vcamdevapi#picoo";
         assert!(camera_identity_matches(expected, Some(expected)));
+        assert!(camera_identity_matches(
+            expected,
+            Some(r"\\?\SWD#VCAMDEVAPI#PICOO")
+        ));
         assert!(!camera_identity_matches(
             expected,
             Some(r"\\?\swd#vcamdevapi#another-camera")
