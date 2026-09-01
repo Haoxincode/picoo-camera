@@ -197,7 +197,7 @@ impl PicooDesktopApp {
                 if cfg!(target_os = "macos") {
                     "正在等待系统批准…"
                 } else {
-                    "正在等待管理员授权…"
+                    "正在等待 Windows UAC 管理员授权…"
                 }
             }
             VcamSetupState::Running(VcamSetupOperation::Detect) => "正在检测…",

@@ -38,7 +38,7 @@ msiexec /i PicooCamera.msi /l*v "$env:TEMP\picoo-camera-install.log"
 在打开任何会议软件之前：
 
 1. [ ] 启动 **picoo-desktop**，确认托盘图标存在
-2. [ ] **设置 → 蓝牙和设备 → 摄像头**（或 **Windows 相机**）→ 下拉选择 **Picoo Camera**
+2. [ ] **设置 → 蓝牙和设备 → 摄像头**（或 **Windows 相机**）→ 下拉选择名称中包含 **Picoo Camera** 的设备；Windows 可能显示为 `Picoo Camera (Windows Virtual Camera)`
 3. [ ] **未开 Streaming**：预览为占位（Waiting for phone…）
 4. [ ] **Android 已 Streaming**：预览为手机画面，方向直立、无明显撕裂
 5. [ ] 若列表无 Picoo Camera：重装 MSI → 重启「Windows Camera Frame Server」服务或重启 PC

@@ -3,6 +3,7 @@
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use windows::core::{GUID, HRESULT, PCWSTR};
 use windows::Win32::Foundation::{
@@ -41,6 +42,8 @@ const INPROC_SERVER_KEY: &str =
     r"SOFTWARE\Classes\CLSID\{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}\InprocServer32";
 const PRODUCT_KEY: &str = r"SOFTWARE\Picoo\PicooCamera";
 const SYMBOLIC_LINK_VALUE: &str = "vcam_symbolic_link";
+const ENUMERATION_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
+const ENUMERATION_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct VirtualCameraRegistration {
     camera: IMFVirtualCamera,
@@ -79,6 +82,7 @@ impl VirtualCameraRegistration {
             }
             return Err(format!("虚拟摄像头已创建，但无法保存设备身份：{err}"));
         }
+        wait_for_registered_camera(ENUMERATION_WAIT_TIMEOUT)?;
         Ok(registration)
     }
 
@@ -127,6 +131,11 @@ pub fn com_server_registered() -> bool {
 
 /// Return the symbolic link only when Media Foundation can enumerate the
 /// registered Picoo video-capture device for the current user.
+///
+/// Windows owns the public device name and appends a localized "Windows
+/// Virtual Camera" suffix. The persisted symbolic link is the stable identity;
+/// comparing it avoids both localized-name false negatives and same-name
+/// devices impersonating Picoo's registration.
 pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
     let Some(expected_link) = read_registry_string(PRODUCT_KEY, Some(SYMBOLIC_LINK_VALUE)) else {
         return Ok(None);
@@ -165,14 +174,17 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
             let Some(device) = device.as_ref() else {
                 continue;
             };
-            let friendly = mf_attribute_string(device, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
             let symbolic_link = mf_attribute_string(
                 device,
                 &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
             );
-            if friendly.as_deref() == Some(FRIENDLY_NAME)
-                && symbolic_link.as_deref() == Some(expected_link.as_str())
-            {
+            if camera_identity_matches(&expected_link, symbolic_link.as_deref()) {
+                let friendly = mf_attribute_string(device, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
+                tracing::debug!(
+                    friendly_name = friendly.as_deref().unwrap_or("<missing>"),
+                    %expected_link,
+                    "matched Picoo Camera Media Foundation identity"
+                );
                 match_link = symbolic_link;
                 break;
             }
@@ -184,6 +196,39 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
         match_link
     };
     Ok(result)
+}
+
+fn camera_identity_matches(expected_link: &str, actual_link: Option<&str>) -> bool {
+    actual_link == Some(expected_link)
+}
+
+/// Wait for the software-device registration to propagate into Media
+/// Foundation enumeration. `IMFVirtualCamera::Start` can return before the
+/// device is visible to a second process, so a single immediate probe is not a
+/// valid registration verdict.
+pub fn wait_for_registered_camera(timeout: Duration) -> Result<String, String> {
+    let deadline = Instant::now() + timeout;
+    let mut last_error = None;
+    loop {
+        match registered_camera_symbolic_link() {
+            Ok(Some(symbolic_link)) => return Ok(symbolic_link),
+            Ok(None) => {}
+            Err(err) => last_error = Some(err),
+        }
+        if Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(ENUMERATION_RETRY_INTERVAL);
+    }
+
+    let detail = last_error.map_or_else(
+        || "Windows 尚未把设备发布到 Media Foundation 摄像头列表".to_string(),
+        |err| format!("最后一次枚举错误：{err}"),
+    );
+    Err(format!(
+        "虚拟摄像头注册命令已完成，但等待 {} 秒后仍不可枚举；{detail}",
+        timeout.as_secs()
+    ))
 }
 
 /// Repair declarative COM registration when the installer keys are missing or stale.
@@ -263,13 +308,21 @@ pub fn repair_system_registration_elevated() -> Result<(), String> {
     }
     exit_result.map_err(|err| format!("无法读取虚拟摄像头修复结果：{err}"))?;
 
-    if exit_code != 0 {
+    if !com_server_registered() {
         return Err(format!(
-            "管理员修复进程失败（退出代码 {exit_code}）；请重新运行 PicooCamera.msi"
+            "管理员修复进程结束（退出代码 {exit_code}），但 COM 注册仍不可用；请重新运行 PicooCamera.msi"
         ));
     }
-    if !com_server_registered() {
-        return Err("修复进程已结束，但 COM 注册仍不可用；请重新运行 PicooCamera.msi".to_string());
+    if let Err(err) = wait_for_registered_camera(ENUMERATION_WAIT_TIMEOUT) {
+        return Err(format!(
+            "管理员修复进程结束（退出代码 {exit_code}），但设备发布未完成：{err}"
+        ));
+    }
+    if exit_code != 0 {
+        tracing::warn!(
+            exit_code,
+            "elevated maintenance reported failure after the authoritative camera identity became enumerable"
+        );
     }
     Ok(())
 }
@@ -709,5 +762,16 @@ mod tests {
     fn candidate_paths_include_exe_dir() {
         let paths = candidate_vcam_dll_paths();
         assert!(!paths.is_empty());
+    }
+
+    #[test]
+    fn camera_identity_uses_symbolic_link_not_windows_owned_display_name() {
+        let expected = r"\\?\swd#vcamdevapi#picoo";
+        assert!(camera_identity_matches(expected, Some(expected)));
+        assert!(!camera_identity_matches(
+            expected,
+            Some(r"\\?\swd#vcamdevapi#another-camera")
+        ));
+        assert!(!camera_identity_matches(expected, None));
     }
 }

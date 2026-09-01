@@ -179,6 +179,8 @@ need "$VCAM_RS" 'MFEnumDeviceSources'
 need "$VCAM_RS" 'MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK'
 need "$VCAM_RS" 'MFVirtualCameraAccess_AllUsers'
 need "$VCAM_RS" 'vcam_symbolic_link'
+need "$VCAM_RS" 'camera_identity_matches'
+need "$VCAM_RS" 'wait_for_registered_camera'
 if awk '/Id="RegisterVcamOnInstall"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
   echo "ok: per-machine VCam registration runs elevated for AllUsers access"
 else
