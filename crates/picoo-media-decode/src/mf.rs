@@ -502,7 +502,7 @@ fn normalize_contiguous_nv12(
     // Horizontal pitch: allocation is `stride * visible_height * 3 / 2`.
     let visible_rows_x2 = height * 3;
     let doubled_len = source.len().saturating_mul(2);
-    if doubled_len % visible_rows_x2 == 0 {
+    if doubled_len.is_multiple_of(visible_rows_x2) {
         let stride = doubled_len / visible_rows_x2;
         if stride >= width {
             return copy_visible_nv12(source, width, height, stride, height);
@@ -511,7 +511,7 @@ fn normalize_contiguous_nv12(
 
     // Vertical allocation: allocation is `width * allocated_height * 3 / 2`.
     let width_x3 = width * 3;
-    if doubled_len % width_x3 == 0 {
+    if doubled_len.is_multiple_of(width_x3) {
         let allocated_height = doubled_len / width_x3;
         if allocated_height >= height {
             return copy_visible_nv12(source, width, height, width, allocated_height);
@@ -564,32 +564,28 @@ unsafe fn drain_output(
     width: u32,
     height: u32,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
-    loop {
-        let provided_sample = output_sample_for_transform(transform)?;
-        let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
-            dwStreamID: 0,
-            pSample: ManuallyDrop::new(provided_sample),
-            dwStatus: 0,
-            pEvents: ManuallyDrop::new(None),
-        };
+    let provided_sample = output_sample_for_transform(transform)?;
+    let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
+        dwStreamID: 0,
+        pSample: ManuallyDrop::new(provided_sample),
+        dwStatus: 0,
+        pEvents: ManuallyDrop::new(None),
+    };
 
-        let mut status = 0u32;
-        let result =
-            transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status);
-        let sample = ManuallyDrop::take(&mut output_buffer.pSample);
-        let _events = ManuallyDrop::take(&mut output_buffer.pEvents);
-        match result {
-            Ok(()) => {
-                if let Some(sample) = sample {
-                    return sample_to_frame(&sample, width, height).map(Some);
-                }
-                return Ok(None);
-            }
-            Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
-            Err(e) => {
-                return Err(DecodeError::Platform(format!("ProcessOutput: {e}")));
+    let mut status = 0u32;
+    let result = transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status);
+    let sample = ManuallyDrop::take(&mut output_buffer.pSample);
+    let _events = ManuallyDrop::take(&mut output_buffer.pEvents);
+    match result {
+        Ok(()) => {
+            if let Some(sample) = sample {
+                sample_to_frame(&sample, width, height).map(Some)
+            } else {
+                Ok(None)
             }
         }
+        Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => Ok(None),
+        Err(e) => Err(DecodeError::Platform(format!("ProcessOutput: {e}"))),
     }
 }
 
