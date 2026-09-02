@@ -102,6 +102,32 @@ impl TrustedDeviceStore {
         self.devices.contains_key(device_id)
     }
 
+    /// Trusted identities with the same user-visible name as `device_id`.
+    ///
+    /// A display name is never a trust key. This query only prepares an
+    /// explicit, post-pairing replacement decision (REQ-PICOO-PAIRING-006).
+    pub fn same_name_identity_ids(&self, device_id: &str) -> Vec<String> {
+        let Some(current) = self.devices.get(device_id) else {
+            return Vec::new();
+        };
+        let current_name = normalized_device_name(&current.device_name);
+        if current_name.is_empty() {
+            return Vec::new();
+        }
+
+        let mut ids = self
+            .devices
+            .values()
+            .filter(|device| {
+                device.device_id != device_id
+                    && normalized_device_name(&device.device_name) == current_name
+            })
+            .map(|device| device.device_id.clone())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
+
     pub fn verify_paired_key(
         &self,
         device_id: &str,
@@ -117,6 +143,10 @@ impl TrustedDeviceStore {
             self.upsert(device);
         }
     }
+}
+
+fn normalized_device_name(name: &str) -> String {
+    name.trim().to_lowercase()
 }
 
 #[cfg(test)]
@@ -147,5 +177,32 @@ mod tests {
                 device_id: "d1".into()
             })
         );
+    }
+
+    #[test]
+    fn same_name_identities_are_candidates_but_remain_distinct_trust_keys() {
+        let mut store = TrustedDeviceStore::new();
+        for (device_id, device_name) in [
+            ("current", "  Pixel 9 Pro "),
+            ("older-b", "pixel 9 pro"),
+            ("older-a", "PIXEL 9 PRO"),
+            ("other", "iPhone"),
+        ] {
+            store.upsert(TrustedDevice {
+                device_id: device_id.into(),
+                device_name: device_name.into(),
+                public_key: vec![device_id.len() as u8],
+                certificate_fingerprint: device_id.into(),
+                paired_at_ms: 0,
+                last_connected_at_ms: None,
+            });
+        }
+
+        assert_eq!(
+            store.same_name_identity_ids("current"),
+            vec!["older-a".to_string(), "older-b".to_string()]
+        );
+        assert!(store.is_paired("current"));
+        assert!(store.is_paired("older-a"));
     }
 }

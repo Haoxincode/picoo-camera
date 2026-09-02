@@ -11,7 +11,9 @@ use picoo_discovery::{
 };
 use picoo_pairing::{public_key_fingerprint_prefix, DeviceIdentity};
 use picoo_protocol::control::{CameraCommand, StreamConfig};
-use picoo_receiver::{IngressStats, ReceiverError, ReceiverIdentity, ReceiverSession};
+use picoo_receiver::{
+    IngressStats, ReceiverError, ReceiverIdentity, ReceiverSession, TrustedIdentityReplacement,
+};
 use picoo_session::ReceiverStatus;
 use picoo_transport::Endpoint;
 
@@ -32,6 +34,7 @@ pub struct TrustedDeviceSummary {
     pub device_id: String,
     pub device_name: String,
     pub certificate_fingerprint: String,
+    pub identity_prefix: String,
     pub last_connected_at_ms: u64,
     /// A→W V1: paired phones are Android.
     pub platform: &'static str,
@@ -85,6 +88,9 @@ pub struct ReceiverSnapshot {
     pub stream_metrics: picoo_metrics::StreamMetrics,
     pub trusted_device_count: usize,
     pub trusted_devices: Vec<TrustedDeviceSummary>,
+    /// Present only while the active, already-trusted Sender has older
+    /// same-name credentials that the user may explicitly revoke.
+    pub trusted_identity_replacement: Option<TrustedIdentityReplacement>,
     pub display_name: String,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub active_sender: Option<ActiveSenderSummary>,
@@ -345,6 +351,34 @@ impl ReceiverRuntime {
                     device_name,
                 });
         let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
+        let mut trusted_devices = self
+            .receiver
+            .trusted_devices()
+            .list()
+            .map(|d| TrustedDeviceSummary {
+                device_id: d.device_id.clone(),
+                device_name: d.device_name.clone(),
+                certificate_fingerprint: d.certificate_fingerprint.clone(),
+                identity_prefix: String::new(),
+                last_connected_at_ms: d.last_connected_at_ms.unwrap_or(0),
+                platform: "Android",
+            })
+            .collect::<Vec<_>>();
+        let identity_prefixes = trusted_devices
+            .iter()
+            .map(|device| distinguishable_fingerprint_prefix(device, &trusted_devices))
+            .collect::<Vec<_>>();
+        for (device, prefix) in trusted_devices.iter_mut().zip(identity_prefixes) {
+            device.identity_prefix = prefix;
+        }
+        trusted_devices.sort_by(|left, right| {
+            right
+                .last_connected_at_ms
+                .cmp(&left.last_connected_at_ms)
+                .then_with(|| left.device_name.cmp(&right.device_name))
+                .then_with(|| left.device_id.cmp(&right.device_id))
+        });
+        let trusted_identity_replacement = self.receiver.trusted_identity_replacement().cloned();
         ReceiverSnapshot {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
@@ -390,19 +424,9 @@ impl ReceiverRuntime {
                     packet_loss: stats.map(|stats| stats.packet_loss).unwrap_or(0.0),
                 }
             },
-            trusted_device_count: self.receiver.trusted_devices().list().count(),
-            trusted_devices: self
-                .receiver
-                .trusted_devices()
-                .list()
-                .map(|d| TrustedDeviceSummary {
-                    device_id: d.device_id.clone(),
-                    device_name: d.device_name.clone(),
-                    certificate_fingerprint: d.certificate_fingerprint.clone(),
-                    last_connected_at_ms: d.last_connected_at_ms.unwrap_or(0),
-                    platform: "Android",
-                })
-                .collect(),
+            trusted_device_count: trusted_devices.len(),
+            trusted_devices,
+            trusted_identity_replacement,
             display_name: self.display_name.clone(),
             active_sender,
             virtual_camera: self.virtual_camera,
@@ -431,6 +455,21 @@ impl ReceiverRuntime {
         Ok(removed)
     }
 
+    pub fn replace_trusted_identity_history(
+        &mut self,
+        revision: u64,
+    ) -> Result<usize, ReceiverError> {
+        let removed = self.receiver.replace_trusted_identity_history(revision)?;
+        if removed > 0 {
+            self.refresh_mdns_advertisement();
+        }
+        Ok(removed)
+    }
+
+    pub fn dismiss_trusted_identity_replacement(&mut self, revision: u64) -> bool {
+        self.receiver.dismiss_trusted_identity_replacement(revision)
+    }
+
     #[allow(dead_code)]
     pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
         let removed = self.receiver.clear_trusted_devices()?;
@@ -452,6 +491,26 @@ impl ReceiverRuntime {
     pub fn trusted_store_path(&self) -> Option<&Path> {
         self.receiver.trusted_store_path()
     }
+}
+
+fn distinguishable_fingerprint_prefix(
+    device: &TrustedDeviceSummary,
+    devices: &[TrustedDeviceSummary],
+) -> String {
+    let fingerprint = device.certificate_fingerprint.as_str();
+    let mut length = fingerprint.len().min(8);
+    while length < fingerprint.len()
+        && devices.iter().any(|other| {
+            other.device_id != device.device_id
+                && other
+                    .certificate_fingerprint
+                    .get(..length)
+                    .is_some_and(|prefix| fingerprint.get(..length) == Some(prefix))
+        })
+    {
+        length = (length + 4).min(fingerprint.len());
+    }
+    fingerprint.get(..length).unwrap_or(fingerprint).to_string()
 }
 
 fn sanitize_receiver_stats(
@@ -565,7 +624,10 @@ pub fn format_last_connected_ms(ms: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_last_connected_ms, sanitize_receiver_stats};
+    use super::{
+        distinguishable_fingerprint_prefix, format_last_connected_ms, sanitize_receiver_stats,
+        TrustedDeviceSummary,
+    };
 
     #[test]
     fn format_last_connected_utc_date_or_dash() {
@@ -600,5 +662,43 @@ mod tests {
         assert_eq!(sanitized.jitter_buffer_target_ms, 0.0);
         assert_eq!(sanitized.jitter_buffer_actual_delay_ms, 0.0);
         assert_eq!(sanitized.jitter_buffer_occupancy_ms, 0.0);
+    }
+
+    #[test]
+    fn fingerprint_prefix_is_eight_hex_and_expands_on_collision() {
+        let devices = vec![
+            TrustedDeviceSummary {
+                device_id: "a".into(),
+                device_name: "Pixel".into(),
+                certificate_fingerprint: "12345678aaaabbbb".into(),
+                identity_prefix: String::new(),
+                last_connected_at_ms: 0,
+                platform: "Android",
+            },
+            TrustedDeviceSummary {
+                device_id: "b".into(),
+                device_name: "Pixel".into(),
+                certificate_fingerprint: "12345678ccccdddd".into(),
+                identity_prefix: String::new(),
+                last_connected_at_ms: 0,
+                platform: "Android",
+            },
+        ];
+        assert_eq!(
+            distinguishable_fingerprint_prefix(&devices[0], &devices),
+            "12345678aaaa"
+        );
+        let unique = TrustedDeviceSummary {
+            device_id: "c".into(),
+            device_name: "iPhone".into(),
+            certificate_fingerprint: "abcdef0123456789".into(),
+            identity_prefix: String::new(),
+            last_connected_at_ms: 0,
+            platform: "iOS",
+        };
+        assert_eq!(
+            distinguishable_fingerprint_prefix(&unique, &devices),
+            "abcdef01"
+        );
     }
 }

@@ -32,6 +32,25 @@ use recovery::RecoveryReason;
 
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 
+/// A post-pairing decision to replace older trust credentials that share the
+/// current Sender's user-visible name (REQ-PICOO-PAIRING-006).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedIdentityCandidate {
+    pub device_id: String,
+    pub certificate_fingerprint: String,
+    pub last_connected_at_ms: Option<u64>,
+}
+
+/// One immutable, post-PairingCommit cleanup decision. The revision and exact
+/// candidate snapshot prevent a later name lookup from widening user consent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedIdentityReplacement {
+    pub revision: u64,
+    pub current_device_id: String,
+    pub device_name: String,
+    pub previous_identities: Vec<TrustedIdentityCandidate>,
+}
+
 const MEDIA_DEADLINE_MIN_MS: f64 = 200.0;
 const MEDIA_DEADLINE_MAX_MS: f64 = 300.0;
 
@@ -184,6 +203,8 @@ pub struct ReceiverSession {
     trusted_store_path: Option<PathBuf>,
     active_sender: Option<ActiveSender>,
     pending_pairing: Option<PendingPairing>,
+    pending_trusted_identity_replacement: Option<TrustedIdentityReplacement>,
+    next_trusted_identity_replacement_revision: u64,
     status: ReceiverStatus,
     ingress: IngressStats,
     stats_reporter: StatsReporter,
@@ -240,6 +261,8 @@ impl ReceiverSession {
             trusted_store_path: None,
             active_sender: None,
             pending_pairing: None,
+            pending_trusted_identity_replacement: None,
+            next_trusted_identity_replacement_revision: 1,
             status: ReceiverStatus::Disconnected,
             ingress: IngressStats::default(),
             stats_reporter: StatsReporter::new(),

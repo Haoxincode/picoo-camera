@@ -19,7 +19,7 @@ use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, SessionId};
 use prost::Message;
 
-use super::ReceiverSession;
+use super::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
 use crate::{ReceiverError, PAIRING_CHALLENGE_TTL};
 
 pub(in crate::session) struct ActiveSender {
@@ -61,18 +61,117 @@ impl ReceiverSession {
     }
 
     pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, ReceiverError> {
+        let previous = self.trusted.clone();
         let removed = self.trusted.remove(device_id);
         if removed {
-            self.persist_trusted()?;
+            if let Err(error) = self.persist_trusted() {
+                self.trusted = previous;
+                return Err(error);
+            }
         }
         Ok(removed)
     }
 
+    /// One immutable decision emitted only when a previously unknown Sender
+    /// completes PairingCommit. Trusted reconnects never synthesize it.
+    pub fn trusted_identity_replacement(&self) -> Option<&TrustedIdentityReplacement> {
+        self.pending_trusted_identity_replacement.as_ref()
+    }
+
+    /// Keep the newly paired identity and transactionally revoke exactly the
+    /// identities shown for this decision. A persistence failure restores all
+    /// entries and keeps the decision retryable.
+    pub fn replace_trusted_identity_history(
+        &mut self,
+        revision: u64,
+    ) -> Result<usize, ReceiverError> {
+        let replacement = self
+            .pending_trusted_identity_replacement
+            .as_ref()
+            .filter(|replacement| replacement.revision == revision)
+            .cloned()
+            .ok_or(ReceiverError::StaleTrustedIdentityReplacement)?;
+        if !self.trusted.is_paired(&replacement.current_device_id)
+            || replacement.previous_identities.iter().any(|candidate| {
+                self.trusted.get(&candidate.device_id).is_none_or(|device| {
+                    device.certificate_fingerprint != candidate.certificate_fingerprint
+                })
+            })
+        {
+            return Err(ReceiverError::StaleTrustedIdentityReplacement);
+        }
+        let previous = self.trusted.clone();
+        let mut removed = 0;
+        for candidate in &replacement.previous_identities {
+            removed += usize::from(self.trusted.remove(&candidate.device_id));
+        }
+        if let Err(error) = self.persist_trusted() {
+            self.trusted = previous;
+            return Err(error);
+        }
+        self.pending_trusted_identity_replacement = None;
+        Ok(removed)
+    }
+
+    pub fn dismiss_trusted_identity_replacement(&mut self, revision: u64) -> bool {
+        if self
+            .pending_trusted_identity_replacement
+            .as_ref()
+            .is_some_and(|replacement| replacement.revision == revision)
+        {
+            self.pending_trusted_identity_replacement = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn prepare_trusted_identity_replacement(&mut self, current_device_id: &str) {
+        self.pending_trusted_identity_replacement = None;
+        let Some(current) = self.trusted.get(current_device_id) else {
+            return;
+        };
+        let current_device_id = current.device_id.clone();
+        let current_device_name = current.device_name.clone();
+        let mut previous_identities = self
+            .trusted
+            .same_name_identity_ids(&current_device_id)
+            .into_iter()
+            .filter_map(|device_id| self.trusted.get(&device_id))
+            .map(|device| TrustedIdentityCandidate {
+                device_id: device.device_id.clone(),
+                certificate_fingerprint: device.certificate_fingerprint.clone(),
+                last_connected_at_ms: device.last_connected_at_ms,
+            })
+            .collect::<Vec<_>>();
+        previous_identities.sort_by(|left, right| {
+            right
+                .last_connected_at_ms
+                .cmp(&left.last_connected_at_ms)
+                .then_with(|| left.device_id.cmp(&right.device_id))
+        });
+        if previous_identities.is_empty() {
+            return;
+        }
+        let revision = self.next_trusted_identity_replacement_revision;
+        self.next_trusted_identity_replacement_revision = revision.saturating_add(1);
+        self.pending_trusted_identity_replacement = Some(TrustedIdentityReplacement {
+            revision,
+            current_device_id,
+            device_name: current_device_name,
+            previous_identities,
+        });
+    }
+
     /// Wipe all trusted devices; subsequent connects require re-pairing (PUC-007).
     pub fn clear_trusted_devices(&mut self) -> Result<usize, ReceiverError> {
+        let previous = self.trusted.clone();
         let n = self.trusted.clear();
         if n > 0 {
-            self.persist_trusted()?;
+            if let Err(error) = self.persist_trusted() {
+                self.trusted = previous;
+                return Err(error);
+            }
         }
         Ok(n)
     }
@@ -393,11 +492,15 @@ impl ReceiverSession {
         if !receiver_committed {
             let now_ms = self.now_ms();
             let active = self.active_sender.as_ref().expect("active sender");
+            let active_sender_id = active.sender_id.clone();
+            let active_device_name = active.device_name.clone();
+            let active_public_key = active.public_key.clone();
+            let previously_trusted = self.trusted.is_paired(&active_sender_id);
             let previous_trusted = self.trusted.clone();
             self.trusted.upsert(trusted_device_from_pairing(
-                &active.sender_id,
-                &active.device_name,
-                &active.public_key,
+                &active_sender_id,
+                &active_device_name,
+                &active_public_key,
                 now_ms,
             ));
             if let Err(error) = self.persist_trusted() {
@@ -406,6 +509,9 @@ impl ReceiverSession {
             }
             if let Some(pending) = self.pending_pairing.as_mut() {
                 pending.receiver_committed = true;
+            }
+            if !previously_trusted {
+                self.prepare_trusted_identity_replacement(&active_sender_id);
             }
         }
 

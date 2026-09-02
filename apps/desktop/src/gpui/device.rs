@@ -326,6 +326,7 @@ impl PicooDesktopApp {
                         .children(snapshot.trusted_devices.iter().map(|device| {
                             let device_id = device.device_id.clone();
                             let device_name = device.device_name.clone();
+                            let identity_prefix = device.identity_prefix.clone();
                             div()
                                 .h_flex()
                                 .justify_between()
@@ -375,8 +376,9 @@ impl PicooDesktopApp {
                                                         .text_xs()
                                                         .text_color(cx.theme().muted_foreground)
                                                         .child(format!(
-                                                            "{} · 最近连接 {} · 等待手机接入",
+                                                            "{} · 身份 {} · 最近连接 {} · 等待手机接入",
                                                             device.platform,
+                                                            identity_prefix,
                                                             crate::receiver_runtime::format_last_connected_ms(
                                                                 device.last_connected_at_ms,
                                                             )

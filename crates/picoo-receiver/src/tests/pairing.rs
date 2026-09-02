@@ -676,3 +676,215 @@ fn clear_trusted_devices_requires_repair() {
     assert!(!loaded.is_paired("phone-a"));
     assert!(!loaded.is_paired("phone-b"));
 }
+
+#[test]
+fn newly_paired_identity_can_replace_same_name_history() {
+    // REQ-PICOO-PAIRING-006 — a previously unknown identity emits one exact
+    // cleanup decision only after the full pairing commit.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store_path = dir.path().join("trusted.json");
+    let mut store = TrustedDeviceStore::new();
+    for (device_id, device_name, key) in [
+        ("phone-old-a", "pixel 9 pro", vec![1]),
+        ("phone-old-b", " Pixel 9 Pro ", vec![2]),
+        ("other-phone", "iPhone", vec![4]),
+    ] {
+        store.upsert(TrustedDevice {
+            device_id: device_id.into(),
+            device_name: device_name.into(),
+            public_key: key,
+            certificate_fingerprint: device_id.into(),
+            paired_at_ms: 0,
+            last_connected_at_ms: None,
+        });
+    }
+    store.save_to_path(&store_path).expect("save");
+
+    let identity = crate::ReceiverIdentity::default();
+    let mut receiver = ReceiverSession::new()
+        .with_identity(identity.clone())
+        .with_trusted_store(&store_path)
+        .expect("load store");
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(100));
+    sender
+        .send_client_hello("phone-current", "Pixel 9 Pro", &[3])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.pairing_short_code().is_some() && sender.pairing_short_code().is_some() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    receiver.confirm_pairing_locally().expect("desktop confirm");
+    sender
+        .send_pairing_confirm(&identity.receiver_id)
+        .expect("sender confirm");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    let replacement = receiver
+        .trusted_identity_replacement()
+        .cloned()
+        .expect("post-pairing decision");
+    assert_eq!(replacement.device_name, "Pixel 9 Pro");
+    assert_eq!(
+        replacement
+            .previous_identities
+            .iter()
+            .map(|candidate| candidate.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["phone-old-a", "phone-old-b"]
+    );
+
+    // A later same-name record was never shown by this decision and must not
+    // be widened into the user's confirmed deletion set.
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "phone-late".into(),
+        device_name: "Pixel 9 Pro".into(),
+        public_key: vec![9],
+        certificate_fingerprint: "late".into(),
+        paired_at_ms: 1,
+        last_connected_at_ms: Some(1),
+    });
+    assert_eq!(
+        receiver
+            .replace_trusted_identity_history(replacement.revision)
+            .expect("replace"),
+        2
+    );
+    let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload");
+    assert!(loaded.is_paired("phone-current"));
+    assert!(loaded.is_paired("other-phone"));
+    assert!(loaded.is_paired("phone-late"));
+    assert!(!loaded.is_paired("phone-old-a"));
+    assert!(!loaded.is_paired("phone-old-b"));
+    assert!(receiver.trusted_identity_replacement().is_none());
+}
+
+#[test]
+fn trusted_reconnect_never_emits_identity_replacement_decision() {
+    let mut receiver = ReceiverSession::new();
+    for (device_id, key) in [("phone-a", vec![1]), ("phone-b", vec![2])] {
+        receiver.trusted_devices_mut().upsert(TrustedDevice {
+            device_id: device_id.into(),
+            device_name: "Pixel".into(),
+            public_key: key.clone(),
+            certificate_fingerprint: device_id.into(),
+            paired_at_ms: 0,
+            last_connected_at_ms: None,
+        });
+    }
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(100));
+    sender
+        .send_client_hello("phone-a", "Pixel", &[1])
+        .expect("hello");
+    for _ in 0..100 {
+        receiver.pump().expect("receiver pump");
+        sender.pump().expect("sender pump");
+        if receiver.status() == ReceiverStatus::Streaming {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert!(receiver.trusted_identity_replacement().is_none());
+}
+
+#[test]
+fn keeping_same_name_identities_consumes_only_the_current_decision() {
+    let mut receiver = ReceiverSession::new();
+    for device_id in ["phone-current", "phone-old"] {
+        receiver.trusted_devices_mut().upsert(TrustedDevice {
+            device_id: device_id.into(),
+            device_name: "Pixel".into(),
+            public_key: vec![device_id.len() as u8],
+            certificate_fingerprint: device_id.into(),
+            paired_at_ms: 0,
+            last_connected_at_ms: None,
+        });
+    }
+    receiver.prepare_trusted_identity_replacement("phone-current");
+    let revision = receiver
+        .trusted_identity_replacement()
+        .expect("decision")
+        .revision;
+    assert!(receiver.dismiss_trusted_identity_replacement(revision));
+    assert!(receiver.trusted_identity_replacement().is_none());
+    assert!(!receiver.dismiss_trusted_identity_replacement(revision));
+    assert!(receiver.trusted_devices().is_paired("phone-current"));
+    assert!(receiver.trusted_devices().is_paired("phone-old"));
+}
+
+#[test]
+fn failed_identity_history_replace_rolls_back_memory() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store_path = dir.path().join("trusted.json");
+    let mut store = TrustedDeviceStore::new();
+    store.upsert(TrustedDevice {
+        device_id: "phone-current".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![2],
+        certificate_fingerprint: "current".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    store.upsert(TrustedDevice {
+        device_id: "phone-old".into(),
+        device_name: "Pixel".into(),
+        public_key: vec![1],
+        certificate_fingerprint: "old".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
+    store.save_to_path(&store_path).expect("save");
+    let mut receiver = ReceiverSession::new()
+        .with_trusted_store(&store_path)
+        .expect("load store");
+    receiver.prepare_trusted_identity_replacement("phone-current");
+    let revision = receiver
+        .trusted_identity_replacement()
+        .expect("decision")
+        .revision;
+    // Replace the loaded file with a directory so the next atomic persistence
+    // fails after the in-memory removal has begun.
+    std::fs::remove_file(&store_path).expect("remove store file");
+    std::fs::create_dir(&store_path).expect("directory target");
+
+    assert!(receiver.replace_trusted_identity_history(revision).is_err());
+    assert!(receiver.trusted_devices().is_paired("phone-current"));
+    assert!(receiver.trusted_devices().is_paired("phone-old"));
+}

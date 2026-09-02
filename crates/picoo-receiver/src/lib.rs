@@ -12,7 +12,10 @@ use picoo_pairing::{PairingError, StoreError};
 use picoo_transport::TransportError;
 use thiserror::Error;
 
-pub use session::{run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession};
+pub use session::{
+    run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession,
+    TrustedIdentityCandidate, TrustedIdentityReplacement,
+};
 
 pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera-v1";
 
@@ -39,6 +42,8 @@ pub enum ReceiverError {
     Decode(#[from] DecodeError),
     #[error("not listening")]
     NotListening,
+    #[error("trusted identity replacement decision is stale")]
+    StaleTrustedIdentityReplacement,
     #[error("loopback timeout")]
     LoopbackTimeout,
 }

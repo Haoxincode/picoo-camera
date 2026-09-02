@@ -71,6 +71,7 @@ impl PicooDesktopApp {
             pairing_dialog_pending: None,
             pairing_dialog_visible: false,
             pairing_locally_confirmed: false,
+            identity_replacement_dialog_revision: None,
         }
     }
 
@@ -276,6 +277,61 @@ impl PicooDesktopApp {
                                 }
                                 cx.notify();
                             });
+                        })
+                        .detach();
+                    }
+
+                    // Present identity cleanup only after the pairing dialog has
+                    // left the window. The candidate is already trusted; name
+                    // matching never bypasses the short-code gate (PAIRING-006).
+                    let identity_replacement_request = snapshot
+                        .trusted_identity_replacement
+                        .as_ref()
+                        .filter(|_| !matches!(snapshot.status, ReceiverStatus::Pairing))
+                        .filter(|_| !this.pairing_dialog_visible)
+                        .filter(|replacement| {
+                            this.identity_replacement_dialog_revision
+                                != Some(replacement.revision)
+                        })
+                        .cloned();
+
+                    if let Some(replacement) = identity_replacement_request {
+                        let revision = replacement.revision;
+                        this.identity_replacement_dialog_revision = Some(revision);
+                        let app = cx.entity().downgrade();
+                        let dialog_app = app.clone();
+                        let window_handle = this.window_handle;
+                        cx.spawn(async move |_, cx| {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(0))
+                                .await;
+                            let opened = window_handle
+                                .update(cx, move |_, window, cx| {
+                                    if window.has_active_dialog(cx) {
+                                        return false;
+                                    }
+                                    PicooDesktopApp::open_identity_replacement_dialog(
+                                        dialog_app,
+                                        replacement,
+                                        window,
+                                        cx,
+                                    );
+                                    true
+                                })
+                                .unwrap_or(false);
+                            if !opened {
+                                // Keep one retry reservation while another
+                                // decision surface owns the window.
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(250))
+                                    .await;
+                                let _ = app.update(cx, |this, cx| {
+                                    if this.identity_replacement_dialog_revision == Some(revision) {
+                                        this.identity_replacement_dialog_revision = None;
+                                    }
+                                    cx.notify();
+                                });
+                            }
                         })
                         .detach();
                     }
