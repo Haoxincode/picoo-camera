@@ -43,13 +43,7 @@ internal class CameraEncodingCompositor private constructor(
     private val runtimeErrorReported = AtomicBoolean(false)
 
     @Volatile
-    private var encodingMatrix = EncodingTransform.outputToCameraTextureMatrix(
-        cameraBufferWidth = cameraBufferSize.width,
-        cameraBufferHeight = cameraBufferSize.height,
-        outputWidth = outputSize.width,
-        outputHeight = outputSize.height,
-        clockwiseRotationDegrees = initialRotationDegrees,
-    )
+    private var requestedRotationDegrees = initialRotationDegrees
 
     @Volatile
     private var inputSurface: Surface? = null
@@ -65,6 +59,9 @@ internal class CameraEncodingCompositor private constructor(
     private var textureMatrixLocation = -1
     private var textureSamplerLocation = -1
     private val producerTextureMatrix = FloatArray(MATRIX_SIZE)
+    private val appliedProducerTextureMatrix = FloatArray(MATRIX_SIZE)
+    private var appliedRotationDegrees = Int.MIN_VALUE
+    private var textureMatrix = FloatArray(MATRIX_SIZE)
     private val positionBuffer = floatBufferOf(
         -1f, -1f,
         1f, -1f,
@@ -82,13 +79,7 @@ internal class CameraEncodingCompositor private constructor(
         get() = checkNotNull(inputSurface) { "compositor is not initialized" }
 
     fun updateRotation(rotationDegrees: Int) {
-        encodingMatrix = EncodingTransform.outputToCameraTextureMatrix(
-            cameraBufferWidth = cameraBufferSize.width,
-            cameraBufferHeight = cameraBufferSize.height,
-            outputWidth = outputSize.width,
-            outputHeight = outputSize.height,
-            clockwiseRotationDegrees = rotationDegrees,
-        )
+        requestedRotationDegrees = rotationDegrees
     }
 
     override fun close() {
@@ -220,10 +211,24 @@ internal class CameraEncodingCompositor private constructor(
             makeEncoderSurfaceCurrent()
             surfaceTexture.updateTexImage()
             surfaceTexture.getTransformMatrix(producerTextureMatrix)
-            val textureMatrix = EncodingTransform.multiply(
-                producerTextureMatrix,
-                encodingMatrix,
-            )
+            val rotationDegrees = requestedRotationDegrees
+            if (rotationDegrees != appliedRotationDegrees ||
+                !EncodingTransform.matricesApproximatelyEqual(
+                    producerTextureMatrix,
+                    appliedProducerTextureMatrix,
+                )
+            ) {
+                textureMatrix = EncodingTransform.outputToSurfaceTextureMatrix(
+                    cameraBufferWidth = cameraBufferSize.width,
+                    cameraBufferHeight = cameraBufferSize.height,
+                    outputWidth = outputSize.width,
+                    outputHeight = outputSize.height,
+                    clockwiseRotationDegrees = rotationDegrees,
+                    producerTextureMatrix = producerTextureMatrix,
+                )
+                producerTextureMatrix.copyInto(appliedProducerTextureMatrix)
+                appliedRotationDegrees = rotationDegrees
+            }
 
             GLES20.glViewport(0, 0, outputSize.width, outputSize.height)
             GLES20.glUseProgram(programId)

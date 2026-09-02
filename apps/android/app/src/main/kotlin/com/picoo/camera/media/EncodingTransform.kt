@@ -1,39 +1,57 @@
 package com.picoo.camera.media
 
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * Pure texture-coordinate transform for the Android encoding compositor
  * (REQ-PICOO-MEDIA-013).
  *
- * The returned column-major matrix maps normalized output coordinates into the
- * Camera2 OES texture before SurfaceTexture's producer matrix is applied.
+ * SurfaceTexture's producer matrix can include a crop, vertical flip, and an
+ * axis swap supplied by the Camera2 HAL. Cropping from the nominal sensor
+ * rotation alone can therefore crop the wrong texture axis. The combined
+ * transform below measures the producer-oriented frame before applying the
+ * centered 16:9 cover crop.
  */
 object EncodingTransform {
-    fun outputToCameraTextureMatrix(
+    fun outputToSurfaceTextureMatrix(
         cameraBufferWidth: Int,
         cameraBufferHeight: Int,
         outputWidth: Int,
         outputHeight: Int,
         clockwiseRotationDegrees: Int,
+        producerTextureMatrix: FloatArray,
     ): FloatArray {
         require(cameraBufferWidth > 0 && cameraBufferHeight > 0)
         require(outputWidth > 0 && outputHeight > 0)
+        require(producerTextureMatrix.size == MATRIX_SIZE)
 
         val rotation = normalizeCardinalRotation(clockwiseRotationDegrees)
-        val swapsAxes = rotation == 90 || rotation == 270
-        val uprightWidth = if (swapsAxes) cameraBufferHeight else cameraBufferWidth
-        val uprightHeight = if (swapsAxes) cameraBufferWidth else cameraBufferHeight
-        val uprightAspect = uprightWidth.toFloat() / uprightHeight.toFloat()
+        val producerOriented = multiply(
+            producerTextureMatrix,
+            rotationInverseMatrix(rotation),
+        )
+        val orientedWidth = hypot(
+            producerOriented[0] * cameraBufferWidth,
+            producerOriented[1] * cameraBufferHeight,
+        )
+        val orientedHeight = hypot(
+            producerOriented[4] * cameraBufferWidth,
+            producerOriented[5] * cameraBufferHeight,
+        )
+        require(orientedWidth > 0f && orientedHeight > 0f) {
+            "producer texture matrix has no visible area"
+        }
+        val orientedAspect = orientedWidth / orientedHeight
         val outputAspect = outputWidth.toFloat() / outputHeight.toFloat()
         val sampleScaleX: Float
         val sampleScaleY: Float
-        if (uprightAspect > outputAspect) {
-            sampleScaleX = outputAspect / uprightAspect
+        if (orientedAspect > outputAspect) {
+            sampleScaleX = outputAspect / orientedAspect
             sampleScaleY = 1f
         } else {
             sampleScaleX = 1f
-            sampleScaleY = uprightAspect / outputAspect
+            sampleScaleY = orientedAspect / outputAspect
         }
 
         val crop = identityMatrix().apply {
@@ -42,7 +60,7 @@ object EncodingTransform {
             this[12] = (1f - sampleScaleX) / 2f
             this[13] = (1f - sampleScaleY) / 2f
         }
-        return multiply(rotationInverseMatrix(rotation), crop)
+        return multiply(producerOriented, crop)
     }
 
     fun multiply(left: FloatArray, right: FloatArray): FloatArray {
