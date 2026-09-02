@@ -13,6 +13,7 @@ use crate::prefs::DesktopPreferences;
 use crate::prefs::{
     current_macos_boot_session, MacosCameraExtensionIntent, PendingMacosCameraExtension,
 };
+use crate::preview_pipeline::PreviewPipeline;
 use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot};
 use crate::video_surface::VideoSurface;
 
@@ -34,15 +35,26 @@ impl PicooDesktopApp {
                 .default_value(prefs.display_name.clone())
                 .placeholder("桌面显示名称")
         });
-        let _subscriptions = vec![cx.subscribe_in(
-            &display_name_input,
-            window,
-            |this, _, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.save_display_name(cx);
-                }
-            },
-        )];
+        let mut preview_pipeline = PreviewPipeline::default();
+        preview_pipeline.set_viewport_physical_width(
+            window.viewport_size().width.as_f32() * window.scale_factor(),
+        );
+        let _subscriptions = vec![
+            cx.subscribe_in(
+                &display_name_input,
+                window,
+                |this, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        this.save_display_name(cx);
+                    }
+                },
+            ),
+            cx.observe_window_bounds(window, |this, window, _| {
+                this.preview_pipeline.set_viewport_physical_width(
+                    window.viewport_size().width.as_f32() * window.scale_factor(),
+                );
+            }),
+        ];
         let page = if prefs.first_launch_completed {
             DesktopPage::Waiting
         } else {
@@ -58,6 +70,7 @@ impl PicooDesktopApp {
             sidebar_collapsed: false,
             pump_started: false,
             last_presented_snapshot,
+            preview_pipeline,
             video_surface: VideoSurface::default(),
             display_name_input,
             _subscriptions,
@@ -163,11 +176,13 @@ impl PicooDesktopApp {
             if this
                 .update(cx, |this, cx| {
                     let _ = this.runtime.pump();
+                    if let Some(slot) = this.runtime.receiver().latest_frame() {
+                        this.preview_pipeline.submit_latest(slot);
+                    }
                     let video_changed = this
-                        .runtime
-                        .receiver()
-                        .latest_frame()
-                        .is_some_and(|slot| this.video_surface.update_from_slot(slot));
+                        .preview_pipeline
+                        .take_prepared()
+                        .is_some_and(|preview| this.video_surface.present(preview));
                     let snapshot = this.runtime.snapshot();
                     let previous_page = this.page;
                     // REQ-PICOO-UI-008: Windows tray message/tip pump.

@@ -21,6 +21,8 @@ mod gpui;
 mod macos_system_extension;
 #[cfg(feature = "gpui-ui")]
 mod picoo_theme;
+#[cfg(feature = "gpui-ui")]
+mod preview_pipeline;
 #[cfg(all(windows, feature = "windows-vcam"))]
 mod vcam_register;
 #[cfg(feature = "gpui-ui")]

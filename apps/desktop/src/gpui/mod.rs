@@ -21,6 +21,7 @@ use gpui_component::input::InputState;
 
 use crate::model::VirtualCameraStatus;
 use crate::prefs::DesktopPreferences;
+use crate::preview_pipeline::PreviewPipeline;
 use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot};
 use crate::video_surface::VideoSurface;
 
@@ -66,6 +67,7 @@ struct PicooDesktopApp {
     sidebar_collapsed: bool,
     pump_started: bool,
     last_presented_snapshot: ReceiverSnapshot,
+    preview_pipeline: PreviewPipeline,
     video_surface: VideoSurface,
     display_name_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,

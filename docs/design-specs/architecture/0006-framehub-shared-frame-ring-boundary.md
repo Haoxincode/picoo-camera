@@ -18,7 +18,7 @@ FrameHub 是解码帧的统一出口，位于桌面主进程内：
 ```text
 Decoded Frame (NV12)
   ↓ FrameHub（三槽环形缓冲）
-  ├── GPUI Preview Consumer
+  ├── Preview Pipeline（单槽 latest-only 后台转换）→ GPUI VideoSurface
   └── Virtual Camera Producer → Shared Frame Ring
 ```
 
@@ -34,6 +34,21 @@ Decoded Frame (NV12)
 4. 释放写租约并发布最新序列号。
 
 读取者总是选择最新完整序列，并在读取期间持有原子租约；Writer 不覆盖仍被读取的槽。消费者处理速度不足时，**丢弃旧帧并提供最新完整帧**；三个槽都被占用时 Producer 保留上一完整帧而不阻塞。
+
+### 桌面预览转换
+
+GPUI `VideoSurface` 只持有并渲染已经准备好的 `RenderImage`，不得在 UI 更新或绘制阶段执行 NV12 色彩转换、缩放或解码。独立 Preview Pipeline 从 FrameHub 观察最新完整帧，以容量为一的 latest-only 待处理槽把转换放到专用后台线程：新帧可以覆盖尚未开始的旧帧，转换速度不足时主动跳过旧帧，不允许形成增加延迟的队列。
+
+预览保持 BT.709 limited range。Preview Pipeline 根据窗口物理像素宽度自适应准备图像：下限为 1280 像素宽，上限为 1920 像素宽，并且不得放大低分辨率源帧；因此 1080p 源在 Full HD 或高 DPI 窗口中保留原始细节，只在较小窗口中按实际显示需求缩小。缩小时使用有抗锯齿能力的卷积滤波，不允许先以最近邻降到 640 像素再放大。每次只发布完整转换结果；UI 线程只接管缓冲所有权、创建纹理并触发重绘。
+
+通用实现候选与判断：
+
+| 候选 | 判断 |
+| --- | --- |
+| `yuv` | 采用。纯 Rust，BSD-3-Clause/Apache-2.0，Windows x86 SIMD 与 Apple ARM SIMD 均有运行时路径，直接支持带 stride 的 NV12→BGRA、BT.709 limited range。 |
+| `fast_image_resize` | 采用。MIT/Apache-2.0，提供 SIMD RGBA/BGRA 卷积缩放；仅启用所需 `U8x4` 像素路径，并使用 Catmull-Rom 在实时预览的清晰度、抗锯齿和耗时之间取平衡。 |
+| `libyuv` C/C++ 绑定 | 不采用。能力成熟，但为当前 Rust/Windows/macOS 构建增加原生工具链、绑定与发布维护；现有纯 Rust SIMD 组合已覆盖所需格式。 |
+| GPUI/平台专属 NV12 GPU shader | 暂不作为本次路径。长期可减少纹理上传和 RGB 中间缓冲，但需要扩展 GPUI 平台纹理边界；在统一跨平台 Preview Pipeline 达到验收前不提前分叉。 |
 
 ### Shared Frame Ring
 
@@ -87,6 +102,8 @@ macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`
 - Windows 生产共享环必须可由交互用户 Receiver 与 Local Service Frame Server 从不同 Session 打开；安装器必须验证 ProgramData 目录与继承 ACL，不能回退到用户临时目录。
 - Windows 真机性能验收必须观察 720p/1080p30 时的磁盘写入；temporary mmap 不得形成与帧率等比例的持续磁盘写放大。
 - GPUI `VideoSurface` 只接收平台视频纹理，不拥有解码器或网络会话。
+- Preview Pipeline 的待处理帧和已完成帧均为单槽覆盖语义；不得因预览消费变慢反压 Receiver、FrameHub 或 Shared Frame Ring。
+- 720p/1080p30 桌面预览必须保持几何比例，细线和人脸轮廓不得出现明显最近邻锯齿；移动场景中预览转换不得占用 GPUI UI 线程。
 
 ## 相关 Use Case
 

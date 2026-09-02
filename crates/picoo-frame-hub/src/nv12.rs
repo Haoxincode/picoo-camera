@@ -1,25 +1,7 @@
-//! NV12 → BGRA conversion for GPUI preview — REQ-PICOO-UI-004.
 //! Horizontal mirror helper — REQ-PICOO-MEDIA-004 (remote output).
 //! Clockwise rotation helper — REQ-PICOO-MEDIA-009 (upright pixels for VCam).
 
 use crate::placeholder::nv12_byte_size;
-
-const PREVIEW_MAX_WIDTH: u32 = 640;
-
-fn clamp_u8(v: i32) -> u8 {
-    v.clamp(0, 255) as u8
-}
-
-/// BT.709 limited-range YUV → BGRA, matching GPUI's raw `RenderImage` contract.
-fn yuv_to_bgra(y: i32, u: i32, v: i32) -> [u8; 4] {
-    let c = (y - 16).max(0);
-    let d = u - 128;
-    let e = v - 128;
-    let r = (298 * c + 459 * e + 128) >> 8;
-    let g = (298 * c - 55 * d - 136 * e + 128) >> 8;
-    let b = (298 * c + 541 * d + 128) >> 8;
-    [clamp_u8(b), clamp_u8(g), clamp_u8(r), 255]
-}
 
 /// Horizontally mirror an NV12 frame in place (Y plane + interleaved UV).
 ///
@@ -145,107 +127,10 @@ pub fn nv12_rotate_clockwise(
     Some((out_w, out_h, out_stride, out))
 }
 
-/// Downscaled BGRA preview suitable for GPUI `RenderImage` (max width 640 by default).
-pub fn nv12_preview_bgra(
-    width: u32,
-    height: u32,
-    stride: u32,
-    nv12: &[u8],
-) -> Option<(u32, u32, Vec<u8>)> {
-    nv12_preview_bgra_max_width(width, height, stride, nv12, PREVIEW_MAX_WIDTH)
-}
-
-pub fn nv12_preview_bgra_max_width(
-    width: u32,
-    height: u32,
-    stride: u32,
-    nv12: &[u8],
-    max_width: u32,
-) -> Option<(u32, u32, Vec<u8>)> {
-    if width == 0 || height == 0 || stride == 0 {
-        return None;
-    }
-    if stride < width {
-        return None;
-    }
-    let expected = (stride as usize)
-        .checked_mul(height as usize)?
-        .checked_mul(3)?
-        / 2;
-    if nv12.len() < expected {
-        return None;
-    }
-
-    let scale = if width > max_width {
-        max_width as f32 / width as f32
-    } else {
-        1.0
-    };
-    let out_w = ((width as f32 * scale).round() as u32).max(1);
-    let out_h = ((height as f32 * scale).round() as u32).max(1);
-    let y_stride = stride as usize;
-    let uv_offset = y_stride * height as usize;
-    let mut bgra = vec![0u8; (out_w * out_h * 4) as usize];
-
-    for oy in 0..out_h {
-        let sy = ((oy as f32 / out_h as f32) * height as f32) as u32;
-        let sy = sy.min(height - 1);
-        let uv_row = uv_offset + (sy as usize / 2) * y_stride;
-        for ox in 0..out_w {
-            let sx = ((ox as f32 / out_w as f32) * width as f32) as u32;
-            let sx = sx.min(width - 1);
-            let y_idx = sy as usize * y_stride + sx as usize;
-            let uv_idx = uv_row + (sx as usize / 2) * 2;
-            let y = nv12[y_idx] as i32;
-            let u = nv12.get(uv_idx).copied().unwrap_or(128) as i32;
-            let v = nv12.get(uv_idx + 1).copied().unwrap_or(128) as i32;
-            let px = yuv_to_bgra(y, u, v);
-            let dst = ((oy * out_w + ox) * 4) as usize;
-            bgra[dst..dst + 4].copy_from_slice(&px);
-        }
-    }
-
-    Some((out_w, out_h, bgra))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::placeholder::{nv12_black, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
-
-    #[test]
-    fn preview_from_placeholder_nv12() {
-        let nv12 = nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT);
-        let (w, h, bgra) = nv12_preview_bgra(
-            PLACEHOLDER_WIDTH,
-            PLACEHOLDER_HEIGHT,
-            PLACEHOLDER_WIDTH,
-            &nv12,
-        )
-        .expect("preview");
-        assert!(w <= PREVIEW_MAX_WIDTH);
-        assert!(h > 0);
-        assert_eq!(bgra.len(), (w * h * 4) as usize);
-        // Black frame → near-zero RGB (alpha is 255)
-        assert!(bgra[0] <= 16 && bgra[1] <= 16 && bgra[2] <= 16);
-        assert_eq!(bgra[3], 255);
-    }
-
-    #[test]
-    fn preview_uses_bt709_limited_range() {
-        let width = 1280;
-        let height = 720;
-        let mut nv12 = vec![81_u8; nv12_byte_size(width, height)];
-        let uv_offset = (width * height) as usize;
-        for uv in nv12[uv_offset..].as_chunks_mut::<2>().0 {
-            uv.copy_from_slice(&[90, 240]);
-        }
-
-        let (_, _, bgra) =
-            nv12_preview_bgra_max_width(width, height, width, &nv12, 1).expect("preview");
-        // This fixture is red in RGB; GPUI requires the raw bytes in BGRA order.
-        assert_eq!(&bgra[..4], &[0, 24, 255, 255]);
-    }
+    use crate::placeholder::nv12_black;
 
     #[test]
     fn mirror_swaps_left_and_right_y_samples() {

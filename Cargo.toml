@@ -33,12 +33,14 @@ repository = "https://github.com/Haoxincode/picoo-camera"
 anyhow = "1.0"
 bitflags = "2.6"
 bytes = "1.9"
+fast_image_resize = { version = "6.1.0", features = ["only_u8x4"] }
 prost = "0.13"
 prost-types = "0.13"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
 tracing = "0.1"
+yuv = "0.8.17"
 reed-solomon-erasure = "6.0"
 
 # GPUI stack — lock to gpui-component compatible revision (ARCH-PICOO-UI-001)

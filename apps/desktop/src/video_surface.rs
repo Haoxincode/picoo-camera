@@ -1,13 +1,14 @@
 //! VideoSurface — ARCH-PICOO-UI-001 / REQ-PICOO-UI-004.
 //!
-//! Renders decoded FrameHub NV12 as GPUI texture; does not own decoder or network.
+//! Renders a prepared GPUI texture; does not own pixel conversion, decoder, or network.
 
 use std::sync::Arc;
 
 use gpui::*;
 use image::{Frame, ImageBuffer, Rgba};
-use picoo_frame_hub::FrameSlot;
 use smallvec::smallvec;
+
+use crate::preview_pipeline::PreparedPreview;
 
 #[derive(Default)]
 pub struct VideoSurface {
@@ -16,24 +17,19 @@ pub struct VideoSurface {
 }
 
 impl VideoSurface {
-    /// Update the preview only for a newer frame and report whether rendering changed.
-    pub fn update_from_slot(&mut self, slot: &FrameSlot) -> bool {
-        if slot.sequence <= self.last_sequence {
+    /// Take ownership of a prepared frame and report whether rendering changed.
+    pub fn present(&mut self, preview: PreparedPreview) -> bool {
+        if preview.sequence <= self.last_sequence {
             return false;
         }
-        self.last_sequence = slot.sequence;
-        if let Some((width, height, bgra)) = picoo_frame_hub::nv12_preview_bgra(
-            slot.width,
-            slot.height,
-            slot.stride,
-            slot.pixel_data.as_ref(),
-        ) {
-            // GPUI's RenderImage stores `image::Frame`, but its raw upload contract is BGRA.
-            if let Some(buffer) = ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(width, height, bgra) {
-                let frame = Frame::new(buffer);
-                self.render_image = Some(Arc::new(RenderImage::new(smallvec![frame])));
-                return true;
-            }
+        self.last_sequence = preview.sequence;
+        // GPUI's RenderImage stores `image::Frame`, but its raw upload contract is BGRA.
+        if let Some(buffer) =
+            ImageBuffer::<Rgba<u8>, Vec<u8>>::from_raw(preview.width, preview.height, preview.bgra)
+        {
+            let frame = Frame::new(buffer);
+            self.render_image = Some(Arc::new(RenderImage::new(smallvec![frame])));
+            return true;
         }
         false
     }
@@ -61,23 +57,24 @@ impl VideoSurface {
 #[cfg(test)]
 mod tests {
     use super::VideoSurface;
-    use picoo_frame_hub::{nv12_black, FrameSlot, ReadyState};
+    use crate::preview_pipeline::PreparedPreview;
 
     #[test]
     fn repeated_frame_sequence_does_not_request_another_render() {
-        let frame = FrameSlot {
+        let frame = PreparedPreview {
             sequence: 1,
-            timestamp_us: 1,
             width: 2,
             height: 2,
-            stride: 2,
-            rotation: 0,
-            pixel_data: nv12_black(2, 2).into(),
-            ready_state: ReadyState::Ready,
+            bgra: vec![0; 16],
         };
         let mut surface = VideoSurface::default();
 
-        assert!(surface.update_from_slot(&frame));
-        assert!(!surface.update_from_slot(&frame));
+        assert!(surface.present(frame));
+        assert!(!surface.present(PreparedPreview {
+            sequence: 1,
+            width: 2,
+            height: 2,
+            bgra: vec![0; 16],
+        }));
     }
 }
