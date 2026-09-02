@@ -499,23 +499,39 @@ fn normalize_contiguous_nv12(
         return Ok(source.to_vec());
     }
 
-    // Horizontal pitch: allocation is `stride * visible_height * 3 / 2`.
+    // The byte length alone can describe both a row-pitched buffer and a
+    // vertically aligned buffer. 1280x720 allocated as 1280x736 is the
+    // important ambiguous case: interpreting it as 1308-byte rows shears and
+    // vertically stretches the preview. Prefer the macroblock-aligned vertical
+    // interpretation when the competing row pitch is not macroblock aligned.
     let visible_rows_x2 = height * 3;
     let doubled_len = source.len().saturating_mul(2);
-    if doubled_len.is_multiple_of(visible_rows_x2) {
+    let row_pitch = if doubled_len.is_multiple_of(visible_rows_x2) {
         let stride = doubled_len / visible_rows_x2;
-        if stride >= width {
-            return copy_visible_nv12(source, width, height, stride, height);
+        (stride >= width).then_some(stride)
+    } else {
+        None
+    };
+
+    let width_x3 = width * 3;
+    let allocated_height = if doubled_len.is_multiple_of(width_x3) {
+        let allocated_height = doubled_len / width_x3;
+        (allocated_height >= height).then_some(allocated_height)
+    } else {
+        None
+    };
+
+    if let Some(allocated_height) = allocated_height {
+        let vertical_is_unambiguous = row_pitch.is_none();
+        let vertical_matches_macroblocks = allocated_height.is_multiple_of(16)
+            && row_pitch.is_some_and(|stride| !stride.is_multiple_of(16));
+        if vertical_is_unambiguous || vertical_matches_macroblocks {
+            return copy_visible_nv12(source, width, height, width, allocated_height);
         }
     }
 
-    // Vertical allocation: allocation is `width * allocated_height * 3 / 2`.
-    let width_x3 = width * 3;
-    if doubled_len.is_multiple_of(width_x3) {
-        let allocated_height = doubled_len / width_x3;
-        if allocated_height >= height {
-            return copy_visible_nv12(source, width, height, width, allocated_height);
-        }
+    if let Some(stride) = row_pitch {
+        return copy_visible_nv12(source, width, height, stride, height);
     }
 
     Err(DecodeError::Platform(format!(
@@ -643,6 +659,31 @@ mod tests {
         assert_eq!(
             &tight[width * visible_height..width * visible_height + 2],
             &[23, 211]
+        );
+    }
+
+    #[test]
+    fn normalizes_ambiguous_720p_vertical_allocation_without_row_pitch_distortion() {
+        let width = 1280usize;
+        let visible_height = 720usize;
+        let allocated_height = 736usize;
+        let mut source = vec![0_u8; width * allocated_height * 3 / 2];
+        source[width] = 17;
+        source[width * allocated_height] = 23;
+        source[width * allocated_height + 1] = 211;
+
+        let tight = normalize_contiguous_nv12(&source, width as u32, visible_height as u32)
+            .expect("normalize ambiguous 720p NV12 allocation");
+
+        assert_eq!(tight.len(), width * visible_height * 3 / 2);
+        assert_eq!(
+            tight[width], 17,
+            "second Y row must retain the 1280-byte pitch"
+        );
+        assert_eq!(
+            &tight[width * visible_height..width * visible_height + 2],
+            &[23, 211],
+            "UV must start after the 736 allocated Y rows"
         );
     }
 

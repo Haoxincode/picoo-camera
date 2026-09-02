@@ -321,6 +321,7 @@ impl PicooDesktopApp {
     ) -> impl IntoElement {
         div()
             .h_flex()
+            .w_full()
             .items_center()
             .justify_between()
             .gap_5()
@@ -332,6 +333,7 @@ impl PicooDesktopApp {
             .child(
                 div()
                     .v_flex()
+                    .flex_1()
                     .min_w_0()
                     .gap_1()
                     .child(
@@ -451,6 +453,7 @@ fn diagnostic_status_badge(
     };
     div()
         .h_flex()
+        .flex_none()
         .gap_1()
         .px_2()
         .py_0p5()
