@@ -6,7 +6,7 @@ import Testing
 struct PicooSenderSessionTests {
     @Test("Rust protocol version crosses the C ABI")
     func protocolVersionCrossesSwiftCAbiBoundary() {
-        #expect(PicooSenderSession.protocolVersion == "PCP/2")
+        #expect(PicooSenderSession.protocolVersion == "PCP/4")
     }
 
     @Test("Sender handle begins disconnected and has deterministic ownership")

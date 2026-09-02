@@ -14,7 +14,7 @@ use super::pairing::{connection_code_hero, format_pairing_code};
 use super::vcam::vcam_label_zh;
 use super::widgets::{
     connection_security_status, hardware_topology, live_hud_pill, network_status_row,
-    onboarding_step, status_badge,
+    onboarding_step, status_badge, NetworkStatusState,
 };
 use super::{DesktopPage, PicooDesktopApp};
 
@@ -335,12 +335,11 @@ impl PicooDesktopApp {
             && !snapshot.advertise_host.is_empty()
             && snapshot.advertise_host != "127.0.0.1";
         let (security_status, security_ready) = connection_security_status(snapshot.status);
-        let latency = if snapshot.stream_metrics.latency_ms <= 30.0 {
-            "低"
-        } else if snapshot.stream_metrics.latency_ms <= 80.0 {
-            "一般"
-        } else {
-            "较高"
+        let (latency, latency_state) = match snapshot.receiver_stats.as_ref() {
+            None => ("等待样本", NetworkStatusState::Pending),
+            Some(stats) if stats.rtt_ms <= 30.0 => ("低", NetworkStatusState::Healthy),
+            Some(stats) if stats.rtt_ms <= 80.0 => ("一般", NetworkStatusState::Healthy),
+            Some(_) => ("较高", NetworkStatusState::Warning),
         };
         div()
             .v_flex()
@@ -371,7 +370,11 @@ impl PicooDesktopApp {
                 } else {
                     "未检测到局域网"
                 },
-                network_ready,
+                if network_ready {
+                    NetworkStatusState::Healthy
+                } else {
+                    NetworkStatusState::Warning
+                },
                 cx,
             ))
             .child(network_status_row(
@@ -382,21 +385,29 @@ impl PicooDesktopApp {
                 } else {
                     "不可用"
                 },
-                snapshot.discovery_available,
+                if snapshot.discovery_available {
+                    NetworkStatusState::Healthy
+                } else {
+                    NetworkStatusState::Warning
+                },
                 cx,
             ))
             .child(network_status_row(
                 "activity",
                 "延迟",
                 latency,
-                latency != "较高",
+                latency_state,
                 cx,
             ))
             .child(network_status_row(
                 "shield",
                 "连接保护",
                 security_status,
-                security_ready,
+                if security_ready {
+                    NetworkStatusState::Healthy
+                } else {
+                    NetworkStatusState::Pending
+                },
                 cx,
             ))
     }
@@ -423,10 +434,14 @@ impl PicooDesktopApp {
             .stream_config
             .as_ref()
             .map(|config| {
-                format!(
-                    "{}p · {} FPS 实测",
-                    config.height, snapshot.stream_metrics.fps
-                )
+                if snapshot.receiver_stats.is_some() {
+                    format!(
+                        "{}p · {} FPS 实测",
+                        config.height, snapshot.stream_metrics.fps
+                    )
+                } else {
+                    format!("{}p · {} FPS 目标", config.height, config.fps)
+                }
             })
             .unwrap_or_else(|| "—".into());
         let sender_name = snapshot
@@ -434,10 +449,23 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|sender| sender.device_name.clone())
             .unwrap_or_else(|| "手机摄像头".into());
-        let quality = crate::network_quality::network_quality_label(
-            snapshot.stream_metrics.packet_loss,
-            snapshot.stream_metrics.latency_ms,
-        );
+        let quality = snapshot.receiver_stats.as_ref().map(|stats| {
+            crate::network_quality::network_quality_label(stats.packet_loss, stats.rtt_ms)
+        });
+        let live_metrics = snapshot
+            .receiver_stats
+            .as_ref()
+            .map(|stats| {
+                format!(
+                    "{} · {:.1} Mbps · {:.0} ms · 可观测丢片 {:.2}% · 网络{}",
+                    res_label,
+                    stats.receive_bitrate as f64 / 1_000_000.0,
+                    stats.rtt_ms,
+                    stats.packet_loss * 100.0,
+                    quality.expect("quality exists with ReceiverStats")
+                )
+            })
+            .unwrap_or_else(|| format!("{res_label} · 等待链路统计样本"));
         let frame_status = snapshot
             .media_error
             .as_ref()
@@ -520,7 +548,7 @@ impl PicooDesktopApp {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
-                                    .child(format!("{res_label} · 网络{quality}")),
+                                    .child(live_metrics),
                             ),
                     )
                     .child(

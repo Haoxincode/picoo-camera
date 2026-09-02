@@ -1,4 +1,4 @@
-//! Android/iOS sender pipeline: H.264 access unit → PCP/2 VideoPacket fragmentation.
+//! Android/iOS sender pipeline: H.264 access unit → PCP/4 FEC-protected fragmentation.
 //!
 //! REQ-PICOO-MEDIA-001, REQ-PICOO-STACK-001
 
@@ -8,8 +8,8 @@ mod stream_config;
 use bytes::Bytes;
 use picoo_pairing::{PairingError, StoreError};
 use picoo_protocol::{
-    VideoPacket, VideoPacketError, VideoPacketFlags, MAX_DATAGRAM_SIZE,
-    MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT, VIDEO_PACKET_HEADER_SIZE,
+    fec_group_ranges, make_fec_parity, VideoPacket, VideoPacketError, VideoPacketFlags,
+    FEC_PARITY_PREFIX_SIZE, MAX_FEC_FRAGMENT_PAYLOAD, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT,
 };
 use picoo_transport::TransportError;
 use thiserror::Error;
@@ -20,8 +20,6 @@ pub use session::{
     MAX_STREAM_EPOCH,
 };
 pub use stream_config::StreamConfigParams;
-
-const MAX_FRAGMENT_PAYLOAD: usize = MAX_DATAGRAM_SIZE - VIDEO_PACKET_HEADER_SIZE;
 
 #[derive(Debug, Error)]
 pub enum SenderError {
@@ -101,17 +99,18 @@ impl SenderPipeline {
             .checked_add(1)
             .ok_or(SenderError::FrameIdExhausted)?;
         let frame_id = self.frame_id;
-        let fragment_count = data.len().div_ceil(MAX_FRAGMENT_PAYLOAD);
+        let fragment_count = data.len().div_ceil(MAX_FEC_FRAGMENT_PAYLOAD);
         if fragment_count > usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT) {
             return Err(SenderError::AccessUnitTooLarge);
         }
         let fragment_count =
             u16::try_from(fragment_count).expect("bounded fragment count always fits the wire u16");
         let mut created = 0usize;
+        let mut data_packets = Vec::with_capacity(usize::from(fragment_count));
 
         for fragment_index in 0..fragment_count {
-            let start = fragment_index as usize * MAX_FRAGMENT_PAYLOAD;
-            let end = (start + MAX_FRAGMENT_PAYLOAD).min(data.len());
+            let start = fragment_index as usize * MAX_FEC_FRAGMENT_PAYLOAD;
+            let end = (start + MAX_FEC_FRAGMENT_PAYLOAD).min(data.len());
             let chunk = &data[start..end];
 
             let mut flags = VideoPacketFlags::empty();
@@ -136,15 +135,116 @@ impl SenderPipeline {
                 payload: Bytes::copy_from_slice(chunk),
             };
             packet.encode()?; // validate before queueing
-            self.pending.push(packet);
+            data_packets.push(packet);
             created += 1;
         }
+
+        let base_flags = if is_keyframe {
+            VideoPacketFlags::KEYFRAME
+        } else {
+            VideoPacketFlags::empty()
+        };
+        let fec_groups = fec_group_ranges(fragment_count);
+        let mut parity_packets_by_group = Vec::with_capacity(fec_groups.len());
+        for group in &fec_groups {
+            let group_data = group
+                .clone()
+                .map(|index| data_packets[usize::from(index)].payload.as_ref())
+                .collect::<Vec<_>>();
+            let Some(parity_shards) = make_fec_parity(group.start, &group_data) else {
+                parity_packets_by_group.push(Vec::new());
+                continue;
+            };
+            let mut group_packets = Vec::with_capacity(parity_shards.len());
+            for parity in parity_shards {
+                let mut payload = Vec::with_capacity(FEC_PARITY_PREFIX_SIZE + parity.bytes.len());
+                payload.push(parity.parity_index);
+                payload.extend_from_slice(&parity.last_data_len.to_be_bytes());
+                payload.extend_from_slice(&parity.bytes);
+                let packet = VideoPacket {
+                    version: VideoPacket::VERSION,
+                    flags: base_flags | VideoPacketFlags::FEC_PARITY,
+                    stream_epoch,
+                    frame_id,
+                    pts_us,
+                    fragment_index: parity.group_start,
+                    fragment_count,
+                    payload: Bytes::from(payload),
+                };
+                packet.encode()?;
+                group_packets.push(packet);
+                created += 1;
+            }
+            parity_packets_by_group.push(group_packets);
+        }
+
+        self.pending.extend(schedule_fec_packets(
+            data_packets,
+            parity_packets_by_group,
+            &fec_groups,
+        ));
 
         self.stats.access_units += 1;
         self.stats.packets += created as u64;
         self.stats.bytes += data.len() as u64;
         Ok(created)
     }
+}
+
+/// Interleave equal-position shards across FEC groups, while keeping all source
+/// data ahead of parity. A short consecutive Wi-Fi loss burst is therefore
+/// spread across independent Reed-Solomon blocks, but a healthy path completes
+/// the AU from original data and never pays needless reconstruction work.
+fn schedule_fec_packets(
+    data_packets: Vec<VideoPacket>,
+    parity_packets_by_group: Vec<Vec<VideoPacket>>,
+    groups: &[std::ops::Range<u16>],
+) -> Vec<VideoPacket> {
+    #[derive(Clone, Copy)]
+    enum Slot {
+        Data(usize),
+        Parity(usize),
+    }
+
+    const SLOTS: [Slot; 8] = [
+        Slot::Data(0),
+        Slot::Data(1),
+        Slot::Data(2),
+        Slot::Data(3),
+        Slot::Data(4),
+        Slot::Data(5),
+        Slot::Parity(0),
+        Slot::Parity(1),
+    ];
+
+    let mut data = data_packets.into_iter().map(Some).collect::<Vec<_>>();
+    let mut parity = parity_packets_by_group
+        .into_iter()
+        .map(|packets| packets.into_iter().map(Some).collect::<Vec<_>>())
+        .collect::<Vec<_>>();
+    let total = data.len() + parity.iter().map(Vec::len).sum::<usize>();
+    let mut scheduled = Vec::with_capacity(total);
+    for slot in SLOTS {
+        for (group_index, group) in groups.iter().enumerate() {
+            let packet = match slot {
+                Slot::Data(offset) => {
+                    let index = usize::from(group.start).saturating_add(offset);
+                    (index < usize::from(group.end))
+                        .then(|| data[index].take())
+                        .flatten()
+                }
+                Slot::Parity(index) => parity
+                    .get_mut(group_index)
+                    .and_then(|packets| packets.get_mut(index))
+                    .and_then(Option::take),
+            };
+            if let Some(packet) = packet {
+                scheduled.push(packet);
+            }
+        }
+    }
+    debug_assert_eq!(scheduled.len(), total);
+    scheduled
 }
 
 #[cfg(test)]
@@ -183,12 +283,12 @@ mod tests {
 
     #[test]
     fn large_access_unit_fragments_and_reassembles() {
-        let payload = vec![7u8; MAX_FRAGMENT_PAYLOAD + 100];
+        let payload = vec![7u8; MAX_FEC_FRAGMENT_PAYLOAD + 100];
         let mut sender = SenderPipeline::default();
         let count = sender
             .ingest_access_unit(&payload, false, 200, 2)
             .expect("ingest");
-        assert_eq!(count, 2);
+        assert_eq!(count, 4, "two data and two parity packets");
 
         let mut map = ReassemblyMap::new(8, 16);
         let mut assembled = None;
@@ -201,9 +301,37 @@ mod tests {
     }
 
     #[test]
+    fn fec_schedule_spreads_groups_and_keeps_parity_after_source_data() {
+        let payload = vec![9u8; MAX_FEC_FRAGMENT_PAYLOAD * 10];
+        let mut sender = SenderPipeline::default();
+        sender
+            .ingest_access_unit(&payload, false, 200, 2)
+            .expect("ingest");
+        let packets = sender.pending_packets();
+        // 10 fragments balance into 0..5 and 5..10. Round-robin scheduling
+        // alternates groups, but all source fragments precede parity so a
+        // healthy receiver never reconstructs data that is already in flight.
+        assert_eq!(packets[0].fragment_index, 0);
+        assert_eq!(packets[1].fragment_index, 5);
+        assert_eq!(packets[2].fragment_index, 1);
+        assert_eq!(packets[3].fragment_index, 6);
+        assert_eq!(packets[4].fragment_index, 2);
+        assert_eq!(packets[5].fragment_index, 7);
+        assert!(packets[..10]
+            .iter()
+            .all(|packet| !packet.flags.contains(VideoPacketFlags::FEC_PARITY)));
+        assert!(packets[10..]
+            .iter()
+            .all(|packet| packet.flags.contains(VideoPacketFlags::FEC_PARITY)));
+    }
+
+    #[test]
     fn access_unit_over_reassembly_budget_is_rejected_before_queueing() {
         let payload =
-            vec![0u8; MAX_FRAGMENT_PAYLOAD * usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT) + 1];
+            vec![
+                0u8;
+                MAX_FEC_FRAGMENT_PAYLOAD * usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT) + 1
+            ];
         let mut sender = SenderPipeline::default();
         assert!(matches!(
             sender.ingest_access_unit(&payload, true, 0, 1),

@@ -12,7 +12,7 @@
 
 用户打开手机端 Sender。Sender 浏览局域网内的 Receiver 列表，显示电脑显示名称、平台类型和就绪状态。对于已配对设备，Sender 可自动连接或等待用户点击连接；对于未配对设备，进入 [PUC-001](puc-001-first-install-and-pairing.md) 的配对流程。
 
-连接建立后，双方通过 PCP/2 可靠 Stream 完成 Hello、Capabilities、StartStream 等控制消息交换；Sender 通过 QUIC Datagram 发送 H.264 视频片段；Receiver 重组、抖动缓冲、解码并将画面提供给 FrameHub 与虚拟摄像头。
+连接建立后，双方通过 PCP/4 可靠 Stream 完成 Hello、Capabilities、StartStream 等控制消息交换；Sender 通过 QUIC Datagram 发送受 FEC 保护的 H.264 视频片段；Receiver 重组、自适应 deadline 播放、解码并将画面提供给 FrameHub 与虚拟摄像头。
 
 ## 可观察结果
 

@@ -51,7 +51,7 @@ object PicooNative {
     const val STATUS_PERMISSION_REQUIRED = SenderStatusCodes.PERMISSION_REQUIRED
     const val STATUS_NETWORK_UNSTABLE = SenderStatusCodes.NETWORK_UNSTABLE
 
-    /** Returns PCP/2 protocol version from Rust Core. */
+    /** Returns PCP/4 protocol version from Rust Core. */
     external fun getProtocolVersion(): String
 
     /** Create Rust sender pipeline; returns opaque handle (0 = failure). */
@@ -61,7 +61,7 @@ object PicooNative {
     external fun destroySender(handle: Long)
 
     /**
-     * Packetize one H.264 access unit into PCP/2 VideoPackets.
+     * Packetize one H.264 access unit into PCP/4 FEC-protected VideoPackets.
      * @return fragment count on success, negative on error.
      */
     external fun ingestAccessUnit(

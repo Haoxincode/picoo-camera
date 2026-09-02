@@ -1,8 +1,8 @@
 syntax = "proto3";
 
-package picoo.camera.v2;
+package picoo.camera.v4;
 
-// PCP/2 control messages — transported over QUIC reliable streams.
+// PCP/4 control messages — transported over QUIC reliable streams.
 // See ARCH-PICOO-PROTOCOL-001.
 
 message ClientHello {
@@ -118,7 +118,23 @@ message ReceiverStats {
   uint64 decoder_drop = 5;
   double frame_age_ms = 6;
   uint32 receive_bitrate = 7;
-  double jitter_buffer_depth_ms = 8;
+  double jitter_buffer_target_ms = 8;
+  double jitter_buffer_actual_delay_ms = 9;
+  double jitter_buffer_occupancy_ms = 10;
+}
+
+// Sender -> Receiver transport observability. This travels on the reliable
+// control stream so desktop diagnostics can distinguish Sender backpressure
+// from loss after a Datagram entered QUIC.
+message SenderStats {
+  uint32 magic = 1; // must be 0x53544154 ("STAT")
+  uint64 access_units = 2;
+  uint64 submitted_datagrams = 3;
+  double video_queue_age_ms = 4;
+  uint64 video_dropped_access_units = 5;
+  uint64 quic_lost_packets = 6;
+  uint64 quic_sent_packets = 7;
+  uint64 video_buffered_bytes = 8;
 }
 
 message RequestKeyframe {}

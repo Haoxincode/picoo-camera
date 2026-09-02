@@ -61,7 +61,7 @@ impl PicooTransport for MemoryTransport {
             return Err(TransportError::NotConnected);
         }
         self.events
-            .push_back(TransportEvent::VideoPacket(session, packet));
+            .push_back(TransportEvent::VideoPackets(session, vec![packet]));
         Ok(())
     }
 

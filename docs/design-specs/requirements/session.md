@@ -3,8 +3,8 @@
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-SESSION-001 | implemented | ARCH-PICOO-SESSION-001 | UI 可观察会话状态枚举完整 | `ReceiverStatus`/`SenderStatus` + `as_label`/`as_code`；VCam/权限/网络不稳定接线；FFI 7/8 |
-| REQ-PICOO-SESSION-002 | implemented | ARCH-PICOO-SESSION-001 | 抖动缓冲目标 50ms，最大 120ms | jitter crate + receiver 重组后接入 |
-| REQ-PICOO-SESSION-003 | implemented | ARCH-PICOO-SESSION-001 | 跨 AU 乱序在 120ms 截止前可完成；每片 ingest 前执行 expiry，过期/越过播放点的旧 AU 丢弃，关键帧丢则请求一次 IDR，迟到尾片或容量淘汰片不得重建旧 AU | packet deadline/跨 AU 乱序/terminal tombstone + jitter late-playout 测试 + `DropKeyframeTailTransport` + `incomplete_keyframe_requests_idr_and_recovers_framehub` |
+| REQ-PICOO-SESSION-002 | implementing | ARCH-PICOO-SESSION-001 | Receiver 以单调时钟和媒体 PTS 建立相对时间线；正常播放 target 根据到达变化与解码耗时在 16–80ms 自适应；异常恢复 deadline 取 `2 × target + 一帧周期` 与 `RTT + 3 × 网络抖动 + 一帧周期` 较大者，并限制在 200–300ms；两者不得混为固定播放延迟；target、实际停留和 occupancy 分别统计 | jitter controller 分位数/快升慢降/deadline/离散 occupancy 测试 + media deadline 测试 + receiver stats |
+| REQ-PICOO-SESSION-003 | implemented | ARCH-PICOO-SESSION-001 | 跨 AU 乱序在自适应恢复 deadline 前可完成；Reassembly 尚有更旧 frame_id 未决时不得先播放更新 AU；每片 ingest 前执行 expiry，每个有界入站批次后给播放队列调度机会；Jitter 的帧数容量必须覆盖 V1 30 FPS 下最大 300 ms 恢复 deadline、80 ms 播放 target 和一帧余量，不能先于时间边界误淘汰；过期/越过播放点的旧 AU 丢弃，关键帧丢则请求一次 IDR，迟到尾片或容量淘汰片不得重建旧 AU | packet deadline/跨 AU 乱序/oldest unresolved frame/tombstone + jitter 完整预算容量/late-playout 测试 + `DropKeyframeTailTransport` + 真机连续入站调度验证 |
 | REQ-PICOO-SESSION-004 | implemented | PUC-006 | 重连后恢复分辨率/镜像并请求 SPS/PPS/IDR | sender reconnect 集成；`reconnect_churn_smoke_five_rounds` + `reconnect_churn_fifteen_rounds`（N=50 `--ignored`） |
 | REQ-PICOO-SESSION-005 | implemented | PRD §21 | 2h 长稳无崩溃、内存不增长 | `soak_harness_smoke_five_seconds`（CI）；`scripts/soak_loopback.sh` + ignored 长 soak（`SOAK_SECONDS=7200`） |
 | REQ-PICOO-SESSION-006 | implemented | PRD §21 | 丢包约 5% 时会话仍可用；恢复后 frame_age &lt;1s | stub + `paired_openh264_remains_usable_under_five_percent_loss`；`scripts/loss_loopback.sh` |

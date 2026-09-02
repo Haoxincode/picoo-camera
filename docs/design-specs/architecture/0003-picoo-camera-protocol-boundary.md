@@ -1,4 +1,4 @@
-# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/2) 边界
+# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/4) 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-002 / PUC-005 / PUC-006
@@ -9,7 +9,8 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 
 ## 架构决策
 
-协议名称：**Picoo Camera Protocol**，版本 **PCP/2**。
+协议名称：**Picoo Camera Protocol**，版本 **PCP/4**。PCP/4 不兼容 PCP/3；版本提升用于
+明确区分低延迟 FEC 视频语义，禁止不理解校验片的旧 Receiver 静默接入。
 
 ### 控制平面
 
@@ -24,6 +25,7 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 - `StreamConfig`
 - `CameraCommand` / `EncoderCommand`
 - `ReceiverStats`
+- `SenderStats`
 - `RequestKeyframe`
 - `Heartbeat`
 - `SessionError`
@@ -45,13 +47,26 @@ VideoPacket {
 }
 ```
 
-Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DISCARDABLE`。
+Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DISCARDABLE`、
+`FEC_PARITY`。
 
 单个载荷约 **1150 字节**，控制在路径 MTU 内，避免 IP 分片。
 
-单个 Access Unit 最多 1024 个 Datagram，即当前头部与 MTU 下约 1.1 MiB。Sender 在
+单个 Access Unit 最多 1024 个系统数据片，即当前头部与 MTU 下约 1.1 MiB 原始 AU；额外校验片
+不计入 `fragment_count`。Sender 在
 入队前拒绝更大的 AU；Receiver 最多并行保留 8 个不完整 AU，因此真实 480p/720p/1080p
 IDR 不会被早期 16 片测试上限误丢弃，同时异常 `fragment_count` 仍有明确内存边界。
+
+每个 AU 的系统数据片按最多 6 片组成一个平衡组；每组额外生成 2 个 Reed-Solomon 校验片。Sender
+按 shard position 在各组间轮转数据片，然后才发送校验片：这样连续丢包会分散到不同恢复组，而
+健康路径能先用原始数据完成 AU，不会把正常在途尾片误当成丢失并消耗重建 CPU。
+校验片复用 `fragment_index` 表示组起点，payload 前缀携带校验片序号与组内最后一个数据片长度。
+Receiver 在 deadline 前收到足够片时，最多恢复组内任意 2 个缺片，不等待 RTT、不重传旧视频。
+无丢片时数据片优先完成 AU，迟到校验片由 terminal tombstone 忽略；超过恢复能力仍丢弃整帧。
+
+`SenderStats` 每秒通过可靠控制流上报完整 AU 提交数、Datagram 提交数、Sender 队列龄与整帧丢弃、
+Quinn 待发字节和 Sender 端 QUIC sent/lost。Receiver 不得用自身控制流方向的 QUIC loss 推断
+Android 视频方向的真实拥塞。
 
 ### StreamConfig 与 stream_epoch
 

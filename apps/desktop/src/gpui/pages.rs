@@ -6,18 +6,13 @@ use gpui_component::button::*;
 use gpui_component::input::Input;
 use gpui_component::switch::*;
 use gpui_component::*;
-use picoo_discovery::DEFAULT_QUIC_PORT;
 
 use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::prefs::LogLevel;
 use crate::receiver_runtime::ReceiverSnapshot;
 
-use super::connect::endpoint_label;
 use super::icons::{reicon_named, reicon_svg};
-use super::widgets::{
-    network_detail_row, onboarding_step, page_header, section_header, settings_toggle_row,
-    status_badge,
-};
+use super::widgets::{onboarding_step, page_header, section_header, settings_toggle_row};
 use super::PicooDesktopApp;
 
 #[derive(Default)]
@@ -77,101 +72,6 @@ impl PicooDesktopApp {
             }
         }
         cx.notify();
-    }
-
-    pub(super) fn render_network_page(
-        &self,
-        snapshot: &ReceiverSnapshot,
-        cx: &Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .v_flex()
-            .max_w(rems(55.))
-            .mx_auto()
-            .gap_5()
-            .child(page_header("wifi", "网络", "配置局域网发现与连接服务", cx))
-            .child(section_header("radio", "自动发现", cx))
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_4()
-                    .p_5()
-                    .rounded(cx.theme().radius_lg)
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().group_box)
-                    .child(
-                        div()
-                            .v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("自动发现附近设备"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("允许同一局域网中的 Picoo Camera 自动发现这台电脑。"),
-                            ),
-                    )
-                    .child(status_badge(
-                        if snapshot.discovery_available {
-                            "在线"
-                        } else {
-                            "不可用"
-                        },
-                        snapshot.discovery_available,
-                        cx,
-                    )),
-            )
-            .child(section_header("tuning", "高级设置", cx))
-            .child(
-                div()
-                    .v_flex()
-                    .overflow_hidden()
-                    .rounded(cx.theme().radius_lg)
-                    .border_1()
-                    .border_color(cx.theme().border)
-                    .bg(cx.theme().group_box)
-                    .child(network_detail_row(
-                        "server",
-                        "连接端口",
-                        "视频与控制连接使用的 UDP 端口",
-                        DEFAULT_QUIC_PORT.to_string(),
-                        cx,
-                    ))
-                    .child(network_detail_row(
-                        "wifi",
-                        "监听地址",
-                        "手机自动发现不可用时可手动输入",
-                        endpoint_label(snapshot),
-                        cx,
-                    ))
-                    .child(network_detail_row(
-                        "monitor",
-                        "Receiver 状态",
-                        "当前桌面接收端会话状态",
-                        Self::status_label(snapshot.status).into(),
-                        cx,
-                    ))
-                    .child(network_detail_row(
-                        "activity",
-                        "传输质量",
-                        "RTT 延迟 · 丢包率 · 网络抖动",
-                        format!(
-                            "{:.0} ms · {:.1}% · {:.1} ms",
-                            snapshot.stream_metrics.latency_ms,
-                            snapshot.stream_metrics.packet_loss * 100.0,
-                            snapshot.link_jitter_ms
-                        ),
-                        cx,
-                    )),
-            )
     }
 
     pub(super) fn render_general_page(

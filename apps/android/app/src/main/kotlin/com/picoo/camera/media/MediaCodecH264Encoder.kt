@@ -336,7 +336,13 @@ internal class MediaCodecH264Encoder(
             setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
             setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
             setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
+            // Real-time camera transport must not inherit the vendor encoder's
+            // implementation-defined look-ahead (four frames on Xiaomi 15).
+            // Android defines this value in frames and requires the negotiated
+            // output format to be inspected to confirm what was accepted.
+            setInteger(MediaFormat.KEY_LATENCY, 0)
             setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+            setInteger(MediaFormat.KEY_OUTPUT_REORDER_DEPTH, 0)
             setInteger(MediaFormat.KEY_PRIORITY, 0)
             setFloat(MediaFormat.KEY_OPERATING_RATE, encoder.profile.targetFps.toFloat())
         }

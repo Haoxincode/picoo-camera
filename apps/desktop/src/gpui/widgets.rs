@@ -426,22 +426,24 @@ pub(super) fn connection_security_status(status: ReceiverStatus) -> (&'static st
     }
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum NetworkStatusState {
+    Healthy,
+    Pending,
+    Warning,
+}
+
 pub(super) fn network_status_row(
     icon: &'static str,
     label: &'static str,
     value: impl Into<SharedString>,
-    healthy: bool,
+    state: NetworkStatusState,
     cx: &Context<PicooDesktopApp>,
 ) -> impl IntoElement {
-    let state_color = if healthy {
-        cx.theme().success
-    } else {
-        cx.theme().warning
-    };
-    let state_icon = if healthy {
-        "check-circle-filled"
-    } else {
-        "xmark"
+    let (state_color, state_icon) = match state {
+        NetworkStatusState::Healthy => (cx.theme().success, "check-circle-filled"),
+        NetworkStatusState::Pending => (cx.theme().muted_foreground, "more-horizontal"),
+        NetworkStatusState::Warning => (cx.theme().warning, "xmark"),
     };
 
     div()

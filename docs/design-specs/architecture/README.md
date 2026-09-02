@@ -12,7 +12,7 @@ ARCH-PICOO-<AREA>-NNN
 
 - [ARCH-PICOO-STACK-001: Rust Core 与 Monorepo 边界](0001-rust-core-monorepo-boundary.md)
 - [ARCH-PICOO-TRANSPORT-001: QUIC 传输与 picoo-transport 封装边界](0002-quic-transport-encapsulation-boundary.md)
-- [ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/2) 边界](0003-picoo-camera-protocol-boundary.md)
+- [ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/4) 边界](0003-picoo-camera-protocol-boundary.md)
 - [ARCH-PICOO-MEDIA-001: 跨平台媒体采集、编码与解码边界](0004-cross-platform-media-pipeline-boundary.md)
 - [ARCH-PICOO-SESSION-001: 会话状态、重连、抖动缓冲与码率控制边界](0005-session-reconnect-jitter-bitrate-boundary.md)
 - [ARCH-PICOO-FRAME-001: FrameHub 与 Shared Frame Ring 边界](0006-framehub-shared-frame-ring-boundary.md)

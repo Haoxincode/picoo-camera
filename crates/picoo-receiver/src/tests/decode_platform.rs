@@ -430,7 +430,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.0,
             frame_age_ms: 40.0,
-            jitter_buffer_depth_ms: 40.0,
+            jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
         let mut buf = Vec::new();
@@ -449,7 +449,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.0,
             frame_age_ms: 40.0,
-            jitter_buffer_depth_ms: 40.0,
+            jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
         let mut buf = Vec::new();

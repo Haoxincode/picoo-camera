@@ -15,6 +15,7 @@ use picoo_receiver::{IngressStats, ReceiverError, ReceiverIdentity, ReceiverSess
 use picoo_session::ReceiverStatus;
 use picoo_transport::Endpoint;
 
+use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
@@ -67,8 +68,18 @@ pub struct ReceiverSnapshot {
     pub pairing_short_code: Option<String>,
     /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
     pub link_jitter_ms: f64,
-    /// Complete-AU playout buffer depth; not a network jitter measurement.
-    pub jitter_buffer_depth_ms: f64,
+    /// Adaptive total playout target; distinct from queue occupancy.
+    pub jitter_buffer_target_ms: f64,
+    /// Mean first-fragment-to-buffer-exit delay in the latest stats window.
+    pub jitter_buffer_actual_delay_ms: f64,
+    /// Complete-AU queue PTS span; not a network jitter measurement.
+    pub jitter_buffer_occupancy_ms: f64,
+    /// Last complete one-second ReceiverStats window. `None` means no inbound
+    /// sample exists yet; UI must not render that state as zero loss/latency.
+    pub receiver_stats: Option<picoo_metrics::ReceiverStats>,
+    /// Bounded desktop-process summary; samples remain available across a
+    /// disconnect so the most recent fault can still be inspected.
+    pub metrics_history: HistorySummary,
     pub ingress: IngressStats,
     pub stream_config: Option<StreamConfig>,
     pub stream_metrics: picoo_metrics::StreamMetrics,
@@ -97,6 +108,7 @@ pub struct ReceiverRuntime {
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
     shared_ring_error: Option<String>,
+    metrics_history: LiveMetricsHistory,
 }
 
 impl ReceiverRuntime {
@@ -172,6 +184,7 @@ impl ReceiverRuntime {
             advertised_trusted_count: trusted_count,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
             shared_ring_error,
+            metrics_history: LiveMetricsHistory::default(),
         })
     }
 
@@ -298,6 +311,13 @@ impl ReceiverRuntime {
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
         self.receiver.pump()?;
+        let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
+        self.metrics_history.observe(
+            receiver_stats.as_ref(),
+            self.receiver.last_stats_revision(),
+            self.receiver.decoded_fps(),
+            std::time::Instant::now(),
+        );
         if let Some(advertiser) = self.mdns.as_mut() {
             let changed = advertiser.poll();
             if changed {
@@ -324,6 +344,7 @@ impl ReceiverRuntime {
                     sender_id,
                     device_name,
                 });
+        let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
         ReceiverSnapshot {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
@@ -333,21 +354,29 @@ impl ReceiverRuntime {
                 .as_ref()
                 .is_some_and(MdnsAdvertiser::is_registered),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
-            link_jitter_ms: self
-                .receiver
-                .last_stats()
-                .map(|s| finite_metric(s.jitter_ms))
+            link_jitter_ms: receiver_stats
+                .as_ref()
+                .map(|stats| stats.jitter_ms)
                 .unwrap_or(0.0),
-            jitter_buffer_depth_ms: self
-                .receiver
-                .last_stats()
-                .map(|s| finite_metric(s.jitter_buffer_depth_ms))
+            jitter_buffer_target_ms: receiver_stats
+                .as_ref()
+                .map(|stats| stats.jitter_buffer_target_ms)
                 .unwrap_or(0.0),
+            jitter_buffer_actual_delay_ms: receiver_stats
+                .as_ref()
+                .map(|stats| stats.jitter_buffer_actual_delay_ms)
+                .unwrap_or(0.0),
+            jitter_buffer_occupancy_ms: receiver_stats
+                .as_ref()
+                .map(|stats| stats.jitter_buffer_occupancy_ms)
+                .unwrap_or(0.0),
+            receiver_stats: receiver_stats.clone(),
+            metrics_history: self.metrics_history.summary(),
             ingress: self.receiver.ingress_stats(),
             stream_config: self.receiver.stream_config().cloned(),
             stream_metrics: {
                 let cfg = self.receiver.stream_config();
-                let stats = self.receiver.last_stats();
+                let stats = receiver_stats.as_ref();
                 picoo_metrics::StreamMetrics {
                     width: cfg.map(|c| c.width).unwrap_or(0),
                     height: cfg.map(|c| c.height).unwrap_or(0),
@@ -357,8 +386,8 @@ impl ReceiverRuntime {
                     // RTT double-counts local display residency and is not an
                     // end-to-end capture timestamp. Until clock synchronization
                     // exists, expose the measured path RTT without inventing E2E.
-                    latency_ms: stats.map(|s| finite_metric(s.rtt_ms)).unwrap_or(0.0),
-                    packet_loss: stats.map(|s| finite_metric(s.packet_loss)).unwrap_or(0.0),
+                    latency_ms: stats.map(|stats| stats.rtt_ms).unwrap_or(0.0),
+                    packet_loss: stats.map(|stats| stats.packet_loss).unwrap_or(0.0),
                 }
             },
             trusted_device_count: self.receiver.trusted_devices().list().count(),
@@ -425,12 +454,34 @@ impl ReceiverRuntime {
     }
 }
 
-fn finite_metric(value: f64) -> f64 {
-    if value.is_finite() {
-        value
-    } else {
-        0.0
-    }
+fn sanitize_receiver_stats(
+    stats: &picoo_metrics::ReceiverStats,
+) -> Option<picoo_metrics::ReceiverStats> {
+    let finite = stats.rtt_ms.is_finite()
+        && stats.packet_loss.is_finite()
+        && stats.jitter_ms.is_finite()
+        && stats.frame_age_ms.is_finite()
+        && stats.jitter_buffer_target_ms.is_finite()
+        && stats.jitter_buffer_actual_delay_ms.is_finite()
+        && stats.jitter_buffer_occupancy_ms.is_finite()
+        && stats.sender_queue_age_ms.is_finite();
+    finite.then(|| picoo_metrics::ReceiverStats {
+        rtt_ms: stats.rtt_ms.max(0.0),
+        packet_loss: stats.packet_loss.clamp(0.0, 1.0),
+        jitter_ms: stats.jitter_ms.max(0.0),
+        reassembly_drop: stats.reassembly_drop,
+        decoder_drop: stats.decoder_drop,
+        frame_age_ms: stats.frame_age_ms.max(0.0),
+        receive_bitrate: stats.receive_bitrate,
+        jitter_buffer_target_ms: stats.jitter_buffer_target_ms.max(0.0),
+        jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms.max(0.0),
+        jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms.max(0.0),
+        sender_queue_age_ms: stats.sender_queue_age_ms.max(0.0),
+        sender_queue_dropped_access_units: stats.sender_queue_dropped_access_units,
+        sender_quic_lost_packets: stats.sender_quic_lost_packets,
+        sender_quic_sent_packets: stats.sender_quic_sent_packets,
+        sender_video_buffered_bytes: stats.sender_video_buffered_bytes,
+    })
 }
 
 fn default_identity_path() -> PathBuf {
@@ -514,7 +565,7 @@ pub fn format_last_connected_ms(ms: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{finite_metric, format_last_connected_ms};
+    use super::{format_last_connected_ms, sanitize_receiver_stats};
 
     #[test]
     fn format_last_connected_utc_date_or_dash() {
@@ -523,10 +574,31 @@ mod tests {
     }
 
     #[test]
-    fn presentation_metrics_replace_non_finite_values() {
-        assert_eq!(finite_metric(f64::NAN), 0.0);
-        assert_eq!(finite_metric(f64::INFINITY), 0.0);
-        assert_eq!(finite_metric(f64::NEG_INFINITY), 0.0);
-        assert_eq!(finite_metric(18.5), 18.5);
+    fn receiver_stats_reject_non_finite_windows() {
+        assert!(sanitize_receiver_stats(&picoo_metrics::ReceiverStats {
+            rtt_ms: f64::NAN,
+            ..Default::default()
+        })
+        .is_none());
+    }
+
+    #[test]
+    fn receiver_stats_clamp_finite_presentation_values() {
+        let sanitized = sanitize_receiver_stats(&picoo_metrics::ReceiverStats {
+            packet_loss: 2.0,
+            jitter_ms: -3.0,
+            jitter_buffer_target_ms: -1.0,
+            jitter_buffer_actual_delay_ms: -2.0,
+            jitter_buffer_occupancy_ms: -3.0,
+            ..Default::default()
+        })
+        .expect("finite window remains present");
+        assert_eq!(sanitized.rtt_ms, 0.0);
+        assert_eq!(sanitized.packet_loss, 1.0);
+        assert_eq!(sanitized.jitter_ms, 0.0);
+        assert_eq!(sanitized.frame_age_ms, 0.0);
+        assert_eq!(sanitized.jitter_buffer_target_ms, 0.0);
+        assert_eq!(sanitized.jitter_buffer_actual_delay_ms, 0.0);
+        assert_eq!(sanitized.jitter_buffer_occupancy_ms, 0.0);
     }
 }

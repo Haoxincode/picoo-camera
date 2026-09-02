@@ -9,6 +9,7 @@ license.workspace = true
 bytes.workspace = true
 picoo-protocol.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 proptest = "=1.6.0"

@@ -6,15 +6,157 @@ use bytes::Bytes;
 use picoo_frame_hub::{
     FrameSlot, PlaceholderMode, SharedFrameRingProducer, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
+use picoo_jitter::{Frame as JitterFrame, PushOutcome};
 #[cfg(test)]
 use picoo_media_decode::AccessUnitDecoder;
+use picoo_packet::ReassemblyError;
+use picoo_protocol::VideoPacket;
+use std::time::Instant;
 
+use super::recovery::RecoveryReason;
 use super::ReceiverSession;
 use crate::ReceiverError;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::DEFAULT_SHARED_RING_NAME;
 
 impl ReceiverSession {
+    pub(super) fn ingest_video_packet(&mut self, packet: VideoPacket) -> Result<(), ReceiverError> {
+        // Enforce the wall-clock deadline before a queued late tail gets a
+        // chance to complete an already-expired AU.
+        self.expire_reassembly_deadline()?;
+        self.ingress.packets_received += 1;
+        if !self.video_allowed() {
+            self.ingress.packets_dropped_unpaired += 1;
+            return Ok(());
+        }
+
+        let packet_epoch = packet.stream_epoch;
+        let configured_epoch = self
+            .current_stream_config
+            .as_ref()
+            .map(|config| config.stream_epoch);
+        let configured_epoch = match configured_epoch {
+            Some(epoch) => epoch,
+            // Explicit test/diagnostic bypass may carry arbitrary bytes and
+            // intentionally has no protocol negotiation.
+            None if self.permit_unpaired_video => packet_epoch,
+            None => {
+                // Control and Datagram channels can reorder. Never decode
+                // product media before StreamConfig establishes codec/epoch.
+                self.waiting_for_stream_config_epoch = Some(packet_epoch);
+                return Ok(());
+            }
+        };
+        if configured_epoch != packet_epoch {
+            // Stale datagrams from an old epoch are expected after
+            // reconfiguration. A future epoch waits for reliable StreamConfig;
+            // that transition owns the single rate-limited fresh-IDR request.
+            if packet_epoch > configured_epoch
+                && self.waiting_for_stream_config_epoch != Some(packet_epoch)
+            {
+                self.waiting_for_stream_config_epoch = Some(packet_epoch);
+            }
+            return Ok(());
+        }
+
+        self.stats_reporter.record_packet(packet.payload.len());
+        let recovered_before = self.reassembly.fec_recovered_fragment_count();
+        let partial_drops_before = self.reassembly.partial_access_unit_drop_count();
+        let gap_drops_before = self.reassembly.whole_access_unit_gap_drop_count();
+        let reassembly_result = self.reassembly.ingest(packet);
+        let recovered_now = self
+            .reassembly
+            .fec_recovered_fragment_count()
+            .saturating_sub(recovered_before);
+        self.ingress.fec_recovered_fragments = self
+            .ingress
+            .fec_recovered_fragments
+            .saturating_add(recovered_now);
+        self.ingress.reassembly_partial_access_unit_drops = self
+            .ingress
+            .reassembly_partial_access_unit_drops
+            .saturating_add(
+                self.reassembly
+                    .partial_access_unit_drop_count()
+                    .saturating_sub(partial_drops_before),
+            );
+        self.ingress.reassembly_whole_access_unit_gap_drops = self
+            .ingress
+            .reassembly_whole_access_unit_gap_drops
+            .saturating_add(
+                self.reassembly
+                    .whole_access_unit_gap_drop_count()
+                    .saturating_sub(gap_drops_before),
+            );
+        match reassembly_result {
+            Ok(Some(access_unit)) => {
+                let pts_us = access_unit.pts_us;
+                let completed_at = Instant::now();
+                if access_unit.keyframe {
+                    tracing::warn!(
+                        bytes = access_unit.data.len(),
+                        fragments = access_unit.fragment_count,
+                        assembly_ms = completed_at
+                            .saturating_duration_since(access_unit.first_fragment_at)
+                            .as_secs_f64()
+                            * 1_000.0,
+                        "complete keyframe reached receiver reassembly"
+                    );
+                }
+                self.interarrival_jitter.observe(completed_at, pts_us);
+                let first_fragment_at_us = access_unit
+                    .first_fragment_at
+                    .saturating_duration_since(self.timing_origin)
+                    .as_micros() as u64;
+                let completed_at_us = completed_at
+                    .saturating_duration_since(self.timing_origin)
+                    .as_micros() as u64;
+                let outcome = self.jitter.push_at(
+                    JitterFrame {
+                        frame_id: access_unit.frame_id,
+                        pts_us,
+                        data: access_unit.data,
+                        keyframe: access_unit.keyframe,
+                        discardable: access_unit.discardable,
+                    },
+                    first_fragment_at_us,
+                    completed_at_us,
+                );
+                match outcome {
+                    PushOutcome::AcceptedAfterReferenceDrop => {
+                        self.ingress.recovery_jitter_capacity =
+                            self.ingress.recovery_jitter_capacity.saturating_add(1);
+                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?
+                    }
+                    PushOutcome::DroppedLate {
+                        requires_refresh: true,
+                    } => {
+                        self.ingress.recovery_arrived_after_playout = self
+                            .ingress
+                            .recovery_arrived_after_playout
+                            .saturating_add(1);
+                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?
+                    }
+                    PushOutcome::Accepted
+                    | PushOutcome::DroppedLate {
+                        requires_refresh: false,
+                    } => {}
+                }
+            }
+            Ok(None) => {}
+            // Reassembly owns drop/keyframe-loss accounting. Keep protocol
+            // rejects out of the decoder and continue the session.
+            Err(ReassemblyError::TooManyFragments)
+            | Err(ReassemblyError::DuplicateFragment)
+            | Err(ReassemblyError::EpochMismatch)
+            | Err(ReassemblyError::InvalidFecParity) => {}
+        }
+        if self.reassembly.take_reference_chain_loss() {
+            self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
+        }
+        Ok(())
+    }
+
     /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
     pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
         #[cfg(target_os = "windows")]
@@ -113,10 +255,13 @@ impl ReceiverSession {
             return Ok(());
         }
         self.ingress.decode_invocations += 1;
-        let outcome = match self
+        let decode_started = Instant::now();
+        let decode_result = self
             .decoder
-            .decode_access_unit(&access_unit, self.current_stream_config.as_ref())
-        {
+            .decode_access_unit(&access_unit, self.current_stream_config.as_ref());
+        self.jitter
+            .observe_decode_time_us(decode_started.elapsed().as_micros() as u64);
+        let outcome = match decode_result {
             Ok(decoded) => decoded,
             Err(error) => {
                 self.stats_reporter.record_decoder_drop();

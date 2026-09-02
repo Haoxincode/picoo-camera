@@ -6,7 +6,7 @@ use std::str::FromStr;
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 
-use crate::quinn_backend::{Command, TransportActor};
+use crate::quinn_backend::{Command, QuicTransportError, TransportActor};
 use crate::{
     CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent,
     TransportLinkStats,
@@ -44,8 +44,11 @@ impl QuicSenderTransport {
         TransportError::ConnectFailed(error.to_string())
     }
 
-    fn map_send_error(error: impl ToString) -> TransportError {
-        TransportError::SendFailed(error.to_string())
+    fn map_send_error(error: QuicTransportError) -> TransportError {
+        match error {
+            QuicTransportError::VideoBackpressure => TransportError::VideoBackpressure,
+            error => TransportError::SendFailed(error.to_string()),
+        }
     }
 }
 

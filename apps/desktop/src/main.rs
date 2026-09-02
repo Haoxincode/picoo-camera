@@ -6,6 +6,7 @@
 //! Picoo Camera desktop Receiver — ARCH-PICOO-UI-001 shell.
 
 mod diagnostics_export;
+mod live_diagnostics;
 mod logging;
 mod model;
 mod network_quality;
@@ -337,8 +338,14 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
                 Err(err) => eprintln!("Export failed: {err}"),
             }
         }
+        "stats" | "live-stats" => match receiver.last_stats() {
+            Some(stats) => println!("{stats:#?}"),
+            None => println!("No completed ReceiverStats window yet."),
+        },
         "help" => {
-            println!("Commands: confirm | list | remove <device_id> | export-diagnostics | help");
+            println!(
+                "Commands: confirm | list | remove <device_id> | stats | export-diagnostics | help"
+            );
         }
         other => println!("Unknown command: {other} (type help)"),
     }
@@ -362,7 +369,9 @@ fn run_serve_mode() {
             trusted_path.display()
         );
     }
-    println!("Type `confirm` when pairing code matches, `list`, `remove <device_id>`, or `export-diagnostics`.");
+    println!(
+        "Type `confirm` when pairing code matches, `list`, `remove <device_id>`, `stats`, or `export-diagnostics`."
+    );
 
     let stdin_rx = spawn_stdin_commands();
     let mut last_pairing_hint = String::new();

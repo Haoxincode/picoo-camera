@@ -434,14 +434,12 @@ fn unpaired_video_keeps_shared_ring_on_placeholder() {
 
     // Simulate a compromised/legacy peer that ignores the production sender gate.
     for frame_id in 1..=20u64 {
-        sender
-            .ingest_and_flush_unchecked_for_test(
-                format!("unpaired-{frame_id}").as_bytes(),
-                true,
-                frame_id,
-                1,
-            )
-            .expect("ingest");
+        let _ = super::video_send_accepted(sender.ingest_and_flush_unchecked_for_test(
+            format!("unpaired-{frame_id}").as_bytes(),
+            true,
+            frame_id,
+            1,
+        ));
         for _ in 0..8 {
             receiver.pump().expect("rx");
             sender.pump().ok();

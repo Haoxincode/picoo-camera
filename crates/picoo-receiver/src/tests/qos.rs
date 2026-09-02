@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use picoo_sender::SenderSession;
 use picoo_session::{ReceiverStatus, SenderStatus};
@@ -8,7 +8,7 @@ use crate::ReceiverSession;
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 use super::abr_epoch::openh264_au;
-use super::use_stub_decoder;
+use super::{use_stub_decoder, video_send_accepted};
 
 /// REQ-PICOO-SESSION-005 — paired loopback soak (default 60s; set `PICOO_SOAK_SECONDS`).
 ///
@@ -122,9 +122,8 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     let mut frame_id = 1u64;
 
     while std::time::Instant::now() < deadline {
-        sender
-            .ingest_and_flush(&soak_au, frame_id % 30 == 1, frame_id, 1)
-            .expect("ingest");
+        let _ =
+            video_send_accepted(sender.ingest_and_flush(&soak_au, frame_id % 30 == 1, frame_id, 1));
         frame_id += 1;
         for _ in 0..8 {
             receiver.pump().expect("rx");
@@ -243,14 +242,13 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
 
     let mut frames_seen = 0u64;
     let mut last_au = receiver.stats().access_units;
-    let mut stalled_rounds = 0u32;
+    let mut stalled_since = Instant::now();
     for frame_id in 1..=400u64 {
         // Prefer keyframes so a drop does not permanently break the stub decode chain.
         let is_key = frame_id % 5 == 1;
         let payload = format!("lossy-au-{frame_id}");
-        sender
-            .ingest_and_flush(payload.as_bytes(), is_key, frame_id, 1)
-            .expect("ingest");
+        let _ =
+            video_send_accepted(sender.ingest_and_flush(payload.as_bytes(), is_key, frame_id, 1));
         for _ in 0..12 {
             receiver.pump().expect("rx");
             sender.pump().ok();
@@ -259,16 +257,18 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
             frames_seen += 1;
         }
         let au = receiver.stats().access_units;
-        if au == last_au {
-            stalled_rounds += 1;
-        } else {
-            stalled_rounds = 0;
+        if au != last_au {
+            stalled_since = Instant::now();
             last_au = au;
         }
-        // Allow brief stalls under loss, but not a permanent hang.
+        // The production failure deadline is hard-bounded at 300ms. Allow that
+        // deadline plus one source-frame/control-loop margin, but reject a
+        // receiver that remains wedged after its recovery budget.
         assert!(
-            stalled_rounds < 80,
-            "session stalled under {loss_ratio} loss after frame_id={frame_id} au={au}"
+            stalled_since.elapsed() < Duration::from_millis(350),
+            "session stalled under {loss_ratio} loss after frame_id={frame_id} au={au} stats={:?} awaiting_refresh={}",
+            receiver.stats(),
+            receiver.awaiting_decoder_refresh_for_test(),
         );
         std::thread::sleep(Duration::from_millis(2));
     }

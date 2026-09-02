@@ -12,9 +12,14 @@ static FILTER_RELOAD: OnceLock<Mutex<FilterHandle>> = OnceLock::new();
 /// Initialize the global subscriber once. Prefer `default_filter` (from prefs)
 /// over a bare `RUST_LOG` when provided.
 pub fn init_logging(default_filter: &str) {
-    let filter = EnvFilter::try_new(default_filter)
-        .or_else(|_| EnvFilter::try_from_default_env())
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    // A one-shot diagnostic launch can opt into a more verbose filter without
+    // mutating the user's persisted desktop preference.
+    let filter = std::env::var("PICOO_LOG_FILTER")
+        .ok()
+        .and_then(|value| EnvFilter::try_new(value).ok())
+        .or_else(|| EnvFilter::try_new(default_filter).ok())
+        .or_else(|| EnvFilter::try_from_default_env().ok())
+        .unwrap_or_else(|| EnvFilter::new("info"));
     let (filter_layer, handle) = reload::Layer::new(filter);
     let _ = FILTER_RELOAD.set(Mutex::new(handle));
     // Ignore double-init in tests / CLI re-entry.

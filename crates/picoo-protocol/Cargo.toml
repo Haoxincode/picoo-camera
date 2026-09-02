@@ -1,6 +1,6 @@
 [package]
 name = "picoo-protocol"
-description = "PCP/2 protocol types: Protobuf control messages and VideoPacket binary format"
+description = "PCP/4 protocol types: Protobuf control messages and FEC-protected VideoPacket"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,6 +11,7 @@ bitflags = { workspace = true }
 prost.workspace = true
 prost-types.workspace = true
 thiserror.workspace = true
+reed-solomon-erasure.workspace = true
 
 [build-dependencies]
 prost-build = "0.13"

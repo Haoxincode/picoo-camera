@@ -95,11 +95,28 @@ impl ReceiverSession {
     ) -> Result<(), ReceiverError> {
         let newly_awaiting = self.decoder_recovery.enter(reason);
         if newly_awaiting {
+            match reason {
+                RecoveryReason::ReferenceAccessUnitLost => {
+                    self.ingress.recovery_reference_lost =
+                        self.ingress.recovery_reference_lost.saturating_add(1);
+                }
+                RecoveryReason::ReferenceAccessUnitLate => {
+                    self.ingress.recovery_reference_late =
+                        self.ingress.recovery_reference_late.saturating_add(1);
+                }
+                RecoveryReason::DecoderError => {
+                    self.ingress.recovery_decoder_errors =
+                        self.ingress.recovery_decoder_errors.saturating_add(1);
+                }
+                RecoveryReason::InitialConfig
+                | RecoveryReason::EpochChanged
+                | RecoveryReason::ManualRepair => {}
+            }
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
-            self.jitter.clear();
-            self.interarrival_jitter.reset();
-            self.jitter_timeline = None;
+            // Decoder recovery discards dependent media but preserves the
+            // current network/decode timing estimate for this stream epoch.
+            self.jitter.discard_queued();
             tracing::warn!(reason = reason.label(), "decoder awaiting fresh IDR");
         }
 
@@ -147,9 +164,7 @@ impl ReceiverSession {
         if newly_awaiting {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
-            self.jitter.clear();
-            self.interarrival_jitter.reset();
-            self.jitter_timeline = None;
+            self.jitter.discard_queued();
         }
         let session = self
             .transport

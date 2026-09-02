@@ -1,12 +1,13 @@
-# REQ-PICOO-PROTOCOL：PCP/2 协议
+# REQ-PICOO-PROTOCOL：PCP/4 协议
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-PROTOCOL-001 | implemented | ARCH-PICOO-PROTOCOL-001 | VideoPacket 固定二进制头（26 字节 + payload） | 编解码往返 + header size 测试 |
-| REQ-PICOO-PROTOCOL-002 | implemented | ARCH-PICOO-PROTOCOL-001 | QUIC ALPN 为 `picoocam/2` | `ALPN` 常量；Hello `protocol_version` 不匹配 fail-fast |
-| REQ-PICOO-PROTOCOL-003 | implemented | ARCH-PICOO-PROTOCOL-001 | 单包最大 1150 字节，payload 不超 MTU；单 AU 上限 1024 片（约 1.1 MiB），Sender/Receiver 使用同一常量 | `rejects_oversized_datagram`；`access_unit_over_reassembly_budget_is_rejected_before_queueing`；产品分辨率 OpenH264 epoch/分辨率切换测试 |
+| REQ-PICOO-PROTOCOL-002 | implemented | ARCH-PICOO-PROTOCOL-001 | QUIC ALPN 为 `picoocam/4`，不兼容旧 PCP/3 | `ALPN` 常量；Hello `protocol_version` 不匹配 fail-fast |
+| REQ-PICOO-PROTOCOL-003 | implemented | ARCH-PICOO-PROTOCOL-001 | 单包最大 1150 字节，payload 不超 MTU；单 AU 上限 1024 个系统数据片（约 1.1 MiB 原始 AU，FEC 校验片不计入 `fragment_count`），Sender/Receiver 使用同一常量 | `rejects_oversized_datagram`；`access_unit_over_reassembly_budget_is_rejected_before_queueing`；产品分辨率 OpenH264 epoch/分辨率切换测试 |
 | REQ-PICOO-PROTOCOL-004 | implemented | ARCH-PICOO-PROTOCOL-001 | stream_epoch 隔离重组 | packet crate epoch 测试 |
 | REQ-PICOO-PROTOCOL-005 | implemented | PUC-005 | StreamConfig 携带 codec/分辨率/SPS/PPS/epoch；AU AVCC→Annex-B 规范化 | Android/iOS 提取 SPS/PPS → FFI → StreamConfig；iOS IDR 同时内联 SPS/PPS，Receiver 拒绝与已知 StreamConfig 不同 epoch 的 Datagram；Profile/Level 从真实 SPS 推导；`stream_epoch_bump_requests_keyframe`；`stream_config_derives_main_level_4_from_sps`；`access_unit_to_annex_b`；`paired_avcc_length_prefixed_au_reaches_frame_hub` |
-| REQ-PICOO-PROTOCOL-006 | implemented | PUC-006 / PUC-005 | ReceiverStats 每秒上报 RTT/丢包/帧龄等；`jitter_ms` 使用 AU 到达间隔与 PTS 间隔之差的 EWMA，与 `jitter_buffer_depth_ms` 分开；Sender 直播页展示链路质量 | transport link_stats + inter-arrival jitter/ABR 单元测试；桌面端分开展示网络抖动和播放缓冲；`picoo_sender_last_receiver_stats` + Android `LinkQuality` |
+| REQ-PICOO-PROTOCOL-006 | implementing | PUC-006 / PUC-005 | ReceiverStats 每秒上报 RTT/入站媒体损失/重组与解码状态；SenderStats 每秒经可靠控制流上报 Sender 完整 AU 队列龄/整帧丢弃、Quinn 待发字节及 QUIC sent/lost；`jitter_ms` 使用 AU 到达间隔与 PTS 间隔之差的 EWMA；播放缓冲分别上报 target、首片至输出的实际平均停留时间和 occupancy | control magic/字段验证 + transport link_stats + jitter/ABR 单元测试；桌面端分层展示 Sender、网络、重组、播放与解码指标；`picoo_sender_last_receiver_stats` + Android `LinkQuality` |
 | REQ-PICOO-PROTOCOL-008 | implemented | ARCH-PICOO-PROTOCOL-001 | StartStream/StopStream 使用 magic 判别（1/2），避免空 message 误解码；未配对 StopStream 不拆除配对 | `unpaired_start_stream_is_rejected` + `unpaired_stop_stream_is_ignored_without_teardown` + `paired_start_stop_stream_and_camera_command_roundtrip` |
 | REQ-PICOO-PROTOCOL-009 | implemented | ARCH-PICOO-SESSION-001 | `ReceiverStats.packet_loss` 使用同一统计单位：完成/确认丢弃的 AU 整体归入一个窗口，按缺失 fragment / 期望 fragment 统计；主动 recovery/epoch 清空不计网络丢包，不得混用 AU drop 与 Datagram 数；完全无片到达的 AU 仍不可观测 | Reassembly resolved/missing fragment 计数与 recovery tombstone 测试；ReceiverStats 同单位比率测试；后续独立 packet sequence 另行评审 |
+| REQ-PICOO-PROTOCOL-010 | implemented | ARCH-PICOO-PROTOCOL-001 / ARCH-PICOO-SESSION-001 | AU 数据片按平衡的最多 6 片一组生成 2 个 Reed-Solomon 校验片；同一 shard position 跨组轮转发送且所有数据片先于校验片，健康路径不得因仍在途的数据片做无效重建；Receiver 在 deadline 前恢复组内任意 2 个真实缺片，不等待 RTT；超过能力仍丢整帧并恢复参考链 | `ranges_avoid_single_fragment_tail`；FEC 两片恢复/超预算测试；`fec_schedule_spreads_groups_and_keeps_parity_after_source_data`；真机健康路径 FEC 恢复接近零、弱网统计 |

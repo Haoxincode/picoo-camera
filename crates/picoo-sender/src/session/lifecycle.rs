@@ -1,12 +1,15 @@
 use std::time::{Duration, Instant};
 
-use picoo_protocol::control::{StartStream, StopStream};
+use picoo_protocol::control::{SenderStats as SenderStatsMsg, StartStream, StopStream};
 use picoo_session::SenderStatus;
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
 use prost::Message;
 
 use super::SenderSession;
 use crate::SenderError;
+
+const SENDER_STATS_MAGIC: u32 = 0x5354_4154;
+const SENDER_STATS_INTERVAL: Duration = Duration::from_secs(1);
 
 impl<T: PicooTransport> SenderSession<T> {
     /// Surface camera/mic permission gate to UI (REQ-PICOO-SESSION-001).
@@ -104,6 +107,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.reconnect_backoff.reset();
         self.reconnect_after = None;
         self.status = SenderStatus::Connecting;
+        self.last_sender_stats_sent_at = None;
         if let Some(params) = self.hello_params.clone() {
             if self.emit_client_hello(&params).is_ok() {
                 self.status = SenderStatus::Negotiating;
@@ -128,7 +132,7 @@ impl<T: PicooTransport> SenderSession<T> {
                     self.pipeline.clear_pending_packets();
                     self.schedule_reconnect();
                 }
-                TransportEvent::VideoPacket(_, _) => {}
+                TransportEvent::VideoPackets(_, _) => {}
             }
         }
     }
@@ -179,8 +183,42 @@ impl<T: PicooTransport> SenderSession<T> {
             SenderStatus::Streaming | SenderStatus::NetworkUnstable
         ) {
             self.send_pending_stream_config()?;
+            self.maybe_send_sender_stats();
         }
         Ok(())
+    }
+
+    fn maybe_send_sender_stats(&mut self) {
+        if self
+            .last_sender_stats_sent_at
+            .is_some_and(|last| last.elapsed() < SENDER_STATS_INTERVAL)
+        {
+            return;
+        }
+        let Some(session) = self.session else {
+            return;
+        };
+        let link = self.transport.link_stats().unwrap_or_default();
+        let pipeline = self.pipeline.stats();
+        let stats = SenderStatsMsg {
+            magic: SENDER_STATS_MAGIC,
+            access_units: pipeline.access_units,
+            submitted_datagrams: self.sent_datagrams,
+            video_queue_age_ms: link.video_queue_age_ms,
+            video_dropped_access_units: link.video_dropped_access_units,
+            quic_lost_packets: link.lost_packets,
+            quic_sent_packets: link.sent_packets,
+            video_buffered_bytes: link.video_buffered_bytes,
+        };
+        let mut bytes = Vec::new();
+        if stats.encode(&mut bytes).is_ok()
+            && self
+                .transport
+                .send_control(session, bytes::Bytes::from(bytes))
+                .is_ok()
+        {
+            self.last_sender_stats_sent_at = Some(Instant::now());
+        }
     }
 
     /// Simulate a failed reconnect attempt: advance backoff without a successful connect.

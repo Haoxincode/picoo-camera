@@ -12,7 +12,7 @@ fn sender_status_code(status: SenderStatus) -> i32 {
 /// Returns protocol version string for FFI smoke tests.
 #[no_mangle]
 pub extern "C" fn picoo_protocol_version() -> *const std::ffi::c_char {
-    static VERSION: &[u8] = b"PCP/2\0";
+    static VERSION: &[u8] = b"PCP/4\0";
     VERSION.as_ptr() as *const std::ffi::c_char
 }
 
@@ -35,7 +35,7 @@ pub extern "C" fn picoo_sender_destroy(handle: *mut std::ffi::c_void) {
     }
 }
 
-/// Connect QUIC session to host:port (PCP/2 ALPN `picoocam/2`).
+/// Connect QUIC session to host:port (PCP/4 ALPN `picoocam/4`).
 #[no_mangle]
 pub extern "C" fn picoo_sender_connect(
     handle: *mut std::ffi::c_void,
@@ -261,15 +261,16 @@ pub extern "C" fn picoo_sender_clear_permission_required(handle: *mut std::ffi::
 
 /// Latest ReceiverStats feedback for live UI (PUC-005 / REQ-PICOO-PROTOCOL-006).
 ///
-/// Writes `[rtt_ms, packet_loss, jitter_ms, frame_age_ms, receive_bitrate, jitter_depth_ms]`
-/// into `out` (length 6). Returns 0 when stats are available, 1 when none yet, -1 on error.
+/// Writes `[rtt_ms, packet_loss, jitter_ms, frame_age_ms, receive_bitrate,
+/// jitter_target_ms, jitter_actual_delay_ms, jitter_occupancy_ms]` into `out`
+/// (length 8). Returns 0 when stats are available, 1 when none yet, -1 on error.
 #[no_mangle]
 pub extern "C" fn picoo_sender_last_receiver_stats(
     handle: *mut std::ffi::c_void,
     out: *mut f64,
     out_len: usize,
 ) -> i32 {
-    if handle.is_null() || out.is_null() || out_len < 6 {
+    if handle.is_null() || out.is_null() || out_len < 8 {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
@@ -283,7 +284,9 @@ pub extern "C" fn picoo_sender_last_receiver_stats(
         *out.add(2) = stats.jitter_ms;
         *out.add(3) = stats.frame_age_ms;
         *out.add(4) = f64::from(stats.receive_bitrate);
-        *out.add(5) = stats.jitter_buffer_depth_ms;
+        *out.add(5) = stats.jitter_buffer_target_ms;
+        *out.add(6) = stats.jitter_buffer_actual_delay_ms;
+        *out.add(7) = stats.jitter_buffer_occupancy_ms;
     }
     0
 }

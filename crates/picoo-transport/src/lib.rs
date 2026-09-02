@@ -32,7 +32,10 @@ pub struct SessionId(pub u64);
 pub enum TransportEvent {
     Connected(SessionId),
     ControlMessage(SessionId, Bytes),
-    VideoPacket(SessionId, VideoPacket),
+    /// A short receive-side transport batch. Batching prevents one encoded
+    /// keyframe from consuming hundreds of cross-thread event slots while the
+    /// media layer still owns AU reassembly and deadline decisions.
+    VideoPackets(SessionId, Vec<VideoPacket>),
     Disconnected(SessionId, CloseReason),
 }
 
@@ -50,6 +53,10 @@ pub enum TransportError {
     ConnectFailed(String),
     #[error("not connected")]
     NotConnected,
+    /// The bounded media queue is full. Callers should drop this stale access
+    /// unit and continue rather than treating the connection as failed.
+    #[error("video queue is full")]
+    VideoBackpressure,
     #[error("send failed: {0}")]
     SendFailed(String),
 }
@@ -64,6 +71,12 @@ pub struct TransportLinkStats {
     pub sent_packets: u64,
     pub recv_packets: u64,
     pub dgram_recv: u64,
+    /// Age of the last complete AU dequeued by the QUIC worker.
+    pub video_queue_age_ms: f64,
+    /// Complete AUs rejected by the application/Quinn datagram queues.
+    pub video_dropped_access_units: u64,
+    /// Bytes currently retained by Quinn's unreliable Datagram send buffer.
+    pub video_buffered_bytes: u64,
 }
 
 impl TransportLinkStats {

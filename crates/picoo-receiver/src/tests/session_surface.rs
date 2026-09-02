@@ -251,8 +251,8 @@ fn default_jitter_holds_au_until_target_delay() {
     }
     assert_eq!(receiver.stats().access_units, 1);
     assert!(
-        started.elapsed() >= Duration::from_millis(40),
-        "expected ~50ms hold, released too early: {:?}",
+        started.elapsed() >= Duration::from_millis(20),
+        "expected adaptive startup hold near 33ms, released too early: {:?}",
         started.elapsed()
     );
 }

@@ -64,7 +64,7 @@ fn connect_loopback() -> Result<
     Ok((receiver, sender, receiver_session, sender_session))
 }
 
-/// Run a minimal PCP/2 session: reliable control messages plus video datagrams.
+/// Run a minimal PCP/4 session: reliable control messages plus FEC video datagrams.
 pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
     let (mut receiver, mut sender, receiver_session, sender_session) = connect_loopback()?;
 
@@ -134,11 +134,13 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
 
     let mut reassembly = ReassemblyMap::new(8, 16);
     let frame = wait_for(|| match receiver.poll_event() {
-        Some(TransportEvent::VideoPacket(_, packet)) => reassembly
-            .ingest(packet)
-            .ok()
-            .flatten()
-            .map(|frame| frame.data),
+        Some(TransportEvent::VideoPackets(_, packets)) => packets.into_iter().find_map(|packet| {
+            reassembly
+                .ingest(packet)
+                .ok()
+                .flatten()
+                .map(|frame| frame.data)
+        }),
         _ => None,
     })?;
     assert_eq!(frame.as_ref(), b"abcdef");

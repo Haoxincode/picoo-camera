@@ -459,7 +459,9 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getLinkStats(
             stats.jitter_ms,
             stats.frame_age_ms,
             f64::from(stats.receive_bitrate),
-            stats.jitter_buffer_depth_ms,
+            stats.jitter_buffer_target_ms,
+            stats.jitter_buffer_actual_delay_ms,
+            stats.jitter_buffer_occupancy_ms,
         ])
     })
     .flatten() else {

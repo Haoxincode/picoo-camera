@@ -93,6 +93,7 @@ fn receiver_sends_stats_to_paired_sender() {
     }
 
     let stats = sender.last_receiver_stats().expect("receiver stats");
+    assert_eq!(receiver.last_stats_revision(), 1);
     assert!(stats.receive_bitrate > 0);
     // One idle stats interval produces a stale frame, but ARCH-PICOO-SESSION-001
     // requires sustained age growth before sacrificing quality.
@@ -103,6 +104,17 @@ fn receiver_sends_stats_to_paired_sender() {
     // Healthy loopback should not report pathological loss.
     assert!(stats.packet_loss < 0.5);
     assert_eq!(sender.last_bitrate_action(), BitrateAction::Hold);
+
+    // The revision identifies complete windows: pumps inside the same interval
+    // do not advance it, and teardown clears current values without rewinding
+    // the monotonic identity used by desktop history de-duplication.
+    receiver.pump().expect("same-window pump");
+    assert_eq!(receiver.last_stats_revision(), 1);
+    receiver.close();
+    assert!(receiver.last_stats().is_none());
+    assert_eq!(receiver.decoded_fps(), 0);
+    assert!(receiver.stream_config().is_none());
+    assert_eq!(receiver.last_stats_revision(), 1);
 }
 
 #[test]

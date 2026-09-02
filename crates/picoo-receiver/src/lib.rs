@@ -64,6 +64,12 @@ impl Default for ReceiverIdentity {
 pub struct IngressStats {
     pub access_units: u64,
     pub packets_received: u64,
+    /// Data fragments reconstructed from PCP/4 FEC parity before AU expiry.
+    pub fec_recovered_fragments: u64,
+    /// Incomplete AUs for which Receiver observed at least one data fragment.
+    pub reassembly_partial_access_unit_drops: u64,
+    /// Missing whole AUs inferred from a discontinuity in Sender frame ids.
+    pub reassembly_whole_access_unit_gap_drops: u64,
     pub packets_dropped_unpaired: u64,
     /// Times the decoder was invoked (REQ-PICOO-MEDIA-006: once per AU).
     pub decode_invocations: u64,
@@ -73,6 +79,18 @@ pub struct IngressStats {
     pub recovery_dropped_access_units: u64,
     /// Decoder prediction-state resets after epoch changes or decode failures.
     pub decoder_resets: u64,
+    /// Recovery entries caused by an incomplete/expired reference AU.
+    pub recovery_reference_lost: u64,
+    /// Recovery entries caused by a complete AU missing its playout deadline.
+    pub recovery_reference_late: u64,
+    /// Complete reference AUs evicted because the bounded Jitter Buffer filled.
+    pub recovery_jitter_capacity: u64,
+    /// Complete reference AUs that arrived after a newer AU was already emitted.
+    pub recovery_arrived_after_playout: u64,
+    /// Complete reference AUs that remained queued beyond the local hard deadline.
+    pub recovery_jitter_expired: u64,
+    /// Recovery entries caused by a platform decoder error.
+    pub recovery_decoder_errors: u64,
     /// Keyframe requests successfully queued on the reliable control stream.
     pub keyframe_requests: u64,
     /// StartStream / CameraCommand rejected while unpaired (PAIRING-003).

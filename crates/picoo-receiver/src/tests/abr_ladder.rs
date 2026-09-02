@@ -391,7 +391,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.0,
             frame_age_ms: 40.0,
-            jitter_buffer_depth_ms: 40.0,
+            jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
         let mut buf = Vec::new();

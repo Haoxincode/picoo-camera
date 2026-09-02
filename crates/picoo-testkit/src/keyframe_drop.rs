@@ -186,7 +186,8 @@ mod tests {
         assert_eq!(t.forwarded_video, 1);
         assert!(matches!(
             t.poll_event(),
-            Some(TransportEvent::VideoPacket(_, packet)) if packet.fragment_index == 0
+            Some(TransportEvent::VideoPackets(_, packets))
+                if packets.iter().any(|packet| packet.fragment_index == 0)
         ));
     }
 }

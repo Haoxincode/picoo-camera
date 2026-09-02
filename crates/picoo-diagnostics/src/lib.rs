@@ -42,6 +42,13 @@ pub struct DiagnosticSessionSnapshot {
     pub packets: u64,
     /// Receiver-only unpaired drops; sender exports 0.
     pub packets_dropped_unpaired: u64,
+    /// Receiver data fragments reconstructed locally from FEC parity.
+    #[serde(default)]
+    pub fec_recovered_fragments: u64,
+    #[serde(default)]
+    pub reassembly_partial_access_unit_drops: u64,
+    #[serde(default)]
+    pub reassembly_whole_access_unit_gap_drops: u64,
     /// Receiver decoder invocations; 0 for senders and older producers.
     #[serde(default)]
     pub decode_invocations: u64,
@@ -54,6 +61,18 @@ pub struct DiagnosticSessionSnapshot {
     /// Decoder state resets caused by epoch changes or recovery.
     #[serde(default)]
     pub decoder_resets: u64,
+    #[serde(default)]
+    pub recovery_reference_lost: u64,
+    #[serde(default)]
+    pub recovery_reference_late: u64,
+    #[serde(default)]
+    pub recovery_jitter_capacity: u64,
+    #[serde(default)]
+    pub recovery_arrived_after_playout: u64,
+    #[serde(default)]
+    pub recovery_jitter_expired: u64,
+    #[serde(default)]
+    pub recovery_decoder_errors: u64,
     /// Reliable-stream IDR requests queued by Receiver.
     #[serde(default)]
     pub keyframe_requests: u64,
@@ -202,10 +221,19 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
             access_units: 0,
             packets: 0,
             packets_dropped_unpaired: 0,
+            fec_recovered_fragments: 0,
+            reassembly_partial_access_unit_drops: 0,
+            reassembly_whole_access_unit_gap_drops: 0,
             decode_invocations: 0,
             decoded_frames: 0,
             recovery_dropped_access_units: 0,
             decoder_resets: 0,
+            recovery_reference_lost: 0,
+            recovery_reference_late: 0,
+            recovery_jitter_capacity: 0,
+            recovery_arrived_after_playout: 0,
+            recovery_jitter_expired: 0,
+            recovery_decoder_errors: 0,
             keyframe_requests: 0,
             hosts: input
                 .hosts
@@ -302,10 +330,19 @@ mod tests {
                 access_units: 1,
                 packets: 2,
                 packets_dropped_unpaired: 0,
+                fec_recovered_fragments: 0,
+                reassembly_partial_access_unit_drops: 0,
+                reassembly_whole_access_unit_gap_drops: 0,
                 decode_invocations: 1,
                 decoded_frames: 1,
                 recovery_dropped_access_units: 0,
                 decoder_resets: 0,
+                recovery_reference_lost: 0,
+                recovery_reference_late: 0,
+                recovery_jitter_capacity: 0,
+                recovery_arrived_after_playout: 0,
+                recovery_jitter_expired: 0,
+                recovery_decoder_errors: 0,
                 keyframe_requests: 0,
                 hosts: vec!["192.168.1.42:4433".into()],
             }),

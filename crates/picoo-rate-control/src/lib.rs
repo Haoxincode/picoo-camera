@@ -64,6 +64,9 @@ pub struct BitrateController {
     max_bps: u32,
     stable_seconds: u32,
     stale_frame_ticks: u32,
+    last_sender_queue_drops: u64,
+    last_sender_quic_lost_packets: u64,
+    last_sender_quic_sent_packets: u64,
     congested_at_floor_ticks: u32,
     downshift_armed: bool,
     upshift_armed: bool,
@@ -83,6 +86,9 @@ impl BitrateController {
             max_bps,
             stable_seconds: 0,
             stale_frame_ticks: 0,
+            last_sender_queue_drops: 0,
+            last_sender_quic_lost_packets: 0,
+            last_sender_quic_sent_packets: 0,
             congested_at_floor_ticks: 0,
             downshift_armed: true,
             upshift_armed: false,
@@ -251,7 +257,30 @@ impl BitrateController {
         } else {
             self.stale_frame_ticks = 0;
         }
-        let congested = stats.packet_loss > 0.03 || self.stale_frame_ticks >= 3;
+        let sender_queue_drop =
+            stats.sender_queue_dropped_access_units > self.last_sender_queue_drops;
+        self.last_sender_queue_drops = stats.sender_queue_dropped_access_units;
+        let sender_quic_lost = stats
+            .sender_quic_lost_packets
+            .saturating_sub(self.last_sender_quic_lost_packets);
+        let sender_quic_sent = stats
+            .sender_quic_sent_packets
+            .saturating_sub(self.last_sender_quic_sent_packets);
+        self.last_sender_quic_lost_packets = stats.sender_quic_lost_packets;
+        self.last_sender_quic_sent_packets = stats.sender_quic_sent_packets;
+        let sender_quic_loss = if sender_quic_sent == 0 {
+            0.0
+        } else {
+            sender_quic_lost as f64 / sender_quic_sent as f64
+        };
+        let congested = stats.packet_loss > 0.03
+            || stats.reassembly_drop > 0
+            || stats.decoder_drop > 0
+            || stats.sender_queue_age_ms > 50.0
+            || sender_queue_drop
+            || stats.sender_video_buffered_bytes > 96 * 1024
+            || sender_quic_loss > 0.02
+            || self.stale_frame_ticks >= 3;
         if congested {
             self.stable_seconds = 0;
             if self.current_bitrate_bps <= self.min_bps {
@@ -274,7 +303,11 @@ impl BitrateController {
 
         self.congested_at_floor_ticks = 0;
         if stats.packet_loss < 0.01
-            && stats.jitter_buffer_depth_ms < 80.0
+            && stats.reassembly_drop == 0
+            && stats.decoder_drop == 0
+            && stats.sender_queue_age_ms <= 50.0
+            && stats.sender_video_buffered_bytes <= 32 * 1024
+            && sender_quic_loss < 0.005
             && stats.frame_age_ms < 200.0
         {
             self.downshift_armed = self.active_height > 480;
@@ -334,6 +367,17 @@ mod tests {
     }
 
     #[test]
+    fn decreases_on_new_sender_queue_drop_but_not_the_same_cumulative_counter_twice() {
+        let mut ctrl = BitrateController::new(6_000_000, 3_000_000, 10_000_000);
+        let dropped = ReceiverStats {
+            sender_queue_dropped_access_units: 1,
+            ..Default::default()
+        };
+        assert_eq!(ctrl.update(&dropped), BitrateAction::Decrease);
+        assert_eq!(ctrl.update(&dropped), BitrateAction::Hold);
+    }
+
+    #[test]
     fn ignores_one_frame_age_spike_but_decreases_when_stale_is_sustained() {
         let mut ctrl = BitrateController::for_height(720);
         let stale = ReceiverStats {
@@ -348,6 +392,41 @@ mod tests {
         assert_eq!(ctrl.update(&stale), BitrateAction::Hold);
         assert_eq!(ctrl.update(&stale), BitrateAction::Decrease);
         assert!(ctrl.current_bitrate_bps() < LADDER_720_INITIAL_BPS);
+    }
+
+    #[test]
+    fn recovers_bitrate_after_five_clean_media_windows_regardless_of_occupancy() {
+        let mut ctrl = BitrateController::for_height(1080);
+        assert_eq!(
+            ctrl.update(&ReceiverStats {
+                packet_loss: 0.05,
+                ..Default::default()
+            }),
+            BitrateAction::Decrease
+        );
+        let reduced = ctrl.current_bitrate_bps();
+
+        for occupancy_ms in [66.0, 100.0, 66.0, 100.0] {
+            assert_eq!(
+                ctrl.update(&ReceiverStats {
+                    packet_loss: 0.0,
+                    jitter_buffer_occupancy_ms: occupancy_ms,
+                    frame_age_ms: 20.0,
+                    ..Default::default()
+                }),
+                BitrateAction::Hold
+            );
+        }
+        assert_eq!(
+            ctrl.update(&ReceiverStats {
+                packet_loss: 0.0,
+                jitter_buffer_occupancy_ms: 100.0,
+                frame_age_ms: 20.0,
+                ..Default::default()
+            }),
+            BitrateAction::Increase
+        );
+        assert!(ctrl.current_bitrate_bps() > reduced);
     }
 
     #[test]
@@ -381,7 +460,7 @@ mod tests {
         ctrl.set_current_bitrate_bps_for_test(LADDER_720_MAX_BPS);
         let good = ReceiverStats {
             packet_loss: 0.0,
-            jitter_buffer_depth_ms: 40.0,
+            jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
         let mut saw = BitrateAction::Hold;
@@ -403,7 +482,7 @@ mod tests {
         ctrl.set_current_bitrate_bps_for_test(LADDER_720_MAX_BPS);
         let good = ReceiverStats {
             packet_loss: 0.0,
-            jitter_buffer_depth_ms: 40.0,
+            jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
         for _ in 0..20 {
@@ -419,7 +498,7 @@ mod tests {
         ctrl.set_current_bitrate_bps_for_test(LADDER_720_MAX_BPS);
         let good = ReceiverStats {
             packet_loss: 0.0,
-            jitter_buffer_depth_ms: 40.0,
+            jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
         for _ in 0..30 {

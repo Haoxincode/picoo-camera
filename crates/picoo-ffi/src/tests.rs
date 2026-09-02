@@ -20,7 +20,7 @@ fn sender_rejects_offline_ingest_via_ffi() {
         -2
     );
     assert_eq!(out, 0);
-    let mut stats = [0.0f64; 6];
+    let mut stats = [0.0f64; 8];
     assert_eq!(
         picoo_sender_last_receiver_stats(handle, stats.as_mut_ptr(), stats.len()),
         1,

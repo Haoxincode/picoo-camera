@@ -10,6 +10,7 @@ bitflags::bitflags! {
         const START_OF_ACCESS_UNIT = 0x02;
         const END_OF_ACCESS_UNIT = 0x04;
         const DISCARDABLE = 0x08;
+        const FEC_PARITY = 0x10;
     }
 }
 

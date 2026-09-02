@@ -3,7 +3,7 @@
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
@@ -23,7 +23,10 @@ const COMMAND_CAPACITY: usize = 64;
 const VIDEO_COMMAND_CAPACITY: usize = 3;
 const VIDEO_EVENT_CAPACITY: usize = 512;
 const CONTROL_READ_BUFFER: usize = 4096;
-const DATAGRAM_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+const DATAGRAM_RECEIVE_BUFFER_SIZE: usize = 2 * 1024 * 1024;
+// Bound queued one-way media to a small number of 1080p access units. A 2 MiB
+// Datagram buffer can silently turn a LAN camera into seconds of stale video.
+const DATAGRAM_SEND_BUFFER_SIZE: usize = 256 * 1024;
 
 #[derive(Debug, Error)]
 pub enum QuicTransportError {
@@ -59,12 +62,15 @@ pub(crate) enum Command {
 struct VideoCommand {
     session: SessionId,
     packets: Vec<VideoPacket>,
+    enqueued_at: Instant,
 }
 
 #[derive(Default)]
 struct SharedState {
     active_session: Option<SessionId>,
     stats: Option<TransportLinkStats>,
+    video_queue_age_ms: f64,
+    video_dropped_access_units: u64,
 }
 
 struct EventSender {
@@ -184,9 +190,22 @@ impl TransportActor {
         packets: Vec<VideoPacket>,
     ) -> Result<(), QuicTransportError> {
         self.video_commands
-            .try_send(VideoCommand { session, packets })
+            .try_send(VideoCommand {
+                session,
+                packets,
+                enqueued_at: Instant::now(),
+            })
             .map_err(|error| match error {
-                mpsc::error::TrySendError::Full(_) => QuicTransportError::VideoBackpressure,
+                mpsc::error::TrySendError::Full(_) => {
+                    let mut state = self.state.lock().expect("QUIC state mutex poisoned");
+                    state.video_dropped_access_units =
+                        state.video_dropped_access_units.saturating_add(1);
+                    let dropped = state.video_dropped_access_units;
+                    if let Some(stats) = state.stats.as_mut() {
+                        stats.video_dropped_access_units = dropped;
+                    }
+                    QuicTransportError::VideoBackpressure
+                }
                 mpsc::error::TrySendError::Closed(_) => QuicTransportError::WorkerUnavailable,
             })
     }
@@ -240,8 +259,8 @@ fn transport_config() -> Arc<TransportConfig> {
     config
         .max_concurrent_uni_streams(VarInt::from_u32(4))
         .keep_alive_interval(Some(Duration::from_secs(5)))
-        .datagram_receive_buffer_size(Some(DATAGRAM_BUFFER_SIZE))
-        .datagram_send_buffer_size(DATAGRAM_BUFFER_SIZE);
+        .datagram_receive_buffer_size(Some(DATAGRAM_RECEIVE_BUFFER_SIZE))
+        .datagram_send_buffer_size(DATAGRAM_SEND_BUFFER_SIZE);
     Arc::new(config)
 }
 
@@ -423,7 +442,7 @@ async fn server_worker(
 
 enum Inbound {
     Control(Vec<u8>),
-    Datagram(Bytes),
+    Datagrams(Vec<Bytes>),
 }
 
 async fn receive_control(connection: Connection, inbound: mpsc::Sender<Inbound>) {
@@ -444,8 +463,20 @@ async fn receive_control(connection: Connection, inbound: mpsc::Sender<Inbound>)
 }
 
 async fn receive_datagrams(connection: Connection, inbound: mpsc::Sender<Inbound>) {
-    while let Ok(datagram) = connection.read_datagram().await {
-        if inbound.send(Inbound::Datagram(datagram)).await.is_err() {
+    const MAX_BATCH_DATAGRAMS: usize = 64;
+    const MAX_BATCH_WAIT: Duration = Duration::from_millis(1);
+
+    while let Ok(first) = connection.read_datagram().await {
+        let mut batch = Vec::with_capacity(MAX_BATCH_DATAGRAMS);
+        batch.push(first);
+        let deadline = tokio::time::Instant::now() + MAX_BATCH_WAIT;
+        while batch.len() < MAX_BATCH_DATAGRAMS {
+            match tokio::time::timeout_at(deadline, connection.read_datagram()).await {
+                Ok(Ok(datagram)) => batch.push(datagram),
+                Ok(Err(_)) | Err(_) => break,
+            }
+        }
+        if inbound.send(Inbound::Datagrams(batch)).await.is_err() {
             return;
         }
     }
@@ -462,7 +493,8 @@ async fn run_connection(
     {
         let mut shared = state.lock().expect("QUIC state mutex poisoned");
         shared.active_session = Some(session);
-        shared.stats = Some(link_stats(&connection));
+        let stats = link_stats(&connection, &shared);
+        shared.stats = Some(stats);
     }
     events.critical(TransportEvent::Connected(session));
 
@@ -522,10 +554,11 @@ async fn run_connection(
             }
             command = video.recv() => {
                 match command {
-                    Some(VideoCommand { session: target, packets }) if target == session => {
-                        let keyframe = packets.first().is_some_and(|packet| {
-                            packet.flags.contains(picoo_protocol::VideoPacketFlags::KEYFRAME)
-                        });
+                    Some(VideoCommand { session: target, packets, enqueued_at }) if target == session => {
+                        {
+                            let mut shared = state.lock().expect("QUIC state mutex poisoned");
+                            shared.video_queue_age_ms = enqueued_at.elapsed().as_secs_f64() * 1_000.0;
+                        }
                         let encoded = match packets
                             .into_iter()
                             .map(|packet| packet.encode())
@@ -536,18 +569,23 @@ async fn run_connection(
                         };
                         let required = encoded.iter().map(Bytes::len).sum::<usize>();
                         // Quinn evicts oldest individual datagrams when its send buffer
-                        // fills. For delta frames, drop this whole AU before enqueueing so
-                        // Receiver never sees an avoidable half-frame. A keyframe may evict
-                        // stale queued deltas to restore decoder state, provided the complete
-                        // keyframe itself fits in the configured buffer.
+                        // fills. Every AU, including a keyframe, must therefore fit in the
+                        // currently available space before its first fragment is enqueued.
+                        // Letting a keyframe evict arbitrary old datagrams corrupts those
+                        // older AUs and can trigger another reference-chain recovery after
+                        // the keyframe has already repaired the decoder.
                         let available = connection.datagram_send_buffer_space();
-                        if should_enqueue_access_unit(available, required, keyframe) {
+                        if should_enqueue_access_unit(available, required) {
                             if let Err(error) = encoded
                                 .into_iter()
                                 .try_for_each(|datagram| connection.send_datagram(datagram))
                             {
                                 break CloseReason::Error(error.to_string());
                             }
+                        } else {
+                            let mut shared = state.lock().expect("QUIC state mutex poisoned");
+                            shared.video_dropped_access_units =
+                                shared.video_dropped_access_units.saturating_add(1);
                         }
                     }
                     Some(_) => {}
@@ -567,16 +605,22 @@ async fn run_connection(
                             Err(error) => break CloseReason::Error(error.to_string()),
                         }
                     }
-                    Some(Inbound::Datagram(datagram)) => {
-                        if let Ok(packet) = VideoPacket::decode(&datagram) {
-                            events.video(TransportEvent::VideoPacket(session, packet));
+                    Some(Inbound::Datagrams(datagrams)) => {
+                        let packets = datagrams
+                            .into_iter()
+                            .filter_map(|datagram| VideoPacket::decode(&datagram).ok())
+                            .collect::<Vec<_>>();
+                        if !packets.is_empty() {
+                            events.video(TransportEvent::VideoPackets(session, packets));
                         }
                     }
                     None => break CloseReason::PeerClose,
                 }
             }
             _ = stats_tick.tick() => {
-                state.lock().expect("QUIC state mutex poisoned").stats = Some(link_stats(&connection));
+                let mut shared = state.lock().expect("QUIC state mutex poisoned");
+                let stats = link_stats(&connection, &shared);
+                shared.stats = Some(stats);
             }
             _ = connection.closed() => break CloseReason::PeerClose,
         }
@@ -595,11 +639,11 @@ async fn run_connection(
     events.critical(TransportEvent::Disconnected(session, disconnect_reason));
 }
 
-fn should_enqueue_access_unit(available: usize, required: usize, keyframe: bool) -> bool {
-    available >= required || (keyframe && required <= DATAGRAM_BUFFER_SIZE)
+fn should_enqueue_access_unit(available: usize, required: usize) -> bool {
+    available >= required
 }
 
-fn link_stats(connection: &Connection) -> TransportLinkStats {
+fn link_stats(connection: &Connection, shared: &SharedState) -> TransportLinkStats {
     let stats = connection.stats();
     TransportLinkStats {
         rtt_ms: stats.path.rtt.as_secs_f64() * 1_000.0,
@@ -607,6 +651,11 @@ fn link_stats(connection: &Connection) -> TransportLinkStats {
         sent_packets: stats.path.sent_packets,
         recv_packets: stats.udp_rx.datagrams,
         dgram_recv: stats.frame_rx.datagram,
+        video_queue_age_ms: shared.video_queue_age_ms,
+        video_dropped_access_units: shared.video_dropped_access_units,
+        video_buffered_bytes: DATAGRAM_SEND_BUFFER_SIZE
+            .saturating_sub(connection.datagram_send_buffer_space())
+            as u64,
     }
 }
 
@@ -616,17 +665,20 @@ mod access_unit_queue_tests {
 
     #[test]
     fn congested_delta_is_dropped_as_a_complete_access_unit() {
-        assert!(!should_enqueue_access_unit(1_000, 1_001, false));
-        assert!(should_enqueue_access_unit(1_001, 1_001, false));
+        assert!(!should_enqueue_access_unit(1_000, 1_001));
+        assert!(should_enqueue_access_unit(1_001, 1_001));
     }
 
     #[test]
-    fn recovery_keyframe_may_replace_stale_deltas_but_must_fit_itself() {
-        assert!(should_enqueue_access_unit(0, DATAGRAM_BUFFER_SIZE, true));
+    fn recovery_keyframe_cannot_evict_fragments_from_older_access_units() {
+        assert!(!should_enqueue_access_unit(0, DATAGRAM_SEND_BUFFER_SIZE));
         assert!(!should_enqueue_access_unit(
-            0,
-            DATAGRAM_BUFFER_SIZE + 1,
-            true
+            DATAGRAM_SEND_BUFFER_SIZE - 1,
+            DATAGRAM_SEND_BUFFER_SIZE
+        ));
+        assert!(should_enqueue_access_unit(
+            DATAGRAM_SEND_BUFFER_SIZE,
+            DATAGRAM_SEND_BUFFER_SIZE
         ));
     }
 }

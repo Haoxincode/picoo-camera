@@ -30,7 +30,7 @@ import kotlinx.coroutines.launch
  * Rotation and window-size changes recreate the Activity, but must not destroy the Rust session or
  * camera encoder. Process-lifetime preferences are kept separately in SharedPreferences.
  *
- * REQ-PICOO-UI-010: the 500ms session pump and encoder side effects live here; Compose observes.
+ * REQ-PICOO-UI-010: session pumping and encoder side effects live here; Compose observes.
  */
 class SenderSessionViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences(PREFERENCES_NAME, 0)
@@ -47,6 +47,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     val streamConfigDirty = AtomicBoolean(false)
     val runtime = SenderNativeRuntime(application)
     val encoderReconfiguration = EncoderReconfigurationCoordinator()
+    private val encoderRef = AtomicReference<Camera2MediaEncoder?>(null)
     val encoder = Camera2MediaEncoder(
         context = application,
         initialBitrateBps = PicooNative.bitrateInitialForHeight(StreamResolution.P720.height),
@@ -63,6 +64,13 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 PicooNative.flushPending(runtime.senderHandle)
                 PicooNative.pump(runtime.senderHandle)
             }
+            // Recovery control arrives on the reliable stream while video
+            // keeps encoding. Consume the IDR request at frame cadence even
+            // when this AU could not enter the bounded sender queue, so
+            // recovery is not delayed until the 500ms maintenance fallback.
+            if (PicooNative.takeKeyframeRequest(runtime.senderHandle) == 1) {
+                encoderRef.get()?.requestKeyFrame()
+            }
         },
         parameterSetsListener = ParameterSetsListener { sps, pps ->
             parameterSetsRef.set(sps to pps)
@@ -77,6 +85,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     private var lastThermalStatus: Int? = null
 
     init {
+        encoderRef.set(encoder)
         uiState.previewTransformInfo = encoder.previewTransformInfo
         val senderHandle = runtime.senderHandle
         if (senderHandle != 0L) {

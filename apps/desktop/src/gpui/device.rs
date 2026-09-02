@@ -194,8 +194,12 @@ impl PicooDesktopApp {
                                     cx,
                                 ))
                                 .child(metric_row(
-                                    "播放缓冲",
-                                    format!("{:.1} ms", snapshot.jitter_buffer_depth_ms),
+                                    "播放缓冲 实际 / 目标",
+                                    format!(
+                                        "{:.1} / {:.1} ms",
+                                        snapshot.jitter_buffer_actual_delay_ms,
+                                        snapshot.jitter_buffer_target_ms
+                                    ),
                                     cx,
                                 )),
                         )

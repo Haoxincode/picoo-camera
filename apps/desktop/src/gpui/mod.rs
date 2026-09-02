@@ -5,6 +5,7 @@
 mod bootstrap;
 mod connect;
 mod device;
+mod diagnostics;
 mod icons;
 mod lifecycle;
 mod nav;

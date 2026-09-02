@@ -7,7 +7,7 @@ use picoo_packet::ReassemblyMap;
 use picoo_pairing::verify_pairing_confirm;
 use picoo_protocol::control::{
     camera_command, CameraCommand, Capabilities, EncoderCommand, PairingCommit, PairingConfirm,
-    Resolution, SessionError, StartStream, StopStream, StreamConfig,
+    Resolution, SenderStats as SenderStatsMsg, SessionError, StartStream, StopStream, StreamConfig,
 };
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
 use picoo_session::ReceiverStatus;
@@ -18,6 +18,8 @@ use super::pairing::{PAIRING_COMMIT_MAGIC, PAIRING_COMMIT_PHASE};
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
 use crate::ReceiverError;
+
+const SENDER_STATS_MAGIC: u32 = 0x5354_4154;
 
 impl ReceiverSession {
     pub(crate) fn handle_control(
@@ -92,12 +94,35 @@ impl ReceiverSession {
                 return self.handle_stop_stream(session);
             }
         }
+        if let Ok(stats) = SenderStatsMsg::decode(msg.as_ref()) {
+            if stats.magic == SENDER_STATS_MAGIC {
+                return self.handle_sender_stats(stats);
+            }
+        }
         if let Ok(config) = StreamConfig::decode(msg.as_ref()) {
             // Require at least codec or dimensions so empty blobs are ignored.
             if !config.codec.is_empty() || config.width > 0 || config.height > 0 {
                 return self.handle_stream_config(session, config);
             }
         }
+        Ok(())
+    }
+
+    fn handle_sender_stats(&mut self, stats: SenderStatsMsg) -> Result<(), ReceiverError> {
+        if !stats.video_queue_age_ms.is_finite() || stats.video_queue_age_ms < 0.0 {
+            return Ok(());
+        }
+        tracing::info!(
+            sender_access_units = stats.access_units,
+            submitted_datagrams = stats.submitted_datagrams,
+            sender_queue_age_ms = stats.video_queue_age_ms,
+            sender_queue_dropped_access_units = stats.video_dropped_access_units,
+            sender_quic_lost_packets = stats.quic_lost_packets,
+            sender_quic_sent_packets = stats.quic_sent_packets,
+            sender_video_buffered_bytes = stats.video_buffered_bytes,
+            "sender media window"
+        );
+        self.last_sender_stats = Some(stats);
         Ok(())
     }
 
@@ -132,8 +157,8 @@ impl ReceiverSession {
         self.stats_reporter = super::StatsReporter::new();
         self.jitter.clear();
         self.interarrival_jitter.reset();
-        self.jitter_timeline = None;
         self.last_stats = None;
+        self.last_sender_stats = None;
         self.last_decoded_fps = 0;
         self.decoder_recovery.reset_session();
         self.placeholder_after = None;

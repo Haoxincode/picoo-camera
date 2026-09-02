@@ -13,11 +13,13 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use picoo_frame_hub::{FrameHub, PlaceholderMode, SharedFrameRingProducer};
-use picoo_jitter::{Frame as JitterFrame, JitterBuffer, PushOutcome};
+use picoo_jitter::JitterBuffer;
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder};
-use picoo_packet::{ReassemblyError, ReassemblyMap};
+use picoo_packet::ReassemblyMap;
 use picoo_pairing::TrustedDeviceStore;
-use picoo_protocol::control::{ReceiverStats as ReceiverStatsMsg, StreamConfig};
+use picoo_protocol::control::{
+    ReceiverStats as ReceiverStatsMsg, SenderStats as SenderStatsMsg, StreamConfig,
+};
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
@@ -30,7 +32,27 @@ use recovery::RecoveryReason;
 
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 
-const REASSEMBLY_MAX_AGE: Duration = Duration::from_millis(120);
+const MEDIA_DEADLINE_MIN_MS: f64 = 200.0;
+const MEDIA_DEADLINE_MAX_MS: f64 = 300.0;
+
+fn media_deadline_from_observations(
+    rtt_ms: f64,
+    jitter_ms: f64,
+    frame_ms: f64,
+    playout_target_ms: f64,
+) -> Duration {
+    // A failure boundary must sit materially beyond normal playout. Two
+    // current playout budgets plus one source frame absorbs a single delayed
+    // receiver/OS scheduling turn; RTT + 3*jitter + one frame remains the
+    // independent network-burst bound. The hard cap still prevents latency
+    // from growing without limit.
+    let playout_bound_ms = 2.0 * playout_target_ms + frame_ms;
+    let network_bound_ms = rtt_ms + 3.0 * jitter_ms + frame_ms;
+    let deadline_ms = playout_bound_ms
+        .max(network_bound_ms)
+        .clamp(MEDIA_DEADLINE_MIN_MS, MEDIA_DEADLINE_MAX_MS);
+    Duration::from_secs_f64(deadline_ms / 1_000.0)
+}
 
 struct StatsReporter {
     last_sent: Instant,
@@ -145,6 +167,14 @@ fn observed_fragment_loss_ratio(resolved_fragments: u64, missing_fragments: u64)
     }
 }
 
+fn playout_blocked_by_older_reassembly(
+    oldest_unresolved_frame_id: Option<u64>,
+    candidate_frame_id: u64,
+) -> bool {
+    oldest_unresolved_frame_id
+        .is_some_and(|unresolved_frame_id| unresolved_frame_id < candidate_frame_id)
+}
+
 pub struct ReceiverSession {
     transport: QuicReceiverTransport,
     reassembly: ReassemblyMap,
@@ -175,11 +205,15 @@ pub struct ReceiverSession {
     jitter: JitterBuffer,
     /// Network arrival variation, distinct from buffered media depth.
     interarrival_jitter: InterarrivalJitter,
-    /// Maps wall time onto the media PTS timeline for jitter scheduling.
-    /// `(wall_anchor, pts_anchor)` — set on the first buffered AU of a burst.
-    jitter_timeline: Option<(Instant, u64)>,
+    /// Receiver-local monotonic epoch used by adaptive playout timing.
+    timing_origin: Instant,
     /// Last ReceiverStats payload sent to the sender (REQ-PICOO-PROTOCOL-006).
     last_stats: Option<picoo_metrics::ReceiverStats>,
+    /// Latest Sender-local queue/path counters received on the reliable stream.
+    last_sender_stats: Option<SenderStatsMsg>,
+    /// Monotonic identity of the latest complete ReceiverStats window.
+    /// Consumers use this to avoid counting the same one-second window twice.
+    last_stats_revision: u64,
     /// Measured decoded FrameHub output rate over the latest stats window.
     last_decoded_fps: u32,
     /// Max height advertised in Capabilities (MEDIA-002); default both 720+1080.
@@ -219,10 +253,12 @@ impl ReceiverSession {
             decoder: create_platform_decoder(),
             last_frame_hold: Duration::from_millis(500),
             placeholder_after: None,
-            jitter: JitterBuffer::new(50, 120),
+            jitter: JitterBuffer::new(),
             interarrival_jitter: InterarrivalJitter::default(),
-            jitter_timeline: None,
+            timing_origin: Instant::now(),
             last_stats: None,
+            last_sender_stats: None,
+            last_stats_revision: 0,
             last_decoded_fps: 0,
             advertised_max_height: 1080,
             last_media_error: None,
@@ -343,6 +379,13 @@ impl ReceiverSession {
         self.last_stats.as_ref()
     }
 
+    /// Monotonic revision for [`Self::last_stats`]. A value is incremented only
+    /// when a new complete stats window is produced and is never reset during
+    /// reconnects in this ReceiverSession.
+    pub fn last_stats_revision(&self) -> u64 {
+        self.last_stats_revision
+    }
+
     pub fn decoded_fps(&self) -> u32 {
         self.last_decoded_fps
     }
@@ -379,85 +422,17 @@ impl ReceiverSession {
                 TransportEvent::ControlMessage(session, msg) => {
                     self.handle_control(session, msg)?;
                 }
-                TransportEvent::VideoPacket(_, packet) => {
-                    // Enforce the wall-clock deadline before a queued late tail
-                    // gets a chance to complete an already-expired AU.
-                    self.expire_reassembly_deadline()?;
-                    self.ingress.packets_received += 1;
-                    if !self.video_allowed() {
-                        self.ingress.packets_dropped_unpaired += 1;
-                        continue;
+                TransportEvent::VideoPackets(_, packets) => {
+                    for packet in packets {
+                        self.ingest_video_packet(packet)?;
                     }
-                    let packet_epoch = packet.stream_epoch;
-                    let configured_epoch = self
-                        .current_stream_config
-                        .as_ref()
-                        .map(|config| config.stream_epoch);
-                    let configured_epoch = match configured_epoch {
-                        Some(epoch) => epoch,
-                        // Explicit test/diagnostic bypass may carry arbitrary
-                        // bytes and intentionally has no protocol negotiation.
-                        None if self.permit_unpaired_video => packet_epoch,
-                        None => {
-                            // Control and Datagram channels can reorder. Never decode
-                            // product media before StreamConfig establishes codec/epoch.
-                            self.waiting_for_stream_config_epoch = Some(packet_epoch);
-                            continue;
-                        }
-                    };
-                    if configured_epoch != packet_epoch {
-                        // Stale datagrams from an old epoch are expected after
-                        // reconfiguration. A future epoch waits for reliable
-                        // StreamConfig; that config transition owns the single
-                        // rate-limited fresh-IDR request.
-                        if packet_epoch > configured_epoch
-                            && self.waiting_for_stream_config_epoch != Some(packet_epoch)
-                        {
-                            self.waiting_for_stream_config_epoch = Some(packet_epoch);
-                        }
-                        continue;
-                    }
-                    self.stats_reporter.record_packet(packet.payload.len());
-                    match self.reassembly.ingest(packet) {
-                        Ok(Some(access_unit)) => {
-                            let pts_us = access_unit.pts_us;
-                            self.interarrival_jitter.observe(Instant::now(), pts_us);
-                            let outcome = self.jitter.push(JitterFrame {
-                                pts_us: access_unit.pts_us,
-                                data: access_unit.data,
-                                keyframe: access_unit.keyframe,
-                                discardable: access_unit.discardable,
-                            });
-                            match outcome {
-                                PushOutcome::Accepted if self.jitter_timeline.is_none() => {
-                                    // Anchor media clock to this AU's PTS at wall arrival.
-                                    self.jitter_timeline = Some((Instant::now(), pts_us));
-                                }
-                                PushOutcome::AcceptedAfterReferenceDrop
-                                | PushOutcome::DroppedLate {
-                                    requires_refresh: true,
-                                } => {
-                                    self.enter_decoder_recovery(
-                                        RecoveryReason::ReferenceAccessUnitLate,
-                                        true,
-                                    )?;
-                                }
-                                PushOutcome::Accepted
-                                | PushOutcome::DroppedLate {
-                                    requires_refresh: false,
-                                } => {}
-                            }
-                        }
-                        Ok(None) => {}
-                        // Reassembly owns drop/keyframe-loss accounting. Keep
-                        // protocol rejects out of the decoder and continue the session.
-                        Err(ReassemblyError::TooManyFragments)
-                        | Err(ReassemblyError::DuplicateFragment)
-                        | Err(ReassemblyError::EpochMismatch) => {}
-                    }
-                    if self.reassembly.take_reference_chain_loss() {
-                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
-                    }
+                    // The transport queue can remain continuously readable on
+                    // a 1080p stream. Draining only after poll_event() becomes
+                    // empty lets complete AUs accumulate behind an artificial
+                    // scheduling boundary and can trip the jitter capacity
+                    // guard even on a lossless LAN. Give every bounded ingress
+                    // batch a playout opportunity before polling more media.
+                    self.drain_jitter()?;
                 }
             }
         }
@@ -476,44 +451,82 @@ impl ReceiverSession {
     }
 
     fn expire_reassembly_deadline(&mut self) -> Result<(), ReceiverError> {
+        let partial_drops_before = self.reassembly.partial_access_unit_drop_count();
+        let gap_drops_before = self.reassembly.whole_access_unit_gap_drop_count();
+        let media_deadline = self.media_deadline();
         self.reassembly
-            .expire_incomplete_older_than(Instant::now(), REASSEMBLY_MAX_AGE);
+            .expire_incomplete_older_than(Instant::now(), media_deadline);
+        self.ingress.reassembly_partial_access_unit_drops = self
+            .ingress
+            .reassembly_partial_access_unit_drops
+            .saturating_add(
+                self.reassembly
+                    .partial_access_unit_drop_count()
+                    .saturating_sub(partial_drops_before),
+            );
+        self.ingress.reassembly_whole_access_unit_gap_drops = self
+            .ingress
+            .reassembly_whole_access_unit_gap_drops
+            .saturating_add(
+                self.reassembly
+                    .whole_access_unit_gap_drop_count()
+                    .saturating_sub(gap_drops_before),
+            );
         if self.reassembly.take_reference_chain_loss() {
             self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
         }
         Ok(())
     }
 
-    /// Media-clock "now" aligned with packet `pts_us` (REQ-PICOO-SESSION-002).
-    ///
-    /// JitterBuffer compares `now_us` against frame PTS; wall-clock UNIX time must
-    /// not be passed in — relative media PTS would be treated as ancient and dropped.
-    fn jitter_media_now_us(&self) -> u64 {
-        match self.jitter_timeline {
-            Some((wall_anchor, pts_anchor)) => {
-                pts_anchor.saturating_add(wall_anchor.elapsed().as_micros() as u64)
-            }
-            None => 0,
-        }
-    }
-
     fn drain_jitter(&mut self) -> Result<(), ReceiverError> {
-        if self.jitter.is_empty() {
-            self.jitter_timeline = None;
-            return Ok(());
-        }
-        let now_us = self.jitter_media_now_us();
-        if self.jitter.drop_expired_before(now_us) {
+        let now_us = self.timing_origin.elapsed().as_micros() as u64;
+        let max_queue_age_us = self.media_deadline().as_micros() as u64;
+        if self.jitter.drop_expired(now_us, max_queue_age_us) {
+            self.ingress.recovery_jitter_expired =
+                self.ingress.recovery_jitter_expired.saturating_add(1);
             self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?;
             return Ok(());
         }
-        while let Some(frame) = self.jitter.pop_ready(now_us) {
+        while let Some(candidate_frame_id) = self.jitter.front_frame_id() {
+            // QUIC Datagrams can complete newer AUs before an older AU. Do not
+            // advance the decoder prediction chain while that older AU is
+            // still inside the reassembly deadline; expiry/FEC owns its final
+            // outcome. Otherwise the older AU becomes falsely "late" merely
+            // because two pipeline stages were scheduled independently.
+            if playout_blocked_by_older_reassembly(
+                self.reassembly.oldest_unresolved_frame_id(),
+                candidate_frame_id,
+            ) {
+                break;
+            }
+            let Some(frame) = self.jitter.pop_ready(now_us) else {
+                break;
+            };
             self.publish_access_unit(frame.data, frame.keyframe)?;
         }
-        if self.jitter.is_empty() {
-            self.jitter_timeline = None;
-        }
         Ok(())
+    }
+
+    /// A deadline is a failure/recovery bound, not the normal playout target.
+    /// It covers both the current playout budget and a network burst while
+    /// remaining strictly bounded for interactive camera use.
+    fn media_deadline(&self) -> Duration {
+        let rtt_ms = self
+            .transport
+            .link_stats()
+            .map_or(0.0, |stats| stats.rtt_ms.max(0.0));
+        let frame_ms = self
+            .current_stream_config
+            .as_ref()
+            .map_or(1_000.0 / 30.0, |config| {
+                1_000.0 / f64::from(config.fps.max(1))
+            });
+        media_deadline_from_observations(
+            rtt_ms,
+            self.interarrival_jitter.milliseconds(),
+            frame_ms,
+            self.jitter.target_delay_ms(),
+        )
     }
 
     fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
@@ -528,8 +541,8 @@ impl ReceiverSession {
         self.stats_reporter = StatsReporter::new();
         self.jitter.clear();
         self.interarrival_jitter.reset();
-        self.jitter_timeline = None;
         self.last_stats = None;
+        self.last_sender_stats = None;
         self.last_decoded_fps = 0;
         self.last_media_error = None;
         self.current_stream_config = None;
@@ -631,6 +644,7 @@ impl ReceiverSession {
         // the same unit instead (REQ-PICOO-PROTOCOL-009).
         let packet_loss = observed_fragment_loss_ratio(resolved_fragments, missing_fragments);
 
+        let jitter_timing = self.jitter.take_timing_stats();
         let stats = ReceiverStatsMsg {
             rtt_ms: link.rtt_ms,
             packet_loss,
@@ -639,9 +653,12 @@ impl ReceiverSession {
             decoder_drop: self.stats_reporter.window_decoder_drops,
             frame_age_ms,
             receive_bitrate,
-            jitter_buffer_depth_ms: self.jitter.depth_ms(),
+            jitter_buffer_target_ms: jitter_timing.target_delay_ms,
+            jitter_buffer_actual_delay_ms: jitter_timing.actual_delay_ms,
+            jitter_buffer_occupancy_ms: jitter_timing.occupancy_ms,
         };
 
+        let sender_stats = self.last_sender_stats.as_ref();
         self.last_stats = Some(picoo_metrics::ReceiverStats {
             rtt_ms: stats.rtt_ms,
             packet_loss: stats.packet_loss,
@@ -650,8 +667,37 @@ impl ReceiverSession {
             decoder_drop: stats.decoder_drop,
             frame_age_ms: stats.frame_age_ms,
             receive_bitrate: stats.receive_bitrate,
-            jitter_buffer_depth_ms: stats.jitter_buffer_depth_ms,
+            jitter_buffer_target_ms: stats.jitter_buffer_target_ms,
+            jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms,
+            jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms,
+            sender_queue_age_ms: sender_stats.map_or(0.0, |stats| stats.video_queue_age_ms),
+            sender_queue_dropped_access_units: sender_stats
+                .map_or(0, |stats| stats.video_dropped_access_units),
+            sender_quic_lost_packets: sender_stats.map_or(0, |stats| stats.quic_lost_packets),
+            sender_quic_sent_packets: sender_stats.map_or(0, |stats| stats.quic_sent_packets),
+            sender_video_buffered_bytes: sender_stats.map_or(0, |stats| stats.video_buffered_bytes),
         });
+        self.last_stats_revision = self.last_stats_revision.saturating_add(1);
+
+        tracing::info!(
+            stats_revision = self.last_stats_revision,
+            access_units = self.ingress.access_units,
+            decoded_frames = self.ingress.decoded_frames,
+            decoder_resets = self.ingress.decoder_resets,
+            partial_access_unit_drops = self.ingress.reassembly_partial_access_unit_drops,
+            whole_access_unit_gap_drops = self.ingress.reassembly_whole_access_unit_gap_drops,
+            jitter_capacity_recoveries = self.ingress.recovery_jitter_capacity,
+            arrived_after_playout_recoveries = self.ingress.recovery_arrived_after_playout,
+            jitter_expired_recoveries = self.ingress.recovery_jitter_expired,
+            fec_recovered_fragments = self.ingress.fec_recovered_fragments,
+            packet_loss,
+            rtt_ms = stats.rtt_ms,
+            jitter_ms = stats.jitter_ms,
+            target_ms = stats.jitter_buffer_target_ms,
+            actual_delay_ms = stats.jitter_buffer_actual_delay_ms,
+            occupancy_ms = stats.jitter_buffer_occupancy_ms,
+            "receiver media window"
+        );
 
         self.send_control_message(session, &stats)?;
 
@@ -713,6 +759,15 @@ impl ReceiverSession {
         self.status = ReceiverStatus::Disconnected;
         self.active_sender = None;
         self.pending_pairing = None;
+        self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
+        self.stats_reporter = StatsReporter::new();
+        self.jitter.clear();
+        self.interarrival_jitter.reset();
+        self.last_stats = None;
+        self.last_decoded_fps = 0;
+        self.current_stream_config = None;
+        self.waiting_for_stream_config_epoch = None;
+        self.receiver_capabilities_sent = None;
         self.last_media_error = None;
         self.decoder_recovery.reset_session();
         let _ = self.publish_waiting_placeholder();
@@ -724,10 +779,10 @@ impl ReceiverSession {
         self.last_frame_hold = hold;
     }
 
-    /// Set jitter buffer target delay in milliseconds (REQ-PICOO-SESSION-002).
-    /// `0` releases reassembled access units immediately (useful for tests/loopback).
+    /// Override adaptive playout for deterministic tests/loopback.
+    /// `0` releases complete access units immediately.
     pub fn set_jitter_target_ms(&mut self, target_ms: u64) {
-        self.jitter.set_target_ms(target_ms);
+        self.jitter.set_fixed_target_ms(Some(target_ms));
     }
 
     /// Test-only: simulate peer disconnect without waiting on QUIC teardown.
@@ -749,12 +804,41 @@ impl ReceiverSession {
 
 #[cfg(test)]
 mod stats_tests {
-    use super::observed_fragment_loss_ratio;
+    use std::time::Duration;
+
+    use super::{
+        media_deadline_from_observations, observed_fragment_loss_ratio,
+        playout_blocked_by_older_reassembly,
+    };
 
     #[test]
     fn fragment_loss_compares_received_and_missing_fragments_in_the_same_unit() {
         assert_eq!(observed_fragment_loss_ratio(0, 0), 0.0);
         assert_eq!(observed_fragment_loss_ratio(10, 1), 0.1);
         assert_eq!(observed_fragment_loss_ratio(1, 1), 1.0);
+    }
+
+    #[test]
+    fn newer_playout_waits_for_an_older_unresolved_access_unit() {
+        assert!(playout_blocked_by_older_reassembly(Some(100), 200));
+        assert!(!playout_blocked_by_older_reassembly(Some(200), 200));
+        assert!(!playout_blocked_by_older_reassembly(Some(300), 200));
+        assert!(!playout_blocked_by_older_reassembly(None, 200));
+    }
+
+    #[test]
+    fn media_failure_deadline_stays_beyond_playout_and_is_hard_bounded() {
+        assert_eq!(
+            media_deadline_from_observations(20.0, 2.0, 33.0, 33.0),
+            Duration::from_millis(200),
+        );
+        assert_eq!(
+            media_deadline_from_observations(40.0, 20.0, 33.0, 80.0),
+            Duration::from_millis(200),
+        );
+        assert_eq!(
+            media_deadline_from_observations(150.0, 80.0, 33.0, 80.0),
+            Duration::from_millis(300),
+        );
     }
 }
