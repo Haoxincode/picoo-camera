@@ -28,6 +28,7 @@
 		A1000000000000000000000F /* VideoToolbox.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000012 /* VideoToolbox.framework */; };
 		A10000000000000000000010 /* SenderMediaPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* SenderMediaPipeline.swift */; };
 		A10000000000000000000020 /* PicooDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000020 /* PicooDesignSystem.swift */; };
+		A10000000000000000000026 /* ManualEndpointInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000026 /* ManualEndpointInput.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,6 +67,7 @@
 		A20000000000000000000012 /* VideoToolbox.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = VideoToolbox.framework; path = System/Library/Frameworks/VideoToolbox.framework; sourceTree = SDKROOT; };
 		A20000000000000000000013 /* SenderMediaPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderMediaPipeline.swift; sourceTree = "<group>"; };
 		A20000000000000000000020 /* PicooDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PicooDesignSystem.swift; sourceTree = "<group>"; };
+		A20000000000000000000026 /* ManualEndpointInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManualEndpointInput.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -107,6 +109,7 @@
 				A20000000000000000000001 /* PicooCameraApp.swift */,
 				A20000000000000000000002 /* ContentView.swift */,
 				A20000000000000000000020 /* PicooDesignSystem.swift */,
+				A20000000000000000000026 /* ManualEndpointInput.swift */,
 				A20000000000000000000003 /* PicooSenderSession.swift */,
 				A2000000000000000000000B /* SenderModels.swift */,
 				A2000000000000000000000C /* SenderAppModel.swift */,
@@ -232,6 +235,7 @@
 				A10000000000000000000001 /* PicooCameraApp.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
 				A10000000000000000000020 /* PicooDesignSystem.swift in Sources */,
+				A10000000000000000000026 /* ManualEndpointInput.swift in Sources */,
 				A10000000000000000000003 /* PicooSenderSession.swift in Sources */,
 				A10000000000000000000008 /* SenderModels.swift in Sources */,
 				A10000000000000000000009 /* SenderAppModel.swift in Sources */,

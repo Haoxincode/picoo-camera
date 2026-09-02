@@ -50,6 +50,27 @@ struct PicooSenderSessionTests {
         #expect(ReceiverEndpoint(manualText: input) == nil)
     }
 
+    @Test("Manual endpoint paste distributes IPv4 and keeps the editable port")
+    func manualEndpointPasteDistribution() {
+        let draft = ManualEndpointDraft(pastedText: "192.168.1.108:8443")
+
+        #expect(draft?.octets == ["192", "168", "1", "108"])
+        #expect(draft?.port == "8443")
+        #expect(draft?.text == "192.168.1.108:8443")
+        #expect(ManualEndpointDraft(pastedText: "192.168.1.108.7:4433") == nil)
+    }
+
+    @Test("Manual endpoint fields prefill the Picoo QUIC port")
+    func manualEndpointDefaultPort() {
+        let draft = ManualEndpointDraft(text: "")
+
+        #expect(draft.octets == ["", "", "", ""])
+        #expect(draft.port == "4433")
+        #expect(ManualEndpointDraft(text: "192.168.1.108:").port.isEmpty)
+        #expect(ManualEndpointDraft.shouldAdvance(octet: "192"))
+        #expect(ManualEndpointDraft.shouldAdvance(octet: "26"))
+    }
+
     @Test("Sender status snapshots resolve to stable SwiftUI screens")
     func resolvesSenderScreens() {
         #expect(SenderScreenResolver.resolve(

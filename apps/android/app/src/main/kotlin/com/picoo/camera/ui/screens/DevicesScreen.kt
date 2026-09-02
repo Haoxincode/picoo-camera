@@ -188,31 +188,6 @@ fun DevicesScreen(
                     }
                 }
 
-                if (!nearbyWifiGranted) {
-                    item {
-                        Surface(
-                            color = colors.statusWarning.copy(alpha = 0.10f),
-                            shape = RoundedCornerShape(dimensions.radiusSurface),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(dimensions.space16),
-                                verticalArrangement = Arrangement.spacedBy(dimensions.space12),
-                            ) {
-                                Text(
-                                    text = "需要附近 Wi‑Fi 设备权限才能发现电脑",
-                                    color = colors.statusWarning,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                )
-                                PicooGhostButton(
-                                    text = "授予权限",
-                                    onClick = onRequestNearbyWifi,
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
-                        }
-                    }
-                }
-
                 if (rows.isNotEmpty()) {
                     item {
                         DiscoveryStatusLine(searching = searching, hasDevices = true)
@@ -259,9 +234,11 @@ fun DevicesScreen(
                     item {
                         DiscoveryHeroPanel(
                             searching = searching,
+                            permissionRequired = !nearbyWifiGranted,
                             onPrimaryAction = if (searching) onStopDiscovery else onRestartDiscovery,
                             onManualConnect = { manualSheetOpen = true },
                             onCheckPermissions = onCheckPermissions,
+                            onRequestPermission = onRequestNearbyWifi,
                         )
                     }
                 }

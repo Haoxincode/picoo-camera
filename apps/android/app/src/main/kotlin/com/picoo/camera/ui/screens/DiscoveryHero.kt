@@ -56,9 +56,11 @@ import com.picoo.camera.ui.theme.PicooTheme
 @Composable
 internal fun DiscoveryHeroPanel(
     searching: Boolean,
+    permissionRequired: Boolean,
     onPrimaryAction: () -> Unit,
     onManualConnect: () -> Unit,
     onCheckPermissions: () -> Unit,
+    onRequestPermission: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = PicooTheme.colors
@@ -76,25 +78,33 @@ internal fun DiscoveryHeroPanel(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(dimensions.space16),
         ) {
-            DiscoveryDeviceIllustration(searching = searching)
+            DiscoveryDeviceIllustration(searching = searching && !permissionRequired)
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(dimensions.space8),
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
             ) {
                 Text(
-                    text = if (searching) "正在查找附近电脑" else "未发现附近电脑",
+                    text = when {
+                        permissionRequired -> "允许查找附近电脑"
+                        searching -> "正在查找附近电脑"
+                        else -> "未发现附近电脑"
+                    },
                     style = MaterialTheme.typography.titleLarge,
                     textAlign = TextAlign.Center,
                 )
                 Text(
-                    text = "请确认电脑端 Picoo Camera 已打开，\n并与手机连接到同一 Wi‑Fi。",
+                    text = if (permissionRequired) {
+                        "需要附近 Wi‑Fi 设备权限才能自动发现电脑；\n也可以直接输入电脑端显示的 IP 地址。"
+                    } else {
+                        "请确认电脑端 Picoo Camera 已打开，\n并与手机连接到同一 Wi‑Fi。"
+                    },
                     color = colors.contentMuted,
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center,
                 )
             }
-            if (searching) {
+            if (searching && !permissionRequired) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
@@ -112,11 +122,21 @@ internal fun DiscoveryHeroPanel(
                 }
             }
             PicooPrimaryButton(
-                text = if (searching) "停止搜索" else "重新搜索附近电脑",
-                onClick = onPrimaryAction,
+                text = when {
+                    permissionRequired -> "允许查找电脑"
+                    searching -> "停止搜索"
+                    else -> "重新搜索附近电脑"
+                },
+                onClick = if (permissionRequired) onRequestPermission else onPrimaryAction,
                 modifier = Modifier.fillMaxWidth(),
                 leadingContent = {
-                    if (searching) {
+                    if (permissionRequired) {
+                        ReiconIcon(
+                            icon = Reicon.Network,
+                            contentDescription = null,
+                            modifier = Modifier.size(dimensions.iconEmphasis),
+                        )
+                    } else if (searching) {
                         StopSearchGlyph()
                     } else {
                         ReiconIcon(
@@ -134,32 +154,34 @@ internal fun DiscoveryHeroPanel(
                 variant = PicooButtonVariant.AccentOutline,
                 leadingContent = { IpAddressGlyph() },
             )
-            Surface(
-                onClick = onCheckPermissions,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = dimensions.touchTarget)
-                    .semantics { role = Role.Button },
-                color = androidx.compose.ui.graphics.Color.Transparent,
-                contentColor = colors.actionHighlight,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = dimensions.space8),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically,
+            if (!permissionRequired) {
+                Surface(
+                    onClick = onCheckPermissions,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = dimensions.touchTarget)
+                        .semantics { role = Role.Button },
+                    color = androidx.compose.ui.graphics.Color.Transparent,
+                    contentColor = colors.actionHighlight,
                 ) {
-                    Text(
-                        text = "找不到电脑？检查网络与发现权限",
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center,
-                    )
-                    ReiconIcon(
-                        icon = Reicon.NavigateBack,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(dimensions.iconCompact)
-                            .graphicsLayer(rotationZ = 180f),
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = dimensions.space8),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "找不到电脑？检查网络与发现权限",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                        ReiconIcon(
+                            icon = Reicon.NavigateBack,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(dimensions.iconCompact)
+                                .graphicsLayer(rotationZ = 180f),
+                        )
+                    }
                 }
             }
         }

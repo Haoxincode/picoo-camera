@@ -595,7 +595,6 @@ private struct CameraOverlay: View {
 
 private struct ManualConnectSheet: View {
     @Bindable var model: SenderAppModel
-    @FocusState private var endpointFocused: Bool
 
     var body: some View {
         ScrollView {
@@ -614,14 +613,7 @@ private struct ManualConnectSheet: View {
                     .foregroundStyle(PicooColor.actionHighlight)
             }
 
-            TextField("192.168.1.108:4433", text: $model.manualEndpointText)
-                .font(.body.monospaced())
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .keyboardType(.numbersAndPunctuation)
-                .focused($endpointFocused)
-                .textFieldStyle(.roundedBorder)
-                .frame(minHeight: PicooIconSize.touchTarget)
+            IPv4EndpointInput(endpoint: $model.manualEndpointText)
 
             if let error = model.errorMessage {
                 InlineNotice(text: error, tone: .danger)
@@ -639,7 +631,6 @@ private struct ManualConnectSheet: View {
             .padding(PicooSpace.xl)
         }
         .scrollDismissesKeyboard(.interactively)
-        .onAppear { endpointFocused = true }
     }
 }
 
