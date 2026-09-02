@@ -526,13 +526,14 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     }
 
     let mut frames_seen = 0u64;
+    let mut backpressure_events = 0u64;
     let mut last_au = receiver.stats().access_units;
     let mut stalled = 0u32;
     for frame_id in 1..=120u64 {
         let is_key = frame_id % 5 == 1;
-        sender
-            .ingest_and_flush(&au, is_key, frame_id, 1)
-            .expect("ingest");
+        if !video_send_accepted(sender.ingest_and_flush(&au, is_key, frame_id, 1)) {
+            backpressure_events += 1;
+        }
         for _ in 0..16 {
             receiver.pump().ok();
             sender.pump().ok();
@@ -555,7 +556,8 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     }
     assert!(
         frames_seen >= 20,
-        "need usable decoded frames under loss, got {frames_seen}"
+        "need usable decoded frames under loss, got {frames_seen}; \
+         backpressure_events={backpressure_events}"
     );
 }
 
