@@ -186,7 +186,7 @@ pub extern "C" fn picoo_sender_nack_encoder_directive(
 
 /// Consume a desktop-originated CameraCommand (PUC-005 / REQ-PICOO-UI-009).
 ///
-/// Returns the command enum value (`1` SWITCH_FRONT … `4` SET_MIRROR), or `0` when
+/// Returns the command enum value (`1` SWITCH_FRONT … `5` SWITCH_CAMERA), or `0` when
 /// none pending. Optional outs: `out_width`/`out_height` for SET_RESOLUTION,
 /// `out_mirrored` (0/1) for SET_MIRROR.
 #[no_mangle]

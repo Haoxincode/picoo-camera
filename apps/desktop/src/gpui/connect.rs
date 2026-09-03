@@ -1,25 +1,36 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::*;
+use gpui_component::menu::DropdownMenu;
 use gpui_component::notification::NotificationType;
+use gpui_component::popover::Popover;
+use gpui_component::separator::Separator;
 use gpui_component::*;
 use picoo_discovery::DEFAULT_QUIC_PORT;
-use picoo_protocol::control::CameraCommand;
+use picoo_protocol::control::{camera_command, CameraCommand, Resolution};
+use serde::Deserialize;
 
 use crate::model::VirtualCameraStatus;
 use crate::receiver_runtime::ReceiverSnapshot;
 
-use super::icons::reicon_named;
+use super::icons::{reicon_button_content, reicon_named};
 use super::pairing::{connection_code_hero, format_pairing_code};
 use super::widgets::{
-    connection_security_status, hardware_topology, network_status_item, onboarding_step,
-    status_badge, NetworkStatusState,
+    connection_security_status, hardware_topology, metric_row, network_status_item,
+    onboarding_step, status_badge, NetworkStatusState,
 };
 use super::{DesktopPage, PicooDesktopApp};
 
 const CONNECT_AUXILIARY_MIN_WIDTH: Rems = rems(21.);
 const CONNECT_AUXILIARY_WIDTH: Rems = rems(24.);
-const CONNECT_LIVE_AUXILIARY_WIDTH: Rems = rems(18.);
+
+#[derive(Clone, Action, PartialEq, Eq, Deserialize)]
+#[action(namespace = picoo_live_toolbar, no_json)]
+enum LiveToolbarAction {
+    Resolution480,
+    Resolution720,
+    Resolution1080,
+}
 
 impl PicooDesktopApp {
     pub(super) fn render_connect(
@@ -28,27 +39,15 @@ impl PicooDesktopApp {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let is_live = self.page == DesktopPage::Live;
-        let auxiliary_min_width = if is_live {
-            CONNECT_LIVE_AUXILIARY_WIDTH
-        } else {
-            CONNECT_AUXILIARY_MIN_WIDTH
-        };
-        let auxiliary_width = if is_live {
-            CONNECT_LIVE_AUXILIARY_WIDTH
-        } else {
-            CONNECT_AUXILIARY_WIDTH
-        };
-
-        // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01 / AC-D-LIVE-01: the primary pane
-        // consumes all surplus width. Live narrows the auxiliary inspector so the
-        // camera remains the screen's largest visual object at the minimum window.
+        // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01 / AC-D-LIVE-01: waiting keeps the
+        // trusted-device inspector; Live removes it and gives the entire workspace
+        // to the fixed single-row command bar and camera preview.
         div()
             .h_flex()
             .size_full()
             .min_w_0()
             .min_h_0()
             .items_stretch()
-            .when(is_live, |this| this.gap_4())
             .when(!is_live, |this| this.gap_5())
             .child(
                 div()
@@ -63,16 +62,18 @@ impl PicooDesktopApp {
                         self.render_waiting(snapshot, cx).into_any_element()
                     }),
             )
-            .child(
-                div()
-                    .v_flex()
-                    .h_full()
-                    .w(auxiliary_width)
-                    .min_w(auxiliary_min_width)
-                    .max_w(auxiliary_width)
-                    .flex_shrink_1()
-                    .child(self.render_device_connection_card(snapshot, cx)),
-            )
+            .when(!is_live, |this| {
+                this.child(
+                    div()
+                        .v_flex()
+                        .h_full()
+                        .w(CONNECT_AUXILIARY_WIDTH)
+                        .min_w(CONNECT_AUXILIARY_MIN_WIDTH)
+                        .max_w(CONNECT_AUXILIARY_WIDTH)
+                        .flex_shrink_1()
+                        .child(self.render_device_connection_card(snapshot, cx)),
+                )
+            })
     }
 
     pub(super) fn render_waiting(
@@ -398,37 +399,161 @@ impl PicooDesktopApp {
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        let res_label = snapshot
+        let sender_name = snapshot
+            .active_sender
+            .as_ref()
+            .map(|sender| sender.device_name.clone())
+            .unwrap_or_else(|| "当前设备".into());
+        let disconnect_sender_name = sender_name.clone();
+        let current_resolution_height = snapshot.stream_config.as_ref().map(|config| config.height);
+        let resolution_label = current_resolution_height
+            .map(|height| format!("{height}p"))
+            .unwrap_or_else(|| "分辨率".into());
+        let remote_mirrored = snapshot
             .stream_config
             .as_ref()
-            .map(|config| {
-                if snapshot.receiver_stats.is_some() {
-                    format!(
-                        "{}p · {} FPS 实测",
-                        config.height, snapshot.stream_metrics.fps
-                    )
-                } else {
-                    format!("{}p · {} FPS 目标", config.height, config.fps)
-                }
-            })
-            .unwrap_or_else(|| "—".into());
-        let quality = snapshot.receiver_stats.as_ref().map(|stats| {
-            crate::network_quality::network_quality_label(stats.packet_loss, stats.rtt_ms)
-        });
-        let live_metrics = snapshot
+            .map(|config| config.mirrored)
+            .unwrap_or(false);
+        let mirror_icon_color = if remote_mirrored {
+            cx.theme().primary_foreground
+        } else {
+            cx.theme().primary
+        };
+        let fps_label = snapshot
             .receiver_stats
             .as_ref()
-            .map(|stats| {
+            .map(|_| format!("{} FPS", snapshot.stream_metrics.fps))
+            .unwrap_or_else(|| "— FPS".into());
+        let latency_label = snapshot
+            .receiver_stats
+            .as_ref()
+            .map(|stats| format!("{:.0} ms", stats.rtt_ms))
+            .unwrap_or_else(|| "— ms".into());
+        let bitrate_label = snapshot
+            .receiver_stats
+            .as_ref()
+            .map(|stats| format!("{:.1} Mbps", stats.receive_bitrate as f64 / 1_000_000.0))
+            .unwrap_or_else(|| "— Mbps".into());
+        let (quality_label, quality_color) = snapshot.receiver_stats.as_ref().map_or_else(
+            || ("网络待测".to_string(), cx.theme().muted_foreground),
+            |stats| {
+                let quality =
+                    crate::network_quality::network_quality_label(stats.packet_loss, stats.rtt_ms)
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("待测");
+                let color = if quality == "较差" {
+                    cx.theme().warning
+                } else {
+                    cx.theme().success
+                };
+                (format!("网络{quality}"), color)
+            },
+        );
+        let active_identity = snapshot
+            .active_sender
+            .as_ref()
+            .and_then(|sender| {
+                snapshot
+                    .trusted_devices
+                    .iter()
+                    .find(|device| device.device_id == sender.sender_id)
+                    .map(|device| device.identity_prefix.clone())
+            })
+            .unwrap_or_else(|| "—".into());
+        let video_spec = snapshot
+            .stream_config
+            .as_ref()
+            .map(|config| format!("H.264 · {}×{}", config.width, config.height))
+            .unwrap_or_else(|| "H.264 · —".into());
+        let packet_loss_label = snapshot
+            .receiver_stats
+            .as_ref()
+            .map(|stats| format!("{:.2}%", stats.packet_loss * 100.0))
+            .unwrap_or_else(|| "—".into());
+        let playback_buffer_label = snapshot
+            .receiver_stats
+            .as_ref()
+            .map(|_| {
                 format!(
-                    "{} · {:.1} Mbps · {:.0} ms · 可观测丢片 {:.2}% · 网络{}",
-                    res_label,
-                    stats.receive_bitrate as f64 / 1_000_000.0,
-                    stats.rtt_ms,
-                    stats.packet_loss * 100.0,
-                    quality.expect("quality exists with ReceiverStats")
+                    "{:.1} / {:.1} ms",
+                    snapshot.jitter_buffer_actual_delay_ms, snapshot.jitter_buffer_target_ms
                 )
             })
-            .unwrap_or_else(|| format!("{res_label} · 等待链路统计样本"));
+            .unwrap_or_else(|| "—".into());
+        let details = Popover::new("live-connection-details")
+            .anchor(Anchor::TopRight)
+            .w(rems(20.))
+            .trigger(
+                Button::new("live-connection-details-trigger")
+                    .outline()
+                    .small()
+                    .tooltip("查看连接详情")
+                    .accessibility_label("连接详情")
+                    .child(reicon_button_content(
+                        "连接详情",
+                        "tuning",
+                        cx.theme().primary,
+                    )),
+            )
+            .child(
+                div()
+                    .v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("连接详情"),
+                    )
+                    .child(Separator::horizontal())
+                    .child(metric_row("身份", active_identity, cx))
+                    .child(metric_row("视频规格", video_spec, cx))
+                    .child(metric_row(
+                        "虚拟摄像头",
+                        super::vcam::vcam_label_zh(snapshot.virtual_camera).into(),
+                        cx,
+                    ))
+                    .child(metric_row("可观测丢片", packet_loss_label, cx))
+                    .child(metric_row(
+                        "网络抖动",
+                        snapshot
+                            .receiver_stats
+                            .as_ref()
+                            .map(|_| format!("{:.1} ms", snapshot.link_jitter_ms))
+                            .unwrap_or_else(|| "—".into()),
+                        cx,
+                    ))
+                    .child(metric_row(
+                        "播放缓冲 实际 / 目标",
+                        playback_buffer_label,
+                        cx,
+                    )),
+            );
+        let resolution = Button::new("live-resolution-trigger")
+            .outline()
+            .small()
+            .label(resolution_label)
+            .tooltip("选择推流分辨率")
+            .accessibility_label("推流分辨率")
+            .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                menu.menu_with_check(
+                    "480p",
+                    current_resolution_height == Some(480),
+                    Box::new(LiveToolbarAction::Resolution480),
+                )
+                .menu_with_check(
+                    "720p",
+                    current_resolution_height == Some(720),
+                    Box::new(LiveToolbarAction::Resolution720),
+                )
+                .menu_with_check(
+                    "1080p",
+                    current_resolution_height == Some(1080),
+                    Box::new(LiveToolbarAction::Resolution1080),
+                )
+            });
+
         div()
             .v_flex()
             .w_full()
@@ -437,11 +562,206 @@ impl PicooDesktopApp {
             .min_h_0()
             .flex_1()
             .overflow_hidden()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
-            .border_color(cx.theme().border)
-            .bg(cx.theme().group_box)
-            .when(cx.theme().shadow, |this| this.shadow_lg())
+            .gap_4()
+            .on_action(cx.listener(|this, action: &LiveToolbarAction, _, cx| {
+                let (width, height) = match action {
+                    LiveToolbarAction::Resolution480 => (854, 480),
+                    LiveToolbarAction::Resolution720 => (1280, 720),
+                    LiveToolbarAction::Resolution1080 => (1920, 1080),
+                };
+                this.send_live_camera_command(CameraCommand {
+                    command: camera_command::Command::SetResolution as i32,
+                    resolution: Some(Resolution { width, height }),
+                    mirrored: false,
+                });
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .flex_none()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .child(
+                        div()
+                            .h_flex()
+                            .min_w_0()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .min_w_0()
+                                    .w(rems(12.))
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .min_w_0()
+                                            .truncate()
+                                            .whitespace_nowrap()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(sender_name),
+                                    )
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .flex_none()
+                                            .gap_1()
+                                            .items_center()
+                                            .text_sm()
+                                            .text_color(cx.theme().success)
+                                            .child(
+                                                div()
+                                                    .size_2()
+                                                    .rounded_full()
+                                                    .bg(cx.theme().success),
+                                            )
+                                            .child("Live"),
+                                    ),
+                            )
+                            .child(resolution)
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .flex_none()
+                                    .items_center()
+                                    .rounded(cx.theme().radius)
+                                    .bg(cx.theme().secondary.opacity(0.65))
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_xs()
+                                    .child(div().px_2().py_1p5().child(fps_label))
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_1p5()
+                                            .border_l_1()
+                                            .border_color(cx.theme().border)
+                                            .child(latency_label),
+                                    )
+                                    .child(
+                                        div()
+                                            .px_2()
+                                            .py_1p5()
+                                            .border_l_1()
+                                            .border_color(cx.theme().border)
+                                            .child(bitrate_label),
+                                    )
+                                    .child(
+                                        div()
+                                            .h_flex()
+                                            .px_2()
+                                            .py_1p5()
+                                            .gap_1()
+                                            .border_l_1()
+                                            .border_color(cx.theme().border)
+                                            .text_color(quality_color)
+                                            .child(
+                                                div().size_1p5().rounded_full().bg(quality_color),
+                                            )
+                                            .child(quality_label),
+                                    ),
+                            )
+                            .child(details),
+                    )
+                    .child(
+                        div()
+                            .h_flex()
+                            .flex_none()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Button::new("remote-mirror-toolbar")
+                                    .outline()
+                                    .small()
+                                    .selected(remote_mirrored)
+                                    .toggled(remote_mirrored)
+                                    .tooltip("镜像翻转")
+                                    .accessibility_label("镜像翻转")
+                                    .child(reicon_button_content(
+                                        "镜像",
+                                        "flip-horizontal",
+                                        mirror_icon_color,
+                                    ))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SetMirror as i32,
+                                            resolution: None,
+                                            mirrored: !remote_mirrored,
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("switch-camera-toolbar")
+                                    .outline()
+                                    .small()
+                                    .tooltip("镜头切换")
+                                    .accessibility_label("镜头切换")
+                                    .child(reicon_button_content(
+                                        "切换",
+                                        "camera-rotate",
+                                        cx.theme().primary,
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.send_live_camera_command(CameraCommand {
+                                            command: camera_command::Command::SwitchCamera as i32,
+                                            resolution: None,
+                                            mirrored: false,
+                                        });
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("request-idr-toolbar")
+                                    .outline()
+                                    .small()
+                                    .tooltip("请求关键帧以修复卡顿或花屏")
+                                    .accessibility_label("画面修复")
+                                    .child(reicon_button_content(
+                                        "修复",
+                                        "refresh",
+                                        cx.theme().primary,
+                                    ))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        if let Err(err) = this.runtime.request_keyframe() {
+                                            this.diagnostics_error =
+                                                Some(format!("请求关键帧失败：{err}"));
+                                        }
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("disconnect-active-device")
+                                    .custom(
+                                        ButtonCustomVariant::new(cx)
+                                            .foreground(cx.theme().danger)
+                                            .hover(cx.theme().danger.opacity(0.08))
+                                            .active(cx.theme().danger.opacity(0.16)),
+                                    )
+                                    .small()
+                                    .tooltip("断开设备")
+                                    .accessibility_label("断开")
+                                    .child(reicon_button_content(
+                                        "断开",
+                                        "xmark",
+                                        cx.theme().danger,
+                                    ))
+                                    .on_click(cx.listener(move |_, _, window, cx| {
+                                        PicooDesktopApp::open_disconnect_dialog(
+                                            cx.entity().downgrade(),
+                                            disconnect_sender_name.clone(),
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            ),
+                    ),
+            )
             .child(
                 div()
                     .flex()
@@ -450,55 +770,22 @@ impl PicooDesktopApp {
                     .min_h_0()
                     .items_center()
                     .justify_center()
-                    .p_3()
                     .child(
                         div()
-                            // REQ-PICOO-UI-0001 / AC-D-LIVE-01: width proposes the
-                            // largest viewport while max-height transfers through the
-                            // aspect ratio, so either axis can constrain without cropping.
+                            // AC-D-LIVE-01: the large fixed window keeps the complete
+                            // command bar visible while the 16:9 preview consumes all
+                            // remaining space without a secondary inspector.
                             .w_full()
                             .max_h_full()
                             .aspect_ratio(16. / 9.)
                             .flex_none()
                             .relative()
-                            .rounded(cx.theme().radius)
+                            .rounded(cx.theme().radius_lg)
                             .bg(cx.theme().muted)
                             .overflow_hidden()
                             .child(self.video_surface.render_preview()),
                     ),
             )
-            .child(
-                div()
-                    .h_flex()
-                    .w_full()
-                    .min_w_0()
-                    .items_center()
-                    .p_4()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .v_flex()
-                            .min_w_0()
-                            .flex_1()
-                            .gap_0p5()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child("实时视频监视器"),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .truncate()
-                                    .whitespace_nowrap()
-                                    .child(live_metrics),
-                            ),
-                    ),
-            )
-            .child(self.render_network_status_bar(snapshot, cx))
     }
 }
 

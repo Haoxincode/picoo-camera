@@ -127,7 +127,8 @@ object PicooNative {
 
     /**
      * Desktop CameraCommand (PUC-005 / REQ-PICOO-UI-009).
-     * @return 0=none, 1=SWITCH_FRONT, 2=SWITCH_BACK, 3=SET_RESOLUTION, 4=SET_MIRROR
+     * @return 0=none, 1=SWITCH_FRONT, 2=SWITCH_BACK, 3=SET_RESOLUTION, 4=SET_MIRROR,
+     * 5=SWITCH_CAMERA (toggle from the active lens)
      * For SET_RESOLUTION / SET_MIRROR, [out] holds `[width, height, mirrored]` (0/1).
      */
     external fun takeCameraCommand(handle: Long, out: IntArray?): Int

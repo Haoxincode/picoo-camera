@@ -196,7 +196,7 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
     // send again to assert payload (previous take may have raced)
     receiver
         .send_camera_command(CameraCommand {
-            command: camera_command::Command::SwitchBack as i32,
+            command: camera_command::Command::SwitchCamera as i32,
             resolution: None,
             mirrored: false,
         })
@@ -212,7 +212,7 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
         std::thread::sleep(Duration::from_millis(2));
     }
     let got = got.expect("CameraCommand delivered to sender");
-    assert_eq!(got.command, camera_command::Command::SwitchBack as i32);
+    assert_eq!(got.command, camera_command::Command::SwitchCamera as i32);
 
     // PUC-005 / ABR: SetResolution 480p (854×480) must round-trip like 720/1080.
     receiver

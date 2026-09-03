@@ -96,6 +96,8 @@ message CameraCommand {
     SWITCH_BACK = 2;
     SET_RESOLUTION = 3;
     SET_MIRROR = 4;
+    // Toggle from the Sender's actual active lens; avoids Receiver-side state drift.
+    SWITCH_CAMERA = 5;
   }
   Command command = 1;
   Resolution resolution = 2;

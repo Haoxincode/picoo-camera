@@ -626,49 +626,11 @@ final class SenderAppModel {
     private func apply(_ command: SenderCameraCommand) async {
         switch command {
         case .switchFront:
-            guard camera.position != .front, let session else { return }
-            suspendMediaSending()
-            let epoch = encoderApply.beginLocal(session: session)
-            guard epoch > 0 else { return }
-            let switched = await camera.switchCamera(streamEpoch: epoch)
-            guard !Task.isCancelled else {
-                try? session.cancelStreamReconfiguration(epoch)
-                return
-            }
-            if switched {
-                encoderApply.waitForApply(
-                    directive: nil,
-                    streamEpoch: epoch,
-                    encoderGeneration: camera.encoderGeneration,
-                    height: UInt32(camera.resolution.rawValue),
-                    bitrateBps: activeBitrateBps
-                )
-            } else {
-                try? session.cancelStreamReconfiguration(epoch)
-                encoderApply.scheduleRecovery(after: "电脑请求的前置摄像头不可用。", host: self)
-            }
+            await applyCameraSwitch(unlessAlreadyAt: .front, failure: "电脑请求的前置摄像头不可用。")
         case .switchBack:
-            guard camera.position != .back, let session else { return }
-            suspendMediaSending()
-            let epoch = encoderApply.beginLocal(session: session)
-            guard epoch > 0 else { return }
-            let switched = await camera.switchCamera(streamEpoch: epoch)
-            guard !Task.isCancelled else {
-                try? session.cancelStreamReconfiguration(epoch)
-                return
-            }
-            if switched {
-                encoderApply.waitForApply(
-                    directive: nil,
-                    streamEpoch: epoch,
-                    encoderGeneration: camera.encoderGeneration,
-                    height: UInt32(camera.resolution.rawValue),
-                    bitrateBps: activeBitrateBps
-                )
-            } else {
-                try? session.cancelStreamReconfiguration(epoch)
-                encoderApply.scheduleRecovery(after: "电脑请求的后置摄像头不可用。", host: self)
-            }
+            await applyCameraSwitch(unlessAlreadyAt: .back, failure: "电脑请求的后置摄像头不可用。")
+        case .switchCamera:
+            await applyCameraSwitch(unlessAlreadyAt: nil, failure: "电脑请求切换的摄像头不可用。")
         case let .setResolution(_, height):
             await applyResolution(VideoResolution.supported(forRequestedHeight: height))
         case let .setMirror(mirrored):
@@ -678,6 +640,34 @@ final class SenderAppModel {
             } catch {
                 errorMessage = "无法更新远端镜像设置。"
             }
+        }
+    }
+
+    private func applyCameraSwitch(
+        unlessAlreadyAt position: CameraPosition?,
+        failure: String
+    ) async {
+        if let position, camera.position == position { return }
+        guard let session else { return }
+        suspendMediaSending()
+        let epoch = encoderApply.beginLocal(session: session)
+        guard epoch > 0 else { return }
+        let switched = await camera.switchCamera(streamEpoch: epoch)
+        guard !Task.isCancelled else {
+            try? session.cancelStreamReconfiguration(epoch)
+            return
+        }
+        if switched {
+            encoderApply.waitForApply(
+                directive: nil,
+                streamEpoch: epoch,
+                encoderGeneration: camera.encoderGeneration,
+                height: UInt32(camera.resolution.rawValue),
+                bitrateBps: activeBitrateBps
+            )
+        } else {
+            try? session.cancelStreamReconfiguration(epoch)
+            encoderApply.scheduleRecovery(after: failure, host: self)
         }
     }
 

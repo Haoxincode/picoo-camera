@@ -410,6 +410,14 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                         ui.remoteMirrored = camOut[2] != 0
                         streamConfigDirty.set(true)
                     }
+                    5 -> {
+                        if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
+                            encoder.switchCamera()
+                            ui.localPreviewMirrored =
+                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
+                            streamConfigDirty.set(true)
+                        }
+                    }
                 }
             }
             val receiverMaxHeight = senderSnapshot.receiverMaxHeight

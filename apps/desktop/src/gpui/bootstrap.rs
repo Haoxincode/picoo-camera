@@ -32,9 +32,9 @@ const DEVICE_FRAME_ASSETS: [(&str, &[u8]); 4] = [
 
 struct PicooAssets;
 
-// REQ-PICOO-UI-0001 / AC-D-LAYOUT-01: the first open uses the smallest
-// verified workspace rather than starting as a full-HD-sized window.
-const COMPACT_WINDOW_SIZE: gpui::Size<Pixels> = size(px(1120.), px(720.));
+// REQ-PICOO-UI-0001 / AC-D-LAYOUT-01 / AC-D-LIVE-01: the product window is
+// intentionally large enough to keep the complete Live toolbar visible.
+const PRODUCT_WINDOW_SIZE: gpui::Size<Pixels> = size(px(1440.), px(900.));
 
 impl AssetSource for PicooAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -89,9 +89,9 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: point(px(100.), px(100.)),
-                    size: COMPACT_WINDOW_SIZE,
+                    size: PRODUCT_WINDOW_SIZE,
                 })),
-                window_min_size: Some(COMPACT_WINDOW_SIZE),
+                window_min_size: Some(PRODUCT_WINDOW_SIZE),
                 ..TitleBar::window_options()
             },
             move |window, cx| {
@@ -147,8 +147,14 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
 
 #[cfg(test)]
 mod tests {
-    use super::PicooAssets;
-    use gpui::AssetSource;
+    use super::{PicooAssets, PRODUCT_WINDOW_SIZE};
+    use gpui::{px, AssetSource};
+
+    #[test]
+    fn product_window_preserves_the_full_live_toolbar() {
+        assert_eq!(PRODUCT_WINDOW_SIZE.width, px(1440.));
+        assert_eq!(PRODUCT_WINDOW_SIZE.height, px(900.));
+    }
 
     #[test]
     fn gpui_platform_initializes_before_receiver_runtime() {

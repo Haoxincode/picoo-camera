@@ -23,7 +23,7 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 - `PairingChallenge` / `PairingConfirm` / `PairingApproval` / `PairingCommit` / `PairingComplete`
 - `StartStream` / `StopStream`
 - `StreamConfig`
-- `CameraCommand` / `EncoderCommand`
+- `CameraCommand` / `EncoderCommand`；其中交互式「切换镜头」使用 `SWITCH_CAMERA`，由持有实际镜头状态的 Sender 决定目标朝向，`SWITCH_FRONT` / `SWITCH_BACK` 只表达调用方明确指定朝向的命令
 - `ReceiverStats`
 - `SenderStats`
 - `RequestKeyframe`

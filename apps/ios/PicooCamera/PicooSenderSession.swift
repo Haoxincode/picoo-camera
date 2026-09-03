@@ -29,6 +29,7 @@ nonisolated struct SenderStreamConfiguration: Equatable, Sendable {
 nonisolated enum SenderCameraCommand: Equatable, Sendable {
     case switchFront
     case switchBack
+    case switchCamera
     case setResolution(width: UInt32, height: UInt32)
     case setMirror(Bool)
 }
@@ -294,6 +295,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             return .setResolution(width: width, height: height)
         case 4:
             return .setMirror(mirrored != 0)
+        case 5:
+            return .switchCamera
         default:
             throw PicooSenderSessionError.operationFailed(
                 name: "sender_take_camera_command",
