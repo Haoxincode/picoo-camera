@@ -757,6 +757,15 @@ fn newly_paired_identity_can_replace_same_name_history() {
         vec!["phone-old-a", "phone-old-b"]
     );
 
+    // The immutable consent snapshot is part of the same durable trust update.
+    // A process restart restores it without treating a trusted reconnect as a
+    // fresh name-based cleanup decision.
+    drop(receiver);
+    let mut receiver = ReceiverSession::new()
+        .with_trusted_store(&store_path)
+        .expect("reload receiver store");
+    assert_eq!(receiver.trusted_identity_replacement(), Some(&replacement));
+
     // A later same-name record was never shown by this decision and must not
     // be widened into the user's confirmed deletion set.
     receiver.trusted_devices_mut().upsert(TrustedDevice {
@@ -826,7 +835,11 @@ fn trusted_reconnect_never_emits_identity_replacement_decision() {
 
 #[test]
 fn keeping_same_name_identities_consumes_only_the_current_decision() {
-    let mut receiver = ReceiverSession::new();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let store_path = dir.path().join("trusted.json");
+    let mut receiver = ReceiverSession::new()
+        .with_trusted_store(&store_path)
+        .expect("load store");
     for device_id in ["phone-current", "phone-old"] {
         receiver.trusted_devices_mut().upsert(TrustedDevice {
             device_id: device_id.into(),
@@ -838,15 +851,28 @@ fn keeping_same_name_identities_consumes_only_the_current_decision() {
         });
     }
     receiver.prepare_trusted_identity_replacement("phone-current");
+    receiver
+        .trusted_devices()
+        .save_to_path(&store_path)
+        .expect("persist decision");
     let revision = receiver
         .trusted_identity_replacement()
         .expect("decision")
         .revision;
-    assert!(receiver.dismiss_trusted_identity_replacement(revision));
+    assert!(receiver
+        .dismiss_trusted_identity_replacement(revision)
+        .expect("dismiss decision"));
     assert!(receiver.trusted_identity_replacement().is_none());
-    assert!(!receiver.dismiss_trusted_identity_replacement(revision));
+    assert!(!receiver
+        .dismiss_trusted_identity_replacement(revision)
+        .expect("decision already dismissed"));
     assert!(receiver.trusted_devices().is_paired("phone-current"));
     assert!(receiver.trusted_devices().is_paired("phone-old"));
+
+    let reloaded = ReceiverSession::new()
+        .with_trusted_store(&store_path)
+        .expect("reload store");
+    assert!(reloaded.trusted_identity_replacement().is_none());
 }
 
 #[test]

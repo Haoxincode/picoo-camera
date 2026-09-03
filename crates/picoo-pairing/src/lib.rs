@@ -28,6 +28,24 @@ pub struct TrustedDevice {
     pub last_connected_at_ms: Option<u64>,
 }
 
+/// One historical trust credential shown to the user before it can be revoked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedIdentityCandidate {
+    pub device_id: String,
+    pub certificate_fingerprint: String,
+    pub last_connected_at_ms: Option<u64>,
+}
+
+/// An immutable post-pairing cleanup decision. Persisting the exact snapshot
+/// prevents a restart from losing the prompt or widening the user's consent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrustedIdentityReplacement {
+    pub revision: u64,
+    pub current_device_id: String,
+    pub device_name: String,
+    pub previous_identities: Vec<TrustedIdentityCandidate>,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PairingError {
     #[error("public key mismatch for device {device_id}")]
@@ -57,9 +75,21 @@ pub fn verify_public_key(device: &TrustedDevice, observed_key: &[u8]) -> Result<
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustedDeviceStore {
     devices: HashMap<String, TrustedDevice>,
+    pending_identity_replacement: Option<TrustedIdentityReplacement>,
+    next_identity_replacement_revision: u64,
+}
+
+impl Default for TrustedDeviceStore {
+    fn default() -> Self {
+        Self {
+            devices: HashMap::new(),
+            pending_identity_replacement: None,
+            next_identity_replacement_revision: 1,
+        }
+    }
 }
 
 impl TrustedDeviceStore {
@@ -126,6 +156,33 @@ impl TrustedDeviceStore {
             .collect::<Vec<_>>();
         ids.sort();
         ids
+    }
+
+    pub fn identity_replacement(&self) -> Option<&TrustedIdentityReplacement> {
+        self.pending_identity_replacement.as_ref()
+    }
+
+    pub fn allocate_identity_replacement_revision(&mut self) -> u64 {
+        let revision = self.next_identity_replacement_revision.max(1);
+        self.next_identity_replacement_revision = revision.saturating_add(1);
+        revision
+    }
+
+    pub fn set_identity_replacement(&mut self, replacement: Option<TrustedIdentityReplacement>) {
+        self.pending_identity_replacement = replacement;
+    }
+
+    pub fn dismiss_identity_replacement(&mut self, revision: u64) -> bool {
+        if self
+            .pending_identity_replacement
+            .as_ref()
+            .is_some_and(|replacement| replacement.revision == revision)
+        {
+            self.pending_identity_replacement = None;
+            true
+        } else {
+            false
+        }
     }
 
     pub fn verify_paired_key(

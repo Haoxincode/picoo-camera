@@ -453,9 +453,11 @@ impl PicooDesktopApp {
                     .p_3()
                     .child(
                         div()
-                            // REQ-PICOO-UI-0001 / AC-D-TECH-02: the preview surface,
-                            // including its empty state, always occupies a 16:9 viewport.
+                            // REQ-PICOO-UI-0001 / AC-D-LIVE-01: width proposes the
+                            // largest viewport while max-height transfers through the
+                            // aspect ratio, so either axis can constrain without cropping.
                             .w_full()
+                            .max_h_full()
                             .aspect_ratio(16. / 9.)
                             .flex_none()
                             .relative()

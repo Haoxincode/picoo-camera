@@ -176,13 +176,28 @@ impl PicooDesktopApp {
                     }
                 })
                 .on_cancel({
-                    move |_, _, cx| {
-                        let _ = cancel_app.update(cx, |this, cx| {
-                            this.runtime
+                    move |_, window, cx| {
+                        let result = cancel_app.update(cx, |this, cx| {
+                            let result = this
+                                .runtime
                                 .dismiss_trusted_identity_replacement(revision);
                             cx.notify();
+                            result
                         });
-                        true
+                        match result {
+                            Ok(Ok(true)) => true,
+                            Ok(Ok(false)) | Err(_) => false,
+                            Ok(Err(error)) => {
+                                window.push_notification(
+                                    (
+                                        NotificationType::Error,
+                                        format!("保存配对记录失败：{error}"),
+                                    ),
+                                    cx,
+                                );
+                                false
+                            }
+                        }
                     }
                 })
                 .on_close({

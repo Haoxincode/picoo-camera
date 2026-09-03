@@ -466,7 +466,10 @@ impl ReceiverRuntime {
         Ok(removed)
     }
 
-    pub fn dismiss_trusted_identity_replacement(&mut self, revision: u64) -> bool {
+    pub fn dismiss_trusted_identity_replacement(
+        &mut self,
+        revision: u64,
+    ) -> Result<bool, ReceiverError> {
         self.receiver.dismiss_trusted_identity_replacement(revision)
     }
 

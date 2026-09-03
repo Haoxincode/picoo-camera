@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{TrustedDevice, TrustedDeviceStore};
+use crate::{TrustedDevice, TrustedDeviceStore, TrustedIdentityReplacement};
 
 const STORE_VERSION: u32 = 1;
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -18,6 +18,14 @@ static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 struct PersistedTrustedDevices {
     version: u32,
     devices: Vec<TrustedDevice>,
+    #[serde(default)]
+    pending_identity_replacement: Option<TrustedIdentityReplacement>,
+    #[serde(default = "initial_identity_replacement_revision")]
+    next_identity_replacement_revision: u64,
+}
+
+const fn initial_identity_replacement_revision() -> u64 {
+    1
 }
 
 #[derive(Debug, Error)]
@@ -45,6 +53,8 @@ impl TrustedDeviceStore {
         let payload = PersistedTrustedDevices {
             version: STORE_VERSION,
             devices: self.list().cloned().collect(),
+            pending_identity_replacement: self.identity_replacement().cloned(),
+            next_identity_replacement_revision: self.next_identity_replacement_revision,
         };
         let json = serde_json::to_string_pretty(&payload)?;
         atomic_replace(path, json.as_bytes())?;
@@ -124,6 +134,8 @@ fn self_from_json(raw: &str) -> Result<TrustedDeviceStore, StoreError> {
     for device in persisted.devices {
         store.upsert(device);
     }
+    store.pending_identity_replacement = persisted.pending_identity_replacement;
+    store.next_identity_replacement_revision = persisted.next_identity_replacement_revision.max(1);
     Ok(store)
 }
 

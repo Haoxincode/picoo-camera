@@ -2,6 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::*;
 use gpui_component::dialog::DialogButtonProps;
+use gpui_component::notification::NotificationType;
 use gpui_component::scroll::ScrollableElement;
 use gpui_component::switch::*;
 use gpui_component::*;
@@ -352,6 +353,8 @@ impl PicooDesktopApp {
                             let device_id = device.device_id.clone();
                             let device_name = device.device_name.clone();
                             let identity_prefix = device.identity_prefix.clone();
+                            let identity_label =
+                                format!("删除 {}（身份 {}）", device.device_name, identity_prefix);
                             let last_connected =
                                 crate::receiver_runtime::format_last_connected_relative_ms(
                                     device.last_connected_at_ms,
@@ -451,8 +454,8 @@ impl PicooDesktopApp {
                                                 device.device_id
                                             ))
                                             .ghost()
-                                            .tooltip("删除可信设备")
-                                            .accessibility_label("删除可信设备")
+                                            .tooltip(identity_label.clone())
+                                            .accessibility_label(identity_label)
                                             .child(
                                                 reicon_named("xmark", cx.theme().danger)
                                                     .size(rems(0.875)),
@@ -462,6 +465,7 @@ impl PicooDesktopApp {
                                                     cx.entity().downgrade(),
                                                     device_id.clone(),
                                                     device_name.clone(),
+                                                    identity_prefix.clone(),
                                                     window,
                                                     cx,
                                                 );
@@ -536,6 +540,7 @@ impl PicooDesktopApp {
         app: WeakEntity<Self>,
         device_id: String,
         device_name: String,
+        identity_prefix: String,
         window: &mut Window,
         cx: &mut App,
     ) {
@@ -543,7 +548,7 @@ impl PicooDesktopApp {
             let app = app.clone();
             let device_id = device_id.clone();
             alert
-                .title(format!("删除“{device_name}”？"))
+                .title(format!("删除“{device_name}”（身份 {identity_prefix}）？"))
                 .description("此设备下次连接时必须重新核对配对短码。")
                 .button_props(
                     DialogButtonProps::default()
@@ -552,24 +557,36 @@ impl PicooDesktopApp {
                         .cancel_text("取消")
                         .show_cancel(true),
                 )
-                .on_ok(move |_, _, cx| {
-                    let _ = app.update(cx, |this, cx| {
-                        match this.runtime.remove_trusted_device(&device_id) {
+                .on_ok(move |_, window, cx| {
+                    let outcome = app.update(cx, |this, cx| {
+                        let result = match this.runtime.remove_trusted_device(&device_id) {
                             Ok(true) => {
                                 this.diagnostics_error = None;
                                 this.diagnostics_message = Some(format!("已删除配对：{device_id}"));
+                                Ok(())
                             }
                             Ok(false) => {
-                                this.diagnostics_error =
-                                    Some(format!("未找到配对设备：{device_id}"));
+                                let message = format!("未找到配对设备：{device_id}");
+                                this.diagnostics_error = Some(message.clone());
+                                Err(message)
                             }
                             Err(err) => {
-                                this.diagnostics_error = Some(format!("删除配对失败：{err}"));
+                                let message = format!("删除配对失败：{err}");
+                                this.diagnostics_error = Some(message.clone());
+                                Err(message)
                             }
-                        }
+                        };
                         cx.notify();
+                        result
                     });
-                    true
+                    match outcome {
+                        Ok(Ok(())) => true,
+                        Ok(Err(message)) => {
+                            window.push_notification((NotificationType::Error, message), cx);
+                            false
+                        }
+                        Err(_) => false,
+                    }
                 })
         });
     }

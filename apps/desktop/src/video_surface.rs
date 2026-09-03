@@ -94,14 +94,7 @@ impl VideoSurface {
 }
 
 fn empty_preview() -> AnyElement {
-    div()
-        .w_full()
-        .h_full()
-        .flex()
-        .items_center()
-        .justify_center()
-        .child("等待视频帧…")
-        .into_any_element()
+    div().w_full().h_full().into_any_element()
 }
 
 #[cfg(test)]
