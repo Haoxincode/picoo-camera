@@ -16,7 +16,9 @@ pub(super) fn hardware_topology(cx: &Context<PicooDesktopApp>) -> impl IntoEleme
         .into_iter()
         .map(|opacity| {
             div()
-                .size_1p5()
+                .w(relative(0.09))
+                .max_w(rems(0.375))
+                .aspect_square()
                 .flex_none()
                 .rounded_full()
                 .bg(cx.theme().primary.opacity(opacity))
@@ -27,116 +29,134 @@ pub(super) fn hardware_topology(cx: &Context<PicooDesktopApp>) -> impl IntoEleme
     div()
         .h_flex()
         .w_full()
+        .min_w_0()
         .min_h_20()
         .items_center()
-        .justify_between()
+        .justify_center()
         .pb_1()
-        .child(
-            div()
-                .relative()
-                .w(rems(2.5))
-                .h(rems(5.08))
-                .flex_none()
-                // The HTML prototype wraps the real-device frame in `drop-shadow-md`.
-                // Keep that separation from the light card so the sub-pixel metal rails
-                // remain visible at the prototype's 40 px display width.
-                .rounded(rems(0.38))
-                .shadow_md()
-                .child(
-                    div()
-                        .absolute()
-                        .top(rems(0.067))
-                        .right(rems(0.085))
-                        .bottom(rems(0.067))
-                        .left(rems(0.085))
-                        .overflow_hidden()
-                        .rounded(rems(0.36))
-                        .bg(cx.theme().group_box),
-                )
-                .child(
-                    img("device-frames/iphone-16-max.svg")
-                        .w_full()
-                        .h_full()
-                        .object_fit(ObjectFit::Contain),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(rems(0.))
-                        .right(rems(0.))
-                        .bottom(rems(0.))
-                        .left(rems(0.))
-                        .rounded(rems(0.38))
-                        .border_1()
-                        .border_color(cx.theme().foreground.opacity(0.24)),
-                ),
-        )
+        .overflow_hidden()
         .child(
             div()
                 .h_flex()
+                .w_full()
+                .max_w(rems(16.))
+                .min_w_0()
                 .items_center()
-                .gap_1p5()
-                .px_2()
-                .children(connection_dots),
-        )
-        .child(
-            div()
-                .relative()
-                .w(rems(7.))
-                .h(rems(4.2))
-                .flex_none()
+                .gap_2()
                 .child(
-                    img(macbook_frame)
-                        .w_full()
-                        .h_full()
-                        .object_fit(ObjectFit::Contain),
+                    div()
+                        .h_flex()
+                        .min_w_0()
+                        .flex_basis(rems(0.))
+                        .flex_grow(2.5)
+                        .flex_shrink_1()
+                        .justify_center()
+                        .child(
+                            div()
+                                .relative()
+                                .w_full()
+                                .max_w(rems(2.5))
+                                .aspect_ratio(415. / 843.)
+                                // The real-device frame scales with its slot; the
+                                // relative screen inset preserves the metal rails.
+                                .rounded(rems(0.38))
+                                .shadow_md()
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top(relative(0.013))
+                                        .right(relative(0.034))
+                                        .bottom(relative(0.013))
+                                        .left(relative(0.034))
+                                        .overflow_hidden()
+                                        .rounded(rems(0.36))
+                                        .bg(cx.theme().group_box),
+                                )
+                                .child(
+                                    img("device-frames/iphone-16-max.svg")
+                                        .w_full()
+                                        .h_full()
+                                        .object_fit(ObjectFit::Contain),
+                                )
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .inset_0()
+                                        .rounded(rems(0.38))
+                                        .border_1()
+                                        .border_color(cx.theme().foreground.opacity(0.24)),
+                                ),
+                        ),
                 )
                 .child(
                     div()
-                        // Mirrors the HTML prototype's MacBook screen slot.
-                        .absolute()
-                        .top(rems(0.31))
-                        .right(rems(0.63))
-                        .bottom(rems(0.49))
-                        .left(rems(0.63))
-                        .flex()
+                        .h_flex()
+                        .min_w_0()
+                        .flex_basis(rems(0.))
+                        .flex_grow(4.5)
+                        .flex_shrink_1()
                         .items_center()
+                        .justify_between()
+                        .children(connection_dots),
+                )
+                .child(
+                    div()
+                        .h_flex()
+                        .min_w_0()
+                        .flex_basis(rems(0.))
+                        .flex_grow(7.)
+                        .flex_shrink_1()
                         .justify_center()
-                        .overflow_hidden()
-                        .rounded(rems(0.06))
-                        .bg(cx.theme().primary.opacity(if cx.theme().is_dark() {
-                            0.16
-                        } else {
-                            0.08
-                        }))
                         .child(
                             div()
-                                .size_5()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded_full()
-                                .border_1()
-                                .border_color(cx.theme().primary.opacity(0.4))
-                                .bg(cx.theme().primary.opacity(0.16))
-                                .child(reicon_named("camera", cx.theme().primary)),
+                                .relative()
+                                .w_full()
+                                .max_w(rems(7.))
+                                .aspect_ratio(5. / 3.)
+                                .child(
+                                    img(macbook_frame)
+                                        .w_full()
+                                        .h_full()
+                                        .object_fit(ObjectFit::Contain),
+                                )
+                                .child(
+                                    div()
+                                        // Mirrors the SVG screen slot with relative
+                                        // insets so it shrinks with the complete frame.
+                                        .absolute()
+                                        .top(relative(0.074))
+                                        .right(relative(0.09))
+                                        .bottom(relative(0.117))
+                                        .left(relative(0.09))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .overflow_hidden()
+                                        .rounded(rems(0.06))
+                                        .bg(cx.theme().primary.opacity(if cx.theme().is_dark() {
+                                            0.16
+                                        } else {
+                                            0.08
+                                        }))
+                                        .child(
+                                            div()
+                                                .size_4()
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_full()
+                                                .border_1()
+                                                .border_color(cx.theme().primary.opacity(0.4))
+                                                .bg(cx.theme().primary.opacity(0.16))
+                                                .child(
+                                                    reicon_named("camera", cx.theme().primary)
+                                                        .size_3(),
+                                                ),
+                                        ),
+                                ),
                         ),
                 ),
         )
-}
-
-pub(super) fn live_hud_pill(label: String, cx: &Context<PicooDesktopApp>) -> impl IntoElement {
-    div()
-        .px_3()
-        .py_1p5()
-        .rounded(cx.theme().radius)
-        .bg(cx.theme().popover.opacity(0.88))
-        .border_1()
-        .border_color(cx.theme().border)
-        .text_xs()
-        .font_weight(FontWeight::SEMIBOLD)
-        .text_color(cx.theme().popover_foreground)
-        .child(label)
 }
 
 pub(super) fn page_header(
@@ -414,7 +434,7 @@ pub(super) fn onboarding_step(
 
 pub(super) fn connection_security_status(status: ReceiverStatus) -> (&'static str, bool) {
     match status {
-        ReceiverStatus::Pairing => ("已加密 · 待确认", false),
+        ReceiverStatus::Pairing => ("加密待确认", false),
         ReceiverStatus::Connecting | ReceiverStatus::Negotiating => ("正在建立", false),
         ReceiverStatus::Streaming
         | ReceiverStatus::Reconnecting
@@ -433,11 +453,11 @@ pub(super) enum NetworkStatusState {
     Warning,
 }
 
-pub(super) fn network_status_row(
+pub(super) fn network_status_item(
     icon: &'static str,
-    label: &'static str,
     value: impl Into<SharedString>,
     state: NetworkStatusState,
+    show_divider: bool,
     cx: &Context<PicooDesktopApp>,
 ) -> impl IntoElement {
     let (state_color, state_icon) = match state {
@@ -448,26 +468,32 @@ pub(super) fn network_status_row(
 
     div()
         .h_flex()
+        .flex_1()
+        .min_w_0()
         .items_center()
-        .justify_between()
-        .gap_3()
+        .justify_center()
+        .gap_1()
+        .px_1()
         .text_xs()
+        .when(show_divider, |this| {
+            this.border_l_1().border_color(cx.theme().border)
+        })
         .child(
-            div()
-                .h_flex()
-                .items_center()
-                .gap_2p5()
-                .text_color(cx.theme().muted_foreground)
-                .child(reicon_named(icon, cx.theme().muted_foreground))
-                .child(label),
+            reicon_named(icon, cx.theme().muted_foreground)
+                .size(rems(0.875))
+                .flex_none(),
         )
         .child(
             div()
-                .h_flex()
-                .items_center()
-                .gap_1p5()
-                .child(value.into())
-                .child(reicon_named(state_icon, state_color)),
+                .min_w_0()
+                .truncate()
+                .whitespace_nowrap()
+                .child(value.into()),
+        )
+        .child(
+            reicon_named(state_icon, state_color)
+                .size(rems(0.875))
+                .flex_none(),
         )
 }
 
@@ -478,6 +504,8 @@ pub(super) fn metric_row(
 ) -> impl IntoElement {
     div()
         .h_flex()
+        .w_full()
+        .min_w_0()
         .justify_between()
         .gap_4()
         .pb_2()
@@ -485,12 +513,18 @@ pub(super) fn metric_row(
         .border_color(cx.theme().border)
         .child(
             div()
+                .flex_none()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(label),
         )
         .child(
             div()
+                .min_w_0()
+                .flex_1()
+                .truncate()
+                .whitespace_nowrap()
+                .text_right()
                 .text_xs()
                 .font_family(cx.theme().mono_font_family.clone())
                 .font_weight(FontWeight::MEDIUM)
@@ -538,7 +572,7 @@ mod tests {
         );
         assert_eq!(
             connection_security_status(ReceiverStatus::Pairing),
-            ("已加密 · 待确认", false)
+            ("加密待确认", false)
         );
         assert_eq!(
             connection_security_status(ReceiverStatus::Streaming),

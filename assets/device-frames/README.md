@@ -8,6 +8,8 @@
   `c1644a3d49dcd50ebf8c76306409c4b1d9b7a2b4`，MIT 许可证见同目录 `LICENSE`。
 - `macbook-pro-light.svg` / `macbook-pro-dark.svg`：Picoo HTML 原型自行定义的
   MacBook Pro 外框，不属于 `sneas/telephone`。
+- `generic-phone.svg`：Picoo 自行绘制的中性手机缩略机框，用于可信设备列表；保留
+  屏幕、金属边框、听筒与镜头层次，但不冒充具体手机品牌或操作系统。
 
 Android Sender 的发现空状态从这两份 SVG 生成
 `apps/android/app/src/main/res/drawable-nodpi/picoo_macbook_pro_{light,dark}.png`。Android

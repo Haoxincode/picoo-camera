@@ -622,17 +622,46 @@ pub fn format_last_connected_ms(ms: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}")
 }
 
+/// Human-readable age for the compact trusted-device row.
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn format_last_connected_relative_ms(last_connected_ms: u64, now_ms: u64) -> String {
+    if last_connected_ms == 0 {
+        return "时间未知".into();
+    }
+
+    let elapsed_days = now_ms.saturating_sub(last_connected_ms) / 86_400_000;
+    match elapsed_days {
+        0 => "今天".into(),
+        1 => "昨天".into(),
+        days => format!("{days} 天前"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        distinguishable_fingerprint_prefix, format_last_connected_ms, sanitize_receiver_stats,
-        TrustedDeviceSummary,
+        distinguishable_fingerprint_prefix, format_last_connected_ms,
+        format_last_connected_relative_ms, sanitize_receiver_stats, TrustedDeviceSummary,
     };
 
     #[test]
     fn format_last_connected_utc_date_or_dash() {
         assert_eq!(format_last_connected_ms(0), "—");
         assert_eq!(format_last_connected_ms(1_577_836_800_000), "2020-01-01");
+    }
+
+    #[test]
+    fn format_last_connected_relative_age_is_compact_and_clock_skew_safe() {
+        const DAY_MS: u64 = 86_400_000;
+        let now = 2_000_000_000_000;
+        assert_eq!(format_last_connected_relative_ms(0, now), "时间未知");
+        assert_eq!(format_last_connected_relative_ms(now, now), "今天");
+        assert_eq!(format_last_connected_relative_ms(now - DAY_MS, now), "昨天");
+        assert_eq!(
+            format_last_connected_relative_ms(now - 12 * DAY_MS, now),
+            "12 天前"
+        );
+        assert_eq!(format_last_connected_relative_ms(now + DAY_MS, now), "今天");
     }
 
     #[test]

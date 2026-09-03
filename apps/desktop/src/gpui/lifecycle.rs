@@ -82,7 +82,7 @@ impl PicooDesktopApp {
             window_handle,
             pairing_dialog_code: None,
             pairing_dialog_pending: None,
-            pairing_dialog_visible: false,
+            pairing_dialog: Default::default(),
             pairing_locally_confirmed: false,
             identity_replacement_dialog_revision: None,
         }
@@ -182,7 +182,7 @@ impl PicooDesktopApp {
                     let video_changed = this
                         .preview_pipeline
                         .take_prepared()
-                        .is_some_and(|preview| this.video_surface.present(preview));
+                        .is_some_and(|preview| this.video_surface.present(preview, cx));
                     let snapshot = this.runtime.snapshot();
                     let previous_page = this.page;
                     // REQ-PICOO-UI-008: Windows tray message/tip pump.
@@ -284,7 +284,7 @@ impl PicooDesktopApp {
                                 }
                                 if opened {
                                     this.pairing_dialog_code = Some(code);
-                                    this.pairing_dialog_visible = true;
+                                    this.pairing_dialog.mark_opened();
                                 } else {
                                     tracing::warn!(
                                         "pairing dialog could not reach the desktop window; inline confirmation remains available"
@@ -303,7 +303,7 @@ impl PicooDesktopApp {
                         .trusted_identity_replacement
                         .as_ref()
                         .filter(|_| !matches!(snapshot.status, ReceiverStatus::Pairing))
-                        .filter(|_| !this.pairing_dialog_visible)
+                        .filter(|_| !this.pairing_dialog.is_visible())
                         .filter(|replacement| {
                             this.identity_replacement_dialog_revision
                                 != Some(replacement.revision)
@@ -355,8 +355,7 @@ impl PicooDesktopApp {
                         this.pairing_dialog_code = None;
                         this.pairing_dialog_pending = None;
                         this.pairing_locally_confirmed = false;
-                        if this.pairing_dialog_visible {
-                            this.pairing_dialog_visible = false;
+                        if this.pairing_dialog.request_close() {
                             let window_handle = this.window_handle;
                             cx.spawn(async move |_, cx| {
                                 cx.background_executor()

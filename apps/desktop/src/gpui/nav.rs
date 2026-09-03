@@ -277,23 +277,46 @@ impl PicooDesktopApp {
             DesktopSection::Help => self.render_help_page(cx).into_any_element(),
             DesktopSection::About => self.render_about_page(cx).into_any_element(),
         };
-        div()
-            .w_full()
-            .h_full()
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
-            .overflow_y_scrollbar()
-            .child(
-                div()
-                    .v_flex()
-                    .w_full()
-                    .min_h_full()
-                    .gap_4()
-                    .p_4()
-                    .child(page),
-            )
-            .into_any_element()
+        if self.section == DesktopSection::Connect {
+            // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01: the connection workspace is
+            // stable at the supported minimum; its trusted-device list owns
+            // ordinary overflow instead of nesting it under a page scrollbar.
+            div()
+                .size_full()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .overflow_hidden()
+                .child(
+                    div()
+                        .v_flex()
+                        .size_full()
+                        .min_w_0()
+                        .min_h_0()
+                        .gap_4()
+                        .p_4()
+                        .child(page),
+                )
+                .into_any_element()
+        } else {
+            div()
+                .w_full()
+                .h_full()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .overflow_y_scrollbar()
+                .child(
+                    div()
+                        .v_flex()
+                        .w_full()
+                        .min_h_full()
+                        .gap_4()
+                        .p_4()
+                        .child(page),
+                )
+                .into_any_element()
+        }
     }
 
     pub(super) fn render_workspace_toolbar(&self, cx: &Context<Self>) -> gpui::AnyElement {

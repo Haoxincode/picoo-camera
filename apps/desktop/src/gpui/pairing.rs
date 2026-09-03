@@ -104,7 +104,7 @@ impl PicooDesktopApp {
                     let close_app = close_app.clone();
                     move |_, _, cx| {
                         let _ = close_app.update(cx, |this, cx| {
-                            this.pairing_dialog_visible = false;
+                            this.pairing_dialog.mark_closed();
                             cx.notify();
                         });
                     }

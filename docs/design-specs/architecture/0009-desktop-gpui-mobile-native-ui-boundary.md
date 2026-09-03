@@ -40,6 +40,12 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 - 支持占位画面；
 - **不** 拥有解码器或网络会话。
 
+VideoSurface 的平台资源必须是有界的。macOS 使用 GPUI 原生 `surface(CVPixelBuffer)` 视频合成路径，
+由 latest-only 后台准备器向最多三个 CoreVideo 缓冲写入画面；不得把连续视频帧作为唯一 ID 的
+`RenderImage` 送入静态 Sprite Atlas。GPUI 尚未提供原生视频 Surface 的平台，允许使用
+`RenderImage` 回退，但替换帧时必须同步驱逐上一帧的 atlas entry，任何帧率和运行时长下都只能
+保留常数数量的 CPU/GPU 帧资源。缓冲耗尽时丢弃预览帧，不得反压 FrameHub、解码或网络会话。
+
 ### 桌面状态边界
 
 GPUI View 不直接持有 QUIC Connection、Decoder 或 Frame Buffer。统一状态模型：

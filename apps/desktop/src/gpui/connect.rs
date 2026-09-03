@@ -11,12 +11,15 @@ use crate::receiver_runtime::ReceiverSnapshot;
 
 use super::icons::reicon_named;
 use super::pairing::{connection_code_hero, format_pairing_code};
-use super::vcam::vcam_label_zh;
 use super::widgets::{
-    connection_security_status, hardware_topology, live_hud_pill, network_status_row,
-    onboarding_step, status_badge, NetworkStatusState,
+    connection_security_status, hardware_topology, network_status_item, onboarding_step,
+    status_badge, NetworkStatusState,
 };
 use super::{DesktopPage, PicooDesktopApp};
+
+const CONNECT_AUXILIARY_MIN_WIDTH: Rems = rems(21.);
+const CONNECT_AUXILIARY_WIDTH: Rems = rems(24.);
+const CONNECT_LIVE_AUXILIARY_WIDTH: Rems = rems(18.);
 
 impl PicooDesktopApp {
     pub(super) fn render_connect(
@@ -24,21 +27,35 @@ impl PicooDesktopApp {
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
     ) -> impl IntoElement {
-        // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01: distribute all available
-        // workspace width after the gap, instead of capping the page at 1160 px.
+        let is_live = self.page == DesktopPage::Live;
+        let auxiliary_min_width = if is_live {
+            CONNECT_LIVE_AUXILIARY_WIDTH
+        } else {
+            CONNECT_AUXILIARY_MIN_WIDTH
+        };
+        let auxiliary_width = if is_live {
+            CONNECT_LIVE_AUXILIARY_WIDTH
+        } else {
+            CONNECT_AUXILIARY_WIDTH
+        };
+
+        // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01 / AC-D-LIVE-01: the primary pane
+        // consumes all surplus width. Live narrows the auxiliary inspector so the
+        // camera remains the screen's largest visual object at the minimum window.
         div()
             .h_flex()
             .size_full()
+            .min_w_0()
             .min_h_0()
             .items_stretch()
-            .gap_5()
+            .when(is_live, |this| this.gap_4())
+            .when(!is_live, |this| this.gap_5())
             .child(
                 div()
                     .v_flex()
                     .h_full()
                     .min_w_0()
-                    .flex_basis(rems(0.))
-                    .flex_grow(58.)
+                    .flex_1()
                     .flex_shrink_1()
                     .child(if self.page == DesktopPage::Live {
                         self.render_live(snapshot, cx).into_any_element()
@@ -50,14 +67,11 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .h_full()
-                    .min_w_0()
-                    .flex_basis(rems(0.))
-                    .flex_grow(42.)
+                    .w(auxiliary_width)
+                    .min_w(auxiliary_min_width)
+                    .max_w(auxiliary_width)
                     .flex_shrink_1()
-                    .justify_between()
-                    .gap_4()
-                    .child(self.render_device_connection_card(snapshot, cx))
-                    .child(self.render_network_status_card(snapshot, cx)),
+                    .child(self.render_device_connection_card(snapshot, cx)),
             )
     }
 
@@ -84,7 +98,8 @@ impl PicooDesktopApp {
             .v_flex()
             .flex_1()
             .h_full()
-            .min_h(rems(35.))
+            .min_w_0()
+            .min_h_0()
             .justify_between()
             .gap_5()
             .p_5()
@@ -269,43 +284,7 @@ impl PicooDesktopApp {
                             .child(hardware_topology(cx)),
                     ),
             )
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_3()
-                    .pt_3()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .size_2()
-                                    .flex_none()
-                                    .rounded_full()
-                                    .bg(cx.theme().success),
-                            )
-                            .child(format!("局域网监听中 · {DEFAULT_QUIC_PORT}")),
-                    )
-                    .child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_1p5()
-                            .flex_none()
-                            .child(
-                                reicon_named("shield-check", cx.theme().primary).size(rems(0.875)),
-                            )
-                            .child("连接后使用加密传输"),
-                    ),
-            )
+            .child(self.render_network_status_bar(snapshot, cx))
     }
 
     pub(super) fn render_manual_endpoint_card(
@@ -326,7 +305,7 @@ impl PicooDesktopApp {
             }))
     }
 
-    pub(super) fn render_network_status_card(
+    pub(super) fn render_network_status_bar(
         &self,
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
@@ -336,78 +315,67 @@ impl PicooDesktopApp {
             && snapshot.advertise_host != "127.0.0.1";
         let (security_status, security_ready) = connection_security_status(snapshot.status);
         let (latency, latency_state) = match snapshot.receiver_stats.as_ref() {
-            None => ("等待样本", NetworkStatusState::Pending),
+            None => ("待测", NetworkStatusState::Pending),
             Some(stats) if stats.rtt_ms <= 30.0 => ("低", NetworkStatusState::Healthy),
             Some(stats) if stats.rtt_ms <= 80.0 => ("一般", NetworkStatusState::Healthy),
             Some(_) => ("较高", NetworkStatusState::Warning),
         };
         div()
-            .v_flex()
-            .gap_3()
-            .p_5()
-            .rounded(cx.theme().radius_lg)
-            .border_1()
+            .h_flex()
+            .w_full()
+            .min_w_0()
+            .flex_none()
+            .items_stretch()
+            .px_2()
+            .py_3()
+            .border_t_1()
             .border_color(cx.theme().border)
-            .bg(cx.theme().group_box)
-            .when(cx.theme().shadow, |this| this.shadow_lg())
-            .child(
-                div()
-                    .h_flex()
-                    .gap_2()
-                    .child(reicon_named("activity", cx.theme().primary))
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("网络状态"),
-                    ),
-            )
-            .child(network_status_row(
+            .child(network_status_item(
                 "wifi",
-                "网络",
                 if network_ready {
-                    "局域网可用"
+                    "网络可用"
                 } else {
-                    "未检测到局域网"
+                    "网络异常"
                 },
                 if network_ready {
                     NetworkStatusState::Healthy
                 } else {
                     NetworkStatusState::Warning
                 },
+                false,
                 cx,
             ))
-            .child(network_status_row(
+            .child(network_status_item(
                 "server",
-                "发现服务",
                 if snapshot.discovery_available {
-                    "在线"
+                    "发现在线"
                 } else {
-                    "不可用"
+                    "发现异常"
                 },
                 if snapshot.discovery_available {
                     NetworkStatusState::Healthy
                 } else {
                     NetworkStatusState::Warning
                 },
+                true,
                 cx,
             ))
-            .child(network_status_row(
+            .child(network_status_item(
                 "activity",
-                "延迟",
-                latency,
+                format!("延迟{latency}"),
                 latency_state,
+                true,
                 cx,
             ))
-            .child(network_status_row(
+            .child(network_status_item(
                 "shield",
-                "连接保护",
                 security_status,
                 if security_ready {
                     NetworkStatusState::Healthy
                 } else {
                     NetworkStatusState::Pending
                 },
+                true,
                 cx,
             ))
     }
@@ -444,11 +412,6 @@ impl PicooDesktopApp {
                 }
             })
             .unwrap_or_else(|| "—".into());
-        let sender_name = snapshot
-            .active_sender
-            .as_ref()
-            .map(|sender| sender.device_name.clone())
-            .unwrap_or_else(|| "手机摄像头".into());
         let quality = snapshot.receiver_stats.as_ref().map(|stats| {
             crate::network_quality::network_quality_label(stats.packet_loss, stats.rtt_ms)
         });
@@ -466,17 +429,13 @@ impl PicooDesktopApp {
                 )
             })
             .unwrap_or_else(|| format!("{res_label} · 等待链路统计样本"));
-        let frame_status = snapshot
-            .media_error
-            .as_ref()
-            .map(|error| format!("视频解码失败 · {error}"))
-            .or_else(|| {
-                (snapshot.ingress.decoded_frames == 0).then(|| "正在等待首个视频帧…".into())
-            });
-
         div()
             .v_flex()
             .w_full()
+            .h_full()
+            .min_w_0()
+            .min_h_0()
+            .flex_1()
             .overflow_hidden()
             .rounded(cx.theme().radius_lg)
             .border_1()
@@ -484,52 +443,33 @@ impl PicooDesktopApp {
             .bg(cx.theme().group_box)
             .when(cx.theme().shadow, |this| this.shadow_lg())
             .child(
-                div().p_4().child(
-                    div()
-                        // REQ-PICOO-UI-0001 / AC-D-TECH-02: the preview surface,
-                        // including its empty state, always occupies a 16:9 viewport.
-                        .w_full()
-                        .aspect_ratio(16. / 9.)
-                        .flex_none()
-                        .relative()
-                        .rounded(cx.theme().radius)
-                        .bg(cx.theme().muted)
-                        .overflow_hidden()
-                        .child(self.video_surface.render_preview())
-                        .when_some(frame_status, |this, status| {
-                            this.child(
-                                div()
-                                    .absolute()
-                                    .inset_0()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .child(live_hud_pill(status, cx)),
-                            )
-                        })
-                        .child(
-                            div()
-                                .absolute()
-                                .top_3()
-                                .left_4()
-                                .right_4()
-                                .h_flex()
-                                .justify_between()
-                                .child(live_hud_pill(format!("● {sender_name} · {res_label}"), cx))
-                                .child(live_hud_pill(
-                                    format!(
-                                        "虚拟摄像头 · {}",
-                                        vcam_label_zh(snapshot.virtual_camera)
-                                    ),
-                                    cx,
-                                )),
-                        ),
-                ),
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .items_center()
+                    .justify_center()
+                    .p_3()
+                    .child(
+                        div()
+                            // REQ-PICOO-UI-0001 / AC-D-TECH-02: the preview surface,
+                            // including its empty state, always occupies a 16:9 viewport.
+                            .w_full()
+                            .aspect_ratio(16. / 9.)
+                            .flex_none()
+                            .relative()
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().muted)
+                            .overflow_hidden()
+                            .child(self.video_surface.render_preview()),
+                    ),
             )
             .child(
                 div()
                     .h_flex()
-                    .justify_between()
+                    .w_full()
+                    .min_w_0()
                     .items_center()
                     .p_4()
                     .border_t_1()
@@ -537,6 +477,8 @@ impl PicooDesktopApp {
                     .child(
                         div()
                             .v_flex()
+                            .min_w_0()
+                            .flex_1()
                             .gap_0p5()
                             .child(
                                 div()
@@ -548,17 +490,13 @@ impl PicooDesktopApp {
                                 div()
                                     .text_xs()
                                     .text_color(cx.theme().muted_foreground)
+                                    .truncate()
+                                    .whitespace_nowrap()
                                     .child(live_metrics),
                             ),
-                    )
-                    .child(
-                        div()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_xs()
-                            .text_color(cx.theme().success)
-                            .child("● LIVE"),
                     ),
             )
+            .child(self.render_network_status_bar(snapshot, cx))
     }
 }
 

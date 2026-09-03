@@ -13,6 +13,7 @@ pub(super) fn reicon_named(name: &str, color: Hsla) -> Svg {
         "check-circle-filled" => {
             include_bytes!("../../../../assets/icons/reicon/check_circle_filled.svg")
         }
+        "clock" => include_bytes!("../../../../assets/icons/reicon/clock.svg"),
         "copy" => include_bytes!("../../../../assets/icons/reicon/copy.svg"),
         "desktop" => include_bytes!("../../../../assets/icons/reicon/desktop.svg"),
         "help" => include_bytes!("../../../../assets/icons/reicon/help.svg"),
@@ -79,6 +80,10 @@ mod tests {
                 "check-circle-filled",
                 include_bytes!("../../../../assets/icons/reicon/check_circle_filled.svg")
                     .as_slice(),
+            ),
+            (
+                "clock",
+                include_bytes!("../../../../assets/icons/reicon/clock.svg").as_slice(),
             ),
             (
                 "help-circle",

@@ -45,6 +45,36 @@ enum DesktopSection {
     About,
 }
 
+#[derive(Default)]
+struct PairingDialogLifecycle {
+    visible: bool,
+    close_requested: bool,
+}
+
+impl PairingDialogLifecycle {
+    fn is_visible(&self) -> bool {
+        self.visible
+    }
+
+    fn mark_opened(&mut self) {
+        self.visible = true;
+        self.close_requested = false;
+    }
+
+    fn request_close(&mut self) -> bool {
+        if !self.visible || self.close_requested {
+            return false;
+        }
+        self.close_requested = true;
+        true
+    }
+
+    fn mark_closed(&mut self) {
+        self.visible = false;
+        self.close_requested = false;
+    }
+}
+
 impl DesktopSection {
     fn label(self) -> &'static str {
         match self {
@@ -81,9 +111,28 @@ struct PicooDesktopApp {
     pairing_dialog_code: Option<String>,
     /// Pairing code currently scheduled for dialog presentation.
     pairing_dialog_pending: Option<String>,
-    pairing_dialog_visible: bool,
+    pairing_dialog: PairingDialogLifecycle,
     pairing_locally_confirmed: bool,
     /// Current post-pairing same-name replacement prompt. Domain identity,
     /// never a list index (REQ-PICOO-PAIRING-006).
     identity_replacement_dialog_revision: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PairingDialogLifecycle;
+
+    #[test]
+    fn pairing_dialog_stays_visible_until_close_completes() {
+        let mut lifecycle = PairingDialogLifecycle::default();
+        lifecycle.mark_opened();
+
+        assert!(lifecycle.request_close());
+        assert!(lifecycle.is_visible());
+        assert!(!lifecycle.request_close());
+
+        lifecycle.mark_closed();
+        assert!(!lifecycle.is_visible());
+        assert!(!lifecycle.request_close());
+    }
 }

@@ -11,6 +11,7 @@ use picoo_session::ReceiverStatus;
 use crate::receiver_runtime::ReceiverSnapshot;
 
 use super::icons::{reicon_button_content, reicon_named};
+use super::vcam::vcam_label_zh;
 use super::widgets::{metric_row, status_badge};
 use super::{DesktopPage, PicooDesktopApp};
 
@@ -62,13 +63,25 @@ impl PicooDesktopApp {
                             .py_0p5()
                             .rounded(cx.theme().radius_full())
                             .border_1()
-                            .border_color(cx.theme().border)
-                            .bg(cx.theme().secondary)
+                            .border_color(if streaming {
+                                cx.theme().success.opacity(0.4)
+                            } else {
+                                cx.theme().border
+                            })
+                            .bg(if streaming {
+                                cx.theme().success.opacity(0.12)
+                            } else {
+                                cx.theme().secondary
+                            })
                             .font_family(cx.theme().mono_font_family.clone())
                             .text_xs()
-                            .text_color(cx.theme().muted_foreground)
+                            .text_color(if streaming {
+                                cx.theme().success
+                            } else {
+                                cx.theme().muted_foreground
+                            })
                             .child(if streaming {
-                                "实时推流"
+                                "Live"
                             } else if snapshot.trusted_device_count == 0 {
                                 "等待设备"
                             } else {
@@ -95,10 +108,12 @@ impl PicooDesktopApp {
                     .outline()
                     .small()
                     .flex_1()
+                    .min_w_0()
                     .selected(remote_mirrored)
+                    .tooltip("镜像翻转")
                     .accessibility_label("镜像翻转")
                     .child(reicon_button_content(
-                        "镜像翻转",
+                        "镜像",
                         "flip-horizontal",
                         mirror_icon_color,
                     ));
@@ -113,44 +128,42 @@ impl PicooDesktopApp {
                 this.child(
                     div()
                         .v_flex()
+                        .flex_1()
+                        .min_h_0()
                         .gap_3()
+                        .overflow_y_scrollbar()
                         .child(
                             div()
                                 .h_flex()
+                                .min_w_0()
                                 .justify_between()
                                 .items_center()
+                                .gap_2()
                                 .p_3()
                                 .rounded(cx.theme().radius)
                                 .border_1()
                                 .border_color(cx.theme().primary.opacity(0.45))
                                 .bg(cx.theme().secondary)
                                 .child(
-                                    div()
-                                        .v_flex()
-                                        .gap_0p5()
-                                        .child(
-                                            div()
-                                                .text_sm()
-                                                .font_weight(FontWeight::SEMIBOLD)
-                                                .child(sender_name),
-                                        )
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().success)
-                                                .child("● 实时推流中"),
-                                        ),
+                                    div().v_flex().min_w_0().flex_1().child(
+                                        div()
+                                            .min_w_0()
+                                            .text_sm()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .truncate()
+                                            .child(sender_name),
+                                    ),
                                 )
                                 .child(
                                     Button::new("disconnect-active-device")
-                                        .danger()
-                                        .small()
+                                        .ghost()
+                                        .flex_none()
+                                        .tooltip("断开设备")
                                         .accessibility_label("断开")
-                                        .child(reicon_button_content(
-                                            "断开",
-                                            "xmark",
-                                            cx.theme().danger_foreground,
-                                        ))
+                                        .child(
+                                            reicon_named("xmark", cx.theme().danger)
+                                                .size(rems(0.875)),
+                                        )
                                         .on_click(cx.listener(move |_, _, window, cx| {
                                             PicooDesktopApp::open_disconnect_dialog(
                                                 cx.entity().downgrade(),
@@ -170,6 +183,11 @@ impl PicooDesktopApp {
                                 .border_1()
                                 .border_color(cx.theme().border)
                                 .bg(cx.theme().secondary.opacity(0.45))
+                                .child(metric_row(
+                                    "虚拟摄像头",
+                                    vcam_label_zh(snapshot.virtual_camera).into(),
+                                    cx,
+                                ))
                                 .child(metric_row(
                                     "视频规格",
                                     snapshot
@@ -248,6 +266,8 @@ impl PicooDesktopApp {
                                 .child(
                                     div()
                                         .h_flex()
+                                        .w_full()
+                                        .min_w_0()
                                         .gap_2()
                                         .child(mirror_button)
                                         .child(
@@ -255,9 +275,11 @@ impl PicooDesktopApp {
                                                 .outline()
                                                 .small()
                                                 .flex_1()
+                                                .min_w_0()
+                                                .tooltip("镜头切换")
                                                 .accessibility_label("镜头切换")
                                                 .child(reicon_button_content(
-                                                    "镜头切换",
+                                                    "切换",
                                                     "camera-rotate",
                                                     cx.theme().primary,
                                                 ))
@@ -276,9 +298,11 @@ impl PicooDesktopApp {
                                                 .outline()
                                                 .small()
                                                 .flex_1()
+                                                .min_w_0()
+                                                .tooltip("画面修复")
                                                 .accessibility_label("画面修复")
                                                 .child(reicon_button_content(
-                                                    "画面修复",
+                                                    "修复",
                                                     "refresh",
                                                     cx.theme().primary,
                                                 ))
@@ -297,6 +321,7 @@ impl PicooDesktopApp {
                 )
             })
             .when(!streaming, |this| {
+                let now_ms = current_unix_time_ms();
                 this.child(
                     div()
                         .v_flex()
@@ -327,6 +352,11 @@ impl PicooDesktopApp {
                             let device_id = device.device_id.clone();
                             let device_name = device.device_name.clone();
                             let identity_prefix = device.identity_prefix.clone();
+                            let last_connected =
+                                crate::receiver_runtime::format_last_connected_relative_ms(
+                                    device.last_connected_at_ms,
+                                    now_ms,
+                                );
                             div()
                                 .h_flex()
                                 .justify_between()
@@ -342,28 +372,21 @@ impl PicooDesktopApp {
                                         .h_flex()
                                         .items_center()
                                         .min_w_0()
-                                        .gap_3()
+                                        .flex_1()
+                                        .gap_2()
                                         .child(
-                                            div()
-                                                .size_7()
-                                                .flex()
+                                            img("device-frames/generic-phone.svg")
+                                                .w_8()
+                                                .h_16()
                                                 .flex_none()
-                                                .items_center()
-                                                .justify_center()
-                                                .rounded(cx.theme().radius)
-                                                .border_1()
-                                                .border_color(cx.theme().border)
-                                                .bg(cx.theme().group_box)
-                                                .child(
-                                                    reicon_named("iphone", cx.theme().primary)
-                                                        .size(rems(1.)),
-                                                ),
+                                                .object_fit(ObjectFit::Contain),
                                         )
                                         .child(
                                             div()
                                                 .v_flex()
                                                 .min_w_0()
-                                                .gap_0p5()
+                                                .flex_1()
+                                                .gap_1()
                                                 .child(
                                                     div()
                                                         .text_sm()
@@ -373,15 +396,44 @@ impl PicooDesktopApp {
                                                 )
                                                 .child(
                                                     div()
+                                                        .h_flex()
+                                                        .min_w_0()
+                                                        .items_center()
+                                                        .gap_1()
                                                         .text_xs()
                                                         .text_color(cx.theme().muted_foreground)
-                                                        .child(format!(
-                                                            "{} · 身份 {} · 最近连接 {} · 等待手机接入",
-                                                            device.platform,
-                                                            identity_prefix,
-                                                            crate::receiver_runtime::format_last_connected_ms(
-                                                                device.last_connected_at_ms,
+                                                        .whitespace_nowrap()
+                                                        .child(
+                                                            reicon_named(
+                                                                "clock",
+                                                                cx.theme().muted_foreground,
                                                             )
+                                                            .size(rems(0.75))
+                                                            .flex_none(),
+                                                        )
+                                                        .child(div().min_w_0().truncate().child(
+                                                            format!("最近连接 {last_connected}"),
+                                                        )),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .h_flex()
+                                                        .min_w_0()
+                                                        .items_center()
+                                                        .gap_1()
+                                                        .text_xs()
+                                                        .text_color(cx.theme().muted_foreground)
+                                                        .whitespace_nowrap()
+                                                        .child(
+                                                            reicon_named(
+                                                                "key",
+                                                                cx.theme().muted_foreground,
+                                                            )
+                                                            .size(rems(0.75))
+                                                            .flex_none(),
+                                                        )
+                                                        .child(div().min_w_0().truncate().child(
+                                                            format!("身份 {identity_prefix}"),
                                                         )),
                                                 ),
                                         ),
@@ -389,23 +441,21 @@ impl PicooDesktopApp {
                                 .child(
                                     div()
                                         .h_flex()
+                                        .flex_none()
                                         .items_center()
                                         .gap_1()
-                                        .child(status_badge("已信任", true, cx))
+                                        .child(status_badge("等待接入", false, cx))
                                         .child(
                                             Button::new(format!(
-                                                "manage-trusted-{}",
+                                                "remove-trusted-{}",
                                                 device.device_id
                                             ))
                                             .ghost()
-                                            .xsmall()
-                                            .accessibility_label("管理可信设备")
+                                            .tooltip("删除可信设备")
+                                            .accessibility_label("删除可信设备")
                                             .child(
-                                                reicon_named(
-                                                    "more-horizontal",
-                                                    cx.theme().muted_foreground,
-                                                )
-                                                .size(rems(0.875)),
+                                                reicon_named("xmark", cx.theme().danger)
+                                                    .size(rems(0.875)),
                                             )
                                             .on_click(cx.listener(move |_, _, window, cx| {
                                                 PicooDesktopApp::open_remove_trusted_dialog(
@@ -523,4 +573,11 @@ impl PicooDesktopApp {
                 })
         });
     }
+}
+
+fn current_unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
 }

@@ -5193,6 +5193,8 @@ name = "picoo-desktop"
 version = "0.1.1"
 dependencies = [
  "bytes",
+ "core-foundation 0.10.1",
+ "core-video",
  "dispatch2",
  "fast_image_resize",
  "gpui",

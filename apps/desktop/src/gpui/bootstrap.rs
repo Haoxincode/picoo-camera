@@ -11,7 +11,11 @@ use crate::vcam_status::detect_vcam_status;
 
 use super::PicooDesktopApp;
 
-const DEVICE_FRAME_ASSETS: [(&str, &[u8]); 3] = [
+const DEVICE_FRAME_ASSETS: [(&str, &[u8]); 4] = [
+    (
+        "device-frames/generic-phone.svg",
+        include_bytes!("../../../../assets/device-frames/generic-phone.svg"),
+    ),
     (
         "device-frames/iphone-16-max.svg",
         include_bytes!("../../../../assets/device-frames/iphone-16-max.svg"),
@@ -27,6 +31,10 @@ const DEVICE_FRAME_ASSETS: [(&str, &[u8]); 3] = [
 ];
 
 struct PicooAssets;
+
+// REQ-PICOO-UI-0001 / AC-D-LAYOUT-01: the first open uses the smallest
+// verified workspace rather than starting as a full-HD-sized window.
+const COMPACT_WINDOW_SIZE: gpui::Size<Pixels> = size(px(1120.), px(720.));
 
 impl AssetSource for PicooAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -81,9 +89,9 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds {
                     origin: point(px(100.), px(100.)),
-                    size: size(px(1920.), px(1080.)),
+                    size: COMPACT_WINDOW_SIZE,
                 })),
-                window_min_size: Some(size(px(1180.), px(720.))),
+                window_min_size: Some(COMPACT_WINDOW_SIZE),
                 ..TitleBar::window_options()
             },
             move |window, cx| {
@@ -162,8 +170,9 @@ mod tests {
     }
 
     #[test]
-    fn hardware_topology_svgs_are_embedded_with_intrinsic_dimensions() {
+    fn device_frame_svgs_are_embedded_with_intrinsic_dimensions() {
         for path in [
+            "device-frames/generic-phone.svg",
             "device-frames/iphone-16-max.svg",
             "device-frames/macbook-pro-light.svg",
             "device-frames/macbook-pro-dark.svg",
