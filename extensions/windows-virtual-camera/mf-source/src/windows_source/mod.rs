@@ -144,7 +144,7 @@ mod tests {
     use windows::Win32::Media::KernelStreaming::IKsControl;
     use windows::Win32::Media::MediaFoundation::{
         IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2,
-        IMFSampleAllocatorControl, IMFVideoSampleAllocator, MFCreateVideoSampleAllocator,
+        IMFSampleAllocatorControl, IMFVideoSampleAllocator, MFCreateVideoSampleAllocatorEx,
         MFShutdown, MFStartup, MF_VERSION,
     };
     use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
@@ -236,8 +236,8 @@ mod tests {
                 .expect("media stream must expose allocator control");
             for _ in 0..2 {
                 let mut raw_allocator = std::ptr::null_mut();
-                MFCreateVideoSampleAllocator(&IMFVideoSampleAllocator::IID, &mut raw_allocator)
-                    .expect("MFCreateVideoSampleAllocator");
+                MFCreateVideoSampleAllocatorEx(&IMFVideoSampleAllocator::IID, &mut raw_allocator)
+                    .expect("MFCreateVideoSampleAllocatorEx");
                 let allocator = IMFVideoSampleAllocator::from_raw(raw_allocator);
                 allocator_control
                     .SetDefaultAllocator(0, &allocator)
