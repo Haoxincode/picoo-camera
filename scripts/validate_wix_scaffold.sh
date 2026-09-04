@@ -9,6 +9,9 @@ CI_WORKFLOW="$ROOT/.github/workflows/ci.yml"
 VCAM_IDS="$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/mod.rs"
 VCAM_MANIFEST="$ROOT/extensions/windows-virtual-camera/mf-source/Cargo.toml"
 VCAM_RS="$ROOT/apps/desktop/src/vcam_register.rs"
+VCAM_HOST_RS="$ROOT/apps/desktop/src/vcam_register/host_contract.rs"
+VCAM_HOST_PS1="$ROOT/scripts/test_windows_vcam_host.ps1"
+VCAM_HOST_WORKFLOW="$ROOT/.github/workflows/windows-vcam-host.yml"
 WINDOWS_RESOURCE="$ROOT/build-support/windows_resource.rs"
 DESKTOP_BUILD="$ROOT/apps/desktop/build.rs"
 MF_SOURCE_BUILD="$ROOT/extensions/windows-virtual-camera/mf-source/build.rs"
@@ -206,6 +209,17 @@ need "$VCAM_RS" 'vcam_symbolic_link'
 need "$VCAM_RS" 'camera_identity_matches'
 need "$VCAM_RS" 'wait_for_registered_camera'
 need "$VCAM_RS" 'self.camera.Shutdown()'
+need "$VCAM_HOST_RS" 'ActivateObject()'
+need "$VCAM_HOST_RS" 'CreatePresentationDescriptor()'
+need "$VCAM_HOST_RS" 'source.Start('
+need "$VCAM_HOST_RS" 'source.Stop()'
+need "$VCAM_HOST_RS" 'source.Shutdown()'
+need "$VCAM_HOST_PS1" '"/fa"'
+need "$VCAM_HOST_PS1" 'idempotent second unregister'
+need "$VCAM_HOST_PS1" 'device absence after uninstall'
+need "$VCAM_HOST_PS1" 'SessionId -eq 0'
+need "$VCAM_HOST_WORKFLOW" 'runs-on: [self-hosted, Windows, X64, picoo-vcam]'
+need "$VCAM_HOST_WORKFLOW" './scripts/test_windows_vcam_host.ps1'
 if sed -n '/pub fn register_system()/,/^    }/p' "$VCAM_RS" | grep -q 'wait_for_registered_camera'; then
   echo "register_system must not make MSI success depend on service-session camera enumeration"
   fail=1

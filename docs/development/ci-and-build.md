@@ -42,12 +42,20 @@ GitHub Actions
 | `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz、30 分钟 paired loopback soak、Shared Ring/FFI Miri 与原子协议 Loom model | `cargo xtask test fuzz/soak/miri/loom` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
+| `Windows VCam host contract` | `self-hosted, Windows, X64, picoo-vcam`（专用管理员 Win11 client） | MSI 安装/repair/卸载、exact-link 枚举、MF Source 激活与 Start/Stop/Shutdown | `cargo xtask package windows`、`scripts/test_windows_vcam_host.ps1` |
 | `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 | `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 | 递增 Host/Extension 版本；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
 
 Nightly validation 使用 `nightly-2026-09-03`，并由 `xtask` 持有同一常量；更新 Miri 或
 cargo-fuzz 工具链时必须同时本地复核 strict-provenance、四个 fuzz target 和 workflow。
+
+`windows-latest` 可能是 Windows Server/headless 环境，只证明 bundle、MSI 数据库与 DLL
+进程内契约，不冒充 Windows 11 Frame Server 主机。独立 `windows-vcam-host.yml` 不作为 PR
+必需检查；它只调度带 `picoo-vcam` 标签、管理员权限、交互式非 Session 0 登录且启用 Media
+Foundation Frame Server 的专用 Windows 11 client runner。脚本要求 runner 开始时不存在 Picoo 安装，且 finally 只以本次 MSI 做有界
+卸载清理，避免接管不属于当前 run 的系统状态。首次真实 runner 绿测前，相应 Requirement 只
+能标记 `implemented`。
 
 ### 依赖关系
 
@@ -169,7 +177,7 @@ Apple Release 手动触发时还必须填写一至三段数字的 marketing vers
 | --- | --- |
 | Rust 单元/集成/协议测试 | `ubuntu-latest`（Cloud Agent 本地亦可） |
 | Android 安装与采集发送 | CI artifact + 真机（人工或后续设备 farm） |
-| Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建 + Windows 真机/VM 人工验证 |
+| Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建/静态契约 + 专用 self-hosted Win11 Host Contract；系统相机 UI 与会议软件仍人工验证 |
 | 会议软件（Zoom/Teams 等）兼容性 | 不在 CI 内自动化；[会议软件验收清单](../design-specs/verification/vcam-meeting-apps.md) |
 | Android→Windows 真机 E2E | [真机 E2E 清单](../design-specs/verification/device-e2e-android-win11.md) |
 

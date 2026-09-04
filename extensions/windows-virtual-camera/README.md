@@ -12,7 +12,7 @@ Independent IMFMediaSource DLL (`PicooVirtualCameraSource.dll`) consuming Shared
 
 ## Requirement mapping
 
-- REQ-PICOO-VCAM-001..005
+- REQ-PICOO-VCAM-001..005, REQ-PICOO-VCAM-008..012
 - REQ-PICOO-FRAME-003, REQ-PICOO-FRAME-004, REQ-PICOO-FRAME-007
 
 ## Local test (Linux / Windows)
@@ -50,6 +50,18 @@ msiexec /i target/release/bundle/msi/PicooCamera.msi
 松散 `windows-bundle` 仅用于编译、导出与加载 smoke，不能从用户可写目录完成系统注册。安装后如需修复，请使用桌面“虚拟摄像头”页的“安装或修复…”入口。
 
 COM CLSID: `{A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F}` — friendly name **Picoo Camera**.
+
+专用 Win11 管理员 Runner 使用以下 Host Contract 验证已安装设备，而不是把
+`windows-latest` 的 DLL 进程内测试当作系统发布证明：
+
+```powershell
+./scripts/test_windows_vcam_host.ps1
+```
+
+Harness 会从安装目录调用 `picoo-desktop --verify-vcam-host`，按注册时持久化的 exact
+symbolic link 执行 `MFEnumDeviceSources → ActivateObject → Start → Stop → Shutdown`，并覆盖
+同版 repair、幂等 unregister、重新注册和卸载后设备消失。它要求运行前不存在 Picoo 安装，
+且只清理由本次传入 MSI 创建的产品；会议软件兼容性仍按独立真机清单验收。
 
 ### DLL exports
 

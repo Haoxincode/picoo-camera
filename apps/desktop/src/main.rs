@@ -100,6 +100,23 @@ fn main() {
     }
 
     #[cfg(all(windows, feature = "windows-vcam"))]
+    if args.iter().any(|arg| arg == "--verify-vcam-host") {
+        run_verify_vcam_host();
+        return;
+    }
+
+    #[cfg(all(windows, feature = "windows-vcam"))]
+    if let Some(index) = args.iter().position(|arg| arg == "--verify-vcam-absent") {
+        let symbolic_link = args.get(index + 1).map(String::as_str).unwrap_or("");
+        if symbolic_link.is_empty() {
+            eprintln!("Usage: picoo-desktop --verify-vcam-absent <symbolic-link>");
+            std::process::exit(1);
+        }
+        run_verify_vcam_absent(symbolic_link);
+        return;
+    }
+
+    #[cfg(all(windows, feature = "windows-vcam"))]
     if args.iter().any(|arg| arg == "--register-vcam") {
         let no_wait = args.iter().any(|arg| arg == "--no-wait");
         run_register_vcam(no_wait);
@@ -135,7 +152,33 @@ fn main() {
     println!("Run with --export-diagnostics [path] to export redacted diagnostics JSON.");
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
     #[cfg(all(windows, feature = "windows-vcam"))]
-    println!("Run with --register-vcam [--no-wait] / --unregister-vcam on Windows 11 for MF virtual camera.");
+    println!("Run with --register-vcam [--no-wait] / --unregister-vcam / --verify-vcam-host on Windows 11 for MF virtual camera.");
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn run_verify_vcam_host() {
+    match vcam_register::verify_installed_host_contract() {
+        Ok(report) => println!(
+            "Installed VCam host contract passed: dll={} symbolic_link={}",
+            report.installed_dll.display(),
+            report.symbolic_link
+        ),
+        Err(err) => {
+            eprintln!("Installed VCam host contract failed: {err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn run_verify_vcam_absent(symbolic_link: &str) {
+    match vcam_register::verify_camera_absent(symbolic_link) {
+        Ok(()) => println!("Virtual camera is no longer enumerable."),
+        Err(err) => {
+            eprintln!("Virtual camera removal contract failed: {err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(all(windows, feature = "windows-vcam"))]

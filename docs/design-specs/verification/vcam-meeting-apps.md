@@ -157,7 +157,9 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 
 - [x] MSI 由 `PICOO_REQUIRE_MSI=1` 强制产出
 - [x] DLL UTF-16 嵌入 `Picoo Camera`（`verify_windows_bundle.ps1`）
-- [ ] 真机安装后系统相机枚举（§1 仍属人工）
+- [x] `windows-vcam-host.yml` 在专用、管理员权限的 self-hosted Windows 11 client 上执行 MSI fresh install、exact symbolic-link 枚举、`IMFActivate` 激活、Source Start/Stop/Shutdown、同版 repair、幂等移除、重新注册与卸载清理；workflow 未实际绿测时 Requirement 仍只算 `implemented`
+- [ ] 首次专用 Win11 Runner 绿测及 evidence artifact 归档
+- [ ] §1 系统相机 UI 与 §3 会议软件兼容仍属人工验收，不能由 Host Contract 替代
 
 ## 故障排查
 

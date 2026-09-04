@@ -1,0 +1,55 @@
+name: Windows VCam host contract
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PICOO_BUILD_NUMBER: ${{ github.run_number }}
+
+concurrency:
+  group: windows-vcam-host
+  cancel-in-progress: false
+
+jobs:
+  installed-host-contract:
+    # Dedicated, elevated Windows 11 client runner with Media Foundation Frame
+    # Server enabled. This intentionally does not block ordinary pull requests.
+    runs-on: [self-hosted, Windows, X64, picoo-vcam]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install WiX v5
+        shell: pwsh
+        run: |
+          $tools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          $env:Path = "$tools;$env:Path"
+          if (Test-Path (Join-Path $tools "wix.exe")) {
+            dotnet tool update --global wix --version 5.0.2 --verbosity quiet
+          } else {
+            dotnet tool install --global wix --version 5.0.2 --verbosity quiet
+          }
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          wix extension add WixToolset.Firewall.wixext/5.0.2
+          wix extension add WixToolset.Util.wixext/5.0.2
+      - name: Build and package current Windows installer
+        env:
+          PICOO_REQUIRE_MSI: '1'
+        run: cargo run -p xtask -- package windows
+      - name: Verify bundle and MSI database contract
+        shell: pwsh
+        run: ./scripts/verify_windows_bundle.ps1
+      - name: Install, activate, repair, remove and uninstall VCam
+        shell: pwsh
+        run: ./scripts/test_windows_vcam_host.ps1
+      - name: Upload host-contract evidence and MSI logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-vcam-host-evidence-${{ github.run_number }}
+          path: target/vcam-host-logs/
+          if-no-files-found: warn
+          retention-days: 30

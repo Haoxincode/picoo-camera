@@ -27,8 +27,11 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
+#[path = "vcam_register/host_contract.rs"]
+mod host_contract;
 #[path = "vcam_register/runtime.rs"]
 mod runtime;
+pub use host_contract::{verify_camera_absent, verify_installed_host_contract};
 use runtime::{ComInit, EnumerationComInit, MfInit, ShellComInit};
 
 /// CLSID for the Rust `PicooVirtualCameraSource.dll` COM server.
@@ -180,6 +183,14 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
     };
     let _com = EnumerationComInit::new()?;
     let _mf = MfInit::new()?;
+    Ok(enumerate_registered_camera_activation(&expected_link)?.map(|(_, link)| link))
+}
+
+/// Enumerate the exact persisted device identity while the caller owns COM and
+/// Media Foundation runtime guards.
+fn enumerate_registered_camera_activation(
+    expected_link: &str,
+) -> Result<Option<(IMFActivate, String)>, String> {
     let mut attributes = None;
     unsafe {
         MFCreateAttributes(&mut attributes, 1)
@@ -207,7 +218,7 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
 
     let result = unsafe {
         let devices = std::slice::from_raw_parts_mut(raw_devices, device_count as usize);
-        let mut match_link = None;
+        let mut matched = None;
         for device in devices.iter_mut() {
             let Some(device) = device.as_ref() else {
                 continue;
@@ -223,7 +234,7 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
                     %expected_link,
                     "matched Picoo Camera Media Foundation identity"
                 );
-                match_link = symbolic_link;
+                matched = symbolic_link.map(|link| (device.clone(), link));
                 break;
             }
         }
@@ -231,7 +242,7 @@ pub fn registered_camera_symbolic_link() -> Result<Option<String>, String> {
             let _ = device.take();
         }
         CoTaskMemFree(Some(raw_devices.cast()));
-        match_link
+        matched
     };
     Ok(result)
 }
