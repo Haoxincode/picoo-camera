@@ -115,7 +115,7 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
 
     // Camera switch: epoch bump + new IDR.
     let t0 = Instant::now();
-    let next_epoch = sender.begin_stream_reconfiguration();
+    let next_epoch = sender.begin_stream_reconfiguration(480);
     assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
         width: 854,
@@ -262,7 +262,7 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     assert_eq!(receiver.latest_frame().map(|f| f.width), Some(854));
 
     let t0 = Instant::now();
-    let next_epoch = sender.begin_stream_reconfiguration();
+    let next_epoch = sender.begin_stream_reconfiguration(720);
     assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
         width: 1280,

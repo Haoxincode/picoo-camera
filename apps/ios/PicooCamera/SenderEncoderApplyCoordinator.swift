@@ -48,14 +48,14 @@ final class SenderEncoderApplyCoordinator {
         )
     }
 
-    func beginLocal(session: PicooSenderSession) -> UInt32 {
+    func beginLocal(session: PicooSenderSession, targetHeight: UInt32) -> UInt32 {
         recoveryTask?.cancel()
         recoveryTask = nil
         cancelPending(session: session)
         if let queuedDirective = try? session.encoderDirective() {
             try? session.rejectEncoderDirective(queuedDirective.id)
         }
-        return session.beginStreamReconfiguration()
+        return session.beginStreamReconfiguration(targetHeight: targetHeight)
     }
 
     func complete(with event: VideoEncoderEvent, host: SenderAppModel) -> Bool {

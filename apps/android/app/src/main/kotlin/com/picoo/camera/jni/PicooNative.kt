@@ -149,7 +149,7 @@ object PicooNative {
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
     /** Allocate a fresh Rust-owned epoch before camera/encoder discontinuity. */
-    external fun beginStreamReconfiguration(handle: Long): Int
+    external fun beginStreamReconfiguration(handle: Long, targetHeight: Int): Int
 
     external fun cancelStreamReconfiguration(handle: Long, streamEpoch: Int): Int
 

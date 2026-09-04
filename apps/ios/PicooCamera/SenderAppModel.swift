@@ -268,27 +268,7 @@ final class SenderAppModel {
     }
 
     func switchCamera() async {
-        guard let session else { return }
-        suspendMediaSending()
-        let streamEpoch = encoderApply.beginLocal(session: session)
-        guard streamEpoch > 0 else { return }
-        let switched = await camera.switchCamera(streamEpoch: streamEpoch)
-        guard !Task.isCancelled else {
-            try? session.cancelStreamReconfiguration(streamEpoch)
-            return
-        }
-        if switched {
-            encoderApply.waitForApply(
-                directive: nil,
-                streamEpoch: streamEpoch,
-                encoderGeneration: camera.encoderGeneration,
-                height: UInt32(camera.resolution.rawValue),
-                bitrateBps: activeBitrateBps
-            )
-        } else {
-            try? session.cancelStreamReconfiguration(streamEpoch)
-            encoderApply.scheduleRecovery(after: "无法切换摄像头。", host: self)
-        }
+        await applyCameraSwitch(unlessAlreadyAt: nil, failure: "无法切换摄像头。")
     }
 
     @discardableResult
@@ -502,7 +482,10 @@ final class SenderAppModel {
             )
         }
         let streamEpoch = selectedInitialResolution
-            ? encoderApply.beginLocal(session: session)
+            ? encoderApply.beginLocal(
+                session: session,
+                targetHeight: UInt32(initialResolution.rawValue)
+            )
             : session.snapshot.streamEpoch
         guard streamEpoch > 0 else { return }
         if !selectedInitialResolution {
@@ -676,7 +659,10 @@ final class SenderAppModel {
         if let position, camera.position == position { return }
         guard let session else { return }
         suspendMediaSending()
-        let epoch = encoderApply.beginLocal(session: session)
+        let epoch = encoderApply.beginLocal(
+            session: session,
+            targetHeight: UInt32(camera.resolution.rawValue)
+        )
         guard epoch > 0 else { return }
         let switched = await camera.switchCamera(streamEpoch: epoch)
         guard !Task.isCancelled else {
@@ -718,7 +704,10 @@ final class SenderAppModel {
                 forHeight: UInt32(supportedResolution.rawValue)
             )
         let streamEpoch = directive?.streamEpoch
-            ?? encoderApply.beginLocal(session: session)
+            ?? encoderApply.beginLocal(
+                session: session,
+                targetHeight: UInt32(supportedResolution.rawValue)
+            )
         guard streamEpoch > 0 else {
             errorMessage = "接收端要求先完成当前编码器调整。"
             return
@@ -781,7 +770,10 @@ final class SenderAppModel {
     func scheduleReconnectRebuild() {
         guard isSceneActive, let session else { return }
         suspendMediaSending()
-        let streamEpoch = encoderApply.beginLocal(session: session)
+        let streamEpoch = encoderApply.beginLocal(
+            session: session,
+            targetHeight: UInt32(camera.resolution.rawValue)
+        )
         guard streamEpoch > 0 else { return }
         cameraLifecycleTask?.cancel()
         cameraLifecycleTask = Task { [weak self] in

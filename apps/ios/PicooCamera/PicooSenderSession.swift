@@ -307,8 +307,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         )
     }
 
-    func beginStreamReconfiguration() -> UInt32 {
-        picoo_sender_begin_stream_reconfiguration(sender)
+    func beginStreamReconfiguration(targetHeight: UInt32) -> UInt32 {
+        picoo_sender_begin_stream_reconfiguration(sender, targetHeight)
     }
 
     func cancelStreamReconfiguration(_ streamEpoch: UInt32) throws {

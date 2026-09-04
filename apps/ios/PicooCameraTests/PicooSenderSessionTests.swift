@@ -120,11 +120,11 @@ struct PicooSenderSessionTests {
     func streamEpochPolicy() throws {
         let session = try PicooSenderSession(defaultDeviceName: "Epoch Testing")
         #expect(session.snapshot.streamEpoch == PicooSenderSession.initialStreamEpoch)
-        let pending = session.beginStreamReconfiguration()
+        let pending = session.beginStreamReconfiguration(targetHeight: 720)
         #expect(pending == PicooSenderSession.initialStreamEpoch + 1)
-        #expect(session.beginStreamReconfiguration() == 0)
+        #expect(session.beginStreamReconfiguration(targetHeight: 720) == 0)
         try session.cancelStreamReconfiguration(pending)
-        let next = session.beginStreamReconfiguration()
+        let next = session.beginStreamReconfiguration(targetHeight: 720)
         #expect(next == pending + 1)
         try session.cancelStreamReconfiguration(next)
     }

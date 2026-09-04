@@ -11,7 +11,7 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
     let committed_epoch = session.current_stream_epoch();
-    let pending_epoch = session.begin_stream_reconfiguration();
+    let pending_epoch = session.begin_stream_reconfiguration(720);
     assert_ne!(pending_epoch, committed_epoch);
     session
         .ingest_access_unit(b"still-current", true, 1, committed_epoch)
@@ -57,7 +57,7 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
         .expect("connect");
     session.stream_config_sent = true;
     let committed = session.current_stream_epoch();
-    let pending = session.begin_stream_reconfiguration();
+    let pending = session.begin_stream_reconfiguration(720);
     assert_ne!(pending, committed);
     assert!(session.stream_config_sent());
     assert_eq!(
@@ -108,9 +108,21 @@ fn current_epoch_report_is_idempotent_not_a_resolution_transition() {
 fn stream_epoch_exhausts_before_crossing_android_signed_range() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session.last_allocated_stream_epoch = MAX_STREAM_EPOCH;
-    assert_eq!(session.begin_stream_reconfiguration(), 0);
+    assert_eq!(session.begin_stream_reconfiguration(720), 0);
     assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
     assert_eq!(session.last_session_error(), Some("STREAM_EPOCH_EXHAUSTED"));
+}
+
+#[test]
+fn invalid_local_target_does_not_consume_transaction_or_epoch_identity() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    let last_epoch = session.last_allocated_stream_epoch;
+    let next_transaction = session.next_encoder_directive_id;
+
+    assert_eq!(session.begin_stream_reconfiguration(0), 0);
+    assert_eq!(session.last_allocated_stream_epoch, last_epoch);
+    assert_eq!(session.next_encoder_directive_id, next_transaction);
+    assert!(session.pending_encoder_directive().is_none());
 }
 
 #[test]
@@ -154,7 +166,7 @@ fn receiver_capability_caps_preferred_height_in_rust() {
 #[test]
 fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    let pending = session.begin_stream_reconfiguration();
+    let pending = session.begin_stream_reconfiguration(720);
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
@@ -178,7 +190,7 @@ fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
         })
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
-    let pending = session.begin_stream_reconfiguration();
+    let pending = session.begin_stream_reconfiguration(720);
     assert!(session.report_encoder_height(720, pending));
     session.set_stream_config(StreamConfigParams {
         width: 1920,
@@ -201,7 +213,7 @@ fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
 #[test]
 fn noncanonical_encoder_height_cannot_commit_ladder_epoch() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    let pending = session.begin_stream_reconfiguration();
+    let pending = session.begin_stream_reconfiguration(720);
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 800,
@@ -216,7 +228,7 @@ fn cancelled_reconfiguration_restores_committed_stream_config() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session.stream_config_sent = true;
     let committed = session.pending_stream_config().cloned();
-    let pending = session.begin_stream_reconfiguration();
+    let pending = session.begin_stream_reconfiguration(720);
     session.set_stream_config(StreamConfigParams {
         width: 854,
         height: 480,
@@ -231,10 +243,12 @@ fn cancelled_reconfiguration_restores_committed_stream_config() {
 #[test]
 fn disconnect_aborts_pending_local_and_directive_generations() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    let local = session.begin_stream_reconfiguration();
-    assert_eq!(session.pending_local_stream_epoch, Some(local));
+    assert_ne!(session.begin_stream_reconfiguration(720), 0);
+    assert!(session.encoder_apply_state.is_applying());
+    assert!(session.pending_encoder_directive().is_none());
     session.disconnect();
-    assert_eq!(session.pending_local_stream_epoch, None);
+    assert!(!session.encoder_apply_state.is_applying());
+    assert!(session.pending_encoder_directive().is_none());
 
     session.queue_encoder_directive(EncoderDirectiveKind::AbrDownshift, 720);
     assert!(session.pending_encoder_directive().is_some());

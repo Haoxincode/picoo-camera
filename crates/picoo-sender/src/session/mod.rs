@@ -4,6 +4,7 @@
 
 mod abr;
 mod control;
+mod encoder_transaction;
 mod lifecycle;
 mod media;
 mod pairing;
@@ -24,6 +25,7 @@ use picoo_transport::{Endpoint, PicooTransport, SessionId};
 use crate::stream_config::StreamConfigParams;
 use crate::{SenderPipeline, SenderStats};
 
+use encoder_transaction::EncoderApplyState;
 use pairing::SenderPairing;
 
 pub const INITIAL_STREAM_EPOCH: u32 = 1;
@@ -41,6 +43,7 @@ pub struct SessionStats {
 pub enum EncoderDirectiveKind {
     AbrDownshift = 1,
     AbrUpshift = 2,
+    Local = 3,
 }
 
 /// Rust-owned desired encoder transition. Reading it never acknowledges it.
@@ -84,15 +87,12 @@ pub struct SenderSession<T: PicooTransport> {
     stream_config_sent: bool,
     /// Receiver asked for IDR via EncoderCommand (REQ-PICOO-SESSION-003/004).
     keyframe_requested: bool,
-    pending_encoder_directive: Option<EncoderDirective>,
+    encoder_apply_state: EncoderApplyState,
     next_encoder_directive_id: u64,
     current_stream_epoch: u32,
     last_allocated_stream_epoch: u32,
     /// Zero until the platform reports its first actual encoder output.
     committed_encoder_height: u32,
-    pending_local_stream_epoch: Option<u32>,
-    reconfiguration_rollback: Option<(Option<StreamConfigParams>, bool)>,
-    stream_config_staged_during_reconfiguration: bool,
     /// A committed epoch must not emit media until its matching StreamConfig
     /// has been queued on the reliable control stream.
     media_blocked_for_stream_config: bool,
@@ -140,14 +140,11 @@ impl<T: PicooTransport> SenderSession<T> {
             receiver_capabilities: None,
             stream_config_sent: false,
             keyframe_requested: false,
-            pending_encoder_directive: None,
+            encoder_apply_state: EncoderApplyState::default(),
             next_encoder_directive_id: 1,
             current_stream_epoch: INITIAL_STREAM_EPOCH,
             last_allocated_stream_epoch: INITIAL_STREAM_EPOCH,
             committed_encoder_height: 0,
-            pending_local_stream_epoch: None,
-            reconfiguration_rollback: None,
-            stream_config_staged_during_reconfiguration: false,
             media_blocked_for_stream_config: false,
             pending_camera_command: None,
             last_session_error: None,
@@ -223,7 +220,9 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn pending_encoder_directive(&self) -> Option<EncoderDirective> {
-        self.pending_encoder_directive
+        self.encoder_apply_state
+            .directive()
+            .filter(|directive| directive.kind != EncoderDirectiveKind::Local)
     }
 
     pub fn stats(&self) -> SessionStats {

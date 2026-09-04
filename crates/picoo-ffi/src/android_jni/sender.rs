@@ -227,11 +227,27 @@ sender_int_call!(
     -1,
     |session| i32::from(session.take_keyframe_request())
 );
-sender_int_call!(
-    Java_com_picoo_camera_jni_PicooNative_beginStreamReconfiguration,
-    0,
-    |session| session.begin_stream_reconfiguration() as jint
-);
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_beginStreamReconfiguration(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    target_height: jint,
+) -> jint {
+    let Ok(target_height) = u32::try_from(target_height) else {
+        return 0;
+    };
+    if target_height == 0 {
+        return 0;
+    }
+    with_sender(handle, |inner| {
+        let Ok(mut session) = inner.session.lock() else {
+            return 0;
+        };
+        session.begin_stream_reconfiguration(target_height) as jint
+    })
+    .unwrap_or(0)
+}
 
 #[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_cancelStreamReconfiguration(

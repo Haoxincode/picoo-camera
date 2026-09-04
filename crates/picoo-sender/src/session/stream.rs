@@ -1,8 +1,11 @@
 use picoo_protocol::control::control_envelope::Payload as ControlPayload;
-use picoo_rate_control::BitrateAction;
+use picoo_rate_control::{BitrateAction, BitrateLadder};
 use picoo_transport::PicooTransport;
 
-use super::{EncoderDirectiveKind, SenderSession, MAX_STREAM_EPOCH};
+use super::encoder_transaction::{
+    EncoderRollback, EncoderTransaction, EncoderTransactionEvent, EncoderTransactionTransition,
+};
+use super::{EncoderDirective, EncoderDirectiveKind, SenderSession, MAX_STREAM_EPOCH};
 use crate::stream_config::StreamConfigParams;
 use crate::SenderError;
 
@@ -12,9 +15,8 @@ impl<T: PicooTransport> SenderSession<T> {
         config.stream_epoch = self.current_stream_epoch;
         self.pending_stream_config = Some(config);
         self.stream_config_sent = false;
-        if self.reconfiguration_rollback.is_some() {
-            self.stream_config_staged_during_reconfiguration = true;
-        }
+        self.encoder_apply_state
+            .reduce(EncoderTransactionEvent::StreamConfigStaged);
     }
 
     /// Host applied an encode height for the current Rust-owned generation.
@@ -26,10 +28,15 @@ impl<T: PicooTransport> SenderSession<T> {
         if height != normalized_height {
             return false;
         }
-        if self.pending_local_stream_epoch == Some(stream_epoch) {
-            self.commit_stream_epoch(stream_epoch, normalized_height);
-        } else if self.pending_local_stream_epoch.is_some()
-            || self.pending_encoder_directive.is_some()
+        let transition = self
+            .encoder_apply_state
+            .reduce(EncoderTransactionEvent::CommitLocal {
+                stream_epoch,
+                height: normalized_height,
+            });
+        if let EncoderTransactionTransition::Commit(transaction) = transition {
+            self.commit_stream_epoch(transaction, normalized_height);
+        } else if self.encoder_apply_state.is_applying()
             || stream_epoch != self.current_stream_epoch
         {
             return false;
@@ -54,19 +61,37 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     /// Allocate a fresh stream generation before a native encoder discontinuity.
-    pub fn begin_stream_reconfiguration(&mut self) -> u32 {
+    pub fn begin_stream_reconfiguration(&mut self, target_height: u32) -> u32 {
         // The platform must explicitly ACK/NACK/cancel the existing transition.
         // Silently replacing it would let a late native callback commit the
         // wrong generation.
-        if self.pending_local_stream_epoch.is_some() || self.pending_encoder_directive.is_some() {
+        if self.encoder_apply_state.is_applying() {
             return 0;
         }
+        if target_height == 0 {
+            return 0;
+        }
+        let target_height = picoo_rate_control::normalize_height(target_height);
+        let id = self.next_encoder_directive_id;
+        let Some(next_id) = id.checked_add(1) else {
+            self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
+            return 0;
+        };
         let epoch = self.allocate_stream_epoch();
         if epoch == 0 {
             return 0;
         }
-        self.begin_reconfiguration_transaction();
-        self.pending_local_stream_epoch = Some(epoch);
+        let directive = EncoderDirective {
+            id,
+            kind: EncoderDirectiveKind::Local,
+            target_height,
+            target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
+            stream_epoch: epoch,
+        };
+        if !self.begin_encoder_transaction(directive) {
+            return 0;
+        }
+        self.next_encoder_directive_id = next_id;
         self.keyframe_requested = true;
         epoch
     }
@@ -84,44 +109,44 @@ impl<T: PicooTransport> SenderSession<T> {
         next
     }
 
-    pub(super) fn commit_stream_epoch(&mut self, epoch: u32, actual_height: u32) {
+    pub(super) fn commit_stream_epoch(
+        &mut self,
+        transaction: EncoderTransaction,
+        actual_height: u32,
+    ) {
         // Keep only a config explicitly staged during this transaction and
         // matching the native encoder output. The old epoch's config must
         // never be relabelled and sent for the new epoch.
-        let staged_config = self
-            .stream_config_staged_during_reconfiguration
+        let staged_config = transaction
+            .stream_config_staged
             .then(|| self.pending_stream_config.clone())
             .flatten()
             .filter(|config| config.height == actual_height)
             .map(|mut config| {
-                config.stream_epoch = epoch;
+                config.stream_epoch = transaction.directive.stream_epoch;
                 config
             });
-        self.current_stream_epoch = epoch;
-        self.pending_local_stream_epoch = None;
+        self.current_stream_epoch = transaction.directive.stream_epoch;
         self.committed_encoder_height = actual_height;
         self.pending_stream_config = staged_config;
         self.stream_config_sent = false;
         self.media_blocked_for_stream_config = true;
         self.keyframe_requested = true;
-        self.reconfiguration_rollback = None;
-        self.stream_config_staged_during_reconfiguration = false;
     }
 
     pub fn cancel_stream_reconfiguration(&mut self, stream_epoch: u32) -> bool {
-        if self.pending_local_stream_epoch != Some(stream_epoch) {
+        let transition = self
+            .encoder_apply_state
+            .reduce(EncoderTransactionEvent::CancelLocal { stream_epoch });
+        let EncoderTransactionTransition::Rollback(transaction) = transition else {
             return false;
-        }
-        self.pending_local_stream_epoch = None;
-        self.rollback_reconfiguration_transaction();
+        };
+        self.rollback_encoder_transaction(transaction);
         true
     }
 
     pub(super) fn send_pending_stream_config(&mut self) -> Result<(), SenderError> {
-        if self.stream_config_sent
-            || self.pending_local_stream_epoch.is_some()
-            || self.pending_encoder_directive.is_some()
-        {
+        if self.stream_config_sent || self.encoder_apply_state.is_applying() {
             return Ok(());
         }
         let Some(config) = self.pending_stream_config.clone() else {
@@ -151,8 +176,16 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn abort_pending_reconfiguration(&mut self) {
-        if let Some(directive) = self.pending_encoder_directive.take() {
+        let transition = self
+            .encoder_apply_state
+            .reduce(EncoderTransactionEvent::Abort);
+        let EncoderTransactionTransition::Rollback(transaction) = transition else {
+            return;
+        };
+        let directive = transaction.directive;
+        if directive.kind != EncoderDirectiveKind::Local {
             match directive.kind {
+                EncoderDirectiveKind::Local => unreachable!(),
                 EncoderDirectiveKind::AbrDownshift => self
                     .bitrate
                     .reject_resolution_change(BitrateAction::DownshiftResolution),
@@ -161,22 +194,21 @@ impl<T: PicooTransport> SenderSession<T> {
                     .reject_resolution_change(BitrateAction::UpshiftResolution),
             }
         }
-        self.pending_local_stream_epoch = None;
-        self.rollback_reconfiguration_transaction();
+        self.rollback_encoder_transaction(transaction);
     }
 
-    pub(super) fn begin_reconfiguration_transaction(&mut self) {
-        debug_assert!(self.reconfiguration_rollback.is_none());
-        self.reconfiguration_rollback =
-            Some((self.pending_stream_config.clone(), self.stream_config_sent));
-        self.stream_config_staged_during_reconfiguration = false;
+    pub(super) fn begin_encoder_transaction(&mut self, directive: EncoderDirective) -> bool {
+        self.encoder_apply_state.begin(
+            directive,
+            EncoderRollback {
+                stream_config: self.pending_stream_config.clone(),
+                stream_config_sent: self.stream_config_sent,
+            },
+        )
     }
 
-    pub(super) fn rollback_reconfiguration_transaction(&mut self) {
-        if let Some((config, sent)) = self.reconfiguration_rollback.take() {
-            self.pending_stream_config = config;
-            self.stream_config_sent = sent;
-        }
-        self.stream_config_staged_during_reconfiguration = false;
+    pub(super) fn rollback_encoder_transaction(&mut self, transaction: EncoderTransaction) {
+        self.pending_stream_config = transaction.rollback.stream_config;
+        self.stream_config_sent = transaction.rollback.stream_config_sent;
     }
 }

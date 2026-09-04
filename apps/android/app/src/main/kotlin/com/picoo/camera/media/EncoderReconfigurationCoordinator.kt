@@ -56,7 +56,7 @@ class EncoderReconfigurationCoordinator {
         PicooNative.readEncoderDirective(senderHandle)?.let { directive ->
             PicooNative.nackEncoderDirective(senderHandle, directive.id)
         }
-        val epoch = PicooNative.beginStreamReconfiguration(senderHandle)
+        val epoch = PicooNative.beginStreamReconfiguration(senderHandle, targetHeight)
         if (epoch > 0) {
             encoder.prepareStreamEpoch(epoch)
             pending = PendingApply(

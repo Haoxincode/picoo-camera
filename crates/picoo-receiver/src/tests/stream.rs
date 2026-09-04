@@ -260,7 +260,7 @@ fn stream_epoch_bump_requests_keyframe() {
         "first StreamConfig must request IDR (SESSION-004 / MEDIA-003)"
     );
 
-    cfg.stream_epoch = sender.begin_stream_reconfiguration();
+    cfg.stream_epoch = sender.begin_stream_reconfiguration(720);
     assert_eq!(cfg.stream_epoch, 2);
     assert!(sender.take_keyframe_request());
     sender.set_stream_config(cfg.clone());
@@ -287,7 +287,7 @@ fn stream_epoch_bump_requests_keyframe() {
     // A candidate epoch is not accepted until native output confirms it. This
     // prevents QUIC datagrams from racing ahead of the reliable StreamConfig.
     let access_units_before = receiver.stats().access_units;
-    let future_epoch = sender.begin_stream_reconfiguration();
+    let future_epoch = sender.begin_stream_reconfiguration(720);
     assert_eq!(future_epoch, 3);
     assert!(sender.take_keyframe_request());
     assert!(sender

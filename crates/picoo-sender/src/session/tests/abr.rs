@@ -111,12 +111,12 @@ fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
     assert_eq!(retry.target_height, 720);
     assert_eq!(session.bitrate_active_height(), 1080);
 
-    assert_eq!(session.begin_stream_reconfiguration(), 0);
+    assert_eq!(session.begin_stream_reconfiguration(720), 0);
     assert_eq!(session.pending_encoder_directive(), Some(retry));
     assert!(session.reject_encoder_directive(retry.id));
-    let local_epoch = session.begin_stream_reconfiguration();
+    let local_epoch = session.begin_stream_reconfiguration(720);
     assert!(local_epoch > retry.stream_epoch);
-    assert_eq!(session.begin_stream_reconfiguration(), 0);
+    assert_eq!(session.begin_stream_reconfiguration(720), 0);
     assert_eq!(session.bitrate_active_height(), 1080);
 }
 

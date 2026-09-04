@@ -197,8 +197,13 @@ fn sender_snapshot_is_coherent_before_capabilities() {
 fn encoder_height_report_commits_only_the_matching_pending_epoch() {
     let handle = create_test_sender();
     assert!(!handle.is_null());
-    let pending = picoo_sender_begin_stream_reconfiguration(handle);
+    let pending = picoo_sender_begin_stream_reconfiguration(handle, 720);
     assert!(pending > picoo_sender::INITIAL_STREAM_EPOCH);
+    let mut directive = PicooEncoderDirective::default();
+    assert_eq!(
+        picoo_sender_peek_encoder_directive(handle, &mut directive),
+        0
+    );
     assert_eq!(
         picoo_sender_report_encoder_height(handle, 720, pending + 1),
         -2

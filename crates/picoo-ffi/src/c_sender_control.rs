@@ -227,15 +227,18 @@ pub extern "C" fn picoo_sender_set_preferred_height(
 
 /// Allocate the next stream epoch before a native encoder discontinuity.
 #[no_mangle]
-pub extern "C" fn picoo_sender_begin_stream_reconfiguration(handle: *mut std::ffi::c_void) -> u32 {
-    if handle.is_null() {
+pub extern "C" fn picoo_sender_begin_stream_reconfiguration(
+    handle: *mut std::ffi::c_void,
+    target_height: u32,
+) -> u32 {
+    if handle.is_null() || target_height == 0 {
         return 0;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
     inner
         .session
         .lock_or_recover()
-        .begin_stream_reconfiguration()
+        .begin_stream_reconfiguration(target_height)
 }
 
 #[no_mangle]

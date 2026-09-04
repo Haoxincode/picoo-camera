@@ -4,6 +4,7 @@ use picoo_rate_control::{BitrateAction, BitrateLadder};
 use picoo_session::SenderStatus;
 use picoo_transport::PicooTransport;
 
+use super::encoder_transaction::{EncoderTransactionEvent, EncoderTransactionTransition};
 use super::{EncoderDirective, EncoderDirectiveKind, SenderSession};
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -33,37 +34,51 @@ impl<T: PicooTransport> SenderSession<T> {
 
     /// Advance ABR state only after the platform confirms the encoder reconfiguration.
     pub fn acknowledge_encoder_directive(&mut self, id: u64, actual_height: u32) -> bool {
-        let Some(directive) = self.pending_encoder_directive else {
+        let Some(directive) = self.encoder_apply_state.directive() else {
             return false;
         };
         if directive.id != id
-            || self.pending_local_stream_epoch.is_some()
+            || directive.kind == EncoderDirectiveKind::Local
             || directive.stream_epoch == self.current_stream_epoch
             || actual_height != directive.target_height
         {
             return false;
         }
+        let transition =
+            self.encoder_apply_state
+                .reduce(EncoderTransactionEvent::CommitDirective {
+                    id,
+                    height: actual_height,
+                });
+        let EncoderTransactionTransition::Commit(transaction) = transition else {
+            return false;
+        };
         self.bitrate.sync_encode_height(actual_height);
-        self.commit_stream_epoch(directive.stream_epoch, directive.target_height);
-        self.pending_encoder_directive = None;
+        self.commit_stream_epoch(transaction, directive.target_height);
         true
     }
 
     /// Keep the active ladder unchanged and allow a later ReceiverStats tick to retry.
     pub fn reject_encoder_directive(&mut self, id: u64) -> bool {
-        let Some(directive) = self.pending_encoder_directive else {
+        let Some(directive) = self.encoder_apply_state.directive() else {
             return false;
         };
-        if directive.id != id {
+        if directive.id != id || directive.kind == EncoderDirectiveKind::Local {
             return false;
         }
         let action = match directive.kind {
+            EncoderDirectiveKind::Local => unreachable!(),
             EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
             EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
         };
         self.bitrate.reject_resolution_change(action);
-        self.pending_encoder_directive = None;
-        self.rollback_reconfiguration_transaction();
+        let transition = self
+            .encoder_apply_state
+            .reduce(EncoderTransactionEvent::RejectDirective { id });
+        let EncoderTransactionTransition::Rollback(transaction) = transition else {
+            return false;
+        };
+        self.rollback_encoder_transaction(transaction);
         true
     }
 
@@ -72,12 +87,13 @@ impl<T: PicooTransport> SenderSession<T> {
         kind: EncoderDirectiveKind,
         target_height: u32,
     ) {
-        if self.pending_encoder_directive.is_some() || self.pending_local_stream_epoch.is_some() {
+        if self.encoder_apply_state.is_applying() {
             return;
         }
         let target_height = self.cap_to_receiver_height(target_height);
         if target_height == self.bitrate.active_height() {
             let action = match kind {
+                EncoderDirectiveKind::Local => return,
                 EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
                 EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
             };
@@ -93,15 +109,17 @@ impl<T: PicooTransport> SenderSession<T> {
         if stream_epoch == 0 {
             return;
         }
-        self.next_encoder_directive_id = next_id;
-        self.begin_reconfiguration_transaction();
-        self.pending_encoder_directive = Some(EncoderDirective {
+        let directive = EncoderDirective {
             id,
             kind,
             target_height,
             target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
             stream_epoch,
-        });
+        };
+        if !self.begin_encoder_transaction(directive) {
+            return;
+        }
+        self.next_encoder_directive_id = next_id;
     }
 
     pub(super) fn cap_to_receiver_height(&self, height: u32) -> u32 {
@@ -141,8 +159,7 @@ impl<T: PicooTransport> SenderSession<T> {
         };
         self.last_receiver_stats = Some(metrics.clone());
         self.last_bitrate_action = self.bitrate.update(&metrics);
-        if self.pending_encoder_directive.is_none()
-            && self.pending_local_stream_epoch.is_none()
+        if !self.encoder_apply_state.is_applying()
             && matches!(
                 self.last_bitrate_action,
                 BitrateAction::DownshiftResolution | BitrateAction::UpshiftResolution

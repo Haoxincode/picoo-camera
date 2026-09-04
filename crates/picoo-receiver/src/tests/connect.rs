@@ -286,7 +286,7 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         Some(1080)
     );
 
-    let epoch = sender.begin_stream_reconfiguration();
+    let epoch = sender.begin_stream_reconfiguration(720);
     assert!(sender.report_encoder_height(720, epoch));
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
