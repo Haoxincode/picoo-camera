@@ -1,5 +1,6 @@
 //! Shared Frame Ring consumer and disconnect placeholder policy.
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
@@ -18,7 +19,7 @@ pub(crate) struct OwnedNv12Frame {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
-    pub pixels: Vec<u8>,
+    pub pixels: Arc<[u8]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,7 +82,7 @@ impl FrameProvider {
                 width: PLACEHOLDER_WIDTH,
                 height: PLACEHOLDER_HEIGHT,
                 stride: PLACEHOLDER_WIDTH,
-                pixels: waiting_placeholder(),
+                pixels: waiting_placeholder().into(),
             },
         };
         AcquiredNv12Frame { frame, origin }
@@ -129,7 +130,7 @@ impl FrameProvider {
                         width: view.width,
                         height: view.height,
                         stride: view.stride,
-                        pixels: view.nv12.to_vec(),
+                        pixels: view.nv12.to_vec().into(),
                     };
                     self.last_sequence = view.sequence;
                     self.live_revision = self.live_revision.wrapping_add(1);
@@ -191,7 +192,7 @@ impl FrameProvider {
                 width,
                 height,
                 stride: width,
-                pixels: waiting_placeholder_for_size(width, height),
+                pixels: waiting_placeholder_for_size(width, height).into(),
             }
         } else {
             fit_nv12(
@@ -205,7 +206,7 @@ impl FrameProvider {
                 width,
                 height,
                 stride: width,
-                pixels: picoo_frame_hub::nv12_black(width, height),
+                pixels: picoo_frame_hub::nv12_black(width, height).into(),
             })
         };
         self.output_cache = Some(OutputFrameCache {
@@ -299,7 +300,7 @@ fn fit_nv12(
         width: output_width,
         height: output_height,
         stride: output_width,
-        pixels,
+        pixels: pixels.into(),
     })
 }
 
@@ -325,7 +326,7 @@ mod tests {
         let frame = acquired.frame;
         assert_eq!(acquired.origin, FrameOrigin::Placeholder);
         assert_eq!((frame.width, frame.height), (1280, 720));
-        assert_eq!(frame.pixels, waiting_placeholder());
+        assert_eq!(frame.pixels.as_ref(), waiting_placeholder().as_slice());
 
         let negotiated = provider.acquire_for_output(1920, 1080);
         assert_eq!(negotiated.origin, FrameOrigin::Placeholder);
@@ -334,8 +335,8 @@ mod tests {
             (1920, 1080)
         );
         assert_eq!(
-            negotiated.frame.pixels,
-            waiting_placeholder_for_size(1920, 1080)
+            negotiated.frame.pixels.as_ref(),
+            waiting_placeholder_for_size(1920, 1080).as_slice()
         );
         let cached_pixels = provider
             .output_cache
@@ -346,6 +347,11 @@ mod tests {
             .as_ptr();
         let repeated = provider.acquire_for_output(1920, 1080);
         assert_eq!(repeated.origin, FrameOrigin::Placeholder);
+        assert_eq!(
+            repeated.frame.pixels.as_ptr(),
+            cached_pixels,
+            "cache hits must share immutable pixels instead of cloning the frame"
+        );
         assert_eq!(
             provider
                 .output_cache
@@ -381,13 +387,14 @@ mod tests {
         let mut provider = FrameProvider::with_ring_name(ring_name.clone());
         let acquired = provider.acquire();
         assert_eq!(acquired.origin, FrameOrigin::Fresh);
-        assert_eq!(acquired.frame.pixels, first_pixels);
+        assert_eq!(acquired.frame.pixels.as_ref(), first_pixels.as_slice());
 
         provider.last_live_at = Some(Instant::now() - LAST_FRAME_HOLD);
         let acquired = provider.acquire();
         assert_eq!(acquired.origin, FrameOrigin::Cached);
         assert_eq!(
-            acquired.frame.pixels, first_pixels,
+            acquired.frame.pixels.as_ref(),
+            first_pixels.as_slice(),
             "a live producer with an unchanged sequence is not disconnected"
         );
         provider.last_live_at = Some(Instant::now());
@@ -395,14 +402,14 @@ mod tests {
         drop(first_producer);
         provider.next_generation_probe = Instant::now();
         assert_eq!(
-            provider.acquire().frame.pixels,
-            first_pixels,
+            provider.acquire().frame.pixels.as_ref(),
+            first_pixels.as_slice(),
             "brief generation gap keeps the last complete frame"
         );
         provider.last_live_at = Some(Instant::now() - LAST_FRAME_HOLD);
         assert_eq!(
-            provider.acquire().frame.pixels,
-            waiting_placeholder(),
+            provider.acquire().frame.pixels.as_ref(),
+            waiting_placeholder().as_slice(),
             "an extended generation gap falls back to the placeholder"
         );
 
@@ -423,7 +430,7 @@ mod tests {
         provider.next_generation_probe = Instant::now();
         let acquired = provider.acquire();
         assert_eq!(acquired.origin, FrameOrigin::Fresh);
-        assert_eq!(acquired.frame.pixels, second_pixels);
+        assert_eq!(acquired.frame.pixels.as_ref(), second_pixels.as_slice());
 
         drop((provider, second_producer));
         let _ = std::fs::remove_file(SharedFrameRingProducer::flink_path(&ring_name));
@@ -438,7 +445,7 @@ mod tests {
             pixels: {
                 let mut pixels = vec![80; nv12_len(4, 4).expect("source size")];
                 pixels[16..].fill(128);
-                pixels
+                pixels.into()
             },
         };
         let fitted = fit_nv12(&source, 8, 4).expect("fit");
