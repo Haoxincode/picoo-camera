@@ -3,6 +3,8 @@ use xshell::{cmd, Shell};
 
 use crate::TestSuite;
 
+const NIGHTLY_TOOLCHAIN: &str = "nightly-2026-09-03";
+
 pub(crate) fn run(suite: TestSuite) -> Result<()> {
     let sh = Shell::new()?;
     match suite {
@@ -56,7 +58,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             ] {
                 cmd!(
                     sh,
-                    "cargo +nightly fuzz run {target} -- -max_total_time={seconds} -rss_limit_mb=2048"
+                    "cargo +{NIGHTLY_TOOLCHAIN} fuzz run {target} -- -max_total_time={seconds} -rss_limit_mb=2048"
                 )
                 .run()?;
             }
@@ -68,6 +70,35 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
                 "cargo test -p picoo-receiver --lib tests::qos::soak_paired_loopback_memory_stable -- --ignored --exact --nocapture"
             )
             .env("PICOO_SOAK_SECONDS", seconds)
+            .run()?;
+        }
+        TestSuite::Miri => {
+            let flags = "-Zmiri-strict-provenance -Zmiri-symbolic-alignment-check";
+            for (package, test) in [
+                (
+                    "picoo-frame-hub",
+                    "shared_ring::tests::protocol::miri_raw_layout_views_stay_aligned_and_within_mapping",
+                ),
+                (
+                    "picoo-frame-hub",
+                    "frame_buffer_pool::tests::storage_returns_only_after_last_shared_view_drops",
+                ),
+                ("picoo-ffi", "tests::protocol_name_cstr"),
+                ("picoo-ffi", "tests::extract_sps_pps_via_ffi"),
+            ] {
+                cmd!(
+                    sh,
+                    "cargo +{NIGHTLY_TOOLCHAIN} miri test -p {package} --lib {test} -- --exact"
+                )
+                .env("MIRIFLAGS", flags)
+                .run()?;
+            }
+        }
+        TestSuite::Loom => {
+            cmd!(
+                sh,
+                "cargo test -p picoo-frame-hub --test shared_ring_loom -- --ignored --exact"
+            )
             .run()?;
         }
         TestSuite::Linux => {

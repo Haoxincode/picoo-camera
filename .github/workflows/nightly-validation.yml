@@ -20,6 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-09-03
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.13.2 --locked
       - name: Fuzz PCP parsers and state boundaries
@@ -44,3 +46,19 @@ jobs:
         env:
           PICOO_SOAK_SECONDS: '1800'
         run: cargo run -p xtask -- test soak
+
+  memory-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-09-03
+          components: miri
+      - name: Prepare Miri sysroot
+        run: cargo +nightly-2026-09-03 miri setup
+      - name: Check raw memory and FFI boundaries
+        run: cargo run -p xtask -- test miri
+      - name: Explore Shared Ring atomic interleavings
+        run: cargo run -p xtask -- test loom

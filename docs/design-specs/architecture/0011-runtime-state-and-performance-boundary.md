@@ -200,6 +200,12 @@ Receiver 重启、控制消息重复/越序/非法阶段、UI 不消费和 VCam 
 Miri，原子协议 Loom model，夜间网络损伤/soak，以及 Windows 安装、注册、枚举和启动 VCam 的
 主机级 Runner。单纯 bundle smoke 不构成 VCam 验收。
 
+原子协议模型采用 `loom 0.7.2`（MIT，Rust 1.65，tokio-rs 维护），仅作为
+`picoo-frame-hub` dev-dependency 穷举 ready/sequence/reader lease 的关键交错；它不进入产品二进制，
+也不替换跨进程 ABI 中必须使用的 `std::sync::atomic`。Miri 使用固定日期 nightly 提供的官方组件，
+只解释执行原始 mapping 布局、共享 buffer 所有权和当前主机可运行的 C ABI 测试；OS mmap、文件锁和
+COM/Objective-C API 仍由平台 contract/stress 测试验证，不能用 Miri 模拟结果替代。
+
 ## 明确排除
 
 - 不替换 H.264、QUIC reliable control + Datagram media、Native Camera/Codec、单次桌面解码、

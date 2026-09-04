@@ -70,6 +70,82 @@ fn ring_layout_is_stable() {
 }
 
 #[test]
+fn miri_raw_layout_views_stay_aligned_and_within_mapping() {
+    use std::alloc::{alloc_zeroed, dealloc, handle_alloc_error, Layout};
+    use std::ptr::NonNull;
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+    use crate::shared_ring::layout::{
+        const_slot_meta_at, const_slot_pixels_at, layout_size, meta_at, slot_meta_at,
+        slot_pixels_at, validate_ring_header,
+    };
+
+    struct AlignedMapping {
+        base: NonNull<u8>,
+        layout: Layout,
+    }
+
+    impl Drop for AlignedMapping {
+        fn drop(&mut self) {
+            // SAFETY: `base` was allocated with this exact layout and remains owned here.
+            unsafe { dealloc(self.base.as_ptr(), self.layout) };
+        }
+    }
+
+    // An odd capacity exercises the stride padding required before every
+    // SlotMeta. Production's default capacity happens to be naturally aligned.
+    let max_frame_bytes = 127;
+    let layout = Layout::from_size_align(
+        layout_size(max_frame_bytes),
+        std::mem::align_of::<RingMeta>(),
+    )
+    .expect("valid mapping layout");
+    // SAFETY: The non-zero layout is retained by AlignedMapping for deallocation.
+    let base =
+        NonNull::new(unsafe { alloc_zeroed(layout) }).unwrap_or_else(|| handle_alloc_error(layout));
+    let mapping = AlignedMapping { base, layout };
+
+    // SAFETY: The allocation covers the complete computed layout, is aligned for
+    // RingMeta/SlotMeta, and each object is initialized before it is referenced.
+    unsafe {
+        meta_at(mapping.base.as_ptr()).write(RingMeta {
+            magic: RING_MAGIC,
+            version: RING_VERSION,
+            slot_count: RING_SLOT_COUNT as u32,
+            max_frame_bytes: max_frame_bytes as u32,
+            write_index: AtomicU32::new(0),
+            latest_sequence: AtomicU64::new(0),
+            _pad: [0; 32],
+        });
+        for index in 0..RING_SLOT_COUNT {
+            slot_meta_at(mapping.base.as_ptr(), max_frame_bytes, index).write(SlotMeta {
+                sequence: AtomicU64::new(index as u64 + 1),
+                timestamp_us: 0,
+                width: 0,
+                height: 0,
+                stride: 0,
+                rotation: 0,
+                pixel_format: PIXEL_FORMAT_NV12,
+                data_length: max_frame_bytes as u32,
+                ready_state: AtomicU32::new(RING_READY_DONE),
+                reader_count: AtomicU32::new(0),
+                _pad: [0; 16],
+            });
+            let pixels = slot_pixels_at(mapping.base.as_ptr(), max_frame_bytes, index);
+            pixels.fill(index as u8 + 1);
+        }
+
+        validate_ring_header(mapping.base.as_ptr(), max_frame_bytes).expect("valid header");
+        for index in 0..RING_SLOT_COUNT {
+            let meta = &*const_slot_meta_at(mapping.base.as_ptr(), max_frame_bytes, index);
+            assert_eq!(meta.sequence.load(Ordering::Acquire), index as u64 + 1);
+            let pixels = const_slot_pixels_at(mapping.base.as_ptr(), max_frame_bytes, index);
+            assert_eq!(pixels, vec![index as u8 + 1; max_frame_bytes]);
+        }
+    }
+}
+
+#[test]
 fn rapid_overwrite_consumer_sees_latest_sequence() {
     let name = test_ring_name();
     let max = nv12_byte_size(64, 64);

@@ -33,6 +33,7 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [dev-dependencies]
+loom = "=0.7.2"
 proptest = "=1.6.0"
 
 [[bench]]

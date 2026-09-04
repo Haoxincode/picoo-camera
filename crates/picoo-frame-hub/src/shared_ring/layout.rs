@@ -44,11 +44,17 @@ pub(super) struct SlotMeta {
 }
 
 pub(super) fn layout_size(max_frame_bytes: usize) -> usize {
-    RING_META_SIZE + RING_SLOT_COUNT * (RING_SLOT_META_SIZE + max_frame_bytes)
+    RING_META_SIZE + RING_SLOT_COUNT * slot_stride(max_frame_bytes)
 }
 
 fn slot_offset(max_frame_bytes: usize, index: usize) -> usize {
-    RING_META_SIZE + index * (RING_SLOT_META_SIZE + max_frame_bytes)
+    RING_META_SIZE + index * slot_stride(max_frame_bytes)
+}
+
+fn slot_stride(max_frame_bytes: usize) -> usize {
+    let unaligned = RING_SLOT_META_SIZE + max_frame_bytes;
+    let alignment = std::mem::align_of::<SlotMeta>();
+    unaligned.div_ceil(alignment) * alignment
 }
 
 pub(super) unsafe fn meta_at(base: *mut u8) -> *mut RingMeta {

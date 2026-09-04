@@ -80,6 +80,10 @@ pub(crate) enum TestSuite {
     Fuzz,
     /// Long-running paired loopback memory/network soak.
     Soak,
+    /// Strict-provenance Miri checks for raw Shared Ring and C ABI boundaries.
+    Miri,
+    /// Exhaustive Loom model for the Shared Ring atomic lease protocol.
+    Loom,
     /// Linux-hostable product gates (WiX scaffold, VCam format, TXT sync, soak smoke).
     Linux,
 }

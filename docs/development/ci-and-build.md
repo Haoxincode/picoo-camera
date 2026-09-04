@@ -39,12 +39,15 @@ GitHub Actions
 | Job | Runner | 职责 | xtask 命令 |
 | --- | --- | --- | --- |
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
-| `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz 与 30 分钟 paired loopback 网络/内存 soak | `cargo xtask test fuzz`、`cargo xtask test soak` |
+| `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz、30 分钟 paired loopback soak、Shared Ring/FFI Miri 与原子协议 Loom model | `cargo xtask test fuzz/soak/miri/loom` |
 | `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
 | `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 | `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 | 递增 Host/Extension 版本；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
+
+Nightly validation 使用 `nightly-2026-09-03`，并由 `xtask` 持有同一常量；更新 Miri 或
+cargo-fuzz 工具链时必须同时本地复核 strict-provenance、四个 fuzz target 和 workflow。
 
 ### 依赖关系
 
