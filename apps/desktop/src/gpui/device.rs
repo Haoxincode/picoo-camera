@@ -1,11 +1,11 @@
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::button::*;
-use gpui_component::dialog::DialogButtonProps;
-use gpui_component::notification::NotificationType;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::switch::*;
-use gpui_component::*;
+use gpui_kit::component::button::*;
+use gpui_kit::component::dialog::DialogButtonProps;
+use gpui_kit::component::notification::NotificationType;
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::switch::*;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use crate::receiver_runtime::ReceiverSnapshot;
 

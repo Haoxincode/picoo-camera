@@ -1,9 +1,9 @@
-use gpui::*;
-use gpui_component::button::*;
-use gpui_component::dialog::DialogButtonProps;
-use gpui_component::notification::NotificationType;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::*;
+use gpui_kit::component::button::*;
+use gpui_kit::component::dialog::DialogButtonProps;
+use gpui_kit::component::notification::NotificationType;
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::*;
+use gpui_kit::*;
 use picoo_receiver::{TrustedIdentityCandidate, TrustedIdentityReplacement};
 
 use super::PicooDesktopApp;
@@ -285,7 +285,10 @@ pub(super) fn format_pairing_code(code: &str) -> String {
     format!("{} {}", &digits[..3], &digits[3..])
 }
 
-pub(super) fn connection_code_hero(code: &str, cx: &Context<PicooDesktopApp>) -> gpui::AnyElement {
+pub(super) fn connection_code_hero(
+    code: &str,
+    cx: &Context<PicooDesktopApp>,
+) -> gpui_kit::AnyElement {
     let digits = code
         .chars()
         .filter(|character| character.is_ascii_digit())
@@ -318,7 +321,7 @@ pub(super) fn connection_code_hero(code: &str, cx: &Context<PicooDesktopApp>) ->
         .into_any_element()
 }
 
-pub(super) fn pairing_code_panel(code: &str, ttl_label: String, cx: &App) -> gpui::AnyElement {
+pub(super) fn pairing_code_panel(code: &str, ttl_label: String, cx: &App) -> gpui_kit::AnyElement {
     let digits = code
         .chars()
         .filter(|character| character.is_ascii_digit())
@@ -348,7 +351,7 @@ pub(super) fn pairing_code_panel(code: &str, ttl_label: String, cx: &App) -> gpu
         .into_any_element()
 }
 
-pub(super) fn pairing_code_box(digit: char, cx: &App) -> gpui::AnyElement {
+pub(super) fn pairing_code_box(digit: char, cx: &App) -> gpui_kit::AnyElement {
     div()
         .w_10()
         .h_12()

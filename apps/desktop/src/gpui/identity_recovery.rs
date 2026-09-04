@@ -1,8 +1,8 @@
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::alert::Alert;
-use gpui_component::button::*;
-use gpui_component::*;
+use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::*;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 use picoo_receiver::ReceiverError;
 
 use crate::receiver_runtime::{repair_receiver_identity_and_reset_trust, reset_receiver_trust};

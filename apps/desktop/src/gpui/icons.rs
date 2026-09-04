@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
+use gpui_kit::*;
 
 pub(super) fn reicon_svg(data: &'static [u8], color: Hsla) -> Svg {
     svg().data(data).size_4().text_color(color)

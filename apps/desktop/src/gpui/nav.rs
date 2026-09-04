@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::animation::{ease_in_out_cubic, EffectTransition};
-use gpui_component::button::*;
-use gpui_component::scroll::ScrollableElement;
-use gpui_component::*;
+use gpui_kit::component::animation::{ease_in_out_cubic, EffectTransition};
+use gpui_kit::component::button::*;
+use gpui_kit::component::scroll::ScrollableElement;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use crate::receiver_runtime::ReceiverSnapshot;
 
@@ -54,7 +54,7 @@ impl PicooDesktopApp {
         &self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let collapsed = self.sidebar_collapsed;
         let target_width = if collapsed {
             SIDEBAR_COLLAPSED_WIDTH
@@ -266,7 +266,7 @@ impl PicooDesktopApp {
         &self,
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> gpui_kit::AnyElement {
         let page = match self.section {
             DesktopSection::Connect => self.render_connect(snapshot, cx).into_any_element(),
             DesktopSection::VirtualCamera => self
@@ -319,7 +319,7 @@ impl PicooDesktopApp {
         }
     }
 
-    pub(super) fn render_workspace_toolbar(&self, cx: &Context<Self>) -> gpui::AnyElement {
+    pub(super) fn render_workspace_toolbar(&self, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let content = div()
             .h_flex()
             .h_full()

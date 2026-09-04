@@ -5,7 +5,7 @@
 #[cfg(not(target_os = "macos"))]
 use std::sync::Arc;
 
-use gpui::*;
+use gpui_kit::*;
 #[cfg(not(target_os = "macos"))]
 use image::{Frame, ImageBuffer, Rgba};
 #[cfg(not(target_os = "macos"))]

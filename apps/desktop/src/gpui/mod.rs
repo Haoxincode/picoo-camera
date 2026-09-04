@@ -17,8 +17,8 @@ mod widgets;
 
 pub use bootstrap::run_gpui_app;
 
-use gpui::*;
-use gpui_component::input::InputState;
+use gpui_kit::component::input::InputState;
+use gpui_kit::*;
 
 use crate::model::VirtualCameraStatus;
 use crate::prefs::DesktopPreferences;

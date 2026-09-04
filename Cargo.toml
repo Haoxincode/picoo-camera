@@ -47,11 +47,14 @@ yuv = "0.8.17"
 reed-solomon-erasure = "6.0"
 zeroize = "1.8"
 
-# GPUI stack — lock to gpui-component compatible revision (ARCH-PICOO-UI-001)
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+# GPUI Kit facade — one compatible stack, including upstream #2940 so the
+# desktop build does not pull the unused reqwest/AWS-LC/CMake chain.
+gpui-kit = {
+  git = "https://github.com/longbridge/gpui-kit",
+  rev = "39c9b7b0fb0bdf3c4d07e26d7fdf74381474646e",
+  default-features = false,
+  features = ["component", "assets"],
+}
 
 picoo-protocol = { path = "crates/picoo-protocol" }
 picoo-packet = { path = "crates/picoo-packet" }

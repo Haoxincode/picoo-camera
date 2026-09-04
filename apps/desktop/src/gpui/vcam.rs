@@ -1,7 +1,7 @@
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::button::*;
-use gpui_component::*;
+use gpui_kit::component::button::*;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use crate::model::VirtualCameraStatus;
 #[cfg(target_os = "macos")]

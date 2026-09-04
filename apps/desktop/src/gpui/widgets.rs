@@ -1,6 +1,6 @@
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 use picoo_session::ReceiverStatus;
 
 use super::icons::reicon_named;

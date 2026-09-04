@@ -34,8 +34,8 @@
 
 | 场景 | Skill | 来源 |
 | --- | --- | --- |
-| GPUI 框架 | [gpui](.agents/skills/gpui/SKILL.md) | [longbridge/gpui-component](https://github.com/longbridge/gpui-component) |
-| gpui-component 组件 / 官方 Design Guides | [gpui-component](.agents/skills/gpui-component/SKILL.md) | 同上 |
+| GPUI Kit 框架、组件 API / Coding Guides | [gpui-kit](.agents/skills/gpui-kit/SKILL.md) | [longbridge/gpui-kit](https://github.com/longbridge/gpui-kit) |
+| GPUI Kit 官方 Design Guides | [gpui-kit-design-guides](.agents/skills/gpui-kit-design-guides/SKILL.md) | 同上 |
 | Compose 状态与副作用 | [compose-state-and-effects](.agents/skills/compose-state-and-effects/SKILL.md) | [chrisbanes/skills](https://github.com/chrisbanes/skills) |
 | Compose 组件 API | [compose-component-design](.agents/skills/compose-component-design/SKILL.md) | 同上 |
 | Compose 动效 | [compose-animations](.agents/skills/compose-animations/SKILL.md) | 同上 |

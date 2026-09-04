@@ -1,5 +1,5 @@
-use gpui::*;
-use gpui_component::*;
+use gpui_kit::component::*;
+use gpui_kit::*;
 use picoo_discovery::DEFAULT_QUIC_PORT;
 
 use crate::live_diagnostics::{

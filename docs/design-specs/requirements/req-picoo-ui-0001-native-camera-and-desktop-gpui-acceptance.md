@@ -39,7 +39,7 @@
 ### 2.1 三层 token 与单一主题事实源
 
 - [ ] **AC-DSYS-01（三层 token）**：全端必须具有 Primitive → Semantic → Component 三层设计契约。Feature 页面只能消费 Semantic 或 Component token；原始色值、字号、间距、圆角、阴影和动效时长只允许出现在集中 token 定义或经审计的数据/媒体内容中。
-- [ ] **AC-DSYS-02（平台适配）**：Android 通过 `MaterialTheme` 与 Picoo `CompositionLocal`，iOS 通过 Asset Catalog Any/Dark 与 SwiftUI token 扩展，桌面通过 `gpui-component::Theme` 与 Picoo 语义扩展消费同一契约。不得在单个 Screen/View 中建立私有 Palette 或另一套组件常量。
+- [ ] **AC-DSYS-02（平台适配）**：Android 通过 `MaterialTheme` 与 Picoo `CompositionLocal`，iOS 通过 Asset Catalog Any/Dark 与 SwiftUI token 扩展，桌面通过 `gpui_kit::component::Theme` 与 Picoo 语义扩展消费同一契约。不得在单个 Screen/View 中建立私有 Palette 或另一套组件常量。
 - [ ] **AC-DSYS-03（状态完整）**：组件覆盖适用的 Rest、Pressed、Focus、Selected、Disabled、Loading、Error 与 Open 状态；桌面另外覆盖 Hover。状态不得只依赖颜色，破坏性操作必须使用 Destructive 意图而不是 Primary。
 
 ### 2.2 Control context 与 Camera context
@@ -182,11 +182,11 @@ context 的普通 Card 颜色模拟取景 HUD。
 ### 4.1 技术选型与组件基线
 - [ ] **AC-D-TECH-01**：Windows 与 macOS 共用同一套 Rust GPUI 代码，**严禁引入 Electron、Tauri、WebView 或内嵌浏览器运行环境**。
 - [ ] **AC-D-TECH-02**：视频监视器核心自定义组件必须封装为 **`VideoSurface`**，绑定 LatestFrameStore 解码帧，保持 16:9 画幅与断流占位画面平滑切换。
-- [ ] **AC-D-TECH-03（gpui-component 与 Tailwind CSS 4.0 对齐）**：
-  - 桌面 UI 组件库必须基于 `gpui-component` 体系；
+- [ ] **AC-D-TECH-03（GPUI Kit / gpui-component 与 Tailwind CSS 4.0 对齐）**：
+  - 桌面应用必须只声明 `gpui-kit` facade，并使用其中的 `gpui_kit::component` 完整样式组件体系；不得在应用 crate 重复声明独立的 GPUI、platform、base 或 component 依赖；
   - `ARCH-PICOO-UI-002` 与本规范中的共享 token 是视觉比例和语义角色的事实源；HTML 原型中的 Tailwind CSS 4.0 类名与 `@theme` 变量是该契约的可视化映射，不是在 Rust 中保留 CSS/Web 运行时的要求；
-  - 间距、字号、图标和普通布局尺寸必须映射为 GPUI 的 `rem` scale helper 或 `gpui-component` 语义尺寸，产品颜色、圆角与阴影必须集中映射到 Picoo 语义主题，禁止在页面调用点散落原始色值和普通布局 `px(...)`；
-  - Button、Switch、AlertDialog、滚动条等交互必须保留 `gpui-component` 的跨平台键盘、焦点、禁用态和 dismissal 契约；HTML 仅负责外观与信息架构，不能以像素复刻为由降级这些行为；
+  - 间距、字号、图标和普通布局尺寸必须映射为 GPUI 的 `rem` scale helper 或 `gpui_kit::component` 语义尺寸，产品颜色、圆角与阴影必须集中映射到 Picoo 语义主题，禁止在页面调用点散落原始色值和普通布局 `px(...)`；
+  - Button、Switch、AlertDialog、滚动条等交互必须保留 GPUI Kit 中 GPUI Component 层的跨平台键盘、焦点、禁用态和 dismissal 契约；HTML 仅负责外观与信息架构，不能以像素复刻为由降级这些行为；
   - 允许且必须保留经产品确认的原型覆盖项：默认窗口与最小窗口均为 1440×900、不记忆上次窗口尺寸、连接页使用可用宽度而不保留 HTML 的 1160px 上限、实时预览严格保持 16:9；窗口边界属于平台物理尺寸，可使用 `px(...)`。
 - [ ] **AC-D-TECH-04（Windows 产品进程）**：从资源管理器或开机启动打开桌面端时不得附带命令行窗口，状态检测也不得启动 `reg.exe` 等控制台子进程；普通权限启动只通过无注册表写入能力的 API 检测并启动已安装的虚拟摄像头，不得自动尝试写系统级 COM 注册表。修复注册只由 MSI 或用户明确触发的修复动作承担；显式修复必须触发 Windows UAC、避免阻塞 GPUI 线程和重复提交，并在当前虚拟摄像头界面内显示等待、成功或失败结果。
 - [ ] **AC-D-TECH-05（macOS 图标启动）**：从 Finder、Dock 或 `open` 启动打包后的 `Picoo Camera.app` 必须及时显示主窗口；Shared Frame Ring 文件访问不得阻塞主线程启动，暂不可用时应降级为页面内状态而不是留下无窗口进程。
@@ -252,14 +252,14 @@ context 的普通 Card 颜色模拟取景 HUD。
 - [ ] **AC-D-NAV-02（100% Reicon 矢量图标标准化）**：
   - 所有产品功能图标严格采用 `dqev/reicon` 官方 24×24 像素网格矢量标准，严禁在功能交互中使用系统 emoji；
   - 一级导航图标必须与页面职责直接对应：`连接`使用同时表达手机与电脑的 `monitor-phone`，`虚拟摄像头`使用同时表达显示器与摄像头输出的 `monitor-camera`，不得继续使用泛化的 `home` 或 `monitor`；
-  - 最小化、最大化、关闭等平台窗口装饰由 `gpui-component::TitleBar` 统一提供；Sidebar 折叠控制使用 Reicon Filled `sidebar-left` / `sidebar-right`，与导航图标保持同一图标体系。
+  - 最小化、最大化、关闭等平台窗口装饰由 `gpui_kit::component::TitleBar` 统一提供；Sidebar 折叠控制使用 Reicon Filled `sidebar-left` / `sidebar-right`，与导航图标保持同一图标体系。
 - [ ] **AC-D-NAV-03（可折叠图标 Sidebar）**：
   - 桌面窗口使用贴边的单层工作区，不展示独立品牌标题栏，不保留工作区外侧留白，也不使用第二层圆角边框包裹 Sidebar 与主内容区；Sidebar 只拥有与主内容相邻的分割线；
   - Sidebar 默认展开并保持 HTML 原型的 `204px` 宽度，两端均可切换为 `48px` 图标态；“连接”必须保留在 Sidebar 导航列表并与其他导航项使用相同结构。折叠按钮位于 Sidebar 分割线右侧，通过共享行高和顶部 inset 与“连接”导航图标严格处于同一水平中心线；
   - 导航区域遵循官方 Sidebar 的紧凑密度：常规导航行高为 `32px`、功能图标为 `16px`，图标与文案使用 `8px` 语义间距；导航功能图标继续使用 Reicon；
-  - 折叠按钮遵循 `gpui-component::SidebarToggleButton` 的紧凑 `ghost + small` 几何与状态语义，展开态显示 Reicon Filled `sidebar-left`，折叠态显示 Reicon Filled `sidebar-right`；应用层继续提供稳定控件 ID、中文悬浮提示与无障碍名称；
+  - 折叠按钮遵循 `gpui_kit::component::SidebarToggleButton` 的紧凑 `ghost + small` 几何与状态语义，展开态显示 Reicon Filled `sidebar-left`，折叠态显示 Reicon Filled `sidebar-right`；应用层继续提供稳定控件 ID、中文悬浮提示与无障碍名称；
   - 展开与折叠必须复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 裁剪宽度过渡：导航内容先按目标态排版，外层宽度连续插值，Sidebar 背景与右侧分隔线逐帧跟随外层宽度，主内容与折叠按钮随 Sidebar 边界平滑移动，不得瞬间跳变或逐帧挤压导航文案；
-  - Windows 不保留额外空标题行，主内容顶部工具行复用 `gpui-component::TitleBar`，折叠按钮、当前页面与最右侧最小化/最大化/关闭按钮处于同一行，未被控件占用的区域可拖拽窗口；macOS 最上方单独保留交通灯与拖拽安全行，Sidebar 导航及主内容工具行位于其下方；两端均不重复展示应用图标与 `Picoo Camera` 文案；
+  - Windows 不保留额外空标题行，主内容顶部工具行复用 `gpui_kit::component::TitleBar`，折叠按钮、当前页面与最右侧最小化/最大化/关闭按钮处于同一行，未被控件占用的区域可拖拽窗口；macOS 最上方单独保留交通灯与拖拽安全行，Sidebar 导航及主内容工具行位于其下方；两端均不重复展示应用图标与 `Picoo Camera` 文案；
   - 折叠态仅显示导航、主题与展开控制图标，隐藏文案但保留选中态、稳定控件 ID、可聚焦按钮、无障碍名称与悬浮提示；
   - 折叠后释放的宽度由主内容区自动接管，主内容继续保持 `flex_1 + min_w_0` 与单一纵向滚动容器；折叠状态只属于当前桌面进程，不写入跨设备偏好。
   - 桌面应用首次启动默认使用 Picoo Light；Sidebar 主题按钮继续允许在 Picoo Light 与 Picoo Dark 之间切换。

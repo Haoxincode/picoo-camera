@@ -108,7 +108,7 @@ FFI 边界只允许：
 
 - 四端业务状态、协议、传输、配对、重连和码率控制尽可能统一在 Rust Core。
 - 原始 YUV/RGB 摄像头帧不跨 FFI；编码发生在平台原生媒体层。
-- `gpui`、`gpui_platform` 和 `gpui-component` 必须在 workspace 根目录统一锁定到相互兼容的 Git revision。
+- 桌面应用只通过 workspace 根目录的 `gpui-kit` facade 依赖 GPUI、`gpui-base`、`gpui-component` 与默认 assets，并锁定一个已验证的 Git revision；各 crate 不得绕过 facade 自行声明 GPUI 家族依赖。
 - 仓库构建不得依赖 CMake，也不为 Windows Virtual Camera 维护第二套 C++/MSBuild 工程。Android JNI 由 Rust `jni` crate 直接导出；Windows Media Foundation Source 使用独立 Rust `cdylib` crate，通过 `windows-rs` 实现 COM/MF 接口并由 Cargo 构建。原生平台链接器与系统 SDK 仍是允许且必需的平台边界。
 - 第一版不在本仓库引入云账号、Registry HTTP 服务或 Plugin 体系。
 

@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
-use gpui::prelude::FluentBuilder;
-use gpui::*;
-use gpui_component::button::*;
-use gpui_component::input::Input;
-use gpui_component::switch::*;
-use gpui_component::*;
+use gpui_kit::component::button::*;
+use gpui_kit::component::input::Input;
+use gpui_kit::component::switch::*;
+use gpui_kit::component::*;
+use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::prefs::LogLevel;

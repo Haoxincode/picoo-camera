@@ -11,7 +11,7 @@ path = "src/main.rs"
 
 [features]
 default = []
-gpui-ui = ["dep:bytes", "dep:fast_image_resize", "dep:gpui", "dep:gpui_platform", "dep:gpui-component", "dep:gpui-component-assets", "dep:image", "dep:smallvec", "dep:yuv"]
+gpui-ui = ["dep:bytes", "dep:fast_image_resize", "dep:gpui-kit", "dep:image", "dep:smallvec", "dep:yuv"]
 windows-vcam = ["dep:windows", "picoo-receiver/windows-mf"]
 
 [dependencies]
@@ -31,10 +31,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 bytes = { workspace = true, optional = true }
 fast_image_resize = { workspace = true, optional = true }
-gpui = { workspace = true, optional = true }
-gpui_platform = { workspace = true, optional = true }
-gpui-component = { workspace = true, optional = true }
-gpui-component-assets = { workspace = true, optional = true }
+gpui-kit = { workspace = true, optional = true }
 image = { version = "0.25", optional = true }
 smallvec = { version = "1", optional = true }
 yuv = { workspace = true, optional = true }

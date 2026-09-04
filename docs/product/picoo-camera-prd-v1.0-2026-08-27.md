@@ -121,7 +121,7 @@ UI 不承担视频处理和协议逻辑，只负责：
 | 视频数据 | QUIC Datagram |
 | 控制数据 | QUIC Reliable Stream |
 | 桌面输出 | 系统虚拟摄像头 |
-| 桌面 UI | GPUI + gpui-component |
+| 桌面 UI | GPUI Kit（GPUI + gpui-component） |
 | Android UI | Jetpack Compose |
 | iOS UI | SwiftUI |
 | 云服务 | 无 |
@@ -692,8 +692,8 @@ UI 必须区分：
 | --- | --- |
 | Android Sender | Jetpack Compose |
 | iOS Sender | SwiftUI |
-| Windows Receiver | GPUI + gpui-component |
-| macOS Receiver | GPUI + gpui-component |
+| Windows Receiver | GPUI Kit（GPUI + gpui-component） |
+| macOS Receiver | GPUI Kit（GPUI + gpui-component） |
 
 不引入：
 
@@ -706,11 +706,13 @@ UI 必须区分：
 
 原因是手机端 UI 很薄，而摄像头、编码器、权限与生命周期无论如何都必须调用原生 API。桌面 Receiver 则是同一个产品，Windows 和 macOS 共用 GPUI 可以真正减少重复代码。
 
-### 10.2 gpui-component 使用方式
+### 10.2 GPUI Kit 与 gpui-component 使用方式
 
-桌面端直接使用完整的：
+桌面应用只依赖 `gpui-kit` facade，并通过它使用完整的：
 
 ```text
+gpui-kit
+      ↓
 gpui-component
       ↓
 gpui-base
@@ -720,7 +722,7 @@ GPUI
 
 第一版不从 gpui-base 开始重做 Picoo Camera Design System。
 
-gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，并明确支持一套 Rust 代码运行于 macOS、Windows 和 Linux；gpui-base 则用于产品需要自行拥有完整设计系统时复用行为与基础设施。
+gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，并明确支持一套 Rust 代码运行于 macOS、Windows 和 Linux；gpui-base 则用于产品需要自行拥有完整设计系统时复用行为与基础设施。`gpui-kit` 只统一依赖与入口，不改变这两层的职责。
 
 桌面端的视觉与信息架构以 `picoo-camera-receiver.html` 为准。HTML 中的 Tailwind 类名与 OKLCH `@theme` 变量应映射为 GPUI 的 `rem` 比例、组件语义尺寸和 Picoo 明暗主题，首次启动默认使用亮色主题，用户仍可在 Sidebar 中切换深色主题；不引入 CSS、WebView 或浏览器运行时，也不以像素复刻为由绕过 gpui-component 已有的键盘、焦点、滚动与弹窗行为。
 
@@ -767,11 +769,11 @@ gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，�
 - 支持占位画面；
 - 不拥有解码器或网络会话。
 
-### 10.3 GPUI 依赖管理
+### 10.3 GPUI Kit 依赖管理
 
-gpui、gpui_platform 和 gpui-component 必须在 Workspace 根目录统一锁定到相互兼容的 Git revision。
+Workspace 根目录只声明一个固定 Git revision 的 `gpui-kit`，并显式启用 `component` 与 `assets`；桌面应用不分别声明 gpui、gpui_platform、gpui-base 或 gpui-component。
 
-不得让不同 crate 自行引用不同 GPUI commit，否则 Cargo 可能解析出两个互不兼容的 GPUI 类型。gpui-base 官方文档也明确提示应用与组件库必须使用相同 GPUI revision。
+不得让不同 crate 绕过 facade 自行引用 GPUI 家族依赖，否则 Cargo 可能解析出两个互不兼容的 GPUI 类型。所选 revision 必须采用 Apache-2.0、支持 Rust 1.90+ / Windows 10+ / macOS 15+，并且不得通过未使用的 HTTP/TLS 依赖引入 CMake；切换到新的正式版本时必须重新核对这些条件和依赖树。
 
 ## 11. Rust Core 架构
 
@@ -1661,7 +1663,7 @@ macOS：
 
 桌面端 UI
 └── Windows + macOS:
-    GPUI + gpui-component
+    GPUI Kit（GPUI + gpui-component）
 
 共享业务核心
 └── Rust

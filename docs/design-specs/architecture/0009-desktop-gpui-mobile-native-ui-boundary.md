@@ -15,8 +15,8 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 | --- | --- |
 | Android Sender | Jetpack Compose |
 | iOS Sender | SwiftUI |
-| Windows Receiver | GPUI + gpui-component |
-| macOS Receiver | GPUI + gpui-component |
+| Windows Receiver | GPUI Kit（GPUI + gpui-component） |
+| macOS Receiver | GPUI Kit（GPUI + gpui-component） |
 
 不引入：Flutter、React Native、Electron、Tauri、WebView、GPUI Mobile。
 
@@ -24,9 +24,13 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 [ARCH-PICOO-UI-002](0010-cross-platform-design-system-boundary.md) 约束。本 Architecture 只决定平台 UI
 技术、状态所有权和运行时边界，不允许任何平台以“原生实现”为由另建一套产品视觉语义。
 
-### gpui-component 使用方式
+### GPUI Kit 与 gpui-component 使用方式
 
-桌面端直接使用完整的 `gpui-component → gpui-base → GPUI`。第一版不从 gpui-base 重做 Design System，仅定制颜色、字体、圆角、间距、明暗主题（默认亮色）、状态色和品牌图标。
+桌面应用只声明 `gpui-kit` facade，由其统一选择相互兼容的 GPUI、`gpui-base`、`gpui-component` 与 assets；Rust 代码通过 `gpui_kit::*` 和 `gpui_kit::component::*` 消费对应层。产品继续完整使用 `gpui-component → gpui-base → GPUI`，不从 gpui-base 重做 Design System，仅定制颜色、字体、圆角、间距、明暗主题（默认亮色）、状态色和品牌图标。
+
+`gpui-shell`、`gpui-wry` 和 `gpui-fps` 不属于 Receiver 运行时依赖；若未来引入，必须先建立独立 Architecture/Requirement 边界。`gpui-kit` 必须关闭隐式默认 feature 并显式启用 Receiver 实际需要的 `component` 与 `assets`，避免上游新增默认能力时静默扩大产品依赖面。
+
+截至 2026-09-05，GPUI Kit 仍由上游活跃维护，最新正式版本为 0.6.0；它使用 Apache-2.0 许可证，要求 Rust 1.90+，支持 Windows 10+ 与 macOS 15+，与 Picoo 的 Rust stable、Windows 11 和 macOS 15 ARM64 基线兼容。facade 只做类型与入口重导出，不增加独立渲染或运行时层；关闭默认 feature 并只启用 `component`、`assets` 后，依赖树不包含 Receiver 未使用的 shell、WebView 和 FPS 能力。直接组合 `gpui-pre`、`gpui-pre-platform` 与 `gpui-component` 虽可构建，但会把版本兼容责任重新泄漏给应用，因此不采用。所锁 revision 必须包含上游 `#2940`：该修复删除 facade 未使用的 `reqwest_client`，使解析树不再包含 `aws-lc-sys` 与 CMake；切换 crates.io 版本前必须确认对应正式版本已经包含该修复。
 
 第一版使用的组件：Button、Card、Badge、Select、Switch、Slider、Dialog、Tooltip、Popover、Toast、Progress、Separator、Icon。
 
@@ -76,7 +80,7 @@ struct DesktopAppState {
 - **通用页**：只承载电脑名称与桌面生命周期偏好（关闭窗口后后台运行、登录时启动）；Windows 托盘与 macOS Dock/后台行为使用平台正确文案，不互相借用平台术语。
 - **帮助页诊断区**：承载日志级别与脱敏诊断导出，避免把面向故障排查的能力混入日常通用设置。
 
-桌面一级导航由 GPUI View 持有进程内展开/折叠状态。窗口采用贴边的单层工作区，不再叠加品牌图标、应用标题、外侧留白或包住 Sidebar 与主内容的第二层圆角边框；Sidebar 只拥有与主内容相邻的分割线。展开态遵循 HTML 原型的 `204px` 导航布局，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。“连接”必须保留在 Sidebar 导航列表并与其他导航项共享相同结构；主内容侧的折叠控制通过与首个“连接”导航行共用高度和顶部 inset，严格位于同一水平中心线，同时保持在 Sidebar 分割线右侧。Windows 不保留额外空标题行，主内容顶部工具行复用 `gpui-component::TitleBar` 的拖拽和窗口按钮契约，最小化、最大化、关闭位于同一行最右侧；macOS 单独保留最上方交通灯与拖拽安全行，导航和主内容工具行位于其下方。两端都不重复展示相机图标或 `Picoo Camera` 文案。折叠控制遵循 `gpui-component::SidebarToggleButton` 的紧凑几何和方向状态语义，图标使用 Reicon Filled `sidebar-left` / `sidebar-right`，应用层补充稳定 ID、中文 Tooltip 与无障碍名称。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。
+桌面一级导航由 GPUI View 持有进程内展开/折叠状态。窗口采用贴边的单层工作区，不再叠加品牌图标、应用标题、外侧留白或包住 Sidebar 与主内容的第二层圆角边框；Sidebar 只拥有与主内容相邻的分割线。展开态遵循 HTML 原型的 `204px` 导航布局，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。“连接”必须保留在 Sidebar 导航列表并与其他导航项共享相同结构；主内容侧的折叠控制通过与首个“连接”导航行共用高度和顶部 inset，严格位于同一水平中心线，同时保持在 Sidebar 分割线右侧。Windows 不保留额外空标题行，主内容顶部工具行复用 `gpui_kit::component::TitleBar` 的拖拽和窗口按钮契约，最小化、最大化、关闭位于同一行最右侧；macOS 单独保留最上方交通灯与拖拽安全行，导航和主内容工具行位于其下方。两端都不重复展示相机图标或 `Picoo Camera` 文案。折叠控制遵循 `gpui_kit::component::SidebarToggleButton` 的紧凑几何和方向状态语义，图标使用 Reicon Filled `sidebar-left` / `sidebar-right`，应用层补充稳定 ID、中文 Tooltip 与无障碍名称。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。
 
 桌面默认窗口与最小窗口统一为 `1440×900`，不记忆上次尺寸。该尺寸是完整产品布局的支持边界，不通过隐藏指标、折叠操作、缩短文案或 icon-only 模式提供更窄的响应式降级。待机连接页保留主区域与固定宽度「设备与连接」辅助栏；进入 Live 后辅助栏整体退出，工作区改由单行命令/状态顶栏和占满剩余空间的 16:9 `VideoSurface` 组成。顶栏左侧常驻设备名、帧率、链路延迟、接收码率和网络质量；分辨率选择、「连接详情」与带文字的镜像、切换、修复、断开动作同在右侧。帧率、延迟、码率和网络质量各自使用独立圆角方块，分辨率与连接详情使用与镜头控制相同的 outline 按钮，顶栏与预览之间用细分隔线分开。唯一 `Live` 标记位于预览左上角。Popover 仅承载身份、虚拟摄像头和深入链路诊断，不承担主信息的响应式收纳。两种页面结构都由同一 `DesktopPage` 状态切换，不在设备辅助栏保留第二套直播控制实现。
 
@@ -121,7 +125,7 @@ UI 同样不承担二维码生成、二维码解析或扫码相机预览；连�
 
 ## 约束
 
-- `gpui`、`gpui_platform`、`gpui-component` 必须在 workspace 根统一锁定 Git revision。
+- workspace 根只声明一个固定 Git revision 的 `gpui-kit`；`gpui`、`gpui_platform`、`gpui-base`、`gpui-component` 与 assets 的兼容版本由该 facade 统一决定，应用 crate 不得重复声明。
 - UI 必须能区分 PRD 定义的连接与错误状态。
 - 权限必须在用户执行相应操作时请求，不在启动后一次性弹出全部权限。
 

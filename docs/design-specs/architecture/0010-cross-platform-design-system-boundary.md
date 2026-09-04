@@ -6,7 +6,7 @@ Source: BUC-001 / PUC-001 / PUC-002 / PUC-005 / PUC-007 / PUC-008 / REQ-PICOO-UI
 ## 背景
 
 Picoo Camera 的 Sender 与 Receiver 承担不同任务，也使用不同原生 UI 技术。桌面端已经通过
-`gpui-component::Theme` 形成浅色/深色语义主题；Android 与 iOS 仍各自维护深色常量和页面级几何，
+`gpui_kit::component::Theme` 形成浅色/深色语义主题；Android 与 iOS 仍各自维护深色常量和页面级几何，
 导致相同产品在颜色、层级、组件密度和 Icon 语义上持续漂移。
 
 跨端一致性不等于复用同一份布局代码或追求像素相同。用户需要识别出它们属于同一个产品，同时仍能
@@ -30,7 +30,7 @@ Picoo Camera 的 Sender 与 Receiver 承担不同任务，也使用不同原生 
 | --- | --- | --- |
 | Android | Compose `MaterialTheme` + Picoo `CompositionLocal` | Compose 导航、Sheet、焦点、手势、语义树与 48dp 触控目标 |
 | iOS | Asset Catalog Any/Dark + `Color`/`Font`/Environment 扩展 | SwiftUI Navigation、Sheet、Dynamic Type、VoiceOver 与 44pt 触控目标 |
-| Windows / macOS | `gpui-component::Theme` + Picoo 语义扩展 | GPUI Component 的窗口、键盘、焦点、Overlay、Tooltip 与组件尺寸 |
+| Windows / macOS | `gpui_kit::component::Theme` + Picoo 语义扩展 | GPUI Kit 中 GPUI Component 层的窗口、键盘、焦点、Overlay、Tooltip 与组件尺寸 |
 | HTML 原型 | CSS custom properties / Tailwind 语义映射 | 只作为经 Design Spec 对齐后的可视化验收入口，不是运行时依赖 |
 
 Tailwind 类名可以表达比例和语义，但不得进入原生运行时。Compose Styles 仍是实验性能力，不作为

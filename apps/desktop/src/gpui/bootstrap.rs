@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
-use gpui::*;
-use gpui_component::*;
-use gpui_component_assets::Assets;
+use gpui_kit::assets::Assets;
+use gpui_kit::component::*;
+use gpui_kit::*;
 use picoo_receiver::ReceiverError;
 
 use crate::prefs::load_prefs;
@@ -35,7 +35,7 @@ struct PicooAssets;
 
 // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01 / AC-D-LIVE-01: the product window is
 // intentionally large enough to keep the complete Live toolbar visible.
-const PRODUCT_WINDOW_SIZE: gpui::Size<Pixels> = size(px(1440.), px(900.));
+const PRODUCT_WINDOW_SIZE: gpui_kit::Size<Pixels> = size(px(1440.), px(900.));
 
 enum DesktopStartup {
     Ready(Box<ReceiverRuntime>),
@@ -78,7 +78,7 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     // GPUI's Windows platform calls OleInitialize (STA). It must own the UI
     // thread apartment before ReceiverRuntime creates the Media Foundation
     // decoder; otherwise an earlier MTA init makes platform construction panic.
-    let app = gpui_platform::application().with_assets(PicooAssets);
+    let app = gpui_kit::application().with_assets(PicooAssets);
     let vcam_status = detect_vcam_status();
     let startup = match ReceiverRuntime::from_prefs(&prefs) {
         Ok(mut runtime) => {
@@ -96,7 +96,7 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
 
     let prefs_for_window = prefs.clone();
     app.run(move |cx| {
-        gpui_component::init(cx);
+        gpui_kit::init(cx);
         crate::picoo_theme::install(cx);
         cx.set_app_identity("com.picoo.camera", "Picoo Camera");
         cx.activate(true);
@@ -174,7 +174,7 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
 #[cfg(test)]
 mod tests {
     use super::{PicooAssets, PRODUCT_WINDOW_SIZE};
-    use gpui::{px, AssetSource};
+    use gpui_kit::{px, AssetSource};
 
     #[test]
     fn product_window_preserves_the_full_live_toolbar() {
@@ -190,7 +190,7 @@ mod tests {
             .expect("run_gpui_app source");
         let body = &source[start..];
         let platform = body
-            .find("let app = gpui_platform::application()")
+            .find("let app = gpui_kit::application()")
             .expect("GPUI platform initialization");
         let receiver = body
             .find("ReceiverRuntime::from_prefs")

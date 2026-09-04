@@ -4,8 +4,8 @@
 //! tokens in `picoo-camera-receiver.html`. Product UI consumes the resolved
 //! semantic roles through `cx.theme()`; raw palette values stay in this file.
 
-use gpui::App;
-use gpui_component::{Theme, ThemeMode, ThemeRegistry};
+use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
+use gpui_kit::App;
 
 const DEFAULT_THEME_MODE: ThemeMode = ThemeMode::Light;
 
@@ -153,7 +153,7 @@ pub fn install(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use gpui_component::ThemeSet;
+    use gpui_kit::component::ThemeSet;
 
     use super::{DEFAULT_THEME_MODE, PICOO_THEME_SET};
 
