@@ -398,7 +398,7 @@ impl FrameProvider {
     }
 
     #[cfg(test)]
-    fn with_ring_name(ring_name: String) -> io::Result<Self> {
+    pub(crate) fn with_ring_name(ring_name: String) -> io::Result<Self> {
         Self::with_reader(RingFrameReader::with_ring_name(ring_name))
     }
 }

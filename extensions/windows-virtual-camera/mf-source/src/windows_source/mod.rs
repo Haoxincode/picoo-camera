@@ -143,8 +143,9 @@ mod tests {
     use windows::core::{IUnknown, Interface};
     use windows::Win32::Media::KernelStreaming::IKsControl;
     use windows::Win32::Media::MediaFoundation::{
-        IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2, MFShutdown,
-        MFStartup, MF_VERSION,
+        IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2,
+        IMFSampleAllocatorControl, IMFVideoSampleAllocator, MFCreateVideoSampleAllocator,
+        MFShutdown, MFStartup, MF_VERSION,
     };
     use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{
@@ -230,6 +231,18 @@ mod tests {
             stream
                 .cast::<IAgileObject>()
                 .expect("media stream must expose IAgileObject");
+            let allocator_control: IMFSampleAllocatorControl = stream
+                .cast()
+                .expect("media stream must expose allocator control");
+            for _ in 0..2 {
+                let mut raw_allocator = std::ptr::null_mut();
+                MFCreateVideoSampleAllocator(&IMFVideoSampleAllocator::IID, &mut raw_allocator)
+                    .expect("MFCreateVideoSampleAllocator");
+                let allocator = IMFVideoSampleAllocator::from_raw(raw_allocator);
+                allocator_control
+                    .SetDefaultAllocator(0, &allocator)
+                    .expect("replace stopped-stream allocator");
+            }
 
             let cross_thread_source = source_ex.clone().into_raw() as usize;
             let cross_thread_stream = stream.clone().into_raw() as usize;
@@ -259,6 +272,10 @@ mod tests {
                 .Start(&presentation, &GUID::zeroed(), &start_position)
                 .expect("IMFMediaSource::Start");
             source.Stop().expect("IMFMediaSource::Stop");
+            source
+                .Start(&presentation, &GUID::zeroed(), &start_position)
+                .expect("IMFMediaSource::Start after Stop");
+            source.Stop().expect("second IMFMediaSource::Stop");
             source.Shutdown().expect("IMFMediaSource::Shutdown");
         }
     }

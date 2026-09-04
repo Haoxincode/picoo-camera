@@ -622,11 +622,13 @@ fn create_sample(
         let mut destination = std::ptr::null_mut();
         let mut capacity = 0u32;
         buffer.Lock(&mut destination, Some(&mut capacity), None)?;
-        let copy_result = if destination.is_null() || capacity < frame.pixels.len() as u32 {
+        let copy_result = if destination.is_null() {
             Err(Error::from(E_FAIL))
         } else {
-            std::ptr::copy_nonoverlapping(frame.pixels.as_ptr(), destination, frame.pixels.len());
-            buffer.SetCurrentLength(frame.pixels.len() as u32)
+            let destination = std::slice::from_raw_parts_mut(destination, capacity as usize);
+            crate::copy_prepared_frame(&frame.pixels, destination)
+                .map_err(|_| Error::from(E_FAIL))
+                .and_then(|copied| buffer.SetCurrentLength(copied as u32))
         };
         let unlock_result = buffer.Unlock();
         copy_result?;
