@@ -21,6 +21,7 @@ object DiscoveryTxt {
         val quicPort: Int,
         val pairingState: String?,
         val fingerprintPrefix: String?,
+        val platform: String,
     )
 
     fun parseAttributes(raw: Map<String, ByteArray?>): Parsed? {
@@ -29,13 +30,14 @@ object DiscoveryTxt {
             keys = attributes.keys,
             values = attributes.values,
         ) ?: return null
-        if (fields.size < 5) return null
+        if (fields.size < 6) return null
         return Parsed(
             receiverId = fields[0],
             displayName = fields[1],
             quicPort = fields[2].toInt(),
             pairingState = fields[3],
             fingerprintPrefix = fields[4],
+            platform = fields[5],
         )
     }
 

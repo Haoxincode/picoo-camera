@@ -242,6 +242,8 @@ object PicooNative {
         val displayName: String,
         val host: String,
         val quicPort: Int,
+        /** TXT `platform` (`windows` / `macos`). */
+        val platform: String,
         /** TXT `pairing_state` (`open` / `paired_only`); null if absent. */
         val pairingState: String? = null,
     )

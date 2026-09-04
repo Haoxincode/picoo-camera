@@ -17,11 +17,12 @@ class ManualEndpointInputTest {
     }
 
     @Test
-    fun defaultPortKeepsTypingFocusedOnTheAddress() {
+    fun defaultLanPrefixAndPortAreRealInputValues() {
         val draft = ManualEndpointDraft.from("")
 
-        assertEquals(listOf("", "", "", ""), draft.octets)
+        assertEquals(listOf("192", "168", "", ""), draft.octets)
         assertEquals("4433", draft.port)
+        assertNull(draft.validatedEndpoint())
     }
 
     @Test

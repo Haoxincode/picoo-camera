@@ -168,7 +168,7 @@ internal fun ManualConnectSheet(
             draft.octets.forEachIndexed { index, octet ->
                 EndpointNumberField(
                     value = octet,
-                    placeholder = if (index == 0) "192" else if (index == 1) "168" else "1",
+                    placeholder = "—",
                     contentDescription = "IP 地址第 ${index + 1} 段",
                     focusRequester = focusRequesters[index],
                     imeAction = androidx.compose.ui.text.input.ImeAction.Next,
@@ -193,7 +193,7 @@ internal fun ManualConnectSheet(
             Text(":", style = MaterialTheme.typography.titleMedium)
             EndpointNumberField(
                 value = draft.port,
-                placeholder = ManualEndpointDraft.DEFAULT_PORT,
+                placeholder = "—",
                 contentDescription = "端口",
                 focusRequester = focusRequesters.last(),
                 imeAction = androidx.compose.ui.text.input.ImeAction.Done,

@@ -9,10 +9,35 @@ pub const SERVICE_TYPE: &str = "_picoocam._udp.local.";
 pub const ALLOWED_TXT_KEYS: &[&str] = &[
     "receiver_id",
     "display_name",
+    "platform",
     "quic_port",
     "pairing_state",
     "public_key_fingerprint_prefix",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReceiverPlatform {
+    Windows,
+    Macos,
+}
+
+impl ReceiverPlatform {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Windows => "windows",
+            Self::Macos => "macos",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "windows" => Some(Self::Windows),
+            "macos" => Some(Self::Macos),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -42,6 +67,7 @@ impl PairingState {
 pub struct ReceiverAdvertisement {
     pub receiver_id: String,
     pub display_name: String,
+    pub platform: ReceiverPlatform,
     pub quic_port: u16,
     pub pairing_state: PairingState,
     pub public_key_fingerprint_prefix: String,
@@ -51,12 +77,14 @@ impl ReceiverAdvertisement {
     pub fn new(
         receiver_id: impl Into<String>,
         display_name: impl Into<String>,
+        platform: ReceiverPlatform,
         quic_port: u16,
         public_key_fingerprint_prefix: impl Into<String>,
     ) -> Self {
         Self {
             receiver_id: receiver_id.into(),
             display_name: display_name.into(),
+            platform,
             quic_port,
             pairing_state: PairingState::Open,
             public_key_fingerprint_prefix: public_key_fingerprint_prefix.into(),
@@ -78,6 +106,7 @@ impl ReceiverAdvertisement {
         vec![
             ("receiver_id", self.receiver_id.clone()),
             ("display_name", self.display_name.clone()),
+            ("platform", self.platform.as_str().into()),
             ("quic_port", self.quic_port.to_string()),
             ("pairing_state", self.pairing_state.as_str().into()),
             (
@@ -107,6 +136,10 @@ impl ReceiverAdvertisement {
             lookup("receiver_id").ok_or(AdvertisementError::MissingField("receiver_id".into()))?;
         let display_name = lookup("display_name")
             .ok_or(AdvertisementError::MissingField("display_name".into()))?;
+        let platform =
+            lookup("platform").ok_or(AdvertisementError::MissingField("platform".into()))?;
+        let platform =
+            ReceiverPlatform::parse(&platform).ok_or(AdvertisementError::InvalidPlatform)?;
         let quic_port = lookup("quic_port")
             .ok_or(AdvertisementError::MissingField("quic_port".into()))?
             .parse::<u16>()
@@ -125,6 +158,7 @@ impl ReceiverAdvertisement {
         Ok(Self {
             receiver_id,
             display_name,
+            platform,
             quic_port,
             pairing_state,
             public_key_fingerprint_prefix,
@@ -140,6 +174,8 @@ pub enum AdvertisementError {
     UnknownField(String),
     #[error("invalid quic_port")]
     InvalidPort,
+    #[error("invalid platform")]
+    InvalidPlatform,
     #[error("invalid pairing_state")]
     InvalidPairingState,
 }
@@ -150,7 +186,13 @@ mod tests {
 
     #[test]
     fn txt_roundtrip_whitelist_only() {
-        let ad = ReceiverAdvertisement::new("recv-1", "Work PC", 4433, "ab12cd34");
+        let ad = ReceiverAdvertisement::new(
+            "recv-1",
+            "Work PC",
+            ReceiverPlatform::Macos,
+            4433,
+            "ab12cd34",
+        );
         let props: Vec<(String, String)> = ad
             .to_txt_properties()
             .into_iter()
@@ -162,8 +204,14 @@ mod tests {
 
     #[test]
     fn with_pairing_state_sets_txt() {
-        let ad = ReceiverAdvertisement::new("recv-1", "Work PC", 4433, "ab12cd34")
-            .with_pairing_state(PairingState::PairedOnly);
+        let ad = ReceiverAdvertisement::new(
+            "recv-1",
+            "Work PC",
+            ReceiverPlatform::Windows,
+            4433,
+            "ab12cd34",
+        )
+        .with_pairing_state(PairingState::PairedOnly);
         let props = ad.to_txt_properties();
         assert_eq!(
             props
@@ -183,6 +231,7 @@ mod tests {
         let props = vec![
             ("receiver_id".into(), "r".into()),
             ("display_name".into(), "n".into()),
+            ("platform".into(), "windows".into()),
             ("quic_port".into(), "1".into()),
             ("pairing_state".into(), "open".into()),
             ("public_key_fingerprint_prefix".into(), "fp".into()),
@@ -199,6 +248,7 @@ mod tests {
         let props = vec![
             ("receiver_id".into(), "r".into()),
             ("display_name".into(), "n".into()),
+            ("platform".into(), "windows".into()),
             ("quic_port".into(), "0".into()),
             ("pairing_state".into(), "open".into()),
             ("public_key_fingerprint_prefix".into(), "fp".into()),
@@ -206,6 +256,22 @@ mod tests {
         assert_eq!(
             ReceiverAdvertisement::from_txt_properties(&props),
             Err(AdvertisementError::InvalidPort)
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_platform() {
+        let props = vec![
+            ("receiver_id".into(), "r".into()),
+            ("display_name".into(), "n".into()),
+            ("platform".into(), "linux".into()),
+            ("quic_port".into(), "4433".into()),
+            ("pairing_state".into(), "open".into()),
+            ("public_key_fingerprint_prefix".into(), "fp".into()),
+        ];
+        assert_eq!(
+            ReceiverAdvertisement::from_txt_properties(&props),
+            Err(AdvertisementError::InvalidPlatform)
         );
     }
 }

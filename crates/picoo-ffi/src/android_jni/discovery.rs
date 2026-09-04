@@ -61,7 +61,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseDiscoveryTxt(
     let Ok(string_class) = env.find_class("java/lang/String") else {
         return ptr::null_mut();
     };
-    let Ok(result) = env.new_object_array(5, string_class, JObject::null()) else {
+    let Ok(result) = env.new_object_array(6, string_class, JObject::null()) else {
         return ptr::null_mut();
     };
     let fields = [
@@ -70,6 +70,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseDiscoveryTxt(
         advertisement.quic_port.to_string(),
         advertisement.pairing_state.as_str().to_owned(),
         advertisement.public_key_fingerprint_prefix,
+        advertisement.platform.as_str().to_owned(),
     ];
     for (index, field) in fields.iter().enumerate() {
         let Ok(value) = env.new_string(field) else {
@@ -141,11 +142,13 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_pollDiscoveryBrowse
                 display_name: [0; 64],
                 host: [0; 64],
                 quic_port: entry.advertisement.quic_port,
+                platform: [0; 16],
                 pairing_state: [0; 32],
             };
             write_field(&mut item.receiver_id, &entry.advertisement.receiver_id);
             write_field(&mut item.display_name, &entry.advertisement.display_name);
             write_field(&mut item.host, &entry.host);
+            write_field(&mut item.platform, entry.advertisement.platform.as_str());
             write_field(
                 &mut item.pairing_state,
                 entry.advertisement.pairing_state.as_str(),
@@ -193,28 +196,32 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getDiscoveredReceiv
         fixed_string(&item.receiver_id),
         fixed_string(&item.display_name),
         fixed_string(&item.host),
+        fixed_string(&item.platform),
         fixed_string(&item.pairing_state),
     ];
-    let (Ok(receiver_id), Ok(display_name), Ok(host), Ok(pairing_state)) = (
+    let (Ok(receiver_id), Ok(display_name), Ok(host), Ok(platform), Ok(pairing_state)) = (
         env.new_string(&strings[0]),
         env.new_string(&strings[1]),
         env.new_string(&strings[2]),
         env.new_string(&strings[3]),
+        env.new_string(&strings[4]),
     ) else {
         return ptr::null_mut();
     };
     let receiver_id = JObject::from(receiver_id);
     let display_name = JObject::from(display_name);
     let host = JObject::from(host);
+    let platform = JObject::from(platform);
     let pairing_state = JObject::from(pairing_state);
     env.new_object(
         class,
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;)V",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;Ljava/lang/String;)V",
         &[
             JValue::Object(&receiver_id),
             JValue::Object(&display_name),
             JValue::Object(&host),
             JValue::Int(item.quic_port as jint),
+            JValue::Object(&platform),
             JValue::Object(&pairing_state),
         ],
     )

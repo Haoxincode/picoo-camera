@@ -12,6 +12,7 @@ class PairedAutoConnectTest {
             displayName = name,
             host = "192.168.1.10",
             quicPort = 4433,
+            platform = "windows",
         )
 
     @Test

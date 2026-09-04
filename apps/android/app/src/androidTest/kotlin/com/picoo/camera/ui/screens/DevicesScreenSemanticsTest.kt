@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.ui.theme.PicooCameraTheme
 import org.junit.Rule
 import org.junit.Assert.assertEquals
@@ -94,6 +95,80 @@ class DevicesScreenSemanticsTest {
         composeRule.onNodeWithContentDescription("IP 地址第 3 段").assertTextEquals("1")
         composeRule.onNodeWithContentDescription("IP 地址第 4 段").assertTextEquals("108")
         composeRule.onNodeWithContentDescription("端口").assertTextEquals("8443").assertIsFocused()
+    }
+
+    @Test
+    fun manualEndpointStartsWithEditableLanPrefixAndRealDefaultPort() {
+        composeRule.setContent {
+            PicooCameraTheme {
+                DevicesScreen(
+                    discoveredList = emptyList(),
+                    pairedDevices = emptyList(),
+                    pairedReceiverIds = emptySet(),
+                    nearbyWifiGranted = true,
+                    discoveryComplete = true,
+                    wifiPillText = "Wi‑Fi",
+                    errorText = null,
+                    manualEndpointText = "",
+                    manualConnecting = false,
+                    onSelectReceiver = {},
+                    onManualConnect = { _, _ -> },
+                    onManualEndpointChange = {},
+                    onCheckPermissions = {},
+                    onRemovePaired = {},
+                    onOfflinePairedClick = {},
+                    onRequestNearbyWifi = {},
+                    onOpenSettings = {},
+                    onRestartDiscovery = {},
+                    onStopDiscovery = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("通过 IP 地址连接").performClick()
+        composeRule.onNodeWithContentDescription("IP 地址第 1 段").assertTextEquals("192")
+        composeRule.onNodeWithContentDescription("IP 地址第 2 段").assertTextEquals("168")
+        composeRule.onNodeWithContentDescription("IP 地址第 3 段").assertTextEquals("")
+        composeRule.onNodeWithContentDescription("IP 地址第 4 段").assertTextEquals("")
+        composeRule.onNodeWithContentDescription("端口").assertTextEquals("4433")
+    }
+
+    @Test
+    fun discoveredMacUsesAdvertisedPlatformLabel() {
+        val receiver = PicooNative.DiscoveredReceiver(
+            receiverId = "studio-mac",
+            displayName = "Studio Mac",
+            host = "192.168.8.110",
+            quicPort = 4433,
+            platform = "macos",
+        )
+        composeRule.setContent {
+            PicooCameraTheme {
+                DevicesScreen(
+                    discoveredList = listOf(receiver),
+                    pairedDevices = emptyList(),
+                    pairedReceiverIds = emptySet(),
+                    nearbyWifiGranted = true,
+                    discoveryComplete = false,
+                    wifiPillText = "Wi‑Fi",
+                    errorText = null,
+                    manualEndpointText = "",
+                    manualConnecting = false,
+                    onSelectReceiver = {},
+                    onManualConnect = { _, _ -> },
+                    onManualEndpointChange = {},
+                    onCheckPermissions = {},
+                    onRemovePaired = {},
+                    onOfflinePairedClick = {},
+                    onRequestNearbyWifi = {},
+                    onOpenSettings = {},
+                    onRestartDiscovery = {},
+                    onStopDiscovery = {},
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("macOS · 首次连接需核对短码").assertIsDisplayed()
     }
 
     @Test

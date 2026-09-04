@@ -9,7 +9,8 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use picoo_discovery::{
-    local_advertise_host, MdnsAdvertiser, PairingState, ReceiverAdvertisement, DEFAULT_QUIC_PORT,
+    local_advertise_host, MdnsAdvertiser, PairingState, ReceiverAdvertisement, ReceiverPlatform,
+    DEFAULT_QUIC_PORT,
 };
 use picoo_pairing::{public_key_fingerprint_prefix, DeviceIdentity};
 use picoo_protocol::control::{CameraCommand, StreamConfig};
@@ -22,6 +23,14 @@ use picoo_transport::Endpoint;
 use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
+
+fn current_receiver_platform() -> ReceiverPlatform {
+    if cfg!(target_os = "macos") {
+        ReceiverPlatform::Macos
+    } else {
+        ReceiverPlatform::Windows
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
@@ -162,6 +171,7 @@ impl ReceiverRuntime {
         let advertisement = ReceiverAdvertisement::new(
             config.identity.receiver_id().to_owned(),
             config.identity.display_name().to_owned(),
+            current_receiver_platform(),
             bind.port(),
             fingerprint_prefix,
         )
@@ -235,6 +245,7 @@ impl ReceiverRuntime {
         let advertisement = ReceiverAdvertisement::new(
             identity.receiver_id().to_owned(),
             self.display_name.clone(),
+            current_receiver_platform(),
             bind.port(),
             fingerprint_prefix,
         )

@@ -90,7 +90,7 @@ fun DevicesScreen(
                     } else if (locallyTrusted) {
                         "在线 · ${receiver.host}"
                     } else {
-                        "${DiscoveredReceiverRow.PLATFORM_WINDOWS} · 首次连接需核对短码"
+                        "${DiscoveredReceiverRow.platformLabel(receiver.platform)} · 首次连接需核对短码"
                     },
                     badge = if (locallyTrusted) "已配对" else "在线",
                     paired = locallyTrusted,

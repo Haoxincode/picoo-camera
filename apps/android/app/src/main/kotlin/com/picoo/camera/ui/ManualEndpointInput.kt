@@ -29,6 +29,7 @@ internal data class ManualEndpointDraft(
         private const val IPV4_OCTET_COUNT = 4
         private const val MAX_OCTET_DIGITS = 3
         private const val MAX_PORT_DIGITS = 5
+        private val DEFAULT_PREFIX = listOf("192", "168")
         const val DEFAULT_PORT = "4433"
 
         fun from(text: String): ManualEndpointDraft {
@@ -38,7 +39,9 @@ internal data class ManualEndpointDraft(
             val portText = if (separator >= 0) trimmed.substring(separator + 1) else DEFAULT_PORT
             val parsedOctets = hostText.split('.').take(IPV4_OCTET_COUNT)
             val octets = List(IPV4_OCTET_COUNT) { index ->
-                parsedOctets.getOrNull(index).orEmpty().digits(MAX_OCTET_DIGITS)
+                parsedOctets.getOrNull(index).orEmpty().digits(MAX_OCTET_DIGITS).ifEmpty {
+                    if (hostText.isEmpty()) DEFAULT_PREFIX.getOrNull(index).orEmpty() else ""
+                }
             }
             return ManualEndpointDraft(
                 octets = octets,

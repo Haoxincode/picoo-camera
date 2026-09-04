@@ -167,12 +167,18 @@ impl Drop for MdnsAdvertiser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ReceiverAdvertisement;
+    use crate::types::{ReceiverAdvertisement, ReceiverPlatform};
 
     #[test]
     fn mdns_register_localhost() {
         let mut advertiser = MdnsAdvertiser::new().expect("daemon");
-        let ad = ReceiverAdvertisement::new("picoo-test-recv", "Picoo Test", 4433, "deadbeef");
+        let ad = ReceiverAdvertisement::new(
+            "picoo-test-recv",
+            "Picoo Test",
+            ReceiverPlatform::Windows,
+            4433,
+            "deadbeef",
+        );
         advertiser
             .register("127.0.0.1", &ad)
             .expect("register localhost");
@@ -184,7 +190,13 @@ mod tests {
     #[test]
     fn mdns_reregister_with_new_display_name() {
         let mut advertiser = MdnsAdvertiser::new().expect("daemon");
-        let first = ReceiverAdvertisement::new("picoo-rename-recv", "Old Name", 4433, "abcd1234");
+        let first = ReceiverAdvertisement::new(
+            "picoo-rename-recv",
+            "Old Name",
+            ReceiverPlatform::Windows,
+            4433,
+            "abcd1234",
+        );
         advertiser
             .register("127.0.0.1", &first)
             .expect("register first");
@@ -193,7 +205,13 @@ mod tests {
             first_fullname.contains("Old Name") || first_fullname.to_lowercase().contains("old")
         );
 
-        let second = ReceiverAdvertisement::new("picoo-rename-recv", "New Name", 4433, "abcd1234");
+        let second = ReceiverAdvertisement::new(
+            "picoo-rename-recv",
+            "New Name",
+            ReceiverPlatform::Windows,
+            4433,
+            "abcd1234",
+        );
         advertiser
             .register("127.0.0.1", &second)
             .expect("register renamed");

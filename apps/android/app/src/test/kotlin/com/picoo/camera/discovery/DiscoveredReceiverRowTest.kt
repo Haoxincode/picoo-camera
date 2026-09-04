@@ -8,11 +8,13 @@ class DiscoveredReceiverRowTest {
     private fun receiver(
         pairingState: String? = "open",
         name: String = "Work PC",
+        platform: String = "windows",
     ) = PicooNative.DiscoveredReceiver(
         receiverId = "recv-1",
         displayName = name,
         host = "192.168.1.20",
         quicPort = 4433,
+        platform = platform,
         pairingState = pairingState,
     )
 
@@ -22,6 +24,18 @@ class DiscoveredReceiverRowTest {
         assertEquals(
             "Work PC · Windows · Ready",
             DiscoveredReceiverRow.format(receiver("open"), locallyTrusted = false),
+        )
+    }
+
+    @Test
+    fun macReceiverUsesAdvertisedPlatform() {
+        assertEquals("macOS", DiscoveredReceiverRow.platformLabel("macos"))
+        assertEquals(
+            "Studio Mac · macOS · Ready",
+            DiscoveredReceiverRow.format(
+                receiver(name = "Studio Mac", platform = "macos"),
+                locallyTrusted = false,
+            ),
         )
     }
 

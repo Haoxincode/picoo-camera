@@ -111,7 +111,7 @@ impl MdnsBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::ReceiverAdvertisement;
+    use crate::types::{ReceiverAdvertisement, ReceiverPlatform};
 
     #[test]
     fn browser_starts_without_error() {
@@ -122,7 +122,13 @@ mod tests {
     #[test]
     fn resolved_service_populates_list() {
         let mut browser = MdnsBrowser::new().expect("browser");
-        let ad = ReceiverAdvertisement::new("recv-test", "Office PC", 4433, "abcd1234");
+        let ad = ReceiverAdvertisement::new(
+            "recv-test",
+            "Office PC",
+            ReceiverPlatform::Windows,
+            4433,
+            "abcd1234",
+        );
         browser.receivers.insert(
             "Office PC._picoocam._udp.local.".into(),
             DiscoveredReceiver {
@@ -145,7 +151,13 @@ mod tests {
 
         use crate::{local_advertise_ipv4, MdnsAdvertiser};
 
-        let ad = ReceiverAdvertisement::new("browse-test-recv", "Browse Test PC", 4433, "cafebabe");
+        let ad = ReceiverAdvertisement::new(
+            "browse-test-recv",
+            "Browse Test PC",
+            ReceiverPlatform::Windows,
+            4433,
+            "cafebabe",
+        );
         let lan_ip = local_advertise_ipv4().expect("LAN IPv4 required for ignored mDNS test");
         let mut advertiser = MdnsAdvertiser::new().expect("advertiser");
         advertiser
@@ -192,6 +204,7 @@ mod tests {
             let ad = ReceiverAdvertisement::new(
                 format!("recv-{i}"),
                 format!("PC {i}"),
+                ReceiverPlatform::Windows,
                 4433,
                 "abcd1234",
             );

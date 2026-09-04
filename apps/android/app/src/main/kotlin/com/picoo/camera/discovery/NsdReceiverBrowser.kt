@@ -157,6 +157,7 @@ class NsdReceiverBrowser(
                             displayName = parsed.displayName,
                             host = host,
                             quicPort = parsed.quicPort,
+                            platform = parsed.platform,
                             pairingState = parsed.pairingState,
                         )
                     receivers[parsed.receiverId] = entry

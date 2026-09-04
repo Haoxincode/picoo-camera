@@ -117,6 +117,7 @@ private fun DevicesFoundScreenPreview() {
         displayName = "Studio PC",
         host = "192.168.1.108",
         quicPort = 4433,
+        platform = "windows",
     )
     PicooCameraTheme {
         DevicesScreen(
