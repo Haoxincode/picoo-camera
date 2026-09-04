@@ -4,7 +4,7 @@
 
 状态：Research，非规范性
 
-范围：Android/iOS Sender → PCP/2 → Windows Receiver → Media Foundation Virtual Camera
+范围：Android/iOS Sender → PCP → Windows Receiver → Media Foundation Virtual Camera
 
 > 本文用于保存研究证据、仓库审计结果和待决策问题，不直接定义产品行为。
 > 已确认的产品与架构决策仍应进入对应 Use Case、Architecture 和 Requirement；实现不得只引用本文作为验收依据。
@@ -43,7 +43,7 @@ Picoo 不是缺少一套全新的“媒体协议栈”，而是存在以下已�
 - Design Spec 要求解码失败后清理缓冲并请求 IDR，当前代码尚未执行该恢复状态转换。
 - `ReceiverStats.packet_loss` 当前把 Datagram 数量与 AU 丢弃数量放在同一比率中，统计单位不一致。
 - Windows VCam 没有 RequestSample 请求频率、新鲜帧和缓存帧指标，无法判断是否存在 request pump。
-- 缺少只验证当前 PCP/2 网络媒体面的独立 `picoo-probe`。
+- 缺少只验证当前 PCP 网络媒体面的独立 `picoo-probe`。
 - 当前 ABR 支持码率和 1080p/720p/480p 分辨率阶梯，但没有帧率降档。
 
 ### 2.3 优先建立证据，再扩大实现
@@ -182,13 +182,13 @@ WebRTC/RTP 的恢复语义已经可以从 RFC 获取；SRT 可作为后续诊断
 
 ## 7. Picoo 当前能力审计
 
-### 7.1 PCP/2 VideoPacket
+### 7.1 PCP VideoPacket
 
 [当前 VideoPacket](../../crates/picoo-protocol/src/video_packet.rs) 已包含：
 
 | 通用媒体字段 | Picoo 当前字段 | 状态 |
 | --- | --- | --- |
-| protocol version | `version` | 已有 |
+| wire compatibility marker | 无 | 同仓同步发布，不维护数字协议版本或兼容分支 |
 | session/config generation | `stream_epoch` | 已有，覆盖连续编码世代 |
 | frame identity | `frame_id` | 已有 |
 | media timestamp | `pts_us` | 已有，但不等同于跨设备可比较的 capture timestamp |
@@ -348,7 +348,7 @@ Healthy
 
 标签：`Repository Gap`、`Candidate Decision`
 
-候选方案是在下一次 PCP/2 VideoPacket 变更中加入单调 `packet_sequence`。Receiver 按窗口统计 received/missing/reordered，Sender 用它进行媒体健康判断。
+候选方案是在下一次 PCP VideoPacket 变更中加入单调 `packet_sequence`。Receiver 按窗口统计 received/missing/reordered，Sender 用它进行媒体健康判断。
 
 在确定字段前需要同时决定：
 
@@ -370,7 +370,7 @@ Healthy
 
 标签：`Repository Gap`
 
-建议的 `picoo-probe` 应使用 Picoo 自己的 PCP/2/QUIC 实现，只接收并重组，不解码、不写 FrameHub、不启动 VCam。至少输出：
+建议的 `picoo-probe` 应使用 Picoo 自己的 PCP/QUIC 实现，只接收并重组，不解码、不写 FrameHub、不启动 VCam。至少输出：
 
 ```text
 session_epoch
@@ -472,7 +472,7 @@ state_transition_reason
 | 验证入口 | 输入 | 输出 | 排除范围 |
 | --- | --- | --- | --- |
 | Sender 本地编码 | Camera → Encoder | `.h264` / AU 统计 | 排除网络、Receiver、VCam |
-| `picoo-probe` | PCP/2 QUIC | 分包、重组、stall 指标 | 排除 Decoder、FrameHub、VCam |
+| `picoo-probe` | PCP QUIC | 分包、重组、stall 指标 | 排除 Decoder、FrameHub、VCam |
 | Receiver 普通预览 | QUIC → Decoder → FrameHub | GPUI 预览和解码指标 | 排除 VCam |
 | 合成 NV12 → VCam | 生成器 → Shared Ring | Teams/Zoom/OBS/浏览器 | 排除 Camera、Encoder、网络、Decoder |
 | 完整真机链路 | Android/iOS → 会议软件 | 用户可见结果与全链路日志 | 集成验收 |
