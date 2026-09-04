@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::sync::Mutex;
 
 use windows::core::{implement, Error, IUnknown, Interface, Ref, Result, BOOL, GUID, HRESULT};
-use windows::Win32::Foundation::ERROR_SET_NOT_FOUND;
+use windows::Win32::Foundation::{ERROR_SET_NOT_FOUND, E_INVALIDARG};
 use windows::Win32::Media::KernelStreaming::{IKsControl, IKsControl_Impl, KSIDENTIFIER};
 use windows::Win32::Media::MediaFoundation::{
     IMFAsyncCallback, IMFAsyncResult, IMFAttributes, IMFGetService, IMFGetService_Impl,
@@ -12,7 +12,7 @@ use windows::Win32::Media::MediaFoundation::{
     MESourceStarted, MESourceStopped, MEUpdatedStream, MFCreateEventQueue,
     MFCreatePresentationDescriptor, MFSampleAllocatorUsage, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS,
     MFMEDIASOURCE_IS_LIVE, MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION, MF_E_SHUTDOWN,
-    MF_E_UNSUPPORTED_SERVICE,
+    MF_E_UNSUPPORTED_SERVICE, MF_E_UNSUPPORTED_TIME_FORMAT,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
@@ -119,32 +119,40 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
         if state.shutdown {
             return Err(Error::from(MF_E_SHUTDOWN));
         }
-        state
+        let presentation = state
             .presentation
             .as_ref()
-            .cloned()
-            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
+            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
+        unsafe { presentation.Clone() }
     }
 
     fn Start(
         &self,
         presentation: Ref<'_, windows::Win32::Media::MediaFoundation::IMFPresentationDescriptor>,
-        _time_format: *const GUID,
-        _start_position: *const PROPVARIANT,
+        time_format: *const GUID,
+        start_position: *const PROPVARIANT,
     ) -> Result<()> {
+        let presentation = presentation
+            .as_ref()
+            .ok_or_else(|| Error::from(E_INVALIDARG))?;
+        if start_position.is_null() {
+            return Err(Error::from(E_INVALIDARG));
+        }
+        if !time_format.is_null() && unsafe { *time_format != GUID::zeroed() } {
+            return Err(Error::from(MF_E_UNSUPPORTED_TIME_FORMAT));
+        }
+
         let mut selected_media_type: Option<IMFMediaType> = None;
-        if let Some(presentation) = presentation.as_ref() {
-            unsafe {
-                let mut selected = BOOL(0);
-                let mut descriptor: Option<IMFStreamDescriptor> = None;
-                presentation.GetStreamDescriptorByIndex(0, &mut selected, &mut descriptor)?;
-                if !selected.as_bool() {
-                    presentation.SelectStream(0)?;
-                }
-                if let Some(descriptor) = descriptor {
-                    selected_media_type =
-                        Some(descriptor.GetMediaTypeHandler()?.GetCurrentMediaType()?);
-                }
+        unsafe {
+            let mut selected = BOOL(0);
+            let mut descriptor: Option<IMFStreamDescriptor> = None;
+            presentation.GetStreamDescriptorByIndex(0, &mut selected, &mut descriptor)?;
+            if !selected.as_bool() {
+                presentation.SelectStream(0)?;
+            }
+            if let Some(descriptor) = descriptor {
+                selected_media_type =
+                    Some(descriptor.GetMediaTypeHandler()?.GetCurrentMediaType()?);
             }
         }
 

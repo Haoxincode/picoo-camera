@@ -140,7 +140,7 @@ pub extern "system" fn DllCanUnloadNow() -> HRESULT {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use windows::core::{IUnknown, Interface};
+    use windows::core::{IUnknown, Interface, BOOL};
     use windows::Win32::Media::KernelStreaming::IKsControl;
     use windows::Win32::Media::MediaFoundation::{
         IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2,
@@ -266,7 +266,19 @@ mod tests {
             let presentation = source
                 .CreatePresentationDescriptor()
                 .expect("CreatePresentationDescriptor");
+            let independent_presentation = source
+                .CreatePresentationDescriptor()
+                .expect("CreatePresentationDescriptor clone");
             presentation.SelectStream(0).expect("SelectStream(0)");
+            let mut independent_selected = BOOL(1);
+            let mut independent_stream = None;
+            independent_presentation
+                .GetStreamDescriptorByIndex(0, &mut independent_selected, &mut independent_stream)
+                .expect("inspect independent presentation descriptor");
+            assert!(
+                !independent_selected.as_bool(),
+                "presentation descriptor selection must be caller-local"
+            );
             let start_position = PROPVARIANT::default();
             source
                 .Start(&presentation, &GUID::zeroed(), &start_position)
