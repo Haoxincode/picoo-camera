@@ -33,6 +33,7 @@ fn receiver_sends_stats_to_paired_sender() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -140,6 +141,7 @@ fn stream_config_and_capabilities_after_paired_hello() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -215,6 +217,7 @@ fn stream_epoch_bump_requests_keyframe() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -334,6 +337,7 @@ fn remote_mirrored_flips_framehub_nv12() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -438,6 +442,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),

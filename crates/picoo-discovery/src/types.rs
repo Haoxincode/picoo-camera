@@ -1,6 +1,5 @@
 //! mDNS advertisement record — whitelisted fields only.
 
-use picoo_protocol::ALPN;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -10,7 +9,6 @@ pub const SERVICE_TYPE: &str = "_picoocam._udp.local.";
 pub const ALLOWED_TXT_KEYS: &[&str] = &[
     "receiver_id",
     "display_name",
-    "protocol_version",
     "quic_port",
     "pairing_state",
     "public_key_fingerprint_prefix",
@@ -44,7 +42,6 @@ impl PairingState {
 pub struct ReceiverAdvertisement {
     pub receiver_id: String,
     pub display_name: String,
-    pub protocol_version: String,
     pub quic_port: u16,
     pub pairing_state: PairingState,
     pub public_key_fingerprint_prefix: String,
@@ -60,7 +57,6 @@ impl ReceiverAdvertisement {
         Self {
             receiver_id: receiver_id.into(),
             display_name: display_name.into(),
-            protocol_version: ALPN.into(),
             quic_port,
             pairing_state: PairingState::Open,
             public_key_fingerprint_prefix: public_key_fingerprint_prefix.into(),
@@ -82,7 +78,6 @@ impl ReceiverAdvertisement {
         vec![
             ("receiver_id", self.receiver_id.clone()),
             ("display_name", self.display_name.clone()),
-            ("protocol_version", self.protocol_version.clone()),
             ("quic_port", self.quic_port.to_string()),
             ("pairing_state", self.pairing_state.as_str().into()),
             (
@@ -112,11 +107,6 @@ impl ReceiverAdvertisement {
             lookup("receiver_id").ok_or(AdvertisementError::MissingField("receiver_id".into()))?;
         let display_name = lookup("display_name")
             .ok_or(AdvertisementError::MissingField("display_name".into()))?;
-        let protocol_version = lookup("protocol_version")
-            .ok_or(AdvertisementError::MissingField("protocol_version".into()))?;
-        if protocol_version != ALPN {
-            return Err(AdvertisementError::InvalidProtocolVersion);
-        }
         let quic_port = lookup("quic_port")
             .ok_or(AdvertisementError::MissingField("quic_port".into()))?
             .parse::<u16>()
@@ -135,7 +125,6 @@ impl ReceiverAdvertisement {
         Ok(Self {
             receiver_id,
             display_name,
-            protocol_version,
             quic_port,
             pairing_state,
             public_key_fingerprint_prefix,
@@ -151,8 +140,6 @@ pub enum AdvertisementError {
     UnknownField(String),
     #[error("invalid quic_port")]
     InvalidPort,
-    #[error("unsupported protocol_version")]
-    InvalidProtocolVersion,
     #[error("invalid pairing_state")]
     InvalidPairingState,
 }
@@ -196,7 +183,6 @@ mod tests {
         let props = vec![
             ("receiver_id".into(), "r".into()),
             ("display_name".into(), "n".into()),
-            ("protocol_version".into(), ALPN.into()),
             ("quic_port".into(), "1".into()),
             ("pairing_state".into(), "open".into()),
             ("public_key_fingerprint_prefix".into(), "fp".into()),
@@ -209,27 +195,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_protocol_version() {
-        let props = vec![
-            ("receiver_id".into(), "r".into()),
-            ("display_name".into(), "n".into()),
-            ("protocol_version".into(), "picoocam/0".into()),
-            ("quic_port".into(), "4433".into()),
-            ("pairing_state".into(), "open".into()),
-            ("public_key_fingerprint_prefix".into(), "fp".into()),
-        ];
-        assert_eq!(
-            ReceiverAdvertisement::from_txt_properties(&props),
-            Err(AdvertisementError::InvalidProtocolVersion)
-        );
-    }
-
-    #[test]
     fn rejects_zero_quic_port() {
         let props = vec![
             ("receiver_id".into(), "r".into()),
             ("display_name".into(), "n".into()),
-            ("protocol_version".into(), ALPN.into()),
             ("quic_port".into(), "0".into()),
             ("pairing_state".into(), "open".into()),
             ("public_key_fingerprint_prefix".into(), "fp".into()),

@@ -52,7 +52,7 @@ occupancy 在 30 FPS 下天然以约 33.3 ms 离散变化，不能当成 target�
 
 ### 丢包处理
 
-Receiver 在判定 AU 不完整前，先按 PCP/4 的平衡 6+2 Reed-Solomon 组尝试就地恢复。每组最多
+Receiver 在判定 AU 不完整前，先按 PCP 的平衡 6+2 Reed-Solomon 组尝试就地恢复。每组最多
 6 个数据片和 2 个校验片，可在不等待重传的情况下恢复任意 2 个缺失数据片；FEC 无法恢复时才进入
 下列丢帧与参考链恢复语义。桌面诊断同时显示 FEC 已恢复 fragment 累计值和 FEC 后残余丢片，避免
 把“已修复的损伤”误判为健康网络。
@@ -126,7 +126,7 @@ occupancy 标成网络抖动或实际播放延迟。
 不完整 AU 在超时或淘汰时整体归入一个统计窗口；分子是这些 AU 中确认缺失的 fragment 数，分母是
 这些 AU 的期望 fragment 总数（收到 + 确认缺失）。不得把同一 AU 的收到片与缺片拆到两个窗口，
 也不得把主动 recovery/epoch 清空的仍在途 AU 计作网络丢包。没有任何 fragment 到达的完整 AU
-在 PCP/4 增加独立
+在 PCP 增加独立
 packet sequence 前无法由该指标观察，因此该指标不是 transport-wide 精确丢包率。QUIC 路径的
 `lost_packets / sent_packets` 只描述本端发出的包；在 Receiver 端它主要是控制流，不能作为
 Android 视频丢包率反馈给 ABR。未建立双端时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；

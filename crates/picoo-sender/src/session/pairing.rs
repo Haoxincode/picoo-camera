@@ -5,20 +5,15 @@ use picoo_pairing::{
     TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    ClientHello, PairingApproval, PairingChallenge, PairingCommit, PairingComplete, PairingConfirm,
-    ServerHello, SessionError,
+    control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingChallenge,
+    PairingCommit, PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
-use picoo_protocol::ALPN;
 use picoo_session::SenderStatus;
 use picoo_transport::{PicooTransport, SessionId};
-use prost::Message;
 
 use super::SenderSession;
 use crate::SenderError;
 
-pub(super) const PAIRING_APPROVAL_MAGIC: u32 = 0x5041_5056;
-const PAIRING_COMMIT_MAGIC: u32 = 0x5043_4D54;
-pub(super) const PAIRING_COMPLETE_MAGIC: u32 = 0x5043_4D50;
 pub(super) const PAIRING_APPROVAL_PHASE: &[u8] = b"pairing-approval-v2";
 const PAIRING_COMMIT_PHASE: &[u8] = b"pairing-commit-v2";
 pub(super) const PAIRING_COMPLETE_PHASE: &[u8] = b"pairing-complete-v2";
@@ -39,7 +34,6 @@ pub(super) struct ClientHelloParams {
     sender_id: String,
     device_name: String,
     public_key: Vec<u8>,
-    protocol_version: String,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -59,6 +53,10 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn trusted_devices(&self) -> &TrustedDeviceStore {
         &self.trusted
+    }
+
+    pub fn trusted_devices_mut(&mut self) -> &mut TrustedDeviceStore {
+        &mut self.trusted
     }
 
     pub fn remove_trusted_device(&mut self, device_id: &str) -> Result<bool, SenderError> {
@@ -84,6 +82,17 @@ impl<T: PicooTransport> SenderSession<T> {
         self.pairing
             .as_ref()
             .and_then(|p| (!p.display_name.is_empty()).then_some(p.display_name.as_str()))
+    }
+
+    pub(super) fn receiver_is_authenticated(&self) -> bool {
+        let Some(pairing) = self.pairing.as_ref() else {
+            return false;
+        };
+        !pairing.receiver_id.is_empty()
+            && self
+                .trusted
+                .verify_paired_key(&pairing.receiver_id, &pairing.public_key)
+                .is_ok()
     }
 
     fn persist_trusted(&self) -> Result<(), SenderError> {
@@ -129,14 +138,12 @@ impl<T: PicooTransport> SenderSession<T> {
         session: SessionId,
         approval: &PairingApproval,
     ) -> bool {
-        if approval.magic == PAIRING_APPROVAL_MAGIC
-            && self.pairing_transcript_matches(
-                session,
-                &approval.challenge_nonce,
-                &approval.transcript_hash,
-                PAIRING_APPROVAL_PHASE,
-            )
-        {
+        if self.pairing_transcript_matches(
+            session,
+            &approval.challenge_nonce,
+            &approval.transcript_hash,
+            PAIRING_APPROVAL_PHASE,
+        ) {
             self.accept_pairing_approval();
             true
         } else {
@@ -149,14 +156,12 @@ impl<T: PicooTransport> SenderSession<T> {
         session: SessionId,
         complete: &PairingComplete,
     ) -> bool {
-        if complete.magic == PAIRING_COMPLETE_MAGIC
-            && self.pairing_transcript_matches(
-                session,
-                &complete.challenge_nonce,
-                &complete.transcript_hash,
-                PAIRING_COMPLETE_PHASE,
-            )
-        {
+        if self.pairing_transcript_matches(
+            session,
+            &complete.challenge_nonce,
+            &complete.transcript_hash,
+            PAIRING_COMPLETE_PHASE,
+        ) {
             self.accept_pairing_complete();
             true
         } else {
@@ -205,21 +210,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn on_server_hello(&mut self, hello: ServerHello) {
-        // Real Hello needs non-empty id + PCP version (empty ver = false positive).
-        if hello.receiver_id.is_empty() || hello.protocol_version.is_empty() {
+        if hello.receiver_id.is_empty() {
             return;
         }
-        // ARCH-PICOO-PROTOCOL-001: reject mismatched PCP version fail-fast.
-        if hello.protocol_version != picoo_protocol::ALPN {
-            if let Some(session) = self.session.take() {
-                self.transport
-                    .close(session, picoo_transport::CloseReason::LocalClose);
-            }
-            self.status = SenderStatus::Disconnected;
-            self.pairing = None;
-            return;
-        }
-        if self.trusted.is_paired(&hello.receiver_id) {
+        let receiver_is_trusted = self.trusted.is_paired(&hello.receiver_id);
+        if receiver_is_trusted {
             if self
                 .trusted
                 .verify_paired_key(&hello.receiver_id, &hello.public_key)
@@ -236,6 +231,17 @@ impl<T: PicooTransport> SenderSession<T> {
             self.trusted
                 .touch_last_connected(&hello.receiver_id, self.now_ms());
             let _ = self.persist_trusted();
+        }
+
+        if !hello.pairing_required && !receiver_is_trusted {
+            self.last_session_error = Some("UNTRUSTED_PAIRING_BYPASS".into());
+            if let Some(session) = self.session.take() {
+                self.transport
+                    .close(session, picoo_transport::CloseReason::LocalClose);
+            }
+            self.status = SenderStatus::Disconnected;
+            self.pairing = None;
+            return;
         }
 
         if hello.pairing_required {
@@ -324,7 +330,6 @@ impl<T: PicooTransport> SenderSession<T> {
             return;
         };
         let commit = PairingCommit {
-            magic: PAIRING_COMMIT_MAGIC,
             challenge_nonce: pairing.challenge_nonce.clone(),
             transcript_hash: pairing_transcript_hash(
                 &pairing.challenge_nonce,
@@ -333,12 +338,9 @@ impl<T: PicooTransport> SenderSession<T> {
                 PAIRING_COMMIT_PHASE,
             ),
         };
-        let mut out = Vec::new();
-        if commit.encode(&mut out).is_err()
-            || self
-                .transport
-                .send_control(active_session, bytes::Bytes::from(out))
-                .is_err()
+        if self
+            .send_control_payload(active_session, ControlPayload::PairingCommit(commit))
+            .is_err()
         {
             self.last_session_error = Some("PAIRING_COMMIT_SEND_FAILED".into());
             return;
@@ -381,17 +383,6 @@ impl<T: PicooTransport> SenderSession<T> {
         device_name: &str,
         public_key: &[u8],
     ) -> Result<(), SenderError> {
-        self.send_client_hello_with_version(sender_id, device_name, public_key, ALPN)
-    }
-
-    /// Emit ClientHello with an explicit protocol_version (protocol fail-fast tests).
-    pub fn send_client_hello_with_version(
-        &mut self,
-        sender_id: &str,
-        device_name: &str,
-        public_key: &[u8],
-        protocol_version: &str,
-    ) -> Result<(), SenderError> {
         let connection_pending = matches!(
             self.status,
             SenderStatus::Connecting | SenderStatus::Reconnecting
@@ -406,7 +397,6 @@ impl<T: PicooTransport> SenderSession<T> {
             sender_id: sender_id.to_string(),
             device_name: device_name.to_string(),
             public_key: public_key.to_vec(),
-            protocol_version: protocol_version.to_string(),
         };
         self.hello_params = Some(params.clone());
 
@@ -418,6 +408,7 @@ impl<T: PicooTransport> SenderSession<T> {
         }
 
         self.emit_client_hello(&params)?;
+        self.status = SenderStatus::Negotiating;
         self.drain_events();
         Ok(())
     }
@@ -430,16 +421,9 @@ impl<T: PicooTransport> SenderSession<T> {
         let hello = ClientHello {
             sender_id: params.sender_id.clone(),
             device_name: params.device_name.clone(),
-            protocol_version: params.protocol_version.clone(),
             public_key: params.public_key.clone(),
         };
-        let mut buf = Vec::new();
-        hello
-            .encode(&mut buf)
-            .map_err(|e| SenderError::Protocol(e.to_string()))?;
-        self.transport
-            .send_control(session, bytes::Bytes::from(buf))
-            .map_err(SenderError::Transport)?;
+        self.send_control_payload(session, ControlPayload::ClientHello(hello))?;
         Ok(())
     }
 
@@ -466,13 +450,7 @@ impl<T: PicooTransport> SenderSession<T> {
                 sender_id,
             ),
         };
-        let mut buf = Vec::new();
-        confirm
-            .encode(&mut buf)
-            .map_err(|e| SenderError::Protocol(e.to_string()))?;
-        self.transport
-            .send_control(session, bytes::Bytes::from(buf))
-            .map_err(SenderError::Transport)?;
+        self.send_control_payload(session, ControlPayload::PairingConfirm(confirm))?;
         if let Some(pairing) = self.pairing.as_mut() {
             pairing.confirm_sent = true;
         }

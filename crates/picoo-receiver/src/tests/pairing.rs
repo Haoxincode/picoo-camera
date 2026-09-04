@@ -208,6 +208,7 @@ fn paired_sender_enters_streaming_after_client_hello() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -320,11 +321,11 @@ fn auto_accept_paired_off_requires_confirm_for_trusted_sender() {
 }
 
 #[test]
-fn pairing_confirm_false_positive_does_not_complete_pairing() {
-    // REQ-PICOO-PAIRING-002 / device-e2e §C: prost may decode unrelated blobs as
-    // PairingConfirm — receiver must verify signature before completing pairing.
+fn invalid_pairing_confirm_does_not_complete_pairing() {
+    // REQ-PICOO-PAIRING-002: an explicitly typed but invalid PairingConfirm
+    // must fail verification without completing pairing.
+    use picoo_protocol::control::control_envelope::Payload as ControlPayload;
     use picoo_protocol::control::PairingConfirm;
-    use prost::Message;
 
     let identity = crate::ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
@@ -370,11 +371,9 @@ fn pairing_confirm_false_positive_does_not_complete_pairing() {
     let bogus = PairingConfirm {
         confirm_signature: vec![0u8; 32],
     };
-    let mut buf = Vec::new();
-    bogus.encode(&mut buf).expect("encode bogus confirm");
-    receiver
-        .inject_control_for_test(bytes::Bytes::from(buf))
-        .expect("inject bogus confirm");
+    assert!(receiver
+        .inject_control_payload_for_test(ControlPayload::PairingConfirm(bogus))
+        .is_err());
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
     assert!(receiver.pairing_short_code().is_some());
 

@@ -5,19 +5,17 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use bytes::Bytes;
 use picoo_pairing::{
     new_pairing_challenge, pairing_transcript_hash, random_challenge_nonce,
     trusted_device_from_pairing, verify_pairing_confirm, PairingHandshakeError, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    ClientHello, PairingApproval, PairingChallenge as PairingChallengeMsg, PairingComplete,
-    PairingConfirm, ServerHello, SessionError,
+    control_envelope::Payload as ControlPayload, ClientHello, PairingApproval,
+    PairingChallenge as PairingChallengeMsg, PairingCommit, PairingComplete, PairingConfirm,
+    ServerHello, SessionError,
 };
-use picoo_protocol::ALPN;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, SessionId};
-use prost::Message;
 
 use super::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
 use crate::{ReceiverError, PAIRING_CHALLENGE_TTL};
@@ -41,9 +39,6 @@ pub(in crate::session) struct PendingPairing {
     pub(in crate::session) expires_at: Instant,
 }
 
-pub(in crate::session) const PAIRING_APPROVAL_MAGIC: u32 = 0x5041_5056;
-pub(in crate::session) const PAIRING_COMMIT_MAGIC: u32 = 0x5043_4D54;
-pub(in crate::session) const PAIRING_COMPLETE_MAGIC: u32 = 0x5043_4D50;
 pub(in crate::session) const PAIRING_APPROVAL_PHASE: &[u8] = b"pairing-approval-v2";
 pub(in crate::session) const PAIRING_COMMIT_PHASE: &[u8] = b"pairing-commit-v2";
 pub(in crate::session) const PAIRING_COMPLETE_PHASE: &[u8] = b"pairing-complete-v2";
@@ -226,11 +221,18 @@ impl ReceiverSession {
         if Instant::now() < pending.expires_at {
             return;
         }
+        let session = pending.session;
         self.pending_pairing = None;
-        if matches!(self.status, ReceiverStatus::Pairing) {
-            // Keep connection; UI must regenerate / wait for new challenge.
-            self.status = ReceiverStatus::Connecting;
-        }
+        self.active_sender = None;
+        self.transport.close(
+            session,
+            CloseReason::Error("pairing challenge expired".into()),
+        );
+        self.status = if self.bind_addr().is_some() {
+            ReceiverStatus::Discovering
+        } else {
+            ReceiverStatus::Disconnected
+        };
     }
 
     /// User confirmed the six-digit code on desktop (PUC-001).
@@ -257,7 +259,7 @@ impl ReceiverSession {
             code: "PAIRING_REJECTED".into(),
             message: "desktop user rejected the pairing challenge".into(),
         };
-        self.send_control_message(session, &error)?;
+        self.send_control_payload(session, ControlPayload::SessionError(error))?;
         self.transport.close(session, CloseReason::LocalClose);
         self.active_sender = None;
         self.pending_pairing = None;
@@ -285,21 +287,8 @@ impl ReceiverSession {
     pub(crate) fn handle_client_hello(
         &mut self,
         session: SessionId,
-        msg: Bytes,
+        hello: ClientHello,
     ) -> Result<(), ReceiverError> {
-        let hello = ClientHello::decode(msg.as_ref())
-            .map_err(|e| ReceiverError::Protocol(format!("ClientHello decode: {e}")))?;
-
-        // ARCH-PICOO-PROTOCOL-001: version negotiation must fail fast.
-        if hello.protocol_version != picoo_protocol::ALPN {
-            self.transport.close(session, CloseReason::LocalClose);
-            return Err(ReceiverError::Protocol(format!(
-                "unsupported protocol_version {:?} (expected {})",
-                hello.protocol_version,
-                picoo_protocol::ALPN
-            )));
-        }
-
         // PAIRING-004 / PUC-007: known device_id with changed public key → hard reject
         // (no pending re-pair, trust store unchanged; peer must remove + re-pair).
         if self.trusted.is_paired(&hello.sender_id)
@@ -312,7 +301,7 @@ impl ReceiverSession {
                 code: "PUBLIC_KEY_CHANGED".into(),
                 message: "paired device public key changed; remove and re-pair".into(),
             };
-            let _ = self.send_control_message(session, &err);
+            let _ = self.send_control_payload(session, ControlPayload::SessionError(err));
             self.transport.close(session, CloseReason::LocalClose);
             self.active_sender = None;
             self.pending_pairing = None;
@@ -333,11 +322,10 @@ impl ReceiverSession {
         let server_hello = ServerHello {
             receiver_id: self.identity.receiver_id.clone(),
             display_name: self.identity.display_name.clone(),
-            protocol_version: ALPN.into(),
             public_key: self.identity.public_key.clone(),
             pairing_required: !auto_accept,
         };
-        self.send_control_message(session, &server_hello)?;
+        self.send_control_payload(session, ControlPayload::ServerHello(server_hello))?;
 
         if auto_accept {
             self.trusted
@@ -358,7 +346,7 @@ impl ReceiverSession {
             short_code: challenge.short_code.clone(),
             challenge_nonce: challenge.challenge_nonce,
         };
-        self.send_control_message(session, &challenge_msg)?;
+        self.send_control_payload(session, ControlPayload::PairingChallenge(challenge_msg))?;
 
         self.pending_pairing = Some(PendingPairing {
             session,
@@ -383,11 +371,8 @@ impl ReceiverSession {
     pub(crate) fn handle_pairing_confirm(
         &mut self,
         session: SessionId,
-        msg: Bytes,
+        confirm: PairingConfirm,
     ) -> Result<(), ReceiverError> {
-        let confirm = PairingConfirm::decode(msg.as_ref())
-            .map_err(|e| ReceiverError::Protocol(format!("PairingConfirm decode: {e}")))?;
-
         let pending = self
             .pending_pairing
             .as_ref()
@@ -453,11 +438,28 @@ impl ReceiverSession {
                 )
     }
 
-    pub(crate) fn handle_pairing_commit(&mut self) -> Result<(), ReceiverError> {
+    fn finish_pairing_commit(&mut self) -> Result<(), ReceiverError> {
         if let Some(pending) = self.pending_pairing.as_mut() {
             pending.sender_committed = true;
         }
         self.advance_pairing()
+    }
+
+    pub(crate) fn handle_pairing_commit(
+        &mut self,
+        session: SessionId,
+        commit: PairingCommit,
+    ) -> Result<(), ReceiverError> {
+        if self.pairing_transcript_matches(
+            session,
+            &commit.challenge_nonce,
+            &commit.transcript_hash,
+            PAIRING_COMMIT_PHASE,
+        ) {
+            self.finish_pairing_commit()
+        } else {
+            Ok(())
+        }
     }
 
     fn advance_pairing(&mut self) -> Result<(), ReceiverError> {
@@ -479,7 +481,6 @@ impl ReceiverSession {
 
         if !sender_committed {
             let approval = PairingApproval {
-                magic: PAIRING_APPROVAL_MAGIC,
                 challenge_nonce: challenge_nonce.clone(),
                 transcript_hash: pairing_transcript_hash(
                     &challenge_nonce,
@@ -488,7 +489,7 @@ impl ReceiverSession {
                     PAIRING_APPROVAL_PHASE,
                 ),
             };
-            return self.send_control_message(session, &approval);
+            return self.send_control_payload(session, ControlPayload::PairingApproval(approval));
         }
 
         if !receiver_committed {
@@ -518,7 +519,6 @@ impl ReceiverSession {
         }
 
         let complete = PairingComplete {
-            magic: PAIRING_COMPLETE_MAGIC,
             challenge_nonce: challenge_nonce.clone(),
             transcript_hash: pairing_transcript_hash(
                 &challenge_nonce,
@@ -527,7 +527,7 @@ impl ReceiverSession {
                 PAIRING_COMPLETE_PHASE,
             ),
         };
-        self.send_control_message(session, &complete)?;
+        self.send_control_payload(session, ControlPayload::PairingComplete(complete))?;
 
         if let Some(sender) = self.active_sender.as_mut() {
             sender.video_allowed = true;

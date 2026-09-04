@@ -118,11 +118,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        sender
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
             assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             downshifted = true;
@@ -184,11 +180,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        sender
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
             assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             downshifted_480 = true;
@@ -342,11 +334,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        sender
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
             assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             downshifted = true;
@@ -394,11 +382,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
             jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        sender
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
             assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             upshifted = true;

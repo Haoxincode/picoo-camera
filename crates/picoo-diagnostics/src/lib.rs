@@ -3,7 +3,6 @@
 //! Default export never includes video frames or raw pixel buffers.
 
 use picoo_pairing::TrustedDevice;
-use picoo_protocol::ALPN;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -96,7 +95,7 @@ pub struct DiagnosticReport {
     pub exported_at_ms: u64,
     pub platform: String,
     pub app_version: String,
-    pub protocol_version: String,
+    pub protocol_name: String,
     pub redaction_enabled: bool,
     pub includes_video: bool,
     pub session: Option<DiagnosticSessionSnapshot>,
@@ -248,7 +247,7 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
         exported_at_ms: input.exported_at_ms,
         platform: input.platform,
         app_version: input.app_version,
-        protocol_version: ALPN.into(),
+        protocol_name: "PCP".into(),
         redaction_enabled,
         includes_video: false,
         session,

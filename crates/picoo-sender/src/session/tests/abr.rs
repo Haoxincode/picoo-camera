@@ -15,11 +15,7 @@ fn receiver_stats_adjusts_bitrate() {
         packet_loss: 0.05,
         ..Default::default()
     };
-    let mut buf = Vec::new();
-    stats.encode(&mut buf).expect("encode");
-    session
-        .inject_control_for_test(bytes::Bytes::from(buf))
-        .expect("inject stats");
+    session.apply_receiver_stats_for_test(stats);
     session.pump().expect("pump");
     assert_eq!(session.last_bitrate_action(), BitrateAction::Decrease);
     assert!(session.current_bitrate_bps() < BitrateLadder::for_height(1080).initial_bps);
@@ -41,11 +37,7 @@ fn sustained_floor_congestion_requests_resolution_downshift() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        session
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        session.apply_receiver_stats_for_test(stats);
     }
     // Keep injecting while at floor until downshift fires.
     let mut saw = false;
@@ -55,11 +47,7 @@ fn sustained_floor_congestion_requests_resolution_downshift() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        session
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        session.apply_receiver_stats_for_test(stats);
         if session.pending_encoder_directive().is_some() {
             saw = true;
             break;
@@ -94,11 +82,7 @@ fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        session
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        session.apply_receiver_stats_for_test(stats);
         if session.pending_encoder_directive().is_some() {
             break;
         }
@@ -115,11 +99,7 @@ fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
             frame_age_ms: 250.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        session
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        session.apply_receiver_stats_for_test(stats);
         if session.pending_encoder_directive().is_some() {
             break;
         }
@@ -152,13 +132,33 @@ fn encoder_command_request_keyframe_sets_flag() {
             port: 1,
         })
         .expect("connect");
+    session
+        .send_client_hello("sender", "Phone", &[1, 2, 3])
+        .expect("hello");
+    session
+        .trusted_devices_mut()
+        .upsert(picoo_pairing::TrustedDevice {
+            device_id: "receiver".into(),
+            device_name: "Receiver".into(),
+            public_key: vec![4, 5, 6],
+            certificate_fingerprint: "test".into(),
+            paired_at_ms: 1,
+            last_connected_at_ms: None,
+        });
+    session
+        .inject_control_payload_for_test(ControlPayload::ServerHello(ServerHello {
+            receiver_id: "receiver".into(),
+            display_name: "Receiver".into(),
+            public_key: vec![4, 5, 6],
+            pairing_required: false,
+        }))
+        .expect("authenticated server hello");
+    assert!(session.take_keyframe_request());
     let cmd = EncoderCommand {
         command: encoder_command::Command::RequestKeyframe as i32,
     };
-    let mut buf = Vec::new();
-    cmd.encode(&mut buf).expect("encode");
     session
-        .inject_control_for_test(bytes::Bytes::from(buf))
+        .inject_control_payload_for_test(ControlPayload::EncoderCommand(cmd))
         .expect("inject");
     assert!(session.take_keyframe_request());
     assert!(!session.take_keyframe_request());

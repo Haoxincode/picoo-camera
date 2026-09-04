@@ -204,6 +204,7 @@ fn default_jitter_holds_au_until_target_delay() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),

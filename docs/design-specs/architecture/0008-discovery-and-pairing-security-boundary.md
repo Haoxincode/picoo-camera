@@ -21,7 +21,6 @@ _picoocam._udp.local
 
 - `receiver_id`
 - `display_name`
-- `protocol_version`
 - `quic_port`
 - `pairing_state`
 - `public_key_fingerprint_prefix`
@@ -36,18 +35,27 @@ Sender 浏览该服务：
 
 ### 配对短码核对与手动 IP 直连
 
-Receiver 在等待连接页始终显示当前局域网 `IP:端口`。未配对 Sender 通过 mDNS 或手动地址建立 QUIC/TLS 连接后，Receiver 才针对本次握手生成：
+Receiver 在等待连接页始终显示当前局域网 `IP:端口`。未配对 Sender 通过 mDNS 或手动地址建立
+QUIC/TLS 连接后，双方才使用 OS CSPRNG 各自生成随机 nonce，并交换静态 Ed25519 公钥。
 
-- 随机挑战 nonce；
-- 由挑战、Receiver ID 与 Sender ID 派生的六位配对短码。
+- Sender/Receiver 随机 nonce；
+- 双方静态公钥；
+- 当前 TLS exporter channel binding；
+- 由以上完整 transcript 派生的六位 SAS。
 
 配对短码只负责人工核对本次首次连接，不负责发现或解析 Receiver Endpoint。mDNS 正常时，Sender 从服务发现结果获得 Endpoint；mDNS 不可用时，用户必须输入 `IP:端口`，Sender 才能绕过服务发现直接连接。
 
-Receiver 通过可靠控制 Stream 将挑战和配对短码发给 Sender，两端同时显示同一短码。用户必须在手机端和桌面端分别确认数字一致，两端确认的先后顺序不得影响配对结果；Receiver 缓存先到达的有效确认。双向确认后，双方通过 `PairingApproval → PairingCommit → PairingComplete` 提交信任：Sender 持久化 Receiver 后发送 Commit，Receiver 持久化 Sender 后返回 Complete，Sender 收到 Complete 才进入 Streaming。三个提交消息都绑定当前 QUIC Session、挑战 nonce 与双方设备 ID，旧连接消息不得完成新挑战。任一端持久化或发送失败时保持 Pairing 并允许在当前挑战内重试，不得形成自动推流的单边信任。任一端拒绝、挑战到期或连接中断都应终止本次配对。短码不作为密码提交，因此不存在输入错误与尝试次数模型；它必须绑定本次握手，不能跨连接复用。未完成双向确认前不得建立信任关系或发送视频。
+SAS 必须由两端独立计算，禁止 Receiver 计算后把短码当作普通字段告知 Sender 显示。用户必须在
+手机端和桌面端分别确认数字一致，确认先后顺序不得影响结果。双向确认后，双方分别使用 Ed25519
+私钥对带 domain separation 的完整 transcript 签名，再执行
+`PairingApproval → PairingCommit → PairingComplete` 持久化事务。所有消息都位于 ControlEnvelope，
+绑定 connection generation、message ID、双方 nonce、公钥、设备 ID 与 TLS exporter。旧连接消息
+不得完成新挑战；任一端持久化或发送失败不得形成自动推流的单边信任。
 
 ### 配对与公钥固定
 
-首次连接时，两端核对相同的 **六位配对短码** 并分别确认。Receiver 校验 Sender 针对本次挑战发送的 `PairingConfirm` 后保存：
+每台设备持有一把 Ed25519 静态身份密钥，由 OS CSPRNG 生成；公钥派生稳定 `device_id`，私钥从不
+跨平台边界或进入日志。Receiver 校验 Sender 针对本次 transcript 的真实私钥签名后保存：
 
 - `device_id`
 - `device_name`
@@ -57,6 +65,20 @@ Receiver 通过可靠控制 Stream 将挑战和配对短码发给 Sender，两�
 - `last_connected_at`
 
 后续连接必须验证固定公钥；同名但公钥不同的设备必须拒绝自动连接。
+
+后续重连还必须执行随机 challenge-response 签名，证明当前连接方持有已固定公钥对应的私钥；
+只比较 Hello 中重复发送的 public-key bytes 不构成认证。通过前不得接收媒体或特权控制。
+
+### 身份存储与损坏处理
+
+- Android：Android Keystore；iOS/macOS：Keychain；Windows：CNG/DPAPI；Rust/Linux 测试：权限受限、
+  原子替换的文件 adapter。
+- 身份加载、解密或一致性校验失败必须 fail closed，并向用户显示“身份损坏，可修复或重置配对”。
+  禁止静默生成 ephemeral identity 后继续启动。
+- 旧伪公钥和旧 trust store 不具备可验证私钥证明，不做静默迁移。切换到本安全契约时全部失效，
+  用户重新配对。
+- QUIC 端点临时自签名证书可以作为 TLS 加密载体，但应用身份认证必须由上述 Ed25519 transcript
+  和 exporter binding 完成；`SkipServerVerification` 不能被描述为已验证设备身份。
 
 ### 身份重建与同名历史配对
 

@@ -136,13 +136,33 @@ impl<T: PicooTransport> SenderSession<T> {
         Ok(())
     }
 
+    pub fn inject_control_payload_for_test(
+        &mut self,
+        payload: picoo_protocol::control::control_envelope::Payload,
+    ) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let message = picoo_protocol::encode_control_envelope(
+            payload,
+            self.last_received_control_message_id.saturating_add(1),
+            session.0,
+        );
+        self.handle_control(session, message);
+        Ok(())
+    }
+
     #[cfg(test)]
-    pub(crate) fn inject_control_for_session_for_test(
+    pub(crate) fn inject_control_payload_for_session_for_test(
         &mut self,
         session: SessionId,
-        msg: bytes::Bytes,
+        payload: picoo_protocol::control::control_envelope::Payload,
     ) {
-        self.handle_control(session, msg);
+        let active_generation = self.session.map_or(session.0, |active| active.0);
+        let message = picoo_protocol::encode_control_envelope(
+            payload,
+            self.last_received_control_message_id.saturating_add(1),
+            active_generation,
+        );
+        self.handle_control(session, message);
     }
 
     pub fn force_status_for_test(&mut self, status: SenderStatus) {

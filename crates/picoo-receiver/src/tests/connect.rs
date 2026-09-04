@@ -100,6 +100,7 @@ fn brief_disconnect_recovers_streaming_under_five_seconds() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -187,6 +188,7 @@ fn paired_loopback_binds_lan_only_without_wan() {
     );
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -230,60 +232,6 @@ fn paired_loopback_binds_lan_only_without_wan() {
 }
 
 #[test]
-fn mismatched_protocol_version_rejects_client_hello() {
-    // ARCH-PICOO-PROTOCOL-001 / PROTOCOL-002: version negotiation fail-fast.
-    use picoo_transport::{Endpoint, QuicSenderTransport};
-
-    let mut receiver = ReceiverSession::new();
-    let bind = receiver
-        .listen(Endpoint {
-            host: "127.0.0.1".into(),
-            port: 0,
-        })
-        .expect("listen");
-    let mut sender = SenderSession::new(QuicSenderTransport::new());
-    sender
-        .connect(Endpoint {
-            host: bind.ip().to_string(),
-            port: bind.port(),
-        })
-        .expect("connect");
-    for _ in 0..200 {
-        let _ = receiver.pump();
-        sender.pump().ok();
-        if sender.is_connected() && receiver.is_connected() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    sender
-        .send_client_hello_with_version("ver-phone", "Ver", &[1, 1, 1], "picoocam/9")
-        .expect("send hello");
-    let mut saw_protocol_err = false;
-    for _ in 0..50 {
-        if let Err(err) = receiver.pump() {
-            let msg = err.to_string();
-            if msg.contains("protocol_version") || msg.contains("unsupported") {
-                saw_protocol_err = true;
-                break;
-            }
-        }
-        sender.pump().ok();
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    assert!(
-        saw_protocol_err
-            || !matches!(
-                receiver.status(),
-                ReceiverStatus::Streaming | ReceiverStatus::Pairing | ReceiverStatus::Connecting
-            ),
-        "mismatched protocol_version must fail fast; status={:?}",
-        receiver.status()
-    );
-    assert_ne!(receiver.status(), ReceiverStatus::Streaming);
-}
-
-#[test]
 fn capabilities_720_only_are_applied_before_sender_stream_config() {
     // REQ-PICOO-MEDIA-002: platform applies the advertised limit, then commits epoch/config.
     use picoo_pairing::TrustedDevice;
@@ -308,6 +256,7 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -469,6 +418,7 @@ fn run_reconnect_churn(rounds: u32) {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),

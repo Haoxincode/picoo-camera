@@ -1,9 +1,26 @@
 use std::time::{Duration, Instant};
 
 use picoo_sender::{SenderError, SenderSession};
-use picoo_transport::{QuicSenderTransport, TransportError};
+use picoo_transport::{PicooTransport, QuicSenderTransport, TransportError};
 
 use crate::ReceiverSession;
+
+fn trust_receiver<T: PicooTransport>(
+    sender: &mut picoo_sender::SenderSession<T>,
+    receiver: &ReceiverSession,
+) {
+    let identity = receiver.identity();
+    sender
+        .trusted_devices_mut()
+        .upsert(picoo_pairing::TrustedDevice {
+            device_id: identity.receiver_id.clone(),
+            device_name: identity.display_name.clone(),
+            public_key: identity.public_key.clone(),
+            certificate_fingerprint: "test-receiver".into(),
+            paired_at_ms: 1,
+            last_connected_at_ms: None,
+        });
+}
 
 mod abr_epoch;
 mod abr_ladder;

@@ -18,7 +18,6 @@ object DiscoveryTxt {
     data class Parsed(
         val receiverId: String,
         val displayName: String,
-        val protocolVersion: String?,
         val quicPort: Int,
         val pairingState: String?,
         val fingerprintPrefix: String?,
@@ -30,14 +29,13 @@ object DiscoveryTxt {
             keys = attributes.keys,
             values = attributes.values,
         ) ?: return null
-        if (fields.size < 6) return null
+        if (fields.size < 5) return null
         return Parsed(
             receiverId = fields[0],
             displayName = fields[1],
-            protocolVersion = fields[2],
-            quicPort = fields[3].toInt(),
-            pairingState = fields[4],
-            fingerprintPrefix = fields[5],
+            quicPort = fields[2].toInt(),
+            pairingState = fields[3],
+            fingerprintPrefix = fields[4],
         )
     }
 

@@ -93,6 +93,21 @@ fn unpaired_start_stream_is_rejected() {
     assert!(receiver.pairing_short_code().is_some());
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
 
+    let unauthorized_config = picoo_protocol::control::StreamConfig {
+        codec: "h264".into(),
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        stream_epoch: 1,
+        ..Default::default()
+    };
+    assert!(receiver
+        .inject_control_payload_for_test(
+            picoo_protocol::control::control_envelope::Payload::StreamConfig(unauthorized_config,),
+        )
+        .is_err());
+    assert!(receiver.stream_config().is_none());
+
     let rejected_before = receiver.stats().control_rejected_unpaired;
     sender.send_start_stream().expect("start stream");
 

@@ -4,13 +4,16 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use picoo_packet::ReassemblyMap;
-use picoo_protocol::control::{ClientHello, ServerHello};
-use picoo_protocol::{VideoPacket, VideoPacketFlags, ALPN};
+use picoo_protocol::control::{
+    control_envelope::Payload as ControlPayload, ClientHello, ServerHello,
+};
+use picoo_protocol::{
+    decode_control_envelope, encode_control_envelope, VideoPacket, VideoPacketFlags,
+};
 use picoo_transport::{
     Endpoint, PicooTransport, QuicReceiverTransport, QuicSenderTransport, SessionId,
     TransportError, TransportEvent,
 };
-use prost::Message;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -64,24 +67,31 @@ fn connect_loopback() -> Result<
     Ok((receiver, sender, receiver_session, sender_session))
 }
 
-/// Run a minimal PCP/4 session: reliable control messages plus FEC video datagrams.
+/// Run a minimal PCP session: reliable enveloped control plus FEC video datagrams.
 pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
     let (mut receiver, mut sender, receiver_session, sender_session) = connect_loopback()?;
 
     let client_hello = ClientHello {
         sender_id: "android-sender".into(),
         device_name: "Pixel Test".into(),
-        protocol_version: ALPN.into(),
         public_key: vec![1, 2, 3],
     };
-    let mut hello_bytes = Vec::new();
-    client_hello
-        .encode(&mut hello_bytes)
-        .map_err(|error| QuicSimulationError::Protocol(error.to_string()))?;
-    sender.send_control(sender_session, Bytes::from(hello_bytes))?;
+    sender.send_control(
+        sender_session,
+        encode_control_envelope(
+            ControlPayload::ClientHello(client_hello),
+            1,
+            sender_session.0,
+        ),
+    )?;
 
     let received = wait_for(|| match receiver.poll_event() {
-        Some(TransportEvent::ControlMessage(_, data)) => ClientHello::decode(data).ok(),
+        Some(TransportEvent::ControlMessage(_, data)) => decode_control_envelope(&data)
+            .ok()
+            .and_then(|envelope| match envelope.payload {
+                Some(ControlPayload::ClientHello(hello)) => Some(hello),
+                _ => None,
+            }),
         _ => None,
     })?;
     assert_eq!(received.sender_id, "android-sender");
@@ -89,18 +99,25 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
     let server_hello = ServerHello {
         receiver_id: "windows-receiver".into(),
         display_name: "Work PC".into(),
-        protocol_version: ALPN.into(),
         public_key: vec![4, 5, 6],
         pairing_required: true,
     };
-    let mut response = Vec::new();
-    server_hello
-        .encode(&mut response)
-        .map_err(|error| QuicSimulationError::Protocol(error.to_string()))?;
-    receiver.send_control(receiver_session, Bytes::from(response))?;
+    receiver.send_control(
+        receiver_session,
+        encode_control_envelope(
+            ControlPayload::ServerHello(server_hello),
+            1,
+            sender_session.0,
+        ),
+    )?;
 
     let response = wait_for(|| match sender.poll_event() {
-        Some(TransportEvent::ControlMessage(_, data)) => ServerHello::decode(data).ok(),
+        Some(TransportEvent::ControlMessage(_, data)) => decode_control_envelope(&data)
+            .ok()
+            .and_then(|envelope| match envelope.payload {
+                Some(ControlPayload::ServerHello(hello)) => Some(hello),
+                _ => None,
+            }),
         _ => None,
     })?;
     assert_eq!(response.display_name, "Work PC");
@@ -108,7 +125,6 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
 
     let fragments = [
         VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::START_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 99,
@@ -118,7 +134,6 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
             payload: Bytes::from_static(b"abc"),
         },
         VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::END_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 99,

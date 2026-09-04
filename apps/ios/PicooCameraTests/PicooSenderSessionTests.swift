@@ -4,9 +4,9 @@ import Testing
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
-    @Test("Rust protocol version crosses the C ABI")
-    func protocolVersionCrossesSwiftCAbiBoundary() {
-        #expect(PicooSenderSession.protocolVersion == "PCP/4")
+    @Test("Rust protocol name crosses the C ABI")
+    func protocolNameCrossesSwiftCAbiBoundary() {
+        #expect(PicooSenderSession.protocolName == "PCP")
     }
 
     @Test("Sender handle begins disconnected and has deterministic ownership")

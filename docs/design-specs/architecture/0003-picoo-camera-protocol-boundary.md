@@ -1,20 +1,40 @@
-# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol (PCP/4) 边界
+# ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-002 / PUC-005 / PUC-006
 
 ## 背景
 
-Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用协议，分别承载会话建立、配对、能力交换、流控制、统计反馈和视频分片语义。若将控制消息与视频片段都放入 Protobuf 或 JSON，会给热路径带来不必要的编解码开销。
+Sender 与 Receiver 需要一套可测试、可 fuzz 的应用协议，分别承载会话建立、配对、能力交换、流控制、统计反馈和视频分片语义。若将控制消息与视频片段都放入 Protobuf 或 JSON，会给热路径带来不必要的编解码开销。
 
 ## 架构决策
 
-协议名称：**Picoo Camera Protocol**，版本 **PCP/4**。PCP/4 不兼容 PCP/3；版本提升用于
-明确区分低延迟 FEC 视频语义，禁止不理解校验片的旧 Receiver 静默接入。
+协议名称：**Picoo Camera Protocol（PCP）**。仓库同时控制 Sender 与 Receiver，且允许使旧状态
+失效，因此协议不维护数字版本、双解析器或兼容窗口。QUIC ALPN 固定为 `picoocam`；不符合当前
+ALPN、Envelope、身份或信任存储契约的旧构建直接失败并要求重新安装/配对。
 
 ### 控制平面
 
-控制消息使用 Protobuf 定义于 `proto/picoo_camera.proto`，由 Rust `prost` 生成类型，经 QUIC Reliable Stream 传输。
+控制消息使用 Protobuf 定义于 `proto/picoo_camera.proto`，由 Rust `prost` 生成类型，经 QUIC
+Reliable Stream 传输。每个控制帧只允许解码一次 `ControlEnvelope`：
+
+```protobuf
+message ControlEnvelope {
+  uint64 message_id = 1;
+  uint64 connection_generation = 2;
+  oneof payload { /* typed control messages */ }
+}
+```
+
+`message_id` 在连接内严格单调，`connection_generation` 隔离旧连接事件。只有出现需要异步关联的
+真实请求/响应语义时才为对应 payload 增加显式 transaction ID，不在通用 Envelope 中预留闲置字段。
+接收方先辨识 oneof payload，再由当前 Trust/Stream 状态判断该消息是否允许。禁止逐个尝试解码为
+不同 protobuf 类型，禁止 magic discriminator，也禁止裸 payload 绕过 Envelope。
+
+双方都必须执行阶段门禁。Sender 只有在已固定 Receiver 公钥与 ServerHello 一致时才接受
+`pairing_required=false`，不能把对端自行声明的“不需要配对”当作认证结果；CameraCommand、
+EncoderCommand、Stats、Capabilities 和 StreamConfig 只能在相应的已认证阶段处理。配对挑战超时
+关闭该连接，非活动 Session 的控制、媒体和断线事件直接丢弃。
 
 主要消息：
 
@@ -36,7 +56,6 @@ Sender 与 Receiver 需要一套版本可协商、可测试、可 fuzz 的应用
 
 ```text
 VideoPacket {
-  version: u8
   flags: u8
   stream_epoch: u32
   frame_id: u64
@@ -47,7 +66,7 @@ VideoPacket {
 }
 ```
 
-Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DISCARDABLE`、
+固定头为 25 字节。Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DISCARDABLE`、
 `FEC_PARITY`。
 
 单个载荷约 **1150 字节**，控制在路径 MTU 内，避免 IP 分片。
@@ -104,7 +123,7 @@ Android 视频方向的真实拥塞。
 
 ## 约束
 
-- 协议版本协商失败时必须 fail fast，不能静默降级到未定义行为。
+- 旧协议、旧 trust store 和裸控制 payload 必须 fail fast，不能静默降级或尝试猜测消息类型。
 - 控制消息 Parser 与 VideoPacket Parser 必须可 fuzz。
 - 配对完成前，控制面不得接受 StartStream 或 CameraCommand 中的敏感操作。
 - 明文控制消息与视频不得在链路上裸传；QUIC/TLS 负责传输层保护。

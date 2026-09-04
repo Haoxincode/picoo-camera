@@ -69,7 +69,7 @@ impl Default for ReceiverIdentity {
 pub struct IngressStats {
     pub access_units: u64,
     pub packets_received: u64,
-    /// Data fragments reconstructed from PCP/4 FEC parity before AU expiry.
+    /// Data fragments reconstructed from PCP FEC parity before AU expiry.
     pub fec_recovered_fragments: u64,
     /// Incomplete AUs for which Receiver observed at least one data fragment.
     pub reassembly_partial_access_unit_drops: u64,

@@ -1,9 +1,7 @@
 use picoo_pairing::pairing_transcript_hash;
 use picoo_protocol::control::{PairingApproval, PairingComplete};
 
-use super::super::pairing::{
-    PAIRING_APPROVAL_MAGIC, PAIRING_APPROVAL_PHASE, PAIRING_COMPLETE_MAGIC, PAIRING_COMPLETE_PHASE,
-};
+use super::super::pairing::{PAIRING_APPROVAL_PHASE, PAIRING_COMPLETE_PHASE};
 use super::*;
 
 #[test]
@@ -28,14 +26,11 @@ fn pairing_confirm_waits_for_receiver_completion() {
     let hello = ServerHello {
         receiver_id: "windows-receiver".into(),
         display_name: "Picoo Camera".into(),
-        protocol_version: ALPN.into(),
         public_key: vec![4, 5, 6],
         pairing_required: true,
     };
-    let mut buf = Vec::new();
-    hello.encode(&mut buf).expect("encode hello");
     session
-        .inject_control_for_test(bytes::Bytes::from(buf))
+        .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
         .expect("inject hello");
 
     let challenge_nonce = vec![0xABu8; 32];
@@ -43,15 +38,12 @@ fn pairing_confirm_waits_for_receiver_completion() {
         short_code: "123456".into(),
         challenge_nonce: challenge_nonce.clone(),
     };
-    let mut buf = Vec::new();
-    challenge.encode(&mut buf).expect("encode challenge");
     session
-        .inject_control_for_test(bytes::Bytes::from(buf))
+        .inject_control_payload_for_test(ControlPayload::PairingChallenge(challenge))
         .expect("inject challenge");
     let _ = session.take_keyframe_request();
 
     let approval = PairingApproval {
-        magic: PAIRING_APPROVAL_MAGIC,
         challenge_nonce: challenge_nonce.clone(),
         transcript_hash: pairing_transcript_hash(
             &challenge_nonce,
@@ -60,10 +52,8 @@ fn pairing_confirm_waits_for_receiver_completion() {
             PAIRING_APPROVAL_PHASE,
         ),
     };
-    let mut approval_buf = Vec::new();
-    approval.encode(&mut approval_buf).expect("encode approval");
     session
-        .inject_control_for_test(bytes::Bytes::copy_from_slice(&approval_buf))
+        .inject_control_payload_for_test(ControlPayload::PairingApproval(approval.clone()))
         .expect("inject premature approval");
     assert_eq!(session.status(), SenderStatus::Pairing);
     assert_eq!(
@@ -86,21 +76,20 @@ fn pairing_confirm_waits_for_receiver_completion() {
     assert_eq!(session.pending_packets(), 0);
 
     let active_session = session.session.expect("active session");
-    session.inject_control_for_session_for_test(
+    session.inject_control_payload_for_session_for_test(
         SessionId(active_session.0 + 1),
-        bytes::Bytes::copy_from_slice(&approval_buf),
+        ControlPayload::PairingApproval(approval.clone()),
     );
     assert!(!session.trusted_devices().is_paired("windows-receiver"));
 
     session
-        .inject_control_for_test(bytes::Bytes::from(approval_buf))
+        .inject_control_payload_for_test(ControlPayload::PairingApproval(approval))
         .expect("inject approval");
     assert_eq!(session.status(), SenderStatus::Pairing);
     assert!(session.trusted_devices().is_paired("windows-receiver"));
     assert!(!session.take_keyframe_request());
 
     let complete = PairingComplete {
-        magic: PAIRING_COMPLETE_MAGIC,
         challenge_nonce: challenge_nonce.clone(),
         transcript_hash: pairing_transcript_hash(
             &challenge_nonce,
@@ -109,12 +98,8 @@ fn pairing_confirm_waits_for_receiver_completion() {
             PAIRING_COMPLETE_PHASE,
         ),
     };
-    let mut complete_buf = Vec::new();
-    complete
-        .encode(&mut complete_buf)
-        .expect("encode completion");
     session
-        .inject_control_for_test(bytes::Bytes::from(complete_buf))
+        .inject_control_payload_for_test(ControlPayload::PairingComplete(complete))
         .expect("inject completion");
 
     assert_eq!(session.status(), SenderStatus::Streaming);
@@ -145,4 +130,73 @@ fn failed_trusted_device_persist_rolls_back_memory_state() {
 
     assert!(session.remove_trusted_device("receiver-rollback").is_err());
     assert!(session.trusted.is_paired("receiver-rollback"));
+}
+
+#[test]
+fn unknown_receiver_cannot_disable_pairing() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session
+        .send_client_hello("sender", "Phone", &[1, 2, 3])
+        .expect("hello");
+
+    session
+        .inject_control_payload_for_test(ControlPayload::ServerHello(ServerHello {
+            receiver_id: "unknown-receiver".into(),
+            display_name: "Unknown".into(),
+            public_key: vec![9, 9, 9],
+            pairing_required: false,
+        }))
+        .expect("inject bypass attempt");
+
+    assert_eq!(session.status(), SenderStatus::Disconnected);
+    assert_eq!(
+        session.last_session_error(),
+        Some("UNTRUSTED_PAIRING_BYPASS")
+    );
+    assert!(!session.is_connected());
+}
+
+#[test]
+fn privileged_control_is_rejected_until_receiver_is_authenticated() {
+    use picoo_protocol::control::{camera_command, CameraCommand};
+
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session
+        .send_client_hello("sender", "Phone", &[1, 2, 3])
+        .expect("hello");
+    session
+        .inject_control_payload_for_test(ControlPayload::ServerHello(ServerHello {
+            receiver_id: "receiver".into(),
+            display_name: "Receiver".into(),
+            public_key: vec![4, 5, 6],
+            pairing_required: true,
+        }))
+        .expect("server hello");
+
+    session
+        .inject_control_payload_for_test(ControlPayload::CameraCommand(CameraCommand {
+            command: camera_command::Command::SwitchCamera as i32,
+            resolution: None,
+            mirrored: false,
+        }))
+        .expect("inject unauthorized command");
+
+    assert_eq!(session.status(), SenderStatus::Pairing);
+    assert_eq!(
+        session.last_session_error(),
+        Some("CONTROL_PAYLOAD_NOT_ALLOWED")
+    );
+    assert!(session.take_camera_command().is_none());
 }

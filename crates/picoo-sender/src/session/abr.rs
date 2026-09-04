@@ -170,6 +170,11 @@ impl<T: PicooTransport> SenderSession<T> {
         }
     }
 
+    #[doc(hidden)]
+    pub fn apply_receiver_stats_for_test(&mut self, stats: ReceiverStatsMsg) {
+        self.apply_receiver_stats(stats);
+    }
+
     pub(super) fn handle_capabilities(&mut self, capabilities: Capabilities) -> bool {
         // Empty Capabilities is a prost false-positive for almost any blob.
         if !capabilities.codecs.is_empty() {
@@ -183,5 +188,10 @@ impl<T: PicooTransport> SenderSession<T> {
         } else {
             false
         }
+    }
+
+    #[doc(hidden)]
+    pub fn apply_capabilities_for_test(&mut self, capabilities: Capabilities) -> bool {
+        self.handle_capabilities(capabilities)
     }
 }

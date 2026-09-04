@@ -126,7 +126,6 @@ mod tests {
             .expect("connect");
 
         let head = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::START_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 1,
@@ -136,7 +135,6 @@ mod tests {
             payload: Bytes::from_static(b"k0"),
         };
         let tail = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::END_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 1,
@@ -163,7 +161,6 @@ mod tests {
             .expect("connect");
         let _ = t.poll_event();
         let head = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::START_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 1,

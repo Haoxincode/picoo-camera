@@ -1,24 +1,49 @@
 syntax = "proto3";
 
-package picoo.camera.v4;
+package picoo.camera;
 
-// PCP/4 control messages — transported over QUIC reliable streams.
+// PCP control messages — transported inside ControlEnvelope over QUIC reliable
+// streams. The repository owns both endpoints and intentionally carries no
+// legacy wire-version negotiation.
 // See ARCH-PICOO-PROTOCOL-001.
+
+message ControlEnvelope {
+  uint64 message_id = 1;
+  uint64 connection_generation = 2;
+
+  oneof payload {
+    ClientHello client_hello = 10;
+    ServerHello server_hello = 11;
+    Capabilities capabilities = 12;
+    PairingChallenge pairing_challenge = 13;
+    PairingConfirm pairing_confirm = 14;
+    PairingApproval pairing_approval = 15;
+    PairingCommit pairing_commit = 16;
+    PairingComplete pairing_complete = 17;
+    StreamConfig stream_config = 20;
+    StartStream start_stream = 21;
+    StopStream stop_stream = 22;
+    CameraCommand camera_command = 30;
+    EncoderCommand encoder_command = 31;
+    RequestKeyframe request_keyframe = 32;
+    ReceiverStats receiver_stats = 40;
+    SenderStats sender_stats = 41;
+    Heartbeat heartbeat = 42;
+    SessionError session_error = 50;
+  }
+}
 
 message ClientHello {
   string sender_id = 1;
   string device_name = 2;
-  string protocol_version = 3;
-  bytes public_key = 4;
-  reserved 5;
+  bytes public_key = 3;
 }
 
 message ServerHello {
   string receiver_id = 1;
   string display_name = 2;
-  string protocol_version = 3;
-  bytes public_key = 4;
-  bool pairing_required = 5;
+  bytes public_key = 3;
+  bool pairing_required = 4;
 }
 
 message Capabilities {
@@ -45,23 +70,20 @@ message PairingConfirm {
 
 // Receiver -> Sender after both users confirmed the same short code.
 message PairingApproval {
-  uint32 magic = 1; // must be 0x50415056 ("PAPV")
-  bytes challenge_nonce = 2;
-  bytes transcript_hash = 3;
+  bytes challenge_nonce = 1;
+  bytes transcript_hash = 2;
 }
 
 // Sender -> Receiver after the Sender durably stores Receiver trust.
 message PairingCommit {
-  uint32 magic = 1; // must be 0x50434D54 ("PCMT")
-  bytes challenge_nonce = 2;
-  bytes transcript_hash = 3;
+  bytes challenge_nonce = 1;
+  bytes transcript_hash = 2;
 }
 
 // Receiver -> Sender after the Receiver durably stores Sender trust.
 message PairingComplete {
-  uint32 magic = 1; // must be 0x50434D50 ("PCMP")
-  bytes challenge_nonce = 2;
-  bytes transcript_hash = 3;
+  bytes challenge_nonce = 1;
+  bytes transcript_hash = 2;
 }
 
 message StreamConfig {
@@ -80,14 +102,8 @@ message StreamConfig {
   uint32 stream_epoch = 13;
 }
 
-message StartStream {
-  // Discriminator — empty protobufs must not false-positive decode (ARCH-PICOO-PROTOCOL-001).
-  // Wire-identical to StopStream except magic value: Start=1, Stop=2.
-  uint32 magic = 1; // must be 1
-}
-message StopStream {
-  uint32 magic = 1; // must be 2
-}
+message StartStream {}
+message StopStream {}
 
 message CameraCommand {
   enum Command {
@@ -129,14 +145,13 @@ message ReceiverStats {
 // control stream so desktop diagnostics can distinguish Sender backpressure
 // from loss after a Datagram entered QUIC.
 message SenderStats {
-  uint32 magic = 1; // must be 0x53544154 ("STAT")
-  uint64 access_units = 2;
-  uint64 submitted_datagrams = 3;
-  double video_queue_age_ms = 4;
-  uint64 video_dropped_access_units = 5;
-  uint64 quic_lost_packets = 6;
-  uint64 quic_sent_packets = 7;
-  uint64 video_buffered_bytes = 8;
+  uint64 access_units = 1;
+  uint64 submitted_datagrams = 2;
+  double video_queue_age_ms = 3;
+  uint64 video_dropped_access_units = 4;
+  uint64 quic_lost_packets = 5;
+  uint64 quic_sent_packets = 6;
+  uint64 video_buffered_bytes = 7;
 }
 
 message RequestKeyframe {}

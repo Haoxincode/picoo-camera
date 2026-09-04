@@ -14,7 +14,7 @@ use crate::c_sender::sender_snapshot;
 use crate::handles::SenderInner;
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getProtocolVersion(
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getProtocolName(
     mut env: JNIEnv<'_>,
     _this: JObject<'_>,
 ) -> jstring {

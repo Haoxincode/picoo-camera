@@ -51,7 +51,7 @@ QUIC Connection
   └── QUIC Datagram                  → H.264 VideoPacket 片段
 ```
 
-QUIC ALPN：`picoocam/4`
+QUIC ALPN：`picoocam`
 
 ### 重连与退避
 
@@ -80,7 +80,7 @@ QUIC ALPN：`picoocam/4`
 - 四端必须能构建并链接同一 Quinn/Rustls 版本族。
 - QUIC 构建不得要求 CMake、BoringSSL 或 NASM；平台仍可使用 Cargo、NDK Clang、MSVC 与系统 SDK。
 - 视频 Datagram 不请求重传旧片段。
-- 控制 Stream 消息丢失或乱序由 QUIC 保证；应用层仍需做协议版本与配对状态校验。
+- 控制 Stream 消息丢失或乱序由 QUIC 保证；应用层仍需校验 Envelope generation/message ID 与配对状态。
 
 ## 相关 Use Case
 

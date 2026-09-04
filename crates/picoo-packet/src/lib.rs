@@ -696,7 +696,6 @@ mod tests {
         payload: &'static [u8],
     ) -> VideoPacket {
         VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::empty(),
             stream_epoch: epoch,
             frame_id,
@@ -723,7 +722,6 @@ mod tests {
                 payload.extend_from_slice(&parity.last_data_len.to_be_bytes());
                 payload.extend_from_slice(&parity.bytes);
                 VideoPacket {
-                    version: VideoPacket::VERSION,
                     flags: VideoPacketFlags::FEC_PARITY,
                     stream_epoch: epoch,
                     frame_id,
@@ -796,7 +794,6 @@ mod tests {
     fn malformed_fec_parity_is_rejected() {
         let mut map = ReassemblyMap::new(8, 16);
         let parity = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::FEC_PARITY,
             stream_epoch: 1,
             frame_id: 10,
@@ -856,7 +853,6 @@ mod tests {
     fn dropping_incomplete_keyframe_sets_loss_flag() {
         let mut map = ReassemblyMap::new(1, 16);
         let key = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME,
             stream_epoch: 1,
             frame_id: 1,
@@ -877,7 +873,6 @@ mod tests {
     fn reassembly_deadline_reports_and_discards_incomplete_keyframe() {
         let mut map = ReassemblyMap::new(8, 16);
         let key_head = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::START_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 1,
@@ -894,7 +889,6 @@ mod tests {
         assert_eq!(map.resolved_fragment_count(), 2);
 
         let key_tail = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::END_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 1,
@@ -978,7 +972,6 @@ mod tests {
     fn cross_access_unit_reordering_completes_both_frames_before_deadline() {
         let mut map = ReassemblyMap::new(8, 16);
         let old_head = VideoPacket {
-            version: VideoPacket::VERSION,
             flags: VideoPacketFlags::KEYFRAME | VideoPacketFlags::START_OF_ACCESS_UNIT,
             stream_epoch: 1,
             frame_id: 1,

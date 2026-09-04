@@ -14,7 +14,9 @@ use std::time::Instant;
 
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_pairing::TrustedDeviceStore;
-use picoo_protocol::control::{CameraCommand, Capabilities};
+use picoo_protocol::control::{
+    control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
+};
 use picoo_rate_control::{BitrateAction, BitrateController};
 use picoo_session::{ReconnectBackoff, SenderStatus};
 use picoo_transport::{Endpoint, PicooTransport, SessionId};
@@ -97,6 +99,8 @@ pub struct SenderSession<T: PicooTransport> {
     pending_camera_command: Option<CameraCommand>,
     /// Last SessionError code from receiver (e.g. PUBLIC_KEY_CHANGED).
     last_session_error: Option<String>,
+    next_control_message_id: u64,
+    last_received_control_message_id: u64,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -138,7 +142,22 @@ impl<T: PicooTransport> SenderSession<T> {
             media_blocked_for_stream_config: false,
             pending_camera_command: None,
             last_session_error: None,
+            next_control_message_id: 1,
+            last_received_control_message_id: 0,
         }
+    }
+
+    pub(super) fn send_control_payload(
+        &mut self,
+        session: SessionId,
+        payload: ControlPayload,
+    ) -> Result<(), crate::SenderError> {
+        let message_id = self.next_control_message_id;
+        self.next_control_message_id = self.next_control_message_id.saturating_add(1);
+        let message = picoo_protocol::encode_control_envelope(payload, message_id, session.0);
+        self.transport
+            .send_control(session, message)
+            .map_err(crate::SenderError::Transport)
     }
 
     pub fn status(&self) -> SenderStatus {

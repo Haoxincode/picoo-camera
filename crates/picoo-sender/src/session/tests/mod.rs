@@ -8,14 +8,13 @@ use picoo_transport::{PicooTransport, TransportError, TransportEvent};
 
 pub(super) use std::time::Duration;
 
+pub(super) use picoo_protocol::control::control_envelope::Payload as ControlPayload;
 pub(super) use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
 pub(super) use picoo_protocol::control::{Capabilities, PairingChallenge, Resolution, ServerHello};
-pub(super) use picoo_protocol::ALPN;
 pub(super) use picoo_rate_control::BitrateAction;
 pub(super) use picoo_session::SenderStatus;
 pub(super) use picoo_testkit::MemoryTransport;
 pub(super) use picoo_transport::{CloseReason, Endpoint, SessionId};
-pub(super) use prost::Message;
 
 pub(super) use crate::stream_config::StreamConfigParams;
 pub(super) use crate::SenderError;

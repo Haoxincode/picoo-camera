@@ -9,11 +9,11 @@ fn sender_status_code(status: SenderStatus) -> i32 {
     status.as_code()
 }
 
-/// Returns protocol version string for FFI smoke tests.
+/// Returns the unversioned protocol name for FFI smoke tests.
 #[no_mangle]
-pub extern "C" fn picoo_protocol_version() -> *const std::ffi::c_char {
-    static VERSION: &[u8] = b"PCP/4\0";
-    VERSION.as_ptr() as *const std::ffi::c_char
+pub extern "C" fn picoo_protocol_name() -> *const std::ffi::c_char {
+    static NAME: &[u8] = b"PCP\0";
+    NAME.as_ptr() as *const std::ffi::c_char
 }
 
 /// Create a sender session (packetization + QUIC transport).
@@ -35,7 +35,7 @@ pub extern "C" fn picoo_sender_destroy(handle: *mut std::ffi::c_void) {
     }
 }
 
-/// Connect QUIC session to host:port (PCP/4 ALPN `picoocam/4`).
+/// Connect QUIC session to host:port (PCP ALPN `picoocam`).
 #[no_mangle]
 pub extern "C" fn picoo_sender_connect(
     handle: *mut std::ffi::c_void,

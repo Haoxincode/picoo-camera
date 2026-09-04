@@ -49,7 +49,7 @@ picoo-camera/                    # 本仓库根目录
 
 Rust Core 负责：
 
-- PCP/4 协议类型、FEC 与控制消息编解码。
+- PCP Envelope 协议类型、FEC 与控制消息编解码。
 - QUIC 传输封装（基于 Quinn + Rustls，经 `picoo-transport` 隔离）。
 - 会话状态机、重连退避与能力协商。
 - 配对、公钥固定与设备模型。

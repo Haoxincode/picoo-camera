@@ -46,7 +46,7 @@ final class SenderAppModel {
     }
 
     let camera: CameraCaptureModel
-    let protocolVersion = PicooSenderSession.protocolVersion
+    let protocolName = PicooSenderSession.protocolName
 
     @ObservationIgnored private let session: PicooSenderSession?
     @ObservationIgnored private let mediaPipeline: SenderMediaPipeline?

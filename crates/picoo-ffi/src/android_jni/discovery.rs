@@ -61,13 +61,12 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseDiscoveryTxt(
     let Ok(string_class) = env.find_class("java/lang/String") else {
         return ptr::null_mut();
     };
-    let Ok(result) = env.new_object_array(6, string_class, JObject::null()) else {
+    let Ok(result) = env.new_object_array(5, string_class, JObject::null()) else {
         return ptr::null_mut();
     };
     let fields = [
         advertisement.receiver_id,
         advertisement.display_name,
-        advertisement.protocol_version,
         advertisement.quic_port.to_string(),
         advertisement.pairing_state.as_str().to_owned(),
         advertisement.public_key_fingerprint_prefix,

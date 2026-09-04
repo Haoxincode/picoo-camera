@@ -4,8 +4,8 @@ use picoo_session::SenderStatus;
 use super::*;
 
 #[test]
-fn protocol_version_cstr() {
-    let ptr = picoo_protocol_version();
+fn protocol_name_cstr() {
+    let ptr = picoo_protocol_name();
     assert!(!ptr.is_null());
 }
 

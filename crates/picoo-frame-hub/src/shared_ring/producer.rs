@@ -274,7 +274,6 @@ impl SharedFrameRingProducer {
             slot.data_length = nv12.len() as u32;
 
             let pixels = slot_pixels_at(base, self.max_frame_bytes, index);
-            pixels.fill(0);
             pixels[..nv12.len()].copy_from_slice(nv12);
 
             let sequence = meta.latest_sequence.load(Ordering::Relaxed) + 1;

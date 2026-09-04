@@ -92,6 +92,27 @@ fn rapid_overwrite_consumer_sees_latest_sequence() {
 }
 
 #[test]
+fn smaller_frame_exposes_only_its_declared_data_length() {
+    let name = test_ring_name();
+    let max = nv12_byte_size(128, 128);
+    let mut producer = SharedFrameRingProducer::create(&name, max).expect("create");
+    let consumer = SharedFrameRingConsumer::open(&name, max).expect("open");
+    let large = vec![0xA5; max];
+    producer
+        .publish_nv12(128, 128, 128, 0, 1, &large)
+        .expect("large publish");
+    let small = vec![0x3C; nv12_byte_size(64, 64)];
+    producer
+        .publish_nv12(64, 64, 64, 0, 2, &small)
+        .expect("small publish");
+
+    let view = consumer.latest_frame().expect("latest");
+    assert_eq!(view.nv12, small.as_slice());
+    assert_eq!(view.nv12.len(), nv12_byte_size(64, 64));
+    cleanup(&name);
+}
+
+#[test]
 fn leased_slots_are_never_overwritten() {
     let name = test_ring_name();
     let max = nv12_byte_size(64, 64);

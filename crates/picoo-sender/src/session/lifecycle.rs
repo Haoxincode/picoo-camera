@@ -1,14 +1,15 @@
 use std::time::{Duration, Instant};
 
-use picoo_protocol::control::{SenderStats as SenderStatsMsg, StartStream, StopStream};
+use picoo_protocol::control::{
+    control_envelope::Payload as ControlPayload, SenderStats as SenderStatsMsg, StartStream,
+    StopStream,
+};
 use picoo_session::SenderStatus;
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
-use prost::Message;
 
 use super::SenderSession;
 use crate::SenderError;
 
-const SENDER_STATS_MAGIC: u32 = 0x5354_4154;
 const SENDER_STATS_INTERVAL: Duration = Duration::from_secs(1);
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -51,13 +52,7 @@ impl<T: PicooTransport> SenderSession<T> {
     /// Sender → Receiver StartStream (PAIRING-003 / PROTOCOL control plane).
     pub fn send_start_stream(&mut self) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
-        let msg = StartStream { magic: 1 };
-        let mut buf = Vec::new();
-        msg.encode(&mut buf)
-            .map_err(|e| SenderError::Protocol(e.to_string()))?;
-        self.transport
-            .send_control(session, bytes::Bytes::from(buf))
-            .map_err(SenderError::Transport)?;
+        self.send_control_payload(session, ControlPayload::StartStream(StartStream {}))?;
         self.drain_events();
         Ok(())
     }
@@ -65,13 +60,7 @@ impl<T: PicooTransport> SenderSession<T> {
     /// Sender → Receiver StopStream.
     pub fn send_stop_stream(&mut self) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
-        let msg = StopStream { magic: 2 };
-        let mut buf = Vec::new();
-        msg.encode(&mut buf)
-            .map_err(|e| SenderError::Protocol(e.to_string()))?;
-        self.transport
-            .send_control(session, bytes::Bytes::from(buf))
-            .map_err(SenderError::Transport)?;
+        self.send_control_payload(session, ControlPayload::StopStream(StopStream {}))?;
         self.drain_events();
         Ok(())
     }
@@ -108,6 +97,8 @@ impl<T: PicooTransport> SenderSession<T> {
         self.reconnect_after = None;
         self.status = SenderStatus::Connecting;
         self.last_sender_stats_sent_at = None;
+        self.next_control_message_id = 1;
+        self.last_received_control_message_id = 0;
         if let Some(params) = self.hello_params.clone() {
             if self.emit_client_hello(&params).is_ok() {
                 self.status = SenderStatus::Negotiating;
@@ -201,7 +192,6 @@ impl<T: PicooTransport> SenderSession<T> {
         let link = self.transport.link_stats().unwrap_or_default();
         let pipeline = self.pipeline.stats();
         let stats = SenderStatsMsg {
-            magic: SENDER_STATS_MAGIC,
             access_units: pipeline.access_units,
             submitted_datagrams: self.sent_datagrams,
             video_queue_age_ms: link.video_queue_age_ms,
@@ -210,12 +200,9 @@ impl<T: PicooTransport> SenderSession<T> {
             quic_sent_packets: link.sent_packets,
             video_buffered_bytes: link.video_buffered_bytes,
         };
-        let mut bytes = Vec::new();
-        if stats.encode(&mut bytes).is_ok()
-            && self
-                .transport
-                .send_control(session, bytes::Bytes::from(bytes))
-                .is_ok()
+        if self
+            .send_control_payload(session, ControlPayload::SenderStats(stats))
+            .is_ok()
         {
             self.last_sender_stats_sent_at = Some(Instant::now());
         }

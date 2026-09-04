@@ -1,4 +1,4 @@
-//! PCP/4 low-latency Reed-Solomon erasure protection for video fragments.
+//! PCP low-latency Reed-Solomon erasure protection for video fragments.
 //!
 //! Each group contains up to six data shards and two parity shards. Recovery
 //! is local and immediate once enough shards arrive; it never waits for an RTT.
@@ -140,7 +140,7 @@ fn fec_codec(data_shards: usize) -> Option<&'static ReedSolomon> {
             (2..=FEC_DATA_SHARDS)
                 .map(|count| {
                     ReedSolomon::new(count, FEC_PARITY_SHARDS)
-                        .expect("fixed PCP/4 FEC parameters are valid")
+                        .expect("fixed PCP FEC parameters are valid")
                 })
                 .collect()
         })

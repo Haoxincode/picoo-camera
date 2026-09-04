@@ -122,7 +122,6 @@ mod tests {
             .expect("connect");
         for i in 0..2_000 {
             let packet = VideoPacket {
-                version: VideoPacket::VERSION,
                 stream_epoch: 1,
                 frame_id: i,
                 fragment_index: 0,

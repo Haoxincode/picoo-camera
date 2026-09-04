@@ -1,4 +1,4 @@
-//! Metrics types aligned with PCP/4 ReceiverStats — REQ-PICOO-PROTOCOL-006.
+//! Metrics types aligned with PCP ReceiverStats — REQ-PICOO-PROTOCOL-006.
 
 use serde::{Deserialize, Serialize};
 

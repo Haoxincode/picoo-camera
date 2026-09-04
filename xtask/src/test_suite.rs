@@ -83,7 +83,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
-                "cargo test -p picoo-receiver --lib mismatched_protocol_version_rejects_client_hello"
+                "cargo test -p picoo-protocol --lib control_envelope_tests"
             )
             .run()?;
             cmd!(

@@ -1,5 +1,3 @@
-use picoo_protocol::control::ClientHello;
-
 use super::*;
 
 #[test]
@@ -27,9 +25,52 @@ fn client_hello_queued_before_async_connect_is_sent_when_connected() {
         .sent_control
         .first()
         .expect("ClientHello emitted after connect");
-    let hello = ClientHello::decode(encoded.as_ref()).expect("decode ClientHello");
+    let envelope = picoo_protocol::decode_control_envelope(encoded).expect("decode envelope");
+    let Some(ControlPayload::ClientHello(hello)) = envelope.payload else {
+        panic!("expected ClientHello payload");
+    };
     assert_eq!(hello.sender_id, "android-sender");
-    assert_eq!(hello.protocol_version, ALPN);
+}
+
+#[test]
+fn stale_or_replayed_control_envelope_is_rejected() {
+    let mut sender = SenderSession::new(MemoryTransport::new());
+    let session = sender
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+
+    let wrong_generation = picoo_protocol::encode_control_envelope(
+        ControlPayload::SessionError(picoo_protocol::control::SessionError {
+            code: "UNPAIRED".into(),
+            message: String::new(),
+        }),
+        1,
+        session.0 + 1,
+    );
+    sender
+        .inject_control_for_test(wrong_generation)
+        .expect("inject wrong generation");
+    assert_eq!(sender.last_session_error(), Some("STALE_CONTROL_ENVELOPE"));
+
+    let valid = picoo_protocol::encode_control_envelope(
+        ControlPayload::SessionError(picoo_protocol::control::SessionError {
+            code: "UNPAIRED".into(),
+            message: String::new(),
+        }),
+        1,
+        session.0,
+    );
+    sender
+        .inject_control_for_test(valid.clone())
+        .expect("inject valid envelope");
+    assert_eq!(sender.last_session_error(), Some("UNPAIRED"));
+    sender
+        .inject_control_for_test(valid)
+        .expect("inject replay");
+    assert_eq!(sender.last_session_error(), Some("STALE_CONTROL_ENVELOPE"));
 }
 
 #[test]
@@ -177,22 +218,14 @@ fn high_packet_loss_marks_network_unstable() {
         packet_loss: 0.05,
         ..Default::default()
     };
-    let mut buf = Vec::new();
-    high_loss.encode(&mut buf).expect("encode");
-    session
-        .inject_control_for_test(bytes::Bytes::from(buf))
-        .expect("inject");
+    session.apply_receiver_stats_for_test(high_loss);
     assert_eq!(session.status(), SenderStatus::NetworkUnstable);
 
     let recovered = ReceiverStatsMsg {
         packet_loss: 0.005,
         ..Default::default()
     };
-    let mut buf = Vec::new();
-    recovered.encode(&mut buf).expect("encode");
-    session
-        .inject_control_for_test(bytes::Bytes::from(buf))
-        .expect("inject");
+    session.apply_receiver_stats_for_test(recovered);
     assert_eq!(session.status(), SenderStatus::Streaming);
 }
 
@@ -229,7 +262,6 @@ fn resends_client_hello_after_reconnect() {
     session
         .send_client_hello("phone-1", "Pixel", &[1, 2, 3])
         .expect("hello");
-
     session.disconnect_for_test(CloseReason::Timeout);
     session.pump().expect("disconnect pump");
 
@@ -254,6 +286,14 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     session
         .send_client_hello("phone-1", "Pixel", &[1, 2, 3])
         .expect("hello");
+    session.trusted.upsert(picoo_pairing::TrustedDevice {
+        device_id: "recv-1".into(),
+        device_name: "Desktop".into(),
+        public_key: vec![9, 9],
+        certificate_fingerprint: "test".into(),
+        paired_at_ms: 1,
+        last_connected_at_ms: None,
+    });
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
@@ -269,14 +309,11 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     let hello = ServerHello {
         receiver_id: "recv-1".into(),
         display_name: "Desktop".into(),
-        protocol_version: ALPN.into(),
         public_key: vec![9, 9],
         pairing_required: false,
     };
-    let mut buf = Vec::new();
-    hello.encode(&mut buf).expect("encode");
     session
-        .inject_control_for_test(bytes::Bytes::from(buf))
+        .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
         .expect("inject hello");
     assert_eq!(session.status(), SenderStatus::Streaming);
     assert_eq!(session.connected_receiver_id(), Some("recv-1"));
@@ -300,14 +337,11 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     let hello2 = ServerHello {
         receiver_id: "recv-1".into(),
         display_name: "Desktop".into(),
-        protocol_version: ALPN.into(),
         public_key: vec![9, 9],
         pairing_required: false,
     };
-    let mut buf2 = Vec::new();
-    hello2.encode(&mut buf2).expect("encode");
     session
-        .inject_control_for_test(bytes::Bytes::from(buf2))
+        .inject_control_payload_for_test(ControlPayload::ServerHello(hello2))
         .expect("inject hello2");
     session.pump().expect("pump streaming");
 

@@ -132,11 +132,7 @@ fn receiver_capability_caps_preferred_height_in_rust() {
         front_camera: true,
         back_camera: true,
     };
-    let mut encoded = Vec::new();
-    capabilities.encode(&mut encoded).expect("encode");
-    session
-        .inject_control_for_test(bytes::Bytes::from(encoded))
-        .expect("inject capabilities");
+    assert!(session.apply_capabilities_for_test(capabilities));
     session.set_preferred_height(1080);
     assert_eq!(session.receiver_max_height(), 720);
     assert_eq!(session.bitrate.preferred_height(), 720);
@@ -151,11 +147,7 @@ fn receiver_capability_caps_preferred_height_in_rust() {
         front_camera: true,
         back_camera: true,
     };
-    let mut encoded = Vec::new();
-    expanded.encode(&mut encoded).expect("encode");
-    session
-        .inject_control_for_test(bytes::Bytes::from(encoded))
-        .expect("inject expanded capabilities");
+    assert!(session.apply_capabilities_for_test(expanded));
     assert_eq!(session.bitrate.preferred_height(), 1080);
 }
 

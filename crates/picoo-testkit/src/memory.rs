@@ -110,7 +110,6 @@ mod tests {
         use bytes::Bytes;
         let packets = vec![
             VideoPacket {
-                version: VideoPacket::VERSION,
                 flags: VideoPacketFlags::empty(),
                 stream_epoch: 1,
                 frame_id: 1,
@@ -120,7 +119,6 @@ mod tests {
                 payload: Bytes::from_static(b"aa"),
             },
             VideoPacket {
-                version: VideoPacket::VERSION,
                 flags: VideoPacketFlags::empty(),
                 stream_epoch: 1,
                 frame_id: 1,

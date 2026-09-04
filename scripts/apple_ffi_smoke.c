@@ -2,6 +2,6 @@
 #include "picoo_camera.h"
 
 int main(void) {
-  const char *version = picoo_protocol_version();
-  return version != NULL && version[0] == 'P' ? 0 : 1;
+  const char *name = picoo_protocol_name();
+  return name != NULL && name[0] == 'P' ? 0 : 1;
 }

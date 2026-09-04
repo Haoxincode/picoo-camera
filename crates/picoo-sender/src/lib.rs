@@ -1,4 +1,4 @@
-//! Android/iOS sender pipeline: H.264 access unit → PCP/4 FEC-protected fragmentation.
+//! Android/iOS sender pipeline: H.264 access unit → PCP FEC-protected fragmentation.
 //!
 //! REQ-PICOO-MEDIA-001, REQ-PICOO-STACK-001
 
@@ -125,7 +125,6 @@ impl SenderPipeline {
             }
 
             let packet = VideoPacket {
-                version: VideoPacket::VERSION,
                 flags,
                 stream_epoch,
                 frame_id,
@@ -162,7 +161,6 @@ impl SenderPipeline {
                 payload.extend_from_slice(&parity.last_data_len.to_be_bytes());
                 payload.extend_from_slice(&parity.bytes);
                 let packet = VideoPacket {
-                    version: VideoPacket::VERSION,
                     flags: base_flags | VideoPacketFlags::FEC_PARITY,
                     stream_epoch,
                     frame_id,

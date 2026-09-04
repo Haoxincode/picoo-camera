@@ -1,6 +1,6 @@
 [package]
 name = "picoo-protocol"
-description = "PCP/4 protocol types: Protobuf control messages and FEC-protected VideoPacket"
+description = "PCP protocol types: enveloped Protobuf control messages and FEC-protected VideoPacket"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

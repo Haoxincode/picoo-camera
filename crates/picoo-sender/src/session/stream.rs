@@ -1,6 +1,6 @@
+use picoo_protocol::control::control_envelope::Payload as ControlPayload;
 use picoo_rate_control::BitrateAction;
 use picoo_transport::PicooTransport;
-use prost::Message;
 
 use super::{EncoderDirectiveKind, SenderSession, MAX_STREAM_EPOCH};
 use crate::stream_config::StreamConfigParams;
@@ -145,12 +145,7 @@ impl<T: PicooTransport> SenderSession<T> {
         let mut config = config.clone();
         config.stream_epoch = self.current_stream_epoch;
         let msg = config.to_proto();
-        let mut buf = Vec::new();
-        msg.encode(&mut buf)
-            .map_err(|e| SenderError::Protocol(e.to_string()))?;
-        self.transport
-            .send_control(session, bytes::Bytes::from(buf))
-            .map_err(SenderError::Transport)?;
+        self.send_control_payload(session, ControlPayload::StreamConfig(msg))?;
         self.pending_stream_config = Some(config);
         Ok(())
     }

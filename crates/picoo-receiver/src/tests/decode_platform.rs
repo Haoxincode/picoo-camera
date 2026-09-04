@@ -172,6 +172,7 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -257,7 +258,6 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;
     use picoo_testkit::{H264_1280X720_RED_IDR, H264_854X480_RED_IDR};
-    use prost::Message;
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -276,6 +276,7 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -310,11 +311,7 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
                 frame_age_ms: 250.0,
                 ..Default::default()
             };
-            let mut bytes = Vec::new();
-            stats.encode(&mut bytes).expect("encode stats");
-            sender
-                .inject_control_for_test(bytes::Bytes::from(bytes))
-                .expect("inject stats");
+            sender.apply_receiver_stats_for_test(stats);
             if let Some(directive) = sender.pending_encoder_directive() {
                 assert!(
                     sender.acknowledge_encoder_directive(directive.id, directive.target_height,)
@@ -417,7 +414,6 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
     // REQ-PICOO-MEDIA-010: host thermal force keeps ABR from requesting 1080p.
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_transport::QuicSenderTransport;
-    use prost::Message;
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
     sender.set_preferred_height(1080);
@@ -433,11 +429,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
             jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        sender
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        sender.apply_receiver_stats_for_test(stats);
         assert!(
             sender.pending_encoder_directive().is_none(),
             "thermal hold must suppress upshift hint"
@@ -452,11 +444,7 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
             jitter_buffer_occupancy_ms: 40.0,
             ..Default::default()
         };
-        let mut buf = Vec::new();
-        stats.encode(&mut buf).expect("encode");
-        sender
-            .inject_control_for_test(bytes::Bytes::from(buf))
-            .expect("inject");
+        sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
             assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
             up = true;

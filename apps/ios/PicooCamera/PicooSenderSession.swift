@@ -68,11 +68,11 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
     private let identity: PicooSenderIdentity
     private let trustedStorePath: String
 
-    static var protocolVersion: String {
-        guard let version = picoo_protocol_version() else {
+    static var protocolName: String {
+        guard let name = picoo_protocol_name() else {
             return "Unavailable"
         }
-        return String(cString: version)
+        return String(cString: name)
     }
 
     init(defaultDeviceName: String = "iPhone") throws {

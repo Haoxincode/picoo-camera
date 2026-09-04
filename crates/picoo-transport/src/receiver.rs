@@ -81,6 +81,12 @@ impl QuicReceiverTransport {
             let _ = actor.command(Command::Close { session, reason });
         }
     }
+
+    pub fn close_active(&mut self, reason: CloseReason) {
+        if let Some(session) = self.active_session() {
+            self.close(session, reason);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -89,7 +95,12 @@ mod tests {
     use crate::{PicooTransport, QuicSenderTransport};
     use std::time::Duration;
 
-    fn loopback() -> (QuicReceiverTransport, QuicSenderTransport, SessionId) {
+    fn loopback() -> (
+        QuicReceiverTransport,
+        QuicSenderTransport,
+        SessionId,
+        SessionId,
+    ) {
         let mut receiver = QuicReceiverTransport::new();
         let addr = receiver
             .bind(Endpoint {
@@ -113,7 +124,8 @@ mod tests {
             receiver_connected |=
                 matches!(receiver.poll_event(), Some(TransportEvent::Connected(_)));
             if sender_connected && receiver_connected {
-                return (receiver, sender, pending);
+                let receiver_session = receiver.active_session().expect("receiver session");
+                return (receiver, sender, receiver_session, pending);
             }
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -122,7 +134,7 @@ mod tests {
 
     #[test]
     fn exchanges_control_messages_without_manual_io_pump() {
-        let (mut receiver, mut sender, sender_session) = loopback();
+        let (mut receiver, mut sender, _, sender_session) = loopback();
         sender
             .send_control(sender_session, Bytes::from_static(b"hello"))
             .expect("send control");
@@ -137,5 +149,57 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         }
         panic!("control message timed out");
+    }
+
+    #[test]
+    fn close_active_targets_a_later_connection_generation() {
+        let (mut receiver, mut first_sender, first_receiver_session, _) = loopback();
+        let addr = receiver.bind_addr().expect("receiver address");
+        receiver.close_active(CloseReason::LocalClose);
+        for _ in 0..200 {
+            let _ = receiver.poll_event();
+            if matches!(
+                first_sender.poll_event(),
+                Some(TransportEvent::Disconnected(_, _))
+            ) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+
+        let mut second_sender = QuicSenderTransport::new();
+        let second_pending = second_sender
+            .connect(Endpoint {
+                host: addr.ip().to_string(),
+                port: addr.port(),
+            })
+            .expect("second connect");
+        let mut second_receiver_session = None;
+        for _ in 0..500 {
+            let _ = second_sender.poll_event();
+            if let Some(TransportEvent::Connected(session)) = receiver.poll_event() {
+                second_receiver_session = Some(session);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let second_receiver_session = second_receiver_session.expect("second receiver session");
+        assert_ne!(second_receiver_session, first_receiver_session);
+        assert!(second_pending.0 > 0);
+        assert!(second_sender.is_connected());
+
+        receiver.close_active(CloseReason::LocalClose);
+        for _ in 0..200 {
+            let _ = receiver.poll_event();
+            if matches!(
+                second_sender.poll_event(),
+                Some(TransportEvent::Disconnected(_, _))
+            ) {
+                assert!(receiver.active_session().is_none());
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        panic!("second connection was not closed");
     }
 }

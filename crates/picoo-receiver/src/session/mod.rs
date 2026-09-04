@@ -11,6 +11,7 @@ mod recovery;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
 use bytes::Bytes;
 use picoo_frame_hub::{FrameHub, PlaceholderMode, SharedFrameRingProducer};
 use picoo_jitter::JitterBuffer;
@@ -18,12 +19,12 @@ use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder};
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::TrustedDeviceStore;
 use picoo_protocol::control::{
-    ReceiverStats as ReceiverStatsMsg, SenderStats as SenderStatsMsg, StreamConfig,
+    control_envelope::Payload as ControlPayload, ReceiverStats as ReceiverStatsMsg,
+    SenderStats as SenderStatsMsg, StreamConfig,
 };
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
-use prost::Message;
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use pairing::{ActiveSender, PendingPairing};
@@ -222,6 +223,10 @@ pub struct ReceiverSession {
     /// Most recent production decode failure, cleared after a real frame lands.
     last_media_error: Option<String>,
     decoder_recovery: DecoderRecovery,
+    /// Sender-selected generation carried by every PCP ControlEnvelope.
+    control_generation: Option<u64>,
+    next_control_message_id: u64,
+    last_received_control_message_id: u64,
 }
 
 impl Default for ReceiverSession {
@@ -264,6 +269,9 @@ impl ReceiverSession {
             advertised_max_height: 1080,
             last_media_error: None,
             decoder_recovery: DecoderRecovery::new(),
+            control_generation: None,
+            next_control_message_id: 1,
+            last_received_control_message_id: 0,
         }
     }
 
@@ -415,15 +423,26 @@ impl ReceiverSession {
 
         while let Some(event) = self.transport.poll_event() {
             match event {
-                TransportEvent::Connected(_) => {
+                TransportEvent::Connected(session)
+                    if self.transport.active_session() == Some(session) =>
+                {
                     self.placeholder_after = None;
+                    self.control_generation = None;
+                    self.next_control_message_id = 1;
+                    self.last_received_control_message_id = 0;
                     self.status = ReceiverStatus::Connecting;
                 }
-                TransportEvent::Disconnected(_, _) => self.on_peer_disconnected()?,
-                TransportEvent::ControlMessage(session, msg) => {
+                TransportEvent::Disconnected(_, _) if self.transport.active_session().is_none() => {
+                    self.on_peer_disconnected()?;
+                }
+                TransportEvent::ControlMessage(session, msg)
+                    if self.transport.active_session() == Some(session) =>
+                {
                     self.handle_control(session, msg)?;
                 }
-                TransportEvent::VideoPackets(_, packets) => {
+                TransportEvent::VideoPackets(session, packets)
+                    if self.transport.active_session() == Some(session) =>
+                {
                     for packet in packets {
                         self.ingest_video_packet(packet)?;
                     }
@@ -434,6 +453,10 @@ impl ReceiverSession {
                     // guard even on a lossless LAN. Give every bounded ingress
                     // batch a playout opportunity before polling more media.
                     self.drain_jitter()?;
+                }
+                _ => {
+                    // An event queued by an older connection generation must not
+                    // mutate the currently active Receiver session.
                 }
             }
         }
@@ -700,7 +723,7 @@ impl ReceiverSession {
             "receiver media window"
         );
 
-        self.send_control_message(session, &stats)?;
+        self.send_control_payload(session, ControlPayload::ReceiverStats(stats))?;
 
         // REQ-PICOO-SESSION-001: reflect Network Unstable from live loss (ARCH >3% / <1%).
         if packet_loss > 0.03 {
@@ -734,17 +757,19 @@ impl ReceiverSession {
         Ok(())
     }
 
-    pub(crate) fn send_control_message<M: Message>(
+    pub(crate) fn send_control_payload(
         &mut self,
         session: SessionId,
-        message: &M,
+        payload: picoo_protocol::control::control_envelope::Payload,
     ) -> Result<(), ReceiverError> {
-        let mut out = Vec::new();
-        message
-            .encode(&mut out)
-            .map_err(|e| ReceiverError::Protocol(format!("encode control: {e}")))?;
+        let generation = self.control_generation.ok_or_else(|| {
+            ReceiverError::Protocol("control generation is not established".into())
+        })?;
+        let message_id = self.next_control_message_id;
+        self.next_control_message_id = self.next_control_message_id.saturating_add(1);
+        let out = picoo_protocol::encode_control_envelope(payload, message_id, generation);
         self.transport
-            .send_control(session, Bytes::from(out))
+            .send_control(session, out)
             .map_err(ReceiverError::Transport)
     }
 
@@ -752,10 +777,7 @@ impl ReceiverSession {
         // close is intentionally infallible for UI teardown, but decoder state
         // must never survive into a later session.
         let _ = self.decoder.reset();
-        if self.transport.is_connected() {
-            self.transport
-                .close(picoo_transport::SessionId(1), CloseReason::LocalClose);
-        }
+        self.transport.close_active(CloseReason::LocalClose);
         self.placeholder_after = None;
         self.status = ReceiverStatus::Disconnected;
         self.active_sender = None;
@@ -771,6 +793,9 @@ impl ReceiverSession {
         self.receiver_capabilities_sent = None;
         self.last_media_error = None;
         self.decoder_recovery.reset_session();
+        self.control_generation = None;
+        self.next_control_message_id = 1;
+        self.last_received_control_message_id = 0;
         let _ = self.publish_waiting_placeholder();
     }
 
@@ -800,6 +825,29 @@ impl ReceiverSession {
             .active_session()
             .ok_or_else(|| ReceiverError::Protocol("no active session".into()))?;
         self.handle_control(session, msg)
+    }
+
+    #[cfg(test)]
+    pub fn inject_control_payload_for_test(
+        &mut self,
+        payload: picoo_protocol::control::control_envelope::Payload,
+    ) -> Result<(), ReceiverError> {
+        let session = self
+            .transport
+            .active_session()
+            .ok_or_else(|| ReceiverError::Protocol("no active session".into()))?;
+        let generation = self.control_generation.unwrap_or(session.0);
+        let message = picoo_protocol::encode_control_envelope(
+            payload,
+            self.last_received_control_message_id.saturating_add(1),
+            generation,
+        );
+        let previous_message_id = self.last_received_control_message_id;
+        let result = self.handle_control(session, message);
+        if result.is_err() {
+            self.last_received_control_message_id = previous_message_id;
+        }
+        result
     }
 }
 

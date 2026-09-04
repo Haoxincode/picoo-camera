@@ -24,7 +24,7 @@ Requirements 是代码实现、单元测试和验收测试的直接映射层。
 | 区域 | 文件 | 说明 |
 | --- | --- | --- |
 | `PICOO-STACK` | [stack.md](stack.md) | Monorepo、xtask、FFI、CI |
-| `PICOO-PROTOCOL` | [protocol.md](protocol.md) | PCP/4、FEC VideoPacket、控制消息 |
+| `PICOO-PROTOCOL` | [protocol.md](protocol.md) | PCP ControlEnvelope、FEC VideoPacket、状态门禁 |
 | `PICOO-TRANSPORT` | [transport.md](transport.md) | QUIC 封装、连接角色 |
 | `PICOO-SESSION` | [session.md](session.md) | 会话状态、重连、抖动缓冲、码率 |
 | `PICOO-DISCOVERY` | [discovery.md](discovery.md) | mDNS、手动 IP 直连、配对短码核对 |

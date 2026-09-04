@@ -2,110 +2,90 @@
 //!
 //! REQ-PICOO-PROTOCOL-*, REQ-PICOO-MEDIA-002/003, REQ-PICOO-SESSION-003/004.
 
-use bytes::Bytes;
+use super::recovery::RecoveryReason;
+use super::ReceiverSession;
+use crate::ReceiverError;
 use picoo_packet::ReassemblyMap;
-use picoo_pairing::verify_pairing_confirm;
 use picoo_protocol::control::{
-    camera_command, CameraCommand, Capabilities, EncoderCommand, PairingCommit, PairingConfirm,
-    Resolution, SenderStats as SenderStatsMsg, SessionError, StartStream, StopStream, StreamConfig,
+    camera_command, control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
+    EncoderCommand, Resolution, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
 };
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
 use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, SessionId};
-use prost::Message;
-
-use super::pairing::{PAIRING_COMMIT_MAGIC, PAIRING_COMMIT_PHASE};
-use super::recovery::RecoveryReason;
-use super::ReceiverSession;
-use crate::ReceiverError;
-
-const SENDER_STATS_MAGIC: u32 = 0x5354_4154;
 
 impl ReceiverSession {
     pub(crate) fn handle_control(
         &mut self,
         session: SessionId,
-        msg: Bytes,
+        msg: bytes::Bytes,
     ) -> Result<(), ReceiverError> {
+        if self.transport.active_session() != Some(session) {
+            return Err(ReceiverError::Protocol(
+                "control event does not belong to the active transport session".into(),
+            ));
+        }
+        let envelope = picoo_protocol::decode_control_envelope(&msg)
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
+
+        if self.control_generation.is_none() {
+            if !matches!(envelope.payload, Some(ControlPayload::ClientHello(_))) {
+                return Err(ReceiverError::Protocol(
+                    "ClientHello must be the first PCP control payload".into(),
+                ));
+            }
+            self.control_generation = Some(envelope.connection_generation);
+        }
+        if self.control_generation != Some(envelope.connection_generation) {
+            return Err(ReceiverError::Protocol(
+                "stale control connection_generation".into(),
+            ));
+        }
+        if envelope.message_id <= self.last_received_control_message_id {
+            return Err(ReceiverError::Protocol(
+                "duplicate or out-of-order control message_id".into(),
+            ));
+        }
+        self.last_received_control_message_id = envelope.message_id;
+
+        let payload = envelope.payload.expect("validated envelope payload");
         if self.pending_pairing.is_some() {
-            if let Ok(commit) = PairingCommit::decode(msg.as_ref()) {
-                if commit.magic == PAIRING_COMMIT_MAGIC
-                    && self.pairing_transcript_matches(
-                        session,
-                        &commit.challenge_nonce,
-                        &commit.transcript_hash,
-                        PAIRING_COMMIT_PHASE,
-                    )
-                {
-                    return self.handle_pairing_commit();
+            return match payload {
+                ControlPayload::PairingCommit(commit) => {
+                    self.handle_pairing_commit(session, commit)
                 }
-            }
-            // Prost will decode many unrelated blobs as PairingConfirm — require a
-            // SHA-256-length signature that verifies against the pending challenge.
-            if let Ok(confirm) = PairingConfirm::decode(msg.as_ref()) {
-                if confirm.confirm_signature.len() == 32 {
-                    if let Some(pending) = self.pending_pairing.as_ref() {
-                        if session == pending.session {
-                            let sender_id = self
-                                .active_sender
-                                .as_ref()
-                                .map(|s| s.sender_id.as_str())
-                                .unwrap_or("");
-                            if verify_pairing_confirm(
-                                &pending.challenge_nonce,
-                                &self.identity.receiver_id,
-                                sender_id,
-                                &confirm.confirm_signature,
-                            )
-                            .is_ok()
-                            {
-                                return self.handle_pairing_confirm(session, msg);
-                            }
-                        }
-                    }
-                    // Unrelated control blob false-positive — keep waiting for real confirm.
+                ControlPayload::PairingConfirm(confirm) => {
+                    self.handle_pairing_confirm(session, confirm)
                 }
-            }
-            // PAIRING-003: StartStream during pending pairing must be rejected explicitly.
-            if let Ok(start) = StartStream::decode(msg.as_ref()) {
-                if start.magic == 1 {
-                    return self.handle_start_stream(session);
-                }
-            }
-            // StopStream must not wipe pairing; route through the same guard as post-pair.
-            if let Ok(stop) = StopStream::decode(msg.as_ref()) {
-                if stop.magic == 2 {
-                    return self.handle_stop_stream(session);
-                }
-            }
-            return Ok(());
+                ControlPayload::StartStream(_) => self.handle_start_stream(session),
+                ControlPayload::StopStream(_) => self.handle_stop_stream(session),
+                _ => Err(ReceiverError::Protocol(
+                    "control payload is not allowed while pairing".into(),
+                )),
+            };
         }
         if self.active_sender.is_none() {
-            return self.handle_client_hello(session, msg);
+            return match payload {
+                ControlPayload::ClientHello(hello) => self.handle_client_hello(session, hello),
+                _ => Err(ReceiverError::Protocol(
+                    "control payload is not valid before ClientHello".into(),
+                )),
+            };
         }
-        // Discriminated control messages (magic/command != 0) before StreamConfig try-decode.
-        if let Ok(start) = StartStream::decode(msg.as_ref()) {
-            if start.magic == 1 {
-                return self.handle_start_stream(session);
-            }
+        if !self.video_allowed() {
+            return Err(ReceiverError::Protocol(
+                "control payload requires an authenticated sender".into(),
+            ));
         }
-        if let Ok(stop) = StopStream::decode(msg.as_ref()) {
-            if stop.magic == 2 {
-                return self.handle_stop_stream(session);
-            }
+        match payload {
+            ControlPayload::StartStream(_) => self.handle_start_stream(session),
+            ControlPayload::StopStream(_) => self.handle_stop_stream(session),
+            ControlPayload::SenderStats(stats) => self.handle_sender_stats(stats),
+            ControlPayload::StreamConfig(config) => self.handle_stream_config(session, config),
+            _ => Err(ReceiverError::Protocol(
+                "control payload is not allowed in the authenticated receiver phase".into(),
+            )),
         }
-        if let Ok(stats) = SenderStatsMsg::decode(msg.as_ref()) {
-            if stats.magic == SENDER_STATS_MAGIC {
-                return self.handle_sender_stats(stats);
-            }
-        }
-        if let Ok(config) = StreamConfig::decode(msg.as_ref()) {
-            // Require at least codec or dimensions so empty blobs are ignored.
-            if !config.codec.is_empty() || config.width > 0 || config.height > 0 {
-                return self.handle_stream_config(session, config);
-            }
-        }
-        Ok(())
     }
 
     fn handle_sender_stats(&mut self, stats: SenderStatsMsg) -> Result<(), ReceiverError> {
@@ -133,7 +113,7 @@ impl ReceiverSession {
                 code: "UNPAIRED".into(),
                 message: "StartStream rejected until pairing completes".into(),
             };
-            let _ = self.send_control_message(session, &err);
+            let _ = self.send_control_payload(session, ControlPayload::SessionError(err));
             return Ok(());
         }
         self.begin_streaming(session)
@@ -188,7 +168,7 @@ impl ReceiverSession {
         if command.command == camera_command::Command::Unspecified as i32 {
             return Err(ReceiverError::Protocol("CameraCommand unspecified".into()));
         }
-        self.send_control_message(session, &command)
+        self.send_control_payload(session, ControlPayload::CameraCommand(command))
     }
 
     fn handle_stream_config(
@@ -266,7 +246,7 @@ impl ReceiverSession {
             front_camera: true,
             back_camera: true,
         };
-        self.send_control_message(session, &capabilities)
+        self.send_control_payload(session, ControlPayload::Capabilities(capabilities))
     }
 
     /// Ask Sender for an IDR after keyframe reassembly loss (REQ-PICOO-SESSION-003).
@@ -277,7 +257,7 @@ impl ReceiverSession {
         let command = EncoderCommand {
             command: picoo_protocol::control::encoder_command::Command::RequestKeyframe as i32,
         };
-        self.send_control_message(session, &command)?;
+        self.send_control_payload(session, ControlPayload::EncoderCommand(command))?;
         self.ingress.keyframe_requests = self.ingress.keyframe_requests.saturating_add(1);
         Ok(())
     }
