@@ -196,7 +196,7 @@ impl ReceiverSession {
             PLACEHOLDER_WIDTH,
             0,
             0,
-            &nv12,
+            Bytes::from(nv12),
         )
     }
 
@@ -209,7 +209,7 @@ impl ReceiverSession {
             PLACEHOLDER_WIDTH,
             0,
             0,
-            &nv12,
+            Bytes::from(nv12),
         )
     }
 
@@ -288,7 +288,7 @@ impl ReceiverSession {
                     frame.stride,
                     rotation,
                     frame.timestamp_us,
-                    &frame.nv12,
+                    frame.nv12,
                 )?;
                 self.ingress.decoded_frames += 1;
                 self.stats_reporter.record_decoded_frame();
@@ -308,14 +308,14 @@ impl ReceiverSession {
         stride: u32,
         rotation: u32,
         timestamp_us: u64,
-        nv12: &[u8],
+        nv12: Bytes,
     ) -> Result<(), ReceiverError> {
         // REQ-PICOO-MEDIA-009: rotate pixels to upright before FrameHub / Shared Ring / VCam.
         // REQ-PICOO-MEDIA-004: then apply remote StreamConfig.mirrored in upright space.
         let rotated_buf =
-            picoo_frame_hub::nv12_rotate_clockwise(width, height, stride, rotation, nv12);
-        let (width, height, stride, base_pixels): (u32, u32, u32, &[u8]) = match &rotated_buf {
-            Some((ow, oh, os, buf)) => (*ow, *oh, *os, buf.as_slice()),
+            picoo_frame_hub::nv12_rotate_clockwise(width, height, stride, rotation, &nv12);
+        let (width, height, stride, pixels) = match rotated_buf {
+            Some((ow, oh, os, buf)) => (ow, oh, os, Bytes::from(buf)),
             None => (width, height, stride, nv12),
         };
 
@@ -323,14 +323,13 @@ impl ReceiverSession {
             .current_stream_config
             .as_ref()
             .is_some_and(|c| c.mirrored);
-        let mirrored_owned = if mirrored {
-            let mut buf = base_pixels.to_vec();
+        let pixels = if mirrored {
+            let mut buf = pixels.to_vec();
             picoo_frame_hub::nv12_mirror_horizontal(width, height, stride, &mut buf);
-            Some(buf)
+            Bytes::from(buf)
         } else {
-            None
+            pixels
         };
-        let pixels = mirrored_owned.as_deref().unwrap_or(base_pixels);
 
         // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
         let published_rotation = 0u32;
@@ -343,7 +342,7 @@ impl ReceiverSession {
             stride,
             published_rotation,
             timestamp_us,
-            Bytes::copy_from_slice(pixels),
+            pixels.clone(),
         );
         if let Some(ring) = self.shared_ring.as_mut() {
             ring.publish_nv12(
@@ -352,7 +351,7 @@ impl ReceiverSession {
                 stride,
                 published_rotation,
                 timestamp_us,
-                pixels,
+                &pixels,
             )?;
         }
         Ok(())
