@@ -210,7 +210,7 @@ pub(crate) fn test_ios(sh: &Shell) -> Result<()> {
     eprintln!("ios tests: {name} ({runtime}, {udid})");
     cmd!(
         sh,
-        "xcodebuild -project {project} -scheme PicooCamera -configuration Debug -destination {destination} -derivedDataPath {derived_data} CODE_SIGNING_ALLOWED=NO PICOO_CORE_XCFRAMEWORK_PATH={xcframework} test"
+        "xcodebuild -project {project} -scheme PicooCamera -configuration Debug -destination {destination} -derivedDataPath {derived_data} PICOO_CORE_XCFRAMEWORK_PATH={xcframework} test"
     )
     .run()?;
     Ok(())
