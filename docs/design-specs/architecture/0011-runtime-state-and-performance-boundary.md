@@ -78,6 +78,15 @@ struct VideoFrame {
 跨 generation 旧帧不能发布；同一 AU 最多解码一次。Decoder 通过有界、reference-aware 的 Effect
 队列在 Worker 上执行，不能同步阻塞控制消息、统计、IDR 请求和断线处理。
 
+Worker 队列最多保留两个尚未开始的 AU。新 IDR 取代全部排队 AU；reference delta 优先淘汰
+discardable delta，自身无法入队时触发参考链恢复；discardable delta 可直接丢弃。Reset 清除所有
+排队 Decode、推进 decoder generation，但不等待正在执行的平台调用，完成事件同时受 decoder、
+connection 与 stream generation 门禁。Worker 析构只请求 Shutdown，不得为无法控制的平台调用执行
+无界 join。队列需要检查并替换任意 pending job，标准库 `Mutex<VecDeque> + Condvar` 比只支持
+端点背压的 channel 更贴合这项 Picoo 特有语义；macOS Worker 每个任务使用 `objc2` autorelease pool，
+平台 Decoder panic 被收敛为可观察错误并由 Worker 重建。每个 job 共享 `Arc<StreamConfig>`，不得为
+每个 AU 深拷贝 SPS/PPS 等配置字节。
+
 ### LatestFrameStore 与共享不可变帧
 
 同进程 `FrameHub` 改名为 `LatestFrameStore`，使用 `Arc<VideoFrame>`。Receiver reducer 当前是

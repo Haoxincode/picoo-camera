@@ -15,21 +15,16 @@ use picoo_protocol::VideoPacket;
 use std::sync::Arc;
 use std::time::Instant;
 
+use super::decoder_worker::{
+    AccessUnitTimeline, DecodeSubmitOutcome, DecoderEvent, EncodedAccessUnit,
+};
+#[cfg(test)]
+use super::decoder_worker::{DecoderWorker, FrameKind};
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
 use crate::ReceiverError;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::DEFAULT_SHARED_RING_NAME;
-
-#[derive(Debug)]
-pub(super) struct EncodedAccessUnit {
-    pub(super) stream_generation: u64,
-    pub(super) frame_id: u64,
-    pub(super) source_pts_us: u64,
-    pub(super) received_at_us: u64,
-    pub(super) kind: FrameKind,
-    pub(super) data: Bytes,
-}
 
 #[cfg(test)]
 mod tests {
@@ -39,20 +34,21 @@ mod tests {
 
     fn receiver_for_generation(generation: u32) -> ReceiverSession {
         let mut receiver = ReceiverSession::new();
-        receiver.decoder = Box::new(StubDecoder::new());
-        receiver.current_stream_config = Some(StreamConfig {
+        receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(StubDecoder::new()));
+        receiver.current_stream_config = Some(Arc::new(StreamConfig {
             codec: "h264".into(),
             width: 1280,
             height: 720,
             fps: 30,
             stream_epoch: generation,
             ..Default::default()
-        });
+        }));
         receiver
     }
 
     fn access_unit(generation: u64, frame_id: u64) -> EncodedAccessUnit {
         EncodedAccessUnit {
+            connection_generation: 0,
             stream_generation: generation,
             frame_id,
             source_pts_us: 42_000,
@@ -82,6 +78,7 @@ mod tests {
         receiver
             .publish_timeline_access_unit(access_unit(2, 9))
             .expect("matching generation");
+        receiver.drain_decoder_until_idle_for_test();
 
         let frame = receiver.latest_frame_store.latest().expect("video frame");
         assert_eq!(frame.stream_generation, 2);
@@ -89,18 +86,21 @@ mod tests {
         assert_eq!(frame.source_pts_us, 42_000);
         assert_eq!(frame.received_at_us, 50_000);
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FrameKind {
-    Key,
-    ReferenceDelta,
-    DiscardableDelta,
-}
+    #[test]
+    fn stale_connection_generation_cannot_publish_into_current_stream() {
+        let mut receiver = receiver_for_generation(2);
+        receiver.control_generation = Some(8);
+        let timeline = AccessUnitTimeline {
+            connection_generation: 7,
+            stream_generation: 2,
+            frame_id: 9,
+            source_pts_us: 42_000,
+            received_at_us: 50_000,
+            kind: FrameKind::Key,
+        };
 
-impl FrameKind {
-    fn is_keyframe(self) -> bool {
-        self == Self::Key
+        assert!(!receiver.decoder_timeline_is_current(timeline));
     }
 }
 
@@ -341,7 +341,7 @@ impl ReceiverSession {
     /// production platform decoder.
     #[cfg(test)]
     pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder>) {
-        self.decoder = decoder;
+        self.decoder_worker = DecoderWorker::with_decoder(decoder);
     }
 
     /// Test adapter for decoder recovery fixtures without a network timeline.
@@ -352,6 +352,10 @@ impl ReceiverSession {
         keyframe: bool,
     ) -> Result<(), ReceiverError> {
         self.publish_timeline_access_unit(EncodedAccessUnit {
+            connection_generation: self
+                .transport
+                .active_session()
+                .map_or(0, |session| session.0),
             stream_generation: self
                 .current_stream_config
                 .as_ref()
@@ -391,25 +395,99 @@ impl ReceiverSession {
                 self.ingress.recovery_dropped_access_units.saturating_add(1);
             return Ok(());
         }
-        self.ingress.decode_invocations += 1;
-        let decode_started = Instant::now();
-        let decode_result = self
-            .decoder
-            .decode_access_unit(&access_unit.data, self.current_stream_config.as_ref());
-        let decoded_at = Instant::now();
-        self.jitter
-            .observe_decode_time_us(decode_started.elapsed().as_micros() as u64);
-        let outcome = match decode_result {
+        match self
+            .decoder_worker
+            .submit(access_unit, self.current_stream_config.clone())
+        {
+            DecodeSubmitOutcome::Queued => {}
+            DecodeSubmitOutcome::Dropped { requires_refresh } => {
+                self.ingress.recovery_dropped_access_units =
+                    self.ingress.recovery_dropped_access_units.saturating_add(1);
+                if requires_refresh {
+                    self.enter_decoder_recovery(RecoveryReason::DecoderQueuePressure, true)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn drain_decoder_events(&mut self) -> Result<(), ReceiverError> {
+        while let Some(event) = self.decoder_worker.poll_event() {
+            match event {
+                DecoderEvent::Started => {
+                    self.ingress.decode_invocations =
+                        self.ingress.decode_invocations.saturating_add(1);
+                }
+                DecoderEvent::Completed {
+                    timeline,
+                    decoder_generation,
+                    decoded_at,
+                    decode_time_us,
+                    result,
+                } => {
+                    self.decoder_completions = self.decoder_completions.saturating_add(1);
+                    self.jitter.observe_decode_time_us(decode_time_us);
+                    if !self
+                        .decoder_worker
+                        .is_current_generation(decoder_generation)
+                        || !self.decoder_timeline_is_current(timeline)
+                    {
+                        continue;
+                    }
+                    if !self.decoder_recovery.accepts(timeline.kind.is_keyframe()) {
+                        continue;
+                    }
+                    self.handle_decoder_result(timeline, decoded_at, result)?;
+                }
+                DecoderEvent::ResetFailed(error) => {
+                    tracing::warn!(%error, "decoder reset failed; worker rebuilt platform decoder");
+                    self.last_media_error = Some(format!("decoder reset failed: {error}"));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn decoder_timeline_is_current(&self, timeline: AccessUnitTimeline) -> bool {
+        #[cfg(test)]
+        if timeline.connection_generation == 0 && timeline.stream_generation == 0 {
+            return true;
+        }
+        let connection_matches = timeline.connection_generation == 0
+            || self.control_generation.map_or_else(
+                || {
+                    self.permit_unpaired_video
+                        && self
+                            .transport
+                            .active_session()
+                            .is_some_and(|session| session.0 == timeline.connection_generation)
+                },
+                |generation| generation == timeline.connection_generation,
+            );
+        let stream_matches = self.current_stream_config.as_ref().map_or_else(
+            || self.permit_unpaired_video && self.transport.active_session().is_some(),
+            |config| u64::from(config.stream_epoch) == timeline.stream_generation,
+        );
+        connection_matches && stream_matches
+    }
+
+    fn handle_decoder_result(
+        &mut self,
+        timeline: AccessUnitTimeline,
+        decoded_at: Instant,
+        result: Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError>,
+    ) -> Result<(), ReceiverError> {
+        let outcome = match result {
             Ok(decoded) => decoded,
             Err(error) => {
                 self.stats_reporter.record_decoder_drop();
                 self.last_media_error = Some(error.to_string());
                 tracing::warn!("H.264 access unit decode failed: {error}");
-                self.enter_decoder_recovery(super::recovery::RecoveryReason::DecoderError, true)?;
+                self.enter_decoder_recovery(RecoveryReason::DecoderError, true)?;
                 return Ok(());
             }
         };
-        if access_unit.kind.is_keyframe() && outcome.refresh_accepted {
+        if timeline.kind.is_keyframe() && outcome.refresh_accepted {
             self.mark_decoder_refresh_accepted();
         }
         match outcome.frame {
@@ -422,10 +500,10 @@ impl ReceiverSession {
                     .unwrap_or(frame.rotation);
                 self.publish_decoded_frame(
                     FrameTimeline {
-                        stream_generation: access_unit.stream_generation,
-                        frame_id: access_unit.frame_id,
-                        source_pts_us: access_unit.source_pts_us,
-                        received_at_us: access_unit.received_at_us,
+                        stream_generation: timeline.stream_generation,
+                        frame_id: timeline.frame_id,
+                        source_pts_us: timeline.source_pts_us,
+                        received_at_us: timeline.received_at_us,
                         decoded_at: Some(decoded_at),
                     },
                     frame,
@@ -439,6 +517,20 @@ impl ReceiverSession {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn drain_decoder_until_idle_for_test(&mut self) {
+        let expected_completion = self.decoder_completions.saturating_add(1);
+        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        while Instant::now() < deadline {
+            self.drain_decoder_events().expect("decoder events");
+            if self.decoder_completions >= expected_completion {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        panic!("decoder worker did not complete within test deadline");
     }
 
     fn publish_decoded_frame(

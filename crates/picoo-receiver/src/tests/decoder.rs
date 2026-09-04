@@ -38,16 +38,29 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
     receiver
         .inject_peer_disconnect_for_test()
         .expect("peer disconnect reset");
+    wait_for_atomic(&resets, 1);
     assert_eq!(resets.load(Ordering::SeqCst), 1);
 
     receiver.set_permit_unpaired_video(true);
     receiver
         .handle_stop_stream(picoo_transport::SessionId(1))
         .expect("StopStream reset");
+    wait_for_atomic(&resets, 2);
     assert_eq!(resets.load(Ordering::SeqCst), 2);
 
     receiver.close();
+    wait_for_atomic(&resets, 3);
     assert_eq!(resets.load(Ordering::SeqCst), 3);
+
+    fn wait_for_atomic(counter: &AtomicUsize, expected: usize) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while std::time::Instant::now() < deadline {
+            if counter.load(Ordering::SeqCst) >= expected {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
 }
 
 #[test]
@@ -92,6 +105,7 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     receiver
         .publish_access_unit(bytes::Bytes::from_static(b"broken-au"), false)
         .expect("a media failure must not terminate the receiver pump");
+    receiver.drain_decoder_until_idle_for_test();
     assert_eq!(receiver.stats().access_units, 1);
     assert_eq!(receiver.stats().decoded_frames, 0);
     assert_eq!(
@@ -110,6 +124,7 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     receiver
         .publish_access_unit(bytes::Bytes::from_static(b"dropped-idr"), true)
         .expect("a dropped IDR does not fail the session");
+    receiver.drain_decoder_until_idle_for_test();
     assert!(
         receiver.awaiting_decoder_refresh_for_test(),
         "FrameDropped/Ok(None) must not reopen the delta gate"
@@ -119,9 +134,106 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     receiver
         .publish_access_unit(bytes::Bytes::from_static(b"recovered-au"), true)
         .expect("decoder recovery");
+    receiver.drain_decoder_until_idle_for_test();
     assert_eq!(receiver.stats().decoded_frames, 1);
     assert_eq!(receiver.last_media_error(), None);
     assert!(!receiver.awaiting_decoder_refresh_for_test());
+}
+
+#[test]
+fn slow_decoder_never_blocks_session_close() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct SlowDecoder(Arc<AtomicBool>);
+
+    impl picoo_media_decode::AccessUnitDecoder for SlowDecoder {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            self.0.store(true, Ordering::Release);
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
+                false,
+            ))
+        }
+
+        fn reset(&mut self) -> Result<(), picoo_media_decode::DecodeError> {
+            Ok(())
+        }
+    }
+
+    let started = Arc::new(AtomicBool::new(false));
+    let mut receiver = ReceiverSession::new();
+    receiver.set_decoder_for_test(Box::new(SlowDecoder(Arc::clone(&started))));
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"slow-au"), true)
+        .expect("queue decode");
+    let start_deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !started.load(Ordering::Acquire) && std::time::Instant::now() < start_deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        started.load(Ordering::Acquire),
+        "slow decoder never started"
+    );
+
+    let close_started = std::time::Instant::now();
+    receiver.close();
+    assert!(
+        close_started.elapsed() < Duration::from_millis(100),
+        "session close waited for pixel decode"
+    );
+}
+
+#[test]
+fn slow_decoder_never_blocks_session_drop() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    struct SlowDecoder(Arc<AtomicBool>);
+
+    impl picoo_media_decode::AccessUnitDecoder for SlowDecoder {
+        fn decode_access_unit(
+            &mut self,
+            _access_unit: &[u8],
+            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            self.0.store(true, Ordering::Release);
+            std::thread::sleep(Duration::from_millis(250));
+            Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
+                false,
+            ))
+        }
+
+        fn reset(&mut self) -> Result<(), picoo_media_decode::DecodeError> {
+            Ok(())
+        }
+    }
+
+    let started = Arc::new(AtomicBool::new(false));
+    let mut receiver = ReceiverSession::new();
+    receiver.set_decoder_for_test(Box::new(SlowDecoder(Arc::clone(&started))));
+    receiver
+        .publish_access_unit(bytes::Bytes::from_static(b"slow-au"), true)
+        .expect("queue decode");
+    let start_deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while !started.load(Ordering::Acquire) && std::time::Instant::now() < start_deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(
+        started.load(Ordering::Acquire),
+        "slow decoder never started"
+    );
+
+    let drop_started = std::time::Instant::now();
+    drop(receiver);
+    assert!(
+        drop_started.elapsed() < Duration::from_millis(100),
+        "session drop waited for pixel decode"
+    );
 }
 
 #[test]
@@ -169,7 +281,7 @@ fn single_decode_per_access_unit_into_frame_hub() {
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.stats().access_units > 0 {
+        if receiver.stats().decode_invocations > 0 && receiver.latest_frame().is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));

@@ -125,8 +125,7 @@ impl ReceiverSession {
             self.ingress.control_rejected_unpaired += 1;
             return Ok(());
         }
-        // Finish protocol/session teardown before surfacing a decoder error.
-        let decoder_reset = self.decoder.reset();
+        self.decoder_worker.reset();
         // Sender-initiated stop: tear down session video without auto-reconnect wait.
         self.active_sender = None;
         self.pending_pairing = None;
@@ -149,7 +148,6 @@ impl ReceiverSession {
         } else {
             ReceiverStatus::Disconnected
         };
-        decoder_reset?;
         Ok(())
     }
 
@@ -178,7 +176,7 @@ impl ReceiverSession {
     ) -> Result<(), ReceiverError> {
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
-        self.current_stream_config = Some(config);
+        self.current_stream_config = Some(std::sync::Arc::new(config));
         self.waiting_for_stream_config_epoch = None;
 
         // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.

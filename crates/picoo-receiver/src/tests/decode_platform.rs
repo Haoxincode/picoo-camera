@@ -1,4 +1,6 @@
 use std::time::Duration;
+#[cfg(any(windows, target_os = "macos"))]
+use std::time::Instant;
 
 #[cfg(target_os = "macos")]
 use picoo_pairing::TrustedDevice;
@@ -221,7 +223,8 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         sender
             .ingest_and_flush(&avcc, true, pts_us, 1)
             .expect("ingest avcc");
-        for _ in 0..100 {
+        let decode_deadline = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < decode_deadline {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
@@ -343,7 +346,8 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     sender
         .ingest_and_flush(H264_1280X720_RED_IDR, true, 2, 2)
         .expect("send 720p IDR");
-    for _ in 0..300 {
+    let decode_deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < decode_deadline {
         receiver.pump().expect("receiver 720p frame");
         sender.pump().ok();
         if receiver
@@ -386,7 +390,8 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     sender
         .ingest_and_flush(H264_854X480_RED_IDR, true, 3, 3)
         .expect("send 480p IDR");
-    for _ in 0..300 {
+    let decode_deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < decode_deadline {
         receiver.pump().expect("receiver 480p frame");
         sender.pump().ok();
         if receiver.latest_frame().is_some_and(|frame| {

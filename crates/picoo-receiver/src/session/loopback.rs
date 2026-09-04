@@ -17,7 +17,9 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let mut receiver = ReceiverSession::new();
-    receiver.decoder = Box::new(picoo_media_decode::StubDecoder::new());
+    receiver.decoder_worker = super::decoder_worker::DecoderWorker::with_decoder(Box::new(
+        picoo_media_decode::StubDecoder::new(),
+    ));
     receiver.set_jitter_target_ms(0);
     receiver.set_permit_unpaired_video(true);
     let bind = receiver.listen(Endpoint {
@@ -73,7 +75,9 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
 
     let identity = ReceiverIdentity::default();
     let mut receiver = ReceiverSession::new().with_identity(identity.clone());
-    receiver.decoder = Box::new(picoo_media_decode::StubDecoder::new());
+    receiver.decoder_worker = super::decoder_worker::DecoderWorker::with_decoder(Box::new(
+        picoo_media_decode::StubDecoder::new(),
+    ));
     receiver.set_jitter_target_ms(0);
     let bind = receiver.listen(Endpoint {
         host: "127.0.0.1".into(),

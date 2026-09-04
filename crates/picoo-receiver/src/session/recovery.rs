@@ -2,8 +2,6 @@
 
 use std::time::{Duration, Instant};
 
-use picoo_media_decode::create_platform_decoder;
-
 use super::ReceiverSession;
 use crate::ReceiverError;
 
@@ -16,6 +14,7 @@ pub(crate) enum RecoveryReason {
     ReferenceAccessUnitLost,
     ReferenceAccessUnitLate,
     DecoderError,
+    DecoderQueuePressure,
     ManualRepair,
 }
 
@@ -27,6 +26,7 @@ impl RecoveryReason {
             Self::ReferenceAccessUnitLost => "reference_access_unit_lost",
             Self::ReferenceAccessUnitLate => "reference_access_unit_late",
             Self::DecoderError => "decoder_error",
+            Self::DecoderQueuePressure => "decoder_queue_pressure",
             Self::ManualRepair => "manual_repair",
         }
     }
@@ -108,6 +108,7 @@ impl ReceiverSession {
                     self.ingress.recovery_decoder_errors =
                         self.ingress.recovery_decoder_errors.saturating_add(1);
                 }
+                RecoveryReason::DecoderQueuePressure => {}
                 RecoveryReason::InitialConfig
                 | RecoveryReason::EpochChanged
                 | RecoveryReason::ManualRepair => {}
@@ -122,14 +123,7 @@ impl ReceiverSession {
 
         if reset_decoder && (newly_awaiting || reason == RecoveryReason::DecoderError) {
             self.ingress.decoder_resets = self.ingress.decoder_resets.saturating_add(1);
-            if let Err(error) = self.decoder.reset() {
-                tracing::warn!(
-                    reason = reason.label(),
-                    "decoder reset failed; rebuilding platform decoder: {error}"
-                );
-                self.last_media_error = Some(format!("decoder reset failed: {error}"));
-                self.decoder = create_platform_decoder();
-            }
+            self.decoder_worker.reset();
         }
 
         self.maybe_request_recovery_keyframe()

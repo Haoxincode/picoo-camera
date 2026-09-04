@@ -3,6 +3,7 @@
 //! REQ-PICOO-SESSION-001/002, REQ-PICOO-TRANSPORT-*, REQ-PICOO-PROTOCOL-006.
 
 mod control;
+mod decoder_worker;
 mod loopback;
 mod media;
 mod pairing;
@@ -10,13 +11,13 @@ mod recovery;
 mod stats;
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use bytes::Bytes;
 use picoo_frame_hub::{LatestFrameStore, PlaceholderMode, SharedFrameRingProducer};
 use picoo_jitter::JitterBuffer;
-use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder};
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::TrustedDeviceStore;
 use picoo_protocol::control::{
@@ -28,6 +29,7 @@ use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
+use decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use pairing::{ActiveSender, PendingPairing};
 use recovery::DecoderRecovery;
 use recovery::RecoveryReason;
@@ -57,11 +59,13 @@ pub struct ReceiverSession {
     /// Idle placeholder style (PRD §16 / AC-D-SET-01).
     placeholder_mode: picoo_frame_hub::PlaceholderMode,
     shared_ring: Option<SharedFrameRingProducer>,
-    current_stream_config: Option<StreamConfig>,
+    current_stream_config: Option<Arc<StreamConfig>>,
     /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
     waiting_for_stream_config_epoch: Option<u32>,
     receiver_capabilities_sent: Option<()>,
-    decoder: Box<dyn AccessUnitDecoder>,
+    decoder_worker: DecoderWorker,
+    /// Monotonic Worker completion revision used by deterministic tests and diagnostics.
+    decoder_completions: u64,
     /// After peer disconnect, keep last frame this long before placeholder (REQ-PICOO-FRAME-005).
     last_frame_hold: Duration,
     placeholder_after: Option<Instant>,
@@ -118,7 +122,8 @@ impl ReceiverSession {
             current_stream_config: None,
             waiting_for_stream_config_epoch: None,
             receiver_capabilities_sent: None,
-            decoder: create_platform_decoder(),
+            decoder_worker: DecoderWorker::new(),
+            decoder_completions: 0,
             last_frame_hold: Duration::from_millis(500),
             placeholder_after: None,
             jitter: JitterBuffer::new(),
@@ -175,7 +180,7 @@ impl ReceiverSession {
     }
 
     pub fn stream_config(&self) -> Option<&StreamConfig> {
-        self.current_stream_config.as_ref()
+        self.current_stream_config.as_deref()
     }
 
     pub fn set_permit_unpaired_video(&mut self, permit: bool) {
@@ -280,6 +285,7 @@ impl ReceiverSession {
     }
 
     pub fn pump(&mut self) -> Result<(), ReceiverError> {
+        self.drain_decoder_events()?;
         self.expire_pending_pairing_if_needed();
         self.expire_reassembly_deadline()?;
 
@@ -332,6 +338,7 @@ impl ReceiverSession {
         self.expire_reassembly_deadline()?;
 
         self.drain_jitter()?;
+        self.drain_decoder_events()?;
         self.maybe_request_recovery_keyframe()?;
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
@@ -391,17 +398,21 @@ impl ReceiverSession {
             let Some(frame) = self.jitter.pop_ready(now_us) else {
                 break;
             };
-            self.publish_timeline_access_unit(media::EncodedAccessUnit {
+            self.publish_timeline_access_unit(EncodedAccessUnit {
+                connection_generation: self
+                    .transport
+                    .active_session()
+                    .map_or(0, |session| session.0),
                 stream_generation: frame.stream_generation,
                 frame_id: frame.frame_id,
                 source_pts_us: frame.pts_us,
                 received_at_us: frame.received_at_us,
                 kind: if frame.keyframe {
-                    media::FrameKind::Key
+                    FrameKind::Key
                 } else if frame.discardable {
-                    media::FrameKind::DiscardableDelta
+                    FrameKind::DiscardableDelta
                 } else {
-                    media::FrameKind::ReferenceDelta
+                    FrameKind::ReferenceDelta
                 },
                 data: frame.data,
             })?;
@@ -432,9 +443,7 @@ impl ReceiverSession {
     }
 
     fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
-        // Teardown must complete even if a platform decoder reports a flush
-        // error; otherwise transport state from a dead peer can survive.
-        let decoder_reset = self.decoder.reset();
+        self.decoder_worker.reset();
         let had_live_frame =
             self.status == ReceiverStatus::Streaming && self.latest_frame_store.latest().is_some();
         self.active_sender = None;
@@ -465,7 +474,6 @@ impl ReceiverSession {
                 ReceiverStatus::Disconnected
             };
         }
-        decoder_reset?;
         Ok(())
     }
 
@@ -654,7 +662,7 @@ impl ReceiverSession {
     pub fn close(&mut self) {
         // close is intentionally infallible for UI teardown, but decoder state
         // must never survive into a later session.
-        let _ = self.decoder.reset();
+        self.decoder_worker.reset();
         self.transport.close_active(CloseReason::LocalClose);
         self.placeholder_after = None;
         self.status = ReceiverStatus::Disconnected;
