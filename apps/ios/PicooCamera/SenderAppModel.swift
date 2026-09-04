@@ -59,7 +59,7 @@ final class SenderAppModel {
     @ObservationIgnored private var mediaControlGeneration: UInt64 = 0
     @ObservationIgnored private var pairingDeadline: ContinuousClock.Instant?
     @ObservationIgnored private var selectedReceiverID = ""
-    @ObservationIgnored private var lastDiscoveryTick = 0
+    @ObservationIgnored private var lastDiscoveryPollAt = ContinuousClock.now
     @ObservationIgnored private var stopResetTask: Task<Void, Never>?
     @ObservationIgnored private var selectedInitialResolution = false
     @ObservationIgnored private var isMediaSendEnabled = false
@@ -119,9 +119,15 @@ final class SenderAppModel {
         refreshDiscoveryBrowserForWifi()
 
         runtimeTask = Task { [weak self] in
+            var eventRevision: UInt64 = 0
             while !Task.isCancelled {
+                guard let session = self?.senderSession else { return }
+                let observedRevision = eventRevision
+                eventRevision = await Task.detached {
+                    session.waitForEvent(after: observedRevision, timeoutMs: 500)
+                }.value
+                guard !Task.isCancelled else { return }
                 self?.tick()
-                try? await Task.sleep(for: .milliseconds(250))
             }
         }
 
@@ -188,7 +194,7 @@ final class SenderAppModel {
     }
 
     func refreshDiscovery() {
-        lastDiscoveryTick = 0
+        lastDiscoveryPollAt = .now
         discovery.resetAutoConnect()
         pollDiscovery()
     }
@@ -421,13 +427,12 @@ final class SenderAppModel {
         pairingSecondsRemaining = max(0, Int(remaining.components.seconds))
     }
 
-    func bumpDiscoveryTick() -> Bool {
-        lastDiscoveryTick += 1
-        if lastDiscoveryTick >= 4 {
-            lastDiscoveryTick = 0
-            return true
+    func discoveryPollIsDue(now: ContinuousClock.Instant = .now) -> Bool {
+        guard lastDiscoveryPollAt.duration(to: now) >= .seconds(1) else {
+            return false
         }
-        return false
+        lastDiscoveryPollAt = now
+        return true
     }
 
     func pollDiscovery() {

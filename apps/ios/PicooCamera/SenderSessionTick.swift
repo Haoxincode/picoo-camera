@@ -82,7 +82,7 @@ extension SenderAppModel {
         {
             scheduleReconnectRebuild()
         }
-        if bumpDiscoveryTick() {
+        if discoveryPollIsDue() {
             pollDiscovery()
         }
     }

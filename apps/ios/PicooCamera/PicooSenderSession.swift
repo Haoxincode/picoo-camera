@@ -188,6 +188,10 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         try check(picoo_sender_pump(sender), operation: "sender_pump")
     }
 
+    func waitForEvent(after revision: UInt64, timeoutMs: UInt32) -> UInt64 {
+        picoo_sender_wait_for_event(sender, revision, timeoutMs)
+    }
+
     func disconnect() throws {
         try check(picoo_sender_disconnect(sender), operation: "sender_disconnect")
     }

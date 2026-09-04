@@ -44,6 +44,7 @@ pub(crate) fn copy_str_to_buf(value: &str, out: *mut std::ffi::c_char, out_len: 
 
 pub(crate) struct SenderInner {
     pub(crate) session: Mutex<SenderSession<QuicSenderTransport>>,
+    pub(crate) event_wake: picoo_transport::TransportEventWake,
 }
 
 pub(crate) fn write_field(buf: &mut [u8], value: &str) {

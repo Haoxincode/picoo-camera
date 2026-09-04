@@ -22,8 +22,10 @@ import com.picoo.camera.ui.screens.WaitOutcome
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Configuration-stable owner for the Android Sender session.
@@ -126,10 +128,20 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         if (senderHandle != 0L) {
             uiState.adaptiveBitrateBps = PicooNative.readSenderSnapshot(senderHandle).currentBitrateBps
         }
-        viewModelScope.launch {
-            while (isActive) {
-                tick()
-                delay(PUMP_INTERVAL_MS)
+        if (senderHandle != 0L) {
+            viewModelScope.launch {
+                var eventRevision = 0L
+                while (isActive) {
+                    eventRevision = withContext(Dispatchers.IO) {
+                        PicooNative.waitForSenderEvent(
+                            senderHandle,
+                            eventRevision,
+                            MAINTENANCE_TIMEOUT_MS,
+                        )
+                    }
+                    if (!isActive) break
+                    tick()
+                }
             }
         }
     }
@@ -614,7 +626,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         const val KEY_AUTO_CONNECT = "auto_connect_enabled"
         const val KEY_PREFERRED_RESOLUTION = "preferred_resolution"
         const val KEY_LAST_MANUAL_ENDPOINT = "last_manual_endpoint"
-        const val PUMP_INTERVAL_MS = 500L
+        const val MAINTENANCE_TIMEOUT_MS = 500
         const val CONNECT_TIMEOUT_MS = 10_000L
         const val THERMAL_INTERVAL_MS = 5_000L
     }

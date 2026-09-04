@@ -86,8 +86,10 @@ Healthy
 不能因为请求被抑制而恢复输入 delta AU。用户主动“画面修复”可以强制发出一次新请求。
 
 Android Sender 必须在每次编码帧回调后消费可靠控制流中的自动关键帧请求，并立即调用
-MediaCodec 的 sync-frame 请求；该检查不依赖当前 AU 是否成功进入有界发送队列。500 ms 的会话维护
-轮询只作为兜底，不得成为正常恢复路径的时延下界。
+MediaCodec 的 sync-frame 请求；该检查不依赖当前 AU 是否成功进入有界发送队列。QUIC actor 的
+control/lifecycle 事件同时推进单调 wake revision，Android/iOS 在后台等待 revision 变化并立即 pump；
+500 ms timeout 只承担重连、事务截止与统计兜底，不得成为正常恢复路径的时延下界。并发编码回调即使
+先消费了 transport event，也不能回退 revision 或让平台丢失这次 UI/控制唤醒。
 
 ### 队列上限
 

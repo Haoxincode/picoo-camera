@@ -162,6 +162,28 @@ mod tests {
     }
 
     #[test]
+    fn sender_event_wake_observes_control_before_platform_poll() {
+        let (mut receiver, mut sender, receiver_session, _) = loopback();
+        let wake = sender.event_wake();
+        let observed = wake.revision();
+        receiver
+            .send_control(receiver_session, Bytes::from_static(b"wake"))
+            .expect("send control");
+
+        let changed = wake.wait_after(observed, Duration::from_secs(1));
+        assert!(changed > observed);
+        assert!(matches!(
+            sender.poll_event(),
+            Some(TransportEvent::ControlMessage(_, ref message)) if message.as_ref() == b"wake"
+        ));
+        assert_eq!(
+            wake.wait_after(observed, Duration::ZERO),
+            changed,
+            "a concurrent Session pump cannot erase the platform wake revision"
+        );
+    }
+
+    #[test]
     fn close_active_targets_a_later_connection_generation() {
         let (mut receiver, mut first_sender, first_receiver_session, _) = loopback();
         let addr = receiver.bind_addr().expect("receiver address");

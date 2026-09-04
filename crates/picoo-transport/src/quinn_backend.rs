@@ -7,6 +7,11 @@ use std::os::fd::AsRawFd;
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
+use crate::{
+    ChannelBinding, ClientNetworkBinding, CloseReason, SessionId, TransportEvent,
+    TransportEventWake, TransportLinkStats, VideoDatagramBatch,
+};
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -19,15 +24,8 @@ use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
 
-use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
-use crate::{
-    ChannelBinding, ClientNetworkBinding, CloseReason, SessionId, TransportEvent,
-    TransportLinkStats, VideoDatagramBatch,
-};
-
 const COMMAND_CAPACITY: usize = 64;
-// Capacity is measured in complete access units, not fragments. A deep video
-// queue directly becomes glass-to-glass latency under congestion.
+// Complete-AU capacity prevents a deep queue from becoming glass-to-glass latency.
 const VIDEO_COMMAND_CAPACITY: usize = 3;
 const VIDEO_EVENT_CAPACITY: usize = 512;
 const CONTROL_READ_BUFFER: usize = 4096;
@@ -87,6 +85,7 @@ struct SharedState {
 struct EventSender {
     critical: std_mpsc::Sender<TransportEvent>,
     video: std_mpsc::SyncSender<TransportEvent>,
+    wake: TransportEventWake,
 }
 
 impl Clone for EventSender {
@@ -94,19 +93,24 @@ impl Clone for EventSender {
         Self {
             critical: self.critical.clone(),
             video: self.video.clone(),
+            wake: self.wake.clone(),
         }
     }
 }
 
 impl EventSender {
     fn critical(&self, event: TransportEvent) {
-        let _ = self.critical.send(event);
+        if self.critical.send(event).is_ok() {
+            self.wake.notify();
+        }
     }
 
     fn video(&self, event: TransportEvent) {
         // Video is intentionally lossy under consumer backpressure. Control and
         // lifecycle events use a separate reliable queue.
-        let _ = self.video.try_send(event);
+        if self.video.try_send(event).is_ok() {
+            self.wake.notify();
+        }
     }
 }
 
@@ -123,6 +127,7 @@ impl TransportActor {
     pub(crate) fn client(
         server_addr: SocketAddr,
         network_binding: ClientNetworkBinding,
+        wake: TransportEventWake,
     ) -> Result<Self, QuicTransportError> {
         let runtime = shared_runtime()?;
         let bind_addr = if server_addr.is_ipv4() {
@@ -139,7 +144,7 @@ impl TransportActor {
         };
         endpoint.set_default_client_config(client_config()?);
 
-        let (actor, command_rx, video_rx, events, state) = Self::channels(endpoint.clone());
+        let (actor, command_rx, video_rx, events, state) = Self::channels(endpoint.clone(), wake);
         runtime.spawn(client_worker(endpoint, command_rx, video_rx, events, state));
         Ok(actor)
     }
@@ -150,13 +155,15 @@ impl TransportActor {
             let _runtime_guard = runtime.enter();
             Endpoint::server(server_config()?, addr)?
         };
-        let (actor, command_rx, video_rx, events, state) = Self::channels(endpoint.clone());
+        let (actor, command_rx, video_rx, events, state) =
+            Self::channels(endpoint.clone(), TransportEventWake::default());
         runtime.spawn(server_worker(endpoint, command_rx, video_rx, events, state));
         Ok(actor)
     }
 
     fn channels(
         endpoint: Endpoint,
+        wake: TransportEventWake,
     ) -> (
         Self,
         mpsc::Receiver<Command>,
@@ -183,6 +190,7 @@ impl TransportActor {
             EventSender {
                 critical: critical_tx,
                 video: video_event_tx,
+                wake,
             },
             state,
         )

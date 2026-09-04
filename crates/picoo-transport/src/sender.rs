@@ -17,6 +17,7 @@ pub struct QuicSenderTransport {
     active_session: Option<SessionId>,
     next_session: u64,
     network_binding: ClientNetworkBinding,
+    event_wake: crate::TransportEventWake,
 }
 
 impl Default for QuicSenderTransport {
@@ -33,6 +34,7 @@ impl QuicSenderTransport {
             active_session: None,
             next_session: 1,
             network_binding: ClientNetworkBinding::Default,
+            event_wake: crate::TransportEventWake::default(),
         }
     }
 
@@ -46,6 +48,10 @@ impl QuicSenderTransport {
     pub fn is_connected(&self) -> bool {
         self.active_session.is_some()
             && self.actor.as_ref().and_then(TransportActor::active_session) == self.active_session
+    }
+
+    pub fn event_wake(&self) -> crate::TransportEventWake {
+        self.event_wake.clone()
     }
 
     fn map_connect_error(error: QuicTransportError) -> TransportError {
@@ -73,8 +79,9 @@ impl PicooTransport for QuicSenderTransport {
 
         let server_addr = SocketAddr::from_str(&format!("{}:{}", endpoint.host, endpoint.port))
             .map_err(|error| TransportError::ConnectFailed(error.to_string()))?;
-        let actor = TransportActor::client(server_addr, self.network_binding)
-            .map_err(Self::map_connect_error)?;
+        let actor =
+            TransportActor::client(server_addr, self.network_binding, self.event_wake.clone())
+                .map_err(Self::map_connect_error)?;
         let session = SessionId(self.next_session);
         self.next_session += 1;
         actor

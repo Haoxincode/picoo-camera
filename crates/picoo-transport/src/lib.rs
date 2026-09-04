@@ -3,6 +3,7 @@
 //! REQ-PICOO-TRANSPORT-001
 
 mod control_framing;
+mod event_wake;
 mod quinn_backend;
 mod receiver;
 mod sender;
@@ -15,6 +16,7 @@ pub use control_framing::{
     encode_control_frame, ControlFrameDecoder, ControlFramingError, MAX_CONTROL_MESSAGE_SIZE,
 };
 
+pub use event_wake::TransportEventWake;
 pub use quinn_backend::QuicTransportError;
 pub use receiver::QuicReceiverTransport;
 pub use sender::QuicSenderTransport;

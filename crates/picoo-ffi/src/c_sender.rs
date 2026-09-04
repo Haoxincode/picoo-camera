@@ -7,6 +7,7 @@ use picoo_session::SenderStatus;
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 use std::ffi::CStr;
 use std::sync::Mutex;
+use std::time::Duration;
 
 fn sender_status_code(status: SenderStatus) -> i32 {
     status.as_code()
@@ -31,11 +32,11 @@ pub extern "C" fn picoo_sender_create(
         return std::ptr::null_mut();
     }
     let identity = unsafe { &*(identity_handle as *mut DeviceIdentity) }.clone();
+    let transport = QuicSenderTransport::new();
+    let event_wake = transport.event_wake();
     Box::into_raw(Box::new(SenderInner {
-        session: Mutex::new(SenderSession::new_with_identity(
-            QuicSenderTransport::new(),
-            identity,
-        )),
+        session: Mutex::new(SenderSession::new_with_identity(transport, identity)),
+        event_wake,
     })) as *mut std::ffi::c_void
 }
 
@@ -115,6 +116,23 @@ pub extern "C" fn picoo_sender_pump(handle: *mut std::ffi::c_void) -> i32 {
         Ok(()) => 0,
         Err(_) => -2,
     }
+}
+
+/// Block a platform background executor until QUIC state changes or a
+/// maintenance timeout expires. Returns the newest monotonic event revision.
+#[no_mangle]
+pub extern "C" fn picoo_sender_wait_for_event(
+    handle: *mut std::ffi::c_void,
+    after_revision: u64,
+    timeout_ms: u32,
+) -> u64 {
+    if handle.is_null() {
+        return after_revision;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .event_wake
+        .wait_after(after_revision, Duration::from_millis(u64::from(timeout_ms)))
 }
 
 /// Ingest one H.264 access unit. Returns 0 on success, negative on error.

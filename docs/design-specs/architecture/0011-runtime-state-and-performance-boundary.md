@@ -147,6 +147,12 @@ OBS 和浏览器实测确认。
 - 端到端延迟只有在 sender monotonic timestamp、ping/pong 与按 generation 重置的 affine clock
   mapping 建立后才可发布；RTT 不得冒充 glass-to-glass latency。
 
+平台唤醒使用 Rust 标准库 `Mutex + Condvar` 保存进程内单调 event revision，并复用 Kotlin Coroutine
+`Dispatchers.IO` 与 Swift detached task 的官方后台执行边界。这里不采用 Linux `eventfd`、Apple
+`DispatchSource` 或 Android `ALooper`：它们会把同一 Session 契约拆成平台专用实现，而当前需求不涉及
+跨进程句柄、文件描述符复用或 UI run-loop source。revision 而非一次性布尔信号保证事件先到、并发
+encoder pump 先消费、或 waiter 稍后启动时仍不会丢失唤醒；Condvar 只等待，不拥有 Session 状态。
+
 时钟同步复用已认证 PCP 控制流传递 NTP 风格四时间戳，并以有界低延迟样本拟合
 `receiver_time = slope × sender_time + offset`。评审过 `ntp-proto 1.9.0`（Apache-2.0 OR MIT，
 Rust 1.88）：它维护活跃且适合标准 NTP 报文、认证与系统校时，但会引入 Picoo 不使用的 UDP NTP、

@@ -1,5 +1,6 @@
 use std::ptr;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use jni::objects::{JByteArray, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jobjectArray, jstring, JNI_TRUE};
@@ -34,11 +35,11 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_createSender(
     let Some(identity) = identity else {
         return 0;
     };
+    let transport = QuicSenderTransport::new();
+    let event_wake = transport.event_wake();
     let inner = SenderInner {
-        session: Mutex::new(SenderSession::new_with_identity(
-            QuicSenderTransport::new(),
-            identity,
-        )),
+        session: Mutex::new(SenderSession::new_with_identity(transport, identity)),
+        event_wake,
     };
     senders()
         .lock()
@@ -123,6 +124,24 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getSenderStats(
     .unwrap_or([0; 5]);
     let _ = env.set_long_array_region(&result, 0, &values);
     result.into_raw()
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_waitForSenderEvent(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    after_revision: jlong,
+    timeout_ms: jint,
+) -> jlong {
+    let wake = with_sender(handle, |inner| inner.event_wake.clone());
+    let Some(wake) = wake else {
+        return after_revision;
+    };
+    wake.wait_after(
+        after_revision as u64,
+        Duration::from_millis(timeout_ms.max(0) as u64),
+    ) as jlong
 }
 
 #[no_mangle]

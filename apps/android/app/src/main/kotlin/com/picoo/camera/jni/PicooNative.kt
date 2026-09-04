@@ -95,6 +95,12 @@ object PicooNative {
 
     external fun pump(handle: Long): Int
 
+    external fun waitForSenderEvent(
+        handle: Long,
+        afterRevision: Long,
+        timeoutMs: Int,
+    ): Long
+
     /** Coherent Rust sender state; prefer this to combining independent getters. */
     external fun getSenderSnapshot(handle: Long): LongArray
 
