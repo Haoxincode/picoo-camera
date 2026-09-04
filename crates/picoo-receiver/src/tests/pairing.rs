@@ -10,18 +10,28 @@ use crate::{ReceiverSession, PAIRING_CHALLENGE_TTL};
 use super::{pump_pair_for, use_stub_decoder};
 
 #[test]
-fn public_key_change_rejects_auto_connect() {
-    // REQ-PICOO-PAIRING-004: same device_id + different public key → hard reject
-    // (SessionError PUBLIC_KEY_CHANGED), trust entry unchanged, no pending re-pair.
+fn claimed_device_id_must_match_public_key() {
+    // REQ-PICOO-PAIRING-004: a claimed device ID is derived from its public key.
+    // A peer cannot reuse a trusted ID with another key, and rejection must not
+    // mutate the durable trust entry or open a pairing transaction.
+    use picoo_protocol::control::control_envelope::Payload as ControlPayload;
+    use picoo_protocol::control::ClientHello;
+
+    let trusted_identity =
+        picoo_pairing::DeviceIdentity::generate("Pixel").expect("trusted identity");
+    let attacker_identity =
+        picoo_pairing::DeviceIdentity::generate("Attacker").expect("attacker identity");
+    let trusted_id = trusted_identity.device_id().to_owned();
+    let trusted_public_key = trusted_identity.public_key().to_vec();
     let mut receiver = ReceiverSession::new();
-    receiver.trusted_devices_mut().upsert(TrustedDevice {
-        device_id: "android-sender".into(),
-        device_name: "Pixel".into(),
-        public_key: vec![1, 2, 3],
-        certificate_fingerprint: "fp".into(),
-        paired_at_ms: 0,
-        last_connected_at_ms: None,
-    });
+    receiver
+        .trusted_devices_mut()
+        .upsert(picoo_pairing::trusted_device_from_pairing(
+            &trusted_id,
+            trusted_identity.device_name(),
+            &trusted_public_key,
+            1,
+        ));
 
     let bind = receiver
         .listen(Endpoint {
@@ -47,27 +57,22 @@ fn public_key_change_rejects_auto_connect() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel", &[9, 9, 9])
-        .expect("client hello");
-
-    for _ in 0..100 {
-        receiver.pump().expect("receiver pump");
-        sender.pump().expect("sender pump");
-        if sender.last_session_error() == Some("PUBLIC_KEY_CHANGED") {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-
-    assert_eq!(sender.last_session_error(), Some("PUBLIC_KEY_CHANGED"));
+    let malformed = ClientHello {
+        sender_id: trusted_id.clone(),
+        device_name: "Attacker".into(),
+        public_key: attacker_identity.public_key().to_vec(),
+        sender_nonce: vec![7; 32],
+    };
+    assert!(receiver
+        .inject_control_payload_for_test(ControlPayload::ClientHello(malformed))
+        .is_err());
     assert!(!receiver.pairing_required());
     assert!(receiver.pairing_short_code().is_none());
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
-    assert!(receiver.trusted_devices().is_paired("android-sender"));
+    assert!(receiver.trusted_devices().is_paired(&trusted_id));
     assert!(receiver
         .trusted_devices()
-        .verify_paired_key("android-sender", &[1, 2, 3])
+        .verify_paired_key(&trusted_id, &trusted_public_key)
         .is_ok());
 
     // Video must not reach FrameHub after key-mismatch reject.
@@ -104,9 +109,7 @@ fn pairing_challenge_expires_clears_short_code() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("ttl-phone", "TTL", &[4, 4, 4])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -128,7 +131,7 @@ fn pairing_challenge_expires_clears_short_code() {
     receiver
         .confirm_pairing_locally()
         .expect("desktop confirm after expiry");
-    let _ = sender.send_pairing_confirm(&identity.receiver_id);
+    let _ = sender.send_pairing_confirm(identity.receiver_id());
     for _ in 0..40 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -157,9 +160,7 @@ fn desktop_reject_sends_explicit_pairing_rejected() {
         .expect("connect");
     pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(100));
 
-    sender
-        .send_client_hello("reject-phone", "Reject Phone", &[7, 7, 7])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
@@ -208,7 +209,7 @@ fn paired_sender_enters_streaming_after_client_hello() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -225,9 +226,7 @@ fn paired_sender_enters_streaming_after_client_hello() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel Test", &[1, 2, 3])
-        .expect("client hello");
+    sender.send_client_hello().expect("client hello");
 
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -295,9 +294,7 @@ fn auto_accept_paired_off_requires_confirm_for_trusted_sender() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
 
     for _ in 0..100 {
         receiver.pump().expect("rx");
@@ -353,9 +350,7 @@ fn invalid_pairing_confirm_does_not_complete_pairing() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("flaky-phone", "Pixel", &[7, 7, 7])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -369,26 +364,18 @@ fn invalid_pairing_confirm_does_not_complete_pairing() {
     receiver.confirm_pairing_locally().expect("desktop confirm");
 
     let bogus = PairingConfirm {
-        confirm_signature: vec![0u8; 32],
+        transcript_hash: vec![0u8; 32],
+        identity_signature: vec![0u8; 64],
     };
     assert!(receiver
         .inject_control_payload_for_test(ControlPayload::PairingConfirm(bogus))
         .is_err());
-    assert_eq!(receiver.status(), ReceiverStatus::Pairing);
-    assert!(receiver.pairing_short_code().is_some());
-
-    sender
-        .send_pairing_confirm(&identity.receiver_id)
-        .expect("real confirm");
-    for _ in 0..100 {
-        receiver.pump().expect("rx");
-        sender.pump().expect("tx");
-        if receiver.status() == ReceiverStatus::Streaming {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert_eq!(receiver.status(), ReceiverStatus::Discovering);
+    assert!(receiver.pairing_short_code().is_none());
+    assert!(!receiver.is_awaiting_pairing_confirm());
+    assert!(!receiver
+        .trusted_devices()
+        .is_paired(sender.identity().device_id()));
 }
 
 #[test]
@@ -403,6 +390,7 @@ fn phone_confirm_before_desktop_confirm_completes_without_retry() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    let sender_id = sender.identity().device_id().to_owned();
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -419,9 +407,7 @@ fn phone_confirm_before_desktop_confirm_completes_without_retry() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("early-phone", "Pixel", &[8, 8, 8])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -433,13 +419,13 @@ fn phone_confirm_before_desktop_confirm_completes_without_retry() {
 
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("early confirm");
     pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(200));
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
     assert_eq!(sender.status(), SenderStatus::Pairing);
-    assert!(!receiver.trusted_devices().is_paired("early-phone"));
-    assert!(!sender.trusted_devices().is_paired(&identity.receiver_id));
+    assert!(!receiver.trusted_devices().is_paired(&sender_id));
+    assert!(!sender.trusted_devices().is_paired(identity.receiver_id()));
 
     receiver.confirm_pairing_locally().expect("desktop confirm");
     let streaming_deadline = Instant::now() + Duration::from_secs(3);
@@ -455,8 +441,8 @@ fn phone_confirm_before_desktop_confirm_completes_without_retry() {
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
     assert_eq!(sender.status(), SenderStatus::Streaming);
-    assert!(receiver.trusted_devices().is_paired("early-phone"));
-    assert!(sender.trusted_devices().is_paired(&identity.receiver_id));
+    assert!(receiver.trusted_devices().is_paired(&sender_id));
+    assert!(sender.trusted_devices().is_paired(identity.receiver_id()));
 }
 
 #[test]
@@ -473,6 +459,7 @@ fn first_time_pairing_flow_enables_video() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    let sender_id = sender.identity().device_id().to_owned();
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -489,9 +476,7 @@ fn first_time_pairing_flow_enables_video() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("new-phone", "Pixel 9", &[9, 9, 9])
-        .expect("client hello");
+    sender.send_client_hello().expect("client hello");
 
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -509,7 +494,7 @@ fn first_time_pairing_flow_enables_video() {
 
     receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("pairing confirm");
 
     for _ in 0..100 {
@@ -525,8 +510,8 @@ fn first_time_pairing_flow_enables_video() {
 
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
     assert_eq!(sender.status(), SenderStatus::Streaming);
-    assert!(receiver.trusted_devices().is_paired("new-phone"));
-    assert!(sender.trusted_devices().is_paired(&identity.receiver_id));
+    assert!(receiver.trusted_devices().is_paired(&sender_id));
+    assert!(sender.trusted_devices().is_paired(identity.receiver_id()));
 
     sender
         .ingest_and_flush(b"paired-after-flow", true, 1, 1)
@@ -562,6 +547,8 @@ fn trusted_store_persists_after_pairing() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    let sender_id = sender.identity().device_id().to_owned();
+    let sender_public_key = sender.identity().public_key().to_vec();
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -578,9 +565,7 @@ fn trusted_store_persists_after_pairing() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("persist-phone", "Pixel", &[7, 7, 7])
-        .expect("client hello");
+    sender.send_client_hello().expect("client hello");
 
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -593,7 +578,7 @@ fn trusted_store_persists_after_pairing() {
 
     receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("pairing confirm");
 
     for _ in 0..100 {
@@ -607,10 +592,10 @@ fn trusted_store_persists_after_pairing() {
 
     assert!(store_path.exists());
     let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload store");
-    assert!(loaded.is_paired("persist-phone"));
+    assert!(loaded.is_paired(&sender_id));
     assert_eq!(
-        loaded.get("persist-phone").map(|d| d.public_key.as_slice()),
-        Some([7u8, 7, 7].as_slice())
+        loaded.get(&sender_id).map(|d| d.public_key.as_slice()),
+        Some(sender_public_key.as_slice())
     );
 }
 
@@ -710,7 +695,10 @@ fn newly_paired_identity_can_replace_same_name_history() {
             port: 0,
         })
         .expect("listen");
-    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    let sender_identity =
+        picoo_pairing::DeviceIdentity::generate("Pixel 9 Pro").expect("sender identity");
+    let current_id = sender_identity.device_id().to_owned();
+    let mut sender = SenderSession::new_with_identity(QuicSenderTransport::new(), sender_identity);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -718,9 +706,7 @@ fn newly_paired_identity_can_replace_same_name_history() {
         })
         .expect("connect");
     pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(100));
-    sender
-        .send_client_hello("phone-current", "Pixel 9 Pro", &[3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
@@ -731,7 +717,7 @@ fn newly_paired_identity_can_replace_same_name_history() {
     }
     receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("sender confirm");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -782,7 +768,7 @@ fn newly_paired_identity_can_replace_same_name_history() {
         2
     );
     let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("reload");
-    assert!(loaded.is_paired("phone-current"));
+    assert!(loaded.is_paired(&current_id));
     assert!(loaded.is_paired("other-phone"));
     assert!(loaded.is_paired("phone-late"));
     assert!(!loaded.is_paired("phone-old-a"));
@@ -793,16 +779,14 @@ fn newly_paired_identity_can_replace_same_name_history() {
 #[test]
 fn trusted_reconnect_never_emits_identity_replacement_decision() {
     let mut receiver = ReceiverSession::new();
-    for (device_id, key) in [("phone-a", vec![1]), ("phone-b", vec![2])] {
-        receiver.trusted_devices_mut().upsert(TrustedDevice {
-            device_id: device_id.into(),
-            device_name: "Pixel".into(),
-            public_key: key.clone(),
-            certificate_fingerprint: device_id.into(),
-            paired_at_ms: 0,
-            last_connected_at_ms: None,
-        });
-    }
+    receiver.trusted_devices_mut().upsert(TrustedDevice {
+        device_id: "phone-history".into(),
+        device_name: "Picoo Test Sender".into(),
+        public_key: vec![2],
+        certificate_fingerprint: "history".into(),
+        paired_at_ms: 0,
+        last_connected_at_ms: None,
+    });
     let bind = receiver
         .listen(Endpoint {
             host: "127.0.0.1".into(),
@@ -810,6 +794,7 @@ fn trusted_reconnect_never_emits_identity_replacement_decision() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -817,9 +802,7 @@ fn trusted_reconnect_never_emits_identity_replacement_decision() {
         })
         .expect("connect");
     pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(100));
-    sender
-        .send_client_hello("phone-a", "Pixel", &[1])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");

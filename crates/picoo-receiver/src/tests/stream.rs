@@ -33,7 +33,7 @@ fn receiver_sends_stats_to_paired_sender() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -50,9 +50,7 @@ fn receiver_sends_stats_to_paired_sender() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel Test", &[1, 2, 3])
-        .expect("client hello");
+    sender.send_client_hello().expect("client hello");
 
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -141,7 +139,7 @@ fn stream_config_and_capabilities_after_paired_hello() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -158,9 +156,7 @@ fn stream_config_and_capabilities_after_paired_hello() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel Test", &[1, 2, 3])
-        .expect("client hello");
+    sender.send_client_hello().expect("client hello");
 
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -217,7 +213,7 @@ fn stream_epoch_bump_requests_keyframe() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -234,9 +230,7 @@ fn stream_epoch_bump_requests_keyframe() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
 
     for _ in 0..100 {
         receiver.pump().expect("rx");
@@ -337,7 +331,7 @@ fn remote_mirrored_flips_framehub_nv12() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -352,9 +346,7 @@ fn remote_mirrored_flips_framehub_nv12() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("android-sender", "Pixel", &[9, 9, 9])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -442,7 +434,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -457,9 +449,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("rot-phone", "Rot", &[7, 7, 7])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();

@@ -157,11 +157,11 @@ impl ReceiverRuntime {
             }
         };
 
-        let fingerprint_prefix = public_key_fingerprint_prefix(&config.identity.public_key);
+        let fingerprint_prefix = public_key_fingerprint_prefix(config.identity.public_key());
         let trusted_count = receiver.trusted_devices().list().count();
         let advertisement = ReceiverAdvertisement::new(
-            config.identity.receiver_id.clone(),
-            config.identity.display_name.clone(),
+            config.identity.receiver_id().to_owned(),
+            config.identity.display_name().to_owned(),
             bind.port(),
             fingerprint_prefix,
         )
@@ -188,7 +188,7 @@ impl ReceiverRuntime {
             mdns,
             bind_addr: Some(bind),
             advertise_host,
-            display_name: config.identity.display_name,
+            display_name: config.identity.display_name().to_owned(),
             advertised_trusted_count: trusted_count,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
             shared_ring_error,
@@ -199,7 +199,7 @@ impl ReceiverRuntime {
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
         let mut config = ReceiverRuntimeConfig::load()?;
-        config.identity.display_name = prefs.display_name.clone();
+        config.identity.set_display_name(prefs.display_name.clone());
         let mut runtime = Self::start(config)?;
         runtime
             .receiver
@@ -228,12 +228,12 @@ impl ReceiverRuntime {
             return;
         };
         let identity = self.receiver.identity();
-        let fingerprint_prefix = public_key_fingerprint_prefix(&identity.public_key);
+        let fingerprint_prefix = public_key_fingerprint_prefix(identity.public_key());
         let trusted_count = self.receiver.trusted_devices().list().count();
         let pairing_state: PairingState =
             ReceiverAdvertisement::pairing_state_for_v1_receiver(trusted_count);
         let advertisement = ReceiverAdvertisement::new(
-            identity.receiver_id.clone(),
+            identity.receiver_id().to_owned(),
             self.display_name.clone(),
             bind.port(),
             fingerprint_prefix,
@@ -574,11 +574,7 @@ fn load_receiver_identity(default_name: &str) -> Result<ReceiverIdentity, Receiv
 }
 
 fn receiver_identity_from_device(identity: &DeviceIdentity) -> ReceiverIdentity {
-    ReceiverIdentity {
-        receiver_id: identity.device_id.clone(),
-        display_name: identity.device_name.clone(),
-        public_key: identity.public_key().to_vec(),
-    }
+    ReceiverIdentity::from_device_identity(identity.clone())
 }
 
 pub fn default_trusted_store_path() -> PathBuf {

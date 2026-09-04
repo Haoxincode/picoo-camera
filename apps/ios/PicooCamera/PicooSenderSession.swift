@@ -83,7 +83,7 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             defaultDeviceName: defaultDeviceName
         )
 
-        guard let senderHandle = picoo_sender_create() else {
+        guard let senderHandle = picoo_sender_create(identity.rawHandle) else {
             throw PicooSenderSessionError.senderCreationFailed
         }
 
@@ -158,20 +158,7 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         }
         try check(connectCode, operation: "sender_connect")
 
-        let publicKey = identity.publicKey
-        let helloCode = identity.deviceID.withCString { deviceID in
-            identity.deviceName.withCString { deviceName in
-                publicKey.withUnsafeBytes { bytes in
-                    picoo_sender_send_client_hello(
-                        sender,
-                        deviceID,
-                        deviceName,
-                        bytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(bytes.count)
-                    )
-                }
-            }
-        }
+        let helloCode = picoo_sender_send_client_hello(sender)
         try check(helloCode, operation: "sender_send_client_hello")
     }
 
@@ -484,6 +471,8 @@ nonisolated private final class PicooSenderIdentity {
     deinit {
         picoo_identity_destroy(identity)
     }
+
+    var rawHandle: UnsafeMutableRawPointer { identity }
 
     var deviceID: String {
         readCString(maxLength: 128) { buffer, length in

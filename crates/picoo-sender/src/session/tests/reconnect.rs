@@ -4,6 +4,7 @@ use super::*;
 fn client_hello_queued_before_async_connect_is_sent_when_connected() {
     // REQ-PICOO-DISCOVERY-007: mirrors Android connect() -> sendClientHello().
     let mut sender = SenderSession::new(DeferredConnectTransport::new());
+    let expected_sender_id = sender.identity().device_id().to_owned();
     sender
         .connect(Endpoint {
             host: "192.168.8.101".into(),
@@ -12,7 +13,7 @@ fn client_hello_queued_before_async_connect_is_sent_when_connected() {
         .expect("queue connect");
 
     sender
-        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
+        .send_client_hello()
         .expect("queue hello before QUIC handshake completes");
     assert!(sender.transport().sent_control.is_empty());
 
@@ -29,7 +30,7 @@ fn client_hello_queued_before_async_connect_is_sent_when_connected() {
     let Some(ControlPayload::ClientHello(hello)) = envelope.payload else {
         panic!("expected ClientHello payload");
     };
-    assert_eq!(hello.sender_id, "android-sender");
+    assert_eq!(hello.sender_id, expected_sender_id);
 }
 
 #[test]
@@ -41,19 +42,6 @@ fn stale_or_replayed_control_envelope_is_rejected() {
             port: 4433,
         })
         .expect("connect");
-
-    let wrong_generation = picoo_protocol::encode_control_envelope(
-        ControlPayload::SessionError(picoo_protocol::control::SessionError {
-            code: "UNPAIRED".into(),
-            message: String::new(),
-        }),
-        1,
-        session.0 + 1,
-    );
-    sender
-        .inject_control_for_test(wrong_generation)
-        .expect("inject wrong generation");
-    assert_eq!(sender.last_session_error(), Some("STALE_CONTROL_ENVELOPE"));
 
     let valid = picoo_protocol::encode_control_envelope(
         ControlPayload::SessionError(picoo_protocol::control::SessionError {
@@ -71,6 +59,31 @@ fn stale_or_replayed_control_envelope_is_rejected() {
         .inject_control_for_test(valid)
         .expect("inject replay");
     assert_eq!(sender.last_session_error(), Some("STALE_CONTROL_ENVELOPE"));
+
+    // Authentication rejection is fail-closed and ends the active session, so
+    // exercise a wrong connection generation on a fresh connection.
+    let mut wrong_generation_sender = SenderSession::new(MemoryTransport::new());
+    let wrong_generation_session = wrong_generation_sender
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect for wrong generation");
+    let wrong_generation = picoo_protocol::encode_control_envelope(
+        ControlPayload::SessionError(picoo_protocol::control::SessionError {
+            code: "UNPAIRED".into(),
+            message: String::new(),
+        }),
+        1,
+        wrong_generation_session.0 + 1,
+    );
+    wrong_generation_sender
+        .inject_control_for_test(wrong_generation)
+        .expect("inject wrong generation");
+    assert_eq!(
+        wrong_generation_sender.last_session_error(),
+        Some("STALE_CONTROL_ENVELOPE")
+    );
 }
 
 #[test]
@@ -259,9 +272,7 @@ fn resends_client_hello_after_reconnect() {
         port: 4433,
     };
     session.connect(endpoint.clone()).expect("connect");
-    session
-        .send_client_hello("phone-1", "Pixel", &[1, 2, 3])
-        .expect("hello");
+    session.send_client_hello().expect("hello");
     session.disconnect_for_test(CloseReason::Timeout);
     session.pump().expect("disconnect pump");
 
@@ -283,17 +294,8 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
         port: 4433,
     };
     session.connect(endpoint.clone()).expect("connect");
-    session
-        .send_client_hello("phone-1", "Pixel", &[1, 2, 3])
-        .expect("hello");
-    session.trusted.upsert(picoo_pairing::TrustedDevice {
-        device_id: "recv-1".into(),
-        device_name: "Desktop".into(),
-        public_key: vec![9, 9],
-        certificate_fingerprint: "test".into(),
-        paired_at_ms: 1,
-        last_connected_at_ms: None,
-    });
+    session.send_client_hello().expect("hello");
+    let receiver = picoo_pairing::DeviceIdentity::generate("Desktop").expect("identity");
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
@@ -306,17 +308,9 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
         ..Default::default()
     });
 
-    let hello = ServerHello {
-        receiver_id: "recv-1".into(),
-        display_name: "Desktop".into(),
-        public_key: vec![9, 9],
-        pairing_required: false,
-    };
-    session
-        .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
-        .expect("inject hello");
+    authenticate_trusted_receiver(&mut session, &receiver);
     assert_eq!(session.status(), SenderStatus::Streaming);
-    assert_eq!(session.connected_receiver_id(), Some("recv-1"));
+    assert_eq!(session.connected_receiver_id(), Some(receiver.device_id()));
     assert_eq!(session.connected_receiver_display_name(), Some("Desktop"));
     assert!(session.stream_config_sent());
     assert!(session.take_keyframe_request());
@@ -334,15 +328,7 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     }
     assert!(session.is_connected());
 
-    let hello2 = ServerHello {
-        receiver_id: "recv-1".into(),
-        display_name: "Desktop".into(),
-        public_key: vec![9, 9],
-        pairing_required: false,
-    };
-    session
-        .inject_control_payload_for_test(ControlPayload::ServerHello(hello2))
-        .expect("inject hello2");
+    authenticate_trusted_receiver(&mut session, &receiver);
     session.pump().expect("pump streaming");
 
     assert_eq!(session.status(), SenderStatus::Streaming);

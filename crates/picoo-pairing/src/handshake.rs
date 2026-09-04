@@ -1,22 +1,16 @@
-//! PairingChallenge / PairingConfirm helpers — REQ-PICOO-PAIRING-001/002.
+//! Channel-bound Ed25519 pairing transcript — REQ-PICOO-PAIRING-008/009.
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{derive_short_code, verify_identity_signature, DeviceIdentity, TrustedDevice};
+use crate::{verify_identity_signature, DeviceIdentity, TrustedDevice};
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"picoo-camera pairing transcript\0";
 const SIGNATURE_DOMAIN: &[u8] = b"picoo-camera identity proof\0";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PairingChallenge {
-    pub short_code: String,
-    pub challenge_nonce: Vec<u8>,
-}
-
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum PairingHandshakeError {
-    #[error("invalid confirm signature")]
+    #[error("invalid identity proof signature")]
     InvalidSignature,
     #[error("invalid pairing transcript: {0}")]
     InvalidTranscript(String),
@@ -119,61 +113,6 @@ fn transcript_phase_message(transcript_hash: &[u8; 32], phase: &[u8]) -> Vec<u8>
     message
 }
 
-pub fn new_pairing_challenge(
-    challenge_nonce: &[u8],
-    receiver_id: &str,
-    sender_id: &str,
-) -> PairingChallenge {
-    PairingChallenge {
-        short_code: derive_short_code(challenge_nonce, receiver_id, sender_id),
-        challenge_nonce: challenge_nonce.to_vec(),
-    }
-}
-
-pub fn pairing_confirm_signature(
-    challenge_nonce: &[u8],
-    receiver_id: &str,
-    sender_id: &str,
-) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(challenge_nonce);
-    hasher.update(receiver_id.as_bytes());
-    hasher.update(sender_id.as_bytes());
-    hasher.update(b"pairing-confirm-v1");
-    hasher.finalize().to_vec()
-}
-
-pub fn verify_pairing_confirm(
-    challenge_nonce: &[u8],
-    receiver_id: &str,
-    sender_id: &str,
-    confirm_signature: &[u8],
-) -> Result<(), PairingHandshakeError> {
-    let expected = pairing_confirm_signature(challenge_nonce, receiver_id, sender_id);
-    if expected == confirm_signature {
-        Ok(())
-    } else {
-        Err(PairingHandshakeError::InvalidSignature)
-    }
-}
-
-/// Bind a pairing control phase to the active challenge and both device identities.
-/// QUIC authenticates the channel; this transcript hash prevents stale-session messages
-/// from being accepted for a later challenge on the same process.
-pub fn pairing_transcript_hash(
-    challenge_nonce: &[u8],
-    receiver_id: &str,
-    sender_id: &str,
-    phase: &[u8],
-) -> Vec<u8> {
-    let mut hasher = Sha256::new();
-    hasher.update(challenge_nonce);
-    hasher.update(receiver_id.as_bytes());
-    hasher.update(sender_id.as_bytes());
-    hasher.update(phase);
-    hasher.finalize().to_vec()
-}
-
 fn bytes_to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -216,34 +155,6 @@ pub fn random_challenge_nonce() -> Result<[u8; 32], PairingHandshakeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn confirm_signature_roundtrip() {
-        let nonce = b"nonce-123";
-        let sig = pairing_confirm_signature(nonce, "receiver", "sender");
-        verify_pairing_confirm(nonce, "receiver", "sender", &sig).expect("valid");
-    }
-
-    #[test]
-    fn pairing_phase_transcripts_are_challenge_and_phase_bound() {
-        let approval = pairing_transcript_hash(b"nonce-a", "receiver", "sender", b"approval-v2");
-        let another_challenge =
-            pairing_transcript_hash(b"nonce-b", "receiver", "sender", b"approval-v2");
-        let commit = pairing_transcript_hash(b"nonce-a", "receiver", "sender", b"commit-v2");
-
-        assert_ne!(approval, another_challenge);
-        assert_ne!(approval, commit);
-    }
-
-    #[test]
-    fn challenge_short_code_matches_derive() {
-        let nonce = b"n";
-        let challenge = new_pairing_challenge(nonce, "recv", "send");
-        assert_eq!(
-            challenge.short_code,
-            derive_short_code(nonce, "recv", "send")
-        );
-    }
 
     #[test]
     fn challenge_nonce_comes_from_os_csprng() {
@@ -291,6 +202,20 @@ mod tests {
         assert_ne!(
             first.short_code().expect("sas"),
             mitm_channel.short_code().expect("sas")
+        );
+    }
+
+    #[test]
+    fn transcript_changes_across_connection_generations() {
+        let first = transcript(&[5; 32]);
+        let next = PairingTranscript {
+            connection_generation: first.connection_generation + 1,
+            ..first
+        };
+        assert_ne!(first.hash().expect("first"), next.hash().expect("next"));
+        assert_ne!(
+            first.short_code().expect("first SAS"),
+            next.short_code().expect("next SAS")
         );
     }
 

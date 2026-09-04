@@ -16,21 +16,12 @@ class SenderNativeRuntime(context: Context) : Closeable {
     val trustedStorePath = java.io.File(context.filesDir, "trusted_devices.json").absolutePath
 
     val identityHandle: Long = createIdentityHandle(context)
-    val senderHandle: Long = PicooNative.createSender()
+    val senderHandle: Long = PicooNative.createSender(identityHandle)
 
     private var trustedStoreHandle: Long = 0L
     private var senderTrustedStoreAttached = false
     private val autoConnectAttemptedIds = mutableSetOf<String>()
     private var closed = false
-
-    val senderDeviceId: String
-        get() = PicooNative.getIdentityDeviceId(identityHandle)
-
-    val senderPublicKey: ByteArray
-        get() = PicooNative.getIdentityPublicKey(identityHandle)
-
-    val senderDeviceName: String
-        get() = PicooNative.getIdentityDeviceName(identityHandle).ifBlank { android.os.Build.MODEL }
 
     fun attachTrustedStore(): Int {
         if (senderHandle == 0L) return -1

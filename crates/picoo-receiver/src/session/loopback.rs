@@ -98,7 +98,7 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
         return Err(ReceiverError::LoopbackTimeout);
     }
 
-    sender.send_client_hello("loopback-phone", "Loopback Sender", &[0xAAu8, 0xBB, 0xCC])?;
+    sender.send_client_hello()?;
 
     for _ in 0..200 {
         receiver.pump()?;
@@ -113,7 +113,7 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
     }
 
     receiver.confirm_pairing_locally()?;
-    sender.send_pairing_confirm(&identity.receiver_id)?;
+    sender.send_pairing_confirm(identity.receiver_id())?;
 
     for _ in 0..200 {
         receiver.pump()?;

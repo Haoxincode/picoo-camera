@@ -6,13 +6,12 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use picoo_pairing::{
-    new_pairing_challenge, pairing_transcript_hash, random_challenge_nonce,
-    trusted_device_from_pairing, verify_pairing_confirm, TrustedDeviceStore,
+    derive_device_id, random_challenge_nonce, sign_transcript_phase, trusted_device_from_pairing,
+    verify_transcript_phase, PairingTranscript, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    control_envelope::Payload as ControlPayload, ClientHello, PairingApproval,
-    PairingChallenge as PairingChallengeMsg, PairingCommit, PairingComplete, PairingConfirm,
-    ServerHello, SessionError,
+    control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingCommit,
+    PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
 use picoo_session::ReceiverStatus;
 use picoo_transport::{CloseReason, SessionId};
@@ -29,19 +28,23 @@ pub(in crate::session) struct ActiveSender {
 
 pub(in crate::session) struct PendingPairing {
     pub(in crate::session) session: SessionId,
-    pub(in crate::session) challenge_nonce: Vec<u8>,
+    pub(in crate::session) transcript_hash: [u8; 32],
     pub(in crate::session) short_code: String,
+    pub(in crate::session) pairing_required: bool,
     pub(in crate::session) local_confirmed: bool,
     pub(in crate::session) remote_confirmed: bool,
+    pub(in crate::session) approval_sent: bool,
     pub(in crate::session) sender_committed: bool,
     pub(in crate::session) receiver_committed: bool,
     /// PUC-001 / AC-M-PAIR-02: challenge valid for 60s (wall clock).
     pub(in crate::session) expires_at: Instant,
 }
 
-pub(in crate::session) const PAIRING_APPROVAL_PHASE: &[u8] = b"pairing-approval-v2";
-pub(in crate::session) const PAIRING_COMMIT_PHASE: &[u8] = b"pairing-commit-v2";
-pub(in crate::session) const PAIRING_COMPLETE_PHASE: &[u8] = b"pairing-complete-v2";
+pub(in crate::session) const SERVER_HELLO_PHASE: &[u8] = b"server-hello";
+pub(in crate::session) const SENDER_CONFIRM_PHASE: &[u8] = b"sender-confirm";
+pub(in crate::session) const PAIRING_APPROVAL_PHASE: &[u8] = b"receiver-approval";
+pub(in crate::session) const PAIRING_COMMIT_PHASE: &[u8] = b"sender-commit";
+pub(in crate::session) const PAIRING_COMPLETE_PHASE: &[u8] = b"receiver-complete";
 
 impl ReceiverSession {
     pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, ReceiverError> {
@@ -198,13 +201,15 @@ impl ReceiverSession {
     }
 
     pub fn pairing_required(&self) -> bool {
-        self.active_sender
+        self.pending_pairing
             .as_ref()
-            .is_some_and(|sender| !sender.video_allowed)
+            .is_some_and(|pairing| pairing.pairing_required)
     }
 
     pub fn pairing_short_code(&self) -> Option<&str> {
-        self.pending_pairing.as_ref().map(|p| p.short_code.as_str())
+        self.pending_pairing.as_ref().and_then(|pairing| {
+            (!pairing.short_code.is_empty()).then_some(pairing.short_code.as_str())
+        })
     }
 
     /// Remaining TTL for the active pairing challenge, if any.
@@ -289,6 +294,14 @@ impl ReceiverSession {
         session: SessionId,
         hello: ClientHello,
     ) -> Result<(), ReceiverError> {
+        if hello.sender_id.is_empty()
+            || derive_device_id(&hello.public_key) != hello.sender_id
+            || hello.sender_nonce.len() != 32
+        {
+            return Err(ReceiverError::Protocol(
+                "ClientHello contains an invalid Sender identity".into(),
+            ));
+        }
         // PAIRING-004 / PUC-007: known device_id with changed public key → hard reject
         // (no pending re-pair, trust store unchanged; peer must remove + re-pair).
         if self.trusted.is_paired(&hello.sender_id)
@@ -318,44 +331,57 @@ impl ReceiverSession {
             .verify_paired_key(&hello.sender_id, &hello.public_key)
             .is_ok();
         let auto_accept = paired && self.auto_accept_paired;
+        let receiver_nonce =
+            random_challenge_nonce().map_err(|error| ReceiverError::Protocol(error.to_string()))?;
+        let channel_binding = self.transport.channel_binding(session)?;
+        let connection_generation = self.control_generation.ok_or_else(|| {
+            ReceiverError::Protocol("missing control connection generation".into())
+        })?;
+        let transcript = PairingTranscript {
+            sender_id: &hello.sender_id,
+            sender_public_key: &hello.public_key,
+            sender_nonce: &hello.sender_nonce,
+            receiver_id: self.identity.receiver_id(),
+            receiver_public_key: self.identity.public_key(),
+            receiver_nonce: &receiver_nonce,
+            channel_binding: &channel_binding,
+            connection_generation,
+        };
+        let transcript_hash = transcript
+            .hash()
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
+        let short_code = transcript
+            .short_code()
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
 
         let server_hello = ServerHello {
-            receiver_id: self.identity.receiver_id.clone(),
-            display_name: self.identity.display_name.clone(),
-            public_key: self.identity.public_key.clone(),
+            receiver_id: self.identity.receiver_id().to_owned(),
+            display_name: self.identity.display_name().to_owned(),
+            public_key: self.identity.public_key().to_vec(),
             pairing_required: !auto_accept,
+            receiver_nonce: receiver_nonce.to_vec(),
+            transcript_hash: transcript_hash.to_vec(),
+            identity_signature: sign_transcript_phase(
+                self.identity.signer(),
+                &transcript_hash,
+                SERVER_HELLO_PHASE,
+            )
+            .to_vec(),
         };
         self.send_control_payload(session, ControlPayload::ServerHello(server_hello))?;
 
-        if auto_accept {
-            self.trusted
-                .touch_last_connected(&hello.sender_id, self.now_ms());
-            self.persist_trusted()?;
-            self.active_sender = Some(ActiveSender {
-                sender_id: hello.sender_id,
-                device_name: hello.device_name,
-                public_key: hello.public_key,
-                video_allowed: true,
-            });
-            return self.begin_streaming(session);
-        }
-
-        let nonce = random_challenge_nonce()
-            .map_err(|error| ReceiverError::Protocol(error.to_string()))?
-            .to_vec();
-        let challenge = new_pairing_challenge(&nonce, &self.identity.receiver_id, &hello.sender_id);
-        let challenge_msg = PairingChallengeMsg {
-            short_code: challenge.short_code.clone(),
-            challenge_nonce: challenge.challenge_nonce,
-        };
-        self.send_control_payload(session, ControlPayload::PairingChallenge(challenge_msg))?;
-
         self.pending_pairing = Some(PendingPairing {
             session,
-            challenge_nonce: nonce,
-            short_code: challenge.short_code,
-            local_confirmed: false,
+            transcript_hash,
+            short_code: if auto_accept {
+                String::new()
+            } else {
+                short_code
+            },
+            pairing_required: !auto_accept,
+            local_confirmed: auto_accept,
             remote_confirmed: false,
+            approval_sent: false,
             sender_committed: false,
             receiver_committed: false,
             expires_at: Instant::now() + PAIRING_CHALLENGE_TTL,
@@ -366,7 +392,11 @@ impl ReceiverSession {
             public_key: hello.public_key,
             video_allowed: false,
         });
-        self.status = ReceiverStatus::Pairing;
+        self.status = if auto_accept {
+            ReceiverStatus::Negotiating
+        } else {
+            ReceiverStatus::Pairing
+        };
         Ok(())
     }
 
@@ -392,17 +422,21 @@ impl ReceiverSession {
             return Err(ReceiverError::Protocol("pairing session mismatch".into()));
         }
 
-        let sender_id = self
+        let sender = self
             .active_sender
             .as_ref()
-            .map(|s| s.sender_id.as_str())
-            .unwrap_or("");
+            .ok_or_else(|| ReceiverError::Protocol("missing active Sender".into()))?;
 
-        verify_pairing_confirm(
-            &pending.challenge_nonce,
-            &self.identity.receiver_id,
-            sender_id,
-            &confirm.confirm_signature,
+        if confirm.transcript_hash != pending.transcript_hash {
+            return Err(ReceiverError::Protocol(
+                "PairingConfirm transcript mismatch".into(),
+            ));
+        }
+        verify_transcript_phase(
+            &sender.public_key,
+            &pending.transcript_hash,
+            SENDER_CONFIRM_PHASE,
+            &confirm.identity_signature,
         )
         .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
 
@@ -412,11 +446,11 @@ impl ReceiverSession {
         self.advance_pairing()
     }
 
-    pub(crate) fn pairing_transcript_matches(
+    pub(crate) fn verify_sender_phase(
         &self,
         session: SessionId,
-        nonce: &[u8],
         transcript_hash: &[u8],
+        signature: &[u8],
         phase: &[u8],
     ) -> bool {
         let Some(pending) = self.pending_pairing.as_ref() else {
@@ -426,14 +460,14 @@ impl ReceiverSession {
             return false;
         };
         session == pending.session
-            && nonce == pending.challenge_nonce
-            && transcript_hash
-                == pairing_transcript_hash(
-                    &pending.challenge_nonce,
-                    &self.identity.receiver_id,
-                    &active.sender_id,
-                    phase,
-                )
+            && transcript_hash == pending.transcript_hash
+            && verify_transcript_phase(
+                &active.public_key,
+                &pending.transcript_hash,
+                phase,
+                signature,
+            )
+            .is_ok()
     }
 
     fn finish_pairing_commit(&mut self) -> Result<(), ReceiverError> {
@@ -448,15 +482,17 @@ impl ReceiverSession {
         session: SessionId,
         commit: PairingCommit,
     ) -> Result<(), ReceiverError> {
-        if self.pairing_transcript_matches(
+        if self.verify_sender_phase(
             session,
-            &commit.challenge_nonce,
             &commit.transcript_hash,
+            &commit.identity_signature,
             PAIRING_COMMIT_PHASE,
         ) {
             self.finish_pairing_commit()
         } else {
-            Ok(())
+            Err(ReceiverError::Protocol(
+                "PairingCommit identity proof is invalid".into(),
+            ))
         }
     }
 
@@ -468,26 +504,29 @@ impl ReceiverSession {
             return Ok(());
         }
         let session = pending.session;
-        let challenge_nonce = pending.challenge_nonce.clone();
+        let transcript_hash = pending.transcript_hash;
+        let approval_sent = pending.approval_sent;
         let sender_committed = pending.sender_committed;
         let receiver_committed = pending.receiver_committed;
-        let sender_id = self
-            .active_sender
-            .as_ref()
-            .map(|active| active.sender_id.clone())
-            .unwrap_or_default();
 
         if !sender_committed {
+            if approval_sent {
+                return Ok(());
+            }
             let approval = PairingApproval {
-                challenge_nonce: challenge_nonce.clone(),
-                transcript_hash: pairing_transcript_hash(
-                    &challenge_nonce,
-                    &self.identity.receiver_id,
-                    &sender_id,
+                transcript_hash: transcript_hash.to_vec(),
+                identity_signature: sign_transcript_phase(
+                    self.identity.signer(),
+                    &transcript_hash,
                     PAIRING_APPROVAL_PHASE,
-                ),
+                )
+                .to_vec(),
             };
-            return self.send_control_payload(session, ControlPayload::PairingApproval(approval));
+            self.send_control_payload(session, ControlPayload::PairingApproval(approval))?;
+            if let Some(pending) = self.pending_pairing.as_mut() {
+                pending.approval_sent = true;
+            }
+            return Ok(());
         }
 
         if !receiver_committed {
@@ -517,13 +556,13 @@ impl ReceiverSession {
         }
 
         let complete = PairingComplete {
-            challenge_nonce: challenge_nonce.clone(),
-            transcript_hash: pairing_transcript_hash(
-                &challenge_nonce,
-                &self.identity.receiver_id,
-                &sender_id,
+            transcript_hash: transcript_hash.to_vec(),
+            identity_signature: sign_transcript_phase(
+                self.identity.signer(),
+                &transcript_hash,
                 PAIRING_COMPLETE_PHASE,
-            ),
+            )
+            .to_vec(),
         };
         self.send_control_payload(session, ControlPayload::PairingComplete(complete))?;
 

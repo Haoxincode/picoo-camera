@@ -3,6 +3,14 @@ use picoo_session::SenderStatus;
 
 use super::*;
 
+fn create_test_sender() -> *mut std::ffi::c_void {
+    let identity = picoo_pairing::DeviceIdentity::generate("Test Sender").expect("identity");
+    let identity_handle = Box::into_raw(Box::new(identity)) as *mut std::ffi::c_void;
+    let sender = picoo_sender_create(identity_handle);
+    picoo_identity_destroy(identity_handle);
+    sender
+}
+
 #[test]
 fn protocol_name_cstr() {
     let ptr = picoo_protocol_name();
@@ -11,7 +19,8 @@ fn protocol_name_cstr() {
 
 #[test]
 fn sender_rejects_offline_ingest_via_ffi() {
-    let handle = picoo_sender_create();
+    assert!(picoo_sender_create(std::ptr::null_mut()).is_null());
+    let handle = create_test_sender();
     assert!(!handle.is_null());
     let data = b"test-nalu";
     let mut out = 0u32;
@@ -43,6 +52,28 @@ fn sender_rejects_offline_ingest_via_ffi() {
 }
 
 #[test]
+fn sender_clones_the_supplied_signing_identity() {
+    let identity = picoo_pairing::DeviceIdentity::generate("Durable Sender").expect("identity");
+    let expected_id = identity.device_id().to_owned();
+    let identity_handle = Box::into_raw(Box::new(identity)) as *mut std::ffi::c_void;
+    let sender_handle = picoo_sender_create(identity_handle);
+    assert!(!sender_handle.is_null());
+
+    picoo_identity_destroy(identity_handle);
+    let sender = unsafe { &*(sender_handle as *mut crate::handles::SenderInner) };
+    assert_eq!(
+        sender
+            .session
+            .lock()
+            .expect("sender lock")
+            .identity()
+            .device_id(),
+        expected_id
+    );
+    picoo_sender_destroy(sender_handle);
+}
+
+#[test]
 fn sender_remove_trusted_device_c_abi_validates_and_persists_removal() {
     use picoo_pairing::TrustedDevice;
     use std::ffi::CString;
@@ -68,7 +99,7 @@ fn sender_remove_trusted_device_c_abi_validates_and_persists_removal() {
         .save_to_path(&store_path)
         .expect("seed trusted store");
     let store = CString::new(store_path.to_str().unwrap()).unwrap();
-    let handle = picoo_sender_create();
+    let handle = create_test_sender();
     assert!(!handle.is_null());
     assert_eq!(picoo_sender_attach_trusted_store(handle, store.as_ptr()), 0);
     assert_eq!(
@@ -152,7 +183,7 @@ fn extract_sps_pps_via_ffi() {
 
 #[test]
 fn sender_snapshot_is_coherent_before_capabilities() {
-    let handle = picoo_sender_create();
+    let handle = create_test_sender();
     assert!(!handle.is_null());
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
@@ -164,7 +195,7 @@ fn sender_snapshot_is_coherent_before_capabilities() {
 
 #[test]
 fn encoder_height_report_commits_only_the_matching_pending_epoch() {
-    let handle = picoo_sender_create();
+    let handle = create_test_sender();
     assert!(!handle.is_null());
     let pending = picoo_sender_begin_stream_reconfiguration(handle);
     assert!(pending > picoo_sender::INITIAL_STREAM_EPOCH);

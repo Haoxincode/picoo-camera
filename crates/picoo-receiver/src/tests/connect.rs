@@ -17,14 +17,6 @@ fn paired_connect_to_streaming_under_three_seconds() {
     let mut samples_ms = Vec::new();
     for round in 0..5u32 {
         let mut receiver = ReceiverSession::new();
-        receiver.trusted_devices_mut().upsert(TrustedDevice {
-            device_id: format!("conn-phone-{round}"),
-            device_name: "Conn".into(),
-            public_key: vec![4, 4, 4],
-            certificate_fingerprint: "fp".into(),
-            paired_at_ms: 0,
-            last_connected_at_ms: None,
-        });
         let bind = receiver
             .listen(Endpoint {
                 host: "127.0.0.1".into(),
@@ -32,6 +24,7 @@ fn paired_connect_to_streaming_under_three_seconds() {
             })
             .expect("listen");
         let mut sender = SenderSession::new(QuicSenderTransport::new());
+        super::trust_receiver(&mut sender, &mut receiver);
         let t0 = Instant::now();
         sender
             .connect(Endpoint {
@@ -47,9 +40,7 @@ fn paired_connect_to_streaming_under_three_seconds() {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        sender
-            .send_client_hello(&format!("conn-phone-{round}"), "Conn", &[4, 4, 4])
-            .expect("hello");
+        sender.send_client_hello().expect("hello");
         for _ in 0..400 {
             receiver.pump().ok();
             sender.pump().ok();
@@ -100,7 +91,7 @@ fn brief_disconnect_recovers_streaming_under_five_seconds() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -115,9 +106,7 @@ fn brief_disconnect_recovers_streaming_under_five_seconds() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("recov-phone", "Recov", &[5, 5, 5])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..400 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -188,7 +177,7 @@ fn paired_loopback_binds_lan_only_without_wan() {
     );
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -203,9 +192,7 @@ fn paired_loopback_binds_lan_only_without_wan() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("lan-phone", "LAN", &[1, 1, 1])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -256,7 +243,7 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -284,9 +271,7 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         sps: vec![0x67],
         pps: vec![0x68],
     });
-    sender
-        .send_client_hello("cap-phone", "Cap", &[2, 2, 2])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -336,19 +321,10 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
 #[test]
 fn manual_endpoint_connects_to_streaming() {
     // REQ-PICOO-DISCOVERY-007 / PUC-008: manual IP endpoint uses the normal QUIC path.
-    use picoo_pairing::TrustedDevice;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
-    receiver.trusted_devices_mut().upsert(TrustedDevice {
-        device_id: "manual-phone".into(),
-        device_name: "Manual".into(),
-        public_key: vec![4, 4, 4],
-        certificate_fingerprint: "fp".into(),
-        paired_at_ms: 0,
-        last_connected_at_ms: None,
-    });
     let bind = receiver
         .listen(Endpoint {
             host: "127.0.0.1".into(),
@@ -356,6 +332,7 @@ fn manual_endpoint_connects_to_streaming() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -364,7 +341,7 @@ fn manual_endpoint_connects_to_streaming() {
         .expect("connect from manual endpoint");
     // Android submits its stable identity immediately; QUIC is still connecting here.
     sender
-        .send_client_hello("manual-phone", "Manual", &[4, 4, 4])
+        .send_client_hello()
         .expect("queue hello while connecting");
     for _ in 0..200 {
         receiver.pump().ok();
@@ -418,7 +395,7 @@ fn run_reconnect_churn(rounds: u32) {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -433,9 +410,7 @@ fn run_reconnect_churn(rounds: u32) {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("churn-phone", "Churn", &[5, 5, 5])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..400 {
         receiver.pump().ok();
         sender.pump().ok();

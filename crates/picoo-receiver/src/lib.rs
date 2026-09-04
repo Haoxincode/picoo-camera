@@ -8,7 +8,7 @@ mod session;
 use std::time::Duration;
 
 use picoo_media_decode::DecodeError;
-use picoo_pairing::{IdentityError, PairingError, StoreError};
+use picoo_pairing::{DeviceIdentity, IdentityError, PairingError, StoreError};
 use picoo_transport::TransportError;
 use thiserror::Error;
 
@@ -52,18 +52,41 @@ pub enum ReceiverError {
 
 #[derive(Debug, Clone)]
 pub struct ReceiverIdentity {
-    pub receiver_id: String,
-    pub display_name: String,
-    pub public_key: Vec<u8>,
+    signer: DeviceIdentity,
+}
+
+impl ReceiverIdentity {
+    pub fn from_device_identity(identity: DeviceIdentity) -> Self {
+        Self { signer: identity }
+    }
+
+    pub fn receiver_id(&self) -> &str {
+        self.signer.device_id()
+    }
+
+    pub fn display_name(&self) -> &str {
+        self.signer.device_name()
+    }
+
+    pub fn public_key(&self) -> &[u8] {
+        self.signer.public_key()
+    }
+
+    pub fn set_display_name(&mut self, display_name: impl Into<String>) {
+        let display_name = display_name.into();
+        self.signer.set_device_name(&display_name);
+    }
+
+    fn signer(&self) -> &DeviceIdentity {
+        &self.signer
+    }
 }
 
 impl Default for ReceiverIdentity {
     fn default() -> Self {
-        Self {
-            receiver_id: "windows-receiver".into(),
-            display_name: "Picoo Camera".into(),
-            public_key: vec![0x04, 0x01],
-        }
+        let identity = DeviceIdentity::generate("Picoo Camera")
+            .expect("OS CSPRNG must be available when constructing a Receiver identity");
+        Self::from_device_identity(identity)
     }
 }
 

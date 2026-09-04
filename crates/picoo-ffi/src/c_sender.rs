@@ -1,4 +1,5 @@
 use crate::handles::{RecoverMutex, SenderInner};
+use picoo_pairing::DeviceIdentity;
 use picoo_sender::{EncoderDirective, SenderSession, SessionStats};
 use picoo_session::SenderStatus;
 use picoo_transport::{Endpoint, QuicSenderTransport};
@@ -16,11 +17,23 @@ pub extern "C" fn picoo_protocol_name() -> *const std::ffi::c_char {
     NAME.as_ptr() as *const std::ffi::c_char
 }
 
-/// Create a sender session (packetization + QUIC transport).
+/// Create a sender session bound to a durable signing identity.
+///
+/// The session clones the identity, so the caller may destroy the identity
+/// handle independently after this function returns.
 #[no_mangle]
-pub extern "C" fn picoo_sender_create() -> *mut std::ffi::c_void {
+pub extern "C" fn picoo_sender_create(
+    identity_handle: *mut std::ffi::c_void,
+) -> *mut std::ffi::c_void {
+    if identity_handle.is_null() {
+        return std::ptr::null_mut();
+    }
+    let identity = unsafe { &*(identity_handle as *mut DeviceIdentity) }.clone();
     Box::into_raw(Box::new(SenderInner {
-        session: Mutex::new(SenderSession::new(QuicSenderTransport::new())),
+        session: Mutex::new(SenderSession::new_with_identity(
+            QuicSenderTransport::new(),
+            identity,
+        )),
     })) as *mut std::ffi::c_void
 }
 

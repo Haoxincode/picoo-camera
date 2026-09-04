@@ -44,9 +44,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     }
     assert!(receiver.is_connected());
 
-    sender
-        .send_client_hello("soak-phone", "Soak Phone", &[7, 7, 7])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -57,7 +55,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     }
     receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("confirm");
     for _ in 0..200 {
         receiver.pump().expect("rx");
@@ -209,7 +207,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
 
     let lossy = LossyVideoTransport::new(QuicSenderTransport::new(), loss_ratio);
     let mut sender = SenderSession::new(lossy);
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -226,9 +224,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("lossy-phone", "Lossy", &[7, 7, 7])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -375,7 +371,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -390,9 +386,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("lat-phone", "Lat", &[3, 3, 3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -495,9 +489,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("lossy-h264", "LossyH264", &[7, 7, 7])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -605,9 +597,7 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("lat-h264", "LatH264", &[3, 3, 3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();

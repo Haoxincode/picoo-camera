@@ -132,27 +132,9 @@ fn encoder_command_request_keyframe_sets_flag() {
             port: 1,
         })
         .expect("connect");
-    session
-        .send_client_hello("sender", "Phone", &[1, 2, 3])
-        .expect("hello");
-    session
-        .trusted_devices_mut()
-        .upsert(picoo_pairing::TrustedDevice {
-            device_id: "receiver".into(),
-            device_name: "Receiver".into(),
-            public_key: vec![4, 5, 6],
-            certificate_fingerprint: "test".into(),
-            paired_at_ms: 1,
-            last_connected_at_ms: None,
-        });
-    session
-        .inject_control_payload_for_test(ControlPayload::ServerHello(ServerHello {
-            receiver_id: "receiver".into(),
-            display_name: "Receiver".into(),
-            public_key: vec![4, 5, 6],
-            pairing_required: false,
-        }))
-        .expect("authenticated server hello");
+    session.send_client_hello().expect("hello");
+    let receiver = picoo_pairing::DeviceIdentity::generate("Receiver").expect("identity");
+    authenticate_trusted_receiver(&mut session, &receiver);
     assert!(session.take_keyframe_request());
     let cmd = EncoderCommand {
         command: encoder_command::Command::RequestKeyframe as i32,

@@ -172,12 +172,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             ui.lastShownSessionError = ""
             ui.selectedReceiverId = receiverId
             ui.connectionStartedAtMs = System.currentTimeMillis()
-            val helloRc = PicooNative.sendClientHello(
-                runtime.senderHandle,
-                senderId = runtime.senderDeviceId,
-                deviceName = runtime.senderDeviceName,
-                publicKey = runtime.senderPublicKey,
-            )
+            val helloRc = PicooNative.sendClientHello(runtime.senderHandle)
             if (helloRc != 0) {
                 PicooNative.disconnect(runtime.senderHandle)
                 ui.connectionStartedAtMs = 0L

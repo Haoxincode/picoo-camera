@@ -290,11 +290,11 @@ impl ReceiverSession {
     }
 
     pub fn set_display_name(&mut self, display_name: impl Into<String>) {
-        self.identity.display_name = display_name.into();
+        self.identity.set_display_name(display_name);
     }
 
     pub fn display_name(&self) -> &str {
-        &self.identity.display_name
+        self.identity.display_name()
     }
 
     /// Used by GPUI desktop shell for live page sender label.
@@ -438,7 +438,10 @@ impl ReceiverSession {
                 TransportEvent::ControlMessage(session, msg)
                     if self.transport.active_session() == Some(session) =>
                 {
-                    self.handle_control(session, msg)?;
+                    if let Err(error) = self.handle_control(session, msg) {
+                        self.reject_control_session(session);
+                        return Err(error);
+                    }
                 }
                 TransportEvent::VideoPackets(session, packets)
                     if self.transport.active_session() == Some(session) =>
@@ -799,6 +802,20 @@ impl ReceiverSession {
         let _ = self.publish_waiting_placeholder();
     }
 
+    fn reject_control_session(&mut self, session: SessionId) {
+        self.transport.close(
+            session,
+            CloseReason::Error("invalid PCP control message".into()),
+        );
+        self.active_sender = None;
+        self.pending_pairing = None;
+        self.status = if self.bind_addr().is_some() {
+            ReceiverStatus::Discovering
+        } else {
+            ReceiverStatus::Disconnected
+        };
+    }
+
     /// Test-only: shorten/extend last-frame hold before placeholder (REQ-PICOO-FRAME-005).
     #[cfg(test)]
     pub fn set_last_frame_hold_for_test(&mut self, hold: Duration) {
@@ -842,10 +859,9 @@ impl ReceiverSession {
             self.last_received_control_message_id.saturating_add(1),
             generation,
         );
-        let previous_message_id = self.last_received_control_message_id;
         let result = self.handle_control(session, message);
         if result.is_err() {
-            self.last_received_control_message_id = previous_message_id;
+            self.reject_control_session(session);
         }
         result
     }

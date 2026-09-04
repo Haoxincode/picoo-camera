@@ -10,27 +10,31 @@ impl<T: PicooTransport> SenderSession<T> {
             return;
         }
         let Ok(envelope) = picoo_protocol::decode_control_envelope(&msg) else {
-            self.last_session_error = Some("INVALID_CONTROL_ENVELOPE".into());
+            self.reject_authentication("INVALID_CONTROL_ENVELOPE");
             return;
         };
         if envelope.connection_generation != session.0
             || envelope.message_id <= self.last_received_control_message_id
         {
-            self.last_session_error = Some("STALE_CONTROL_ENVELOPE".into());
+            self.reject_authentication("STALE_CONTROL_ENVELOPE");
             return;
         }
         self.last_received_control_message_id = envelope.message_id;
         let payload = envelope.payload.expect("validated envelope payload");
         if !self.control_payload_allowed(&payload) {
-            self.last_session_error = Some("CONTROL_PAYLOAD_NOT_ALLOWED".into());
+            self.reject_authentication("CONTROL_PAYLOAD_NOT_ALLOWED");
             return;
         }
         match payload {
             ControlPayload::PairingApproval(approval) => {
-                self.handle_pairing_approval(session, &approval);
+                if !self.handle_pairing_approval(session, &approval) {
+                    self.reject_authentication("INVALID_RECEIVER_APPROVAL");
+                }
             }
             ControlPayload::PairingComplete(complete) => {
-                self.handle_pairing_complete(session, &complete);
+                if !self.handle_pairing_complete(session, &complete) {
+                    self.reject_authentication("INVALID_RECEIVER_COMPLETE");
+                }
             }
             ControlPayload::ReceiverStats(stats) => self.apply_receiver_stats(stats),
             ControlPayload::EncoderCommand(command) => {
@@ -41,9 +45,6 @@ impl<T: PicooTransport> SenderSession<T> {
             }
             ControlPayload::Capabilities(capabilities) => {
                 self.handle_capabilities(capabilities);
-            }
-            ControlPayload::PairingChallenge(challenge) => {
-                self.handle_pairing_challenge(challenge);
             }
             ControlPayload::SessionError(error) => {
                 self.handle_session_error(error);
@@ -56,9 +57,12 @@ impl<T: PicooTransport> SenderSession<T> {
     fn control_payload_allowed(&self, payload: &ControlPayload) -> bool {
         match payload {
             ControlPayload::ServerHello(_) => self.status == SenderStatus::Negotiating,
-            ControlPayload::PairingChallenge(_)
-            | ControlPayload::PairingApproval(_)
-            | ControlPayload::PairingComplete(_) => self.status == SenderStatus::Pairing,
+            ControlPayload::PairingApproval(_) | ControlPayload::PairingComplete(_) => {
+                matches!(
+                    self.status,
+                    SenderStatus::Pairing | SenderStatus::Negotiating
+                )
+            }
             ControlPayload::Capabilities(_)
             | ControlPayload::ReceiverStats(_)
             | ControlPayload::EncoderCommand(_)

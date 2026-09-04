@@ -931,7 +931,6 @@ QUIC Connection
 - ClientHello
 - ServerHello
 - Capabilities
-- PairingChallenge
 - PairingConfirm
 - PairingApproval
 - PairingCommit
@@ -945,6 +944,10 @@ QUIC Connection
 - RequestKeyframe
 - Heartbeat
 - SessionError
+
+首次配对短码不是控制消息字段。Sender 与 Receiver 分别从双方设备 ID、Ed25519 公钥、随机
+nonce、TLS exporter channel binding 和 connection generation 计算同一个 SAS；后续确认、提交与
+完成消息分别携带该 transcript 的阶段化 Ed25519 签名。
 
 **StreamConfig**
 

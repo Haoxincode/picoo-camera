@@ -9,7 +9,7 @@ use picoo_rate_control::BitrateLadder;
 use picoo_sender::{SenderSession, StreamConfigParams};
 use picoo_transport::{Endpoint, QuicSenderTransport};
 
-use super::{java_string, new_java_string, senders, with_sender};
+use super::{identities, java_string, new_java_string, senders, with_sender};
 use crate::c_sender::sender_snapshot;
 use crate::handles::SenderInner;
 
@@ -25,9 +25,20 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getProtocolName(
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_createSender(
     _env: JNIEnv<'_>,
     _this: JObject<'_>,
+    identity_handle: jlong,
 ) -> jlong {
+    let identity = identities()
+        .lock()
+        .ok()
+        .and_then(|handles| handles.values.get(&identity_handle).cloned());
+    let Some(identity) = identity else {
+        return 0;
+    };
     let inner = SenderInner {
-        session: Mutex::new(SenderSession::new(QuicSenderTransport::new())),
+        session: Mutex::new(SenderSession::new_with_identity(
+            QuicSenderTransport::new(),
+            identity,
+        )),
     };
     senders()
         .lock()
@@ -308,35 +319,15 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_nackEncoderDirectiv
 
 #[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_sendClientHello(
-    mut env: JNIEnv<'_>,
+    _env: JNIEnv<'_>,
     _this: JObject<'_>,
     handle: jlong,
-    sender_id: JString<'_>,
-    device_name: JString<'_>,
-    public_key: JByteArray<'_>,
 ) -> jint {
-    let (Some(sender_id), Some(device_name)) = (
-        java_string(&mut env, sender_id),
-        java_string(&mut env, device_name),
-    ) else {
-        return -1;
-    };
-    let public_key = if public_key.is_null() {
-        Vec::new()
-    } else {
-        match env.convert_byte_array(public_key) {
-            Ok(bytes) => bytes,
-            Err(_) => return -1,
-        }
-    };
     with_sender(handle, |inner| {
         let Ok(mut session) = inner.session.lock() else {
             return -1;
         };
-        session
-            .send_client_hello(&sender_id, &device_name, &public_key)
-            .map(|_| 0)
-            .unwrap_or(-2)
+        session.send_client_hello().map(|_| 0).unwrap_or(-2)
     })
     .unwrap_or(-1)
 }

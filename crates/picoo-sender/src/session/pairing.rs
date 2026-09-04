@@ -1,12 +1,12 @@
 use std::path::Path;
 
 use picoo_pairing::{
-    pairing_confirm_signature, pairing_transcript_hash, trusted_device_from_pairing,
-    TrustedDeviceStore,
+    derive_device_id, random_challenge_nonce, sign_transcript_phase, trusted_device_from_pairing,
+    verify_transcript_phase, PairingTranscript, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
-    control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingChallenge,
-    PairingCommit, PairingComplete, PairingConfirm, ServerHello, SessionError,
+    control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingCommit,
+    PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
 use picoo_session::SenderStatus;
 use picoo_transport::{PicooTransport, SessionId};
@@ -14,26 +14,22 @@ use picoo_transport::{PicooTransport, SessionId};
 use super::SenderSession;
 use crate::SenderError;
 
-pub(super) const PAIRING_APPROVAL_PHASE: &[u8] = b"pairing-approval-v2";
-const PAIRING_COMMIT_PHASE: &[u8] = b"pairing-commit-v2";
-pub(super) const PAIRING_COMPLETE_PHASE: &[u8] = b"pairing-complete-v2";
+pub(super) const SERVER_HELLO_PHASE: &[u8] = b"server-hello";
+pub(super) const SENDER_CONFIRM_PHASE: &[u8] = b"sender-confirm";
+pub(super) const PAIRING_APPROVAL_PHASE: &[u8] = b"receiver-approval";
+const PAIRING_COMMIT_PHASE: &[u8] = b"sender-commit";
+pub(super) const PAIRING_COMPLETE_PHASE: &[u8] = b"receiver-complete";
 
 #[derive(Debug, Clone)]
 pub(super) struct SenderPairing {
     receiver_id: String,
     display_name: String,
     public_key: Vec<u8>,
-    challenge_nonce: Vec<u8>,
+    transcript_hash: [u8; 32],
     short_code: String,
+    pairing_required: bool,
     confirm_sent: bool,
     trust_committed: bool,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct ClientHelloParams {
-    sender_id: String,
-    device_name: String,
-    public_key: Vec<u8>,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -109,28 +105,25 @@ impl<T: PicooTransport> SenderSession<T> {
             .unwrap_or(0)
     }
 
-    fn pairing_transcript_matches(
+    fn verify_receiver_phase(
         &self,
         session: SessionId,
-        nonce: &[u8],
         transcript_hash: &[u8],
+        signature: &[u8],
         phase: &[u8],
     ) -> bool {
         let Some(pairing) = self.pairing.as_ref() else {
             return false;
         };
-        let Some(sender_id) = self.sender_id.as_deref() else {
-            return false;
-        };
         self.session == Some(session)
-            && nonce == pairing.challenge_nonce
-            && transcript_hash
-                == pairing_transcript_hash(
-                    &pairing.challenge_nonce,
-                    &pairing.receiver_id,
-                    sender_id,
-                    phase,
-                )
+            && transcript_hash == pairing.transcript_hash
+            && verify_transcript_phase(
+                &pairing.public_key,
+                &pairing.transcript_hash,
+                phase,
+                signature,
+            )
+            .is_ok()
     }
 
     pub(super) fn handle_pairing_approval(
@@ -138,10 +131,10 @@ impl<T: PicooTransport> SenderSession<T> {
         session: SessionId,
         approval: &PairingApproval,
     ) -> bool {
-        if self.pairing_transcript_matches(
+        if self.verify_receiver_phase(
             session,
-            &approval.challenge_nonce,
             &approval.transcript_hash,
+            &approval.identity_signature,
             PAIRING_APPROVAL_PHASE,
         ) {
             self.accept_pairing_approval();
@@ -156,41 +149,13 @@ impl<T: PicooTransport> SenderSession<T> {
         session: SessionId,
         complete: &PairingComplete,
     ) -> bool {
-        if self.pairing_transcript_matches(
+        if self.verify_receiver_phase(
             session,
-            &complete.challenge_nonce,
             &complete.transcript_hash,
+            &complete.identity_signature,
             PAIRING_COMPLETE_PHASE,
         ) {
             self.accept_pairing_complete();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(super) fn handle_pairing_challenge(&mut self, challenge: PairingChallenge) -> bool {
-        let valid = challenge.challenge_nonce.len() == 32
-            && challenge.short_code.len() == 6
-            && challenge.short_code.chars().all(|c| c.is_ascii_digit());
-        if valid {
-            if let Some(pairing) = self.pairing.as_mut() {
-                pairing.challenge_nonce = challenge.challenge_nonce;
-                pairing.short_code = challenge.short_code;
-                pairing.confirm_sent = false;
-                pairing.trust_committed = false;
-            } else {
-                self.pairing = Some(SenderPairing {
-                    receiver_id: String::new(),
-                    display_name: String::new(),
-                    public_key: Vec::new(),
-                    challenge_nonce: challenge.challenge_nonce,
-                    short_code: challenge.short_code,
-                    confirm_sent: false,
-                    trust_committed: false,
-                });
-            }
-            self.status = SenderStatus::Pairing;
             true
         } else {
             false
@@ -210,79 +175,115 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn on_server_hello(&mut self, hello: ServerHello) {
-        if hello.receiver_id.is_empty() {
+        let Some(session) = self.session else {
+            self.reject_authentication("PAIRING_SESSION_MISSING");
+            return;
+        };
+        let Some(sender_nonce) = self.sender_nonce else {
+            self.reject_authentication("PAIRING_SENDER_NONCE_MISSING");
+            return;
+        };
+        if hello.receiver_id.is_empty()
+            || derive_device_id(&hello.public_key) != hello.receiver_id
+            || hello.receiver_nonce.len() != 32
+        {
+            self.reject_authentication("INVALID_RECEIVER_IDENTITY");
             return;
         }
+        let Ok(channel_binding) = self.transport.channel_binding(session) else {
+            self.reject_authentication("CHANNEL_BINDING_UNAVAILABLE");
+            return;
+        };
+        let transcript = PairingTranscript {
+            sender_id: self.identity.device_id(),
+            sender_public_key: self.identity.public_key(),
+            sender_nonce: &sender_nonce,
+            receiver_id: &hello.receiver_id,
+            receiver_public_key: &hello.public_key,
+            receiver_nonce: &hello.receiver_nonce,
+            channel_binding: &channel_binding,
+            connection_generation: session.0,
+        };
+        let Ok(transcript_hash) = transcript.hash() else {
+            self.reject_authentication("INVALID_PAIRING_TRANSCRIPT");
+            return;
+        };
+        let Ok(short_code) = transcript.short_code() else {
+            self.reject_authentication("INVALID_PAIRING_TRANSCRIPT");
+            return;
+        };
+        if hello.transcript_hash != transcript_hash
+            || verify_transcript_phase(
+                &hello.public_key,
+                &transcript_hash,
+                SERVER_HELLO_PHASE,
+                &hello.identity_signature,
+            )
+            .is_err()
+        {
+            self.reject_authentication("INVALID_RECEIVER_PROOF");
+            return;
+        }
+
         let receiver_is_trusted = self.trusted.is_paired(&hello.receiver_id);
-        if receiver_is_trusted {
-            if self
+        if receiver_is_trusted
+            && self
                 .trusted
                 .verify_paired_key(&hello.receiver_id, &hello.public_key)
                 .is_err()
-            {
-                if let Some(session) = self.session.take() {
-                    self.transport
-                        .close(session, picoo_transport::CloseReason::LocalClose);
-                }
-                self.status = SenderStatus::Disconnected;
-                self.pairing = None;
-                return;
-            }
-            self.trusted
-                .touch_last_connected(&hello.receiver_id, self.now_ms());
-            let _ = self.persist_trusted();
-        }
-
-        if !hello.pairing_required && !receiver_is_trusted {
-            self.last_session_error = Some("UNTRUSTED_PAIRING_BYPASS".into());
-            if let Some(session) = self.session.take() {
-                self.transport
-                    .close(session, picoo_transport::CloseReason::LocalClose);
-            }
-            self.status = SenderStatus::Disconnected;
-            self.pairing = None;
+        {
+            self.reject_authentication("PUBLIC_KEY_CHANGED");
             return;
         }
 
-        if hello.pairing_required {
-            if let Some(pairing) = self.pairing.as_mut() {
-                pairing.receiver_id = hello.receiver_id;
-                pairing.display_name = hello.display_name;
-                pairing.public_key = hello.public_key;
+        if !hello.pairing_required && !receiver_is_trusted {
+            self.reject_authentication("UNTRUSTED_PAIRING_BYPASS");
+            return;
+        }
+
+        self.pairing = Some(SenderPairing {
+            receiver_id: hello.receiver_id,
+            display_name: hello.display_name,
+            public_key: hello.public_key,
+            transcript_hash,
+            short_code: if hello.pairing_required {
+                short_code
             } else {
-                self.pairing = Some(SenderPairing {
-                    receiver_id: hello.receiver_id,
-                    display_name: hello.display_name,
-                    public_key: hello.public_key,
-                    challenge_nonce: Vec::new(),
-                    short_code: String::new(),
-                    confirm_sent: false,
-                    trust_committed: false,
-                });
-            }
+                String::new()
+            },
+            pairing_required: hello.pairing_required,
+            confirm_sent: false,
+            trust_committed: false,
+        });
+
+        if hello.pairing_required {
             self.status = SenderStatus::Pairing;
         } else {
-            if let Some(pairing) = self.pairing.as_mut() {
-                pairing.receiver_id = hello.receiver_id;
-                pairing.display_name = hello.display_name;
-                pairing.public_key = hello.public_key;
-            } else {
-                self.pairing = Some(SenderPairing {
-                    receiver_id: hello.receiver_id,
-                    display_name: hello.display_name,
-                    public_key: hello.public_key,
-                    challenge_nonce: Vec::new(),
-                    short_code: String::new(),
-                    confirm_sent: false,
-                    trust_committed: false,
-                });
+            self.status = SenderStatus::Negotiating;
+            if self.send_identity_confirm().is_err() {
+                self.reject_authentication("SENDER_PROOF_SEND_FAILED");
             }
-            self.enter_streaming();
         }
     }
 
+    pub(super) fn reject_authentication(&mut self, code: &str) {
+        self.last_session_error = Some(code.into());
+        self.auto_reconnect = false;
+        self.reconnect_after = None;
+        if let Some(session) = self.session.take() {
+            self.transport
+                .close(session, picoo_transport::CloseReason::LocalClose);
+        }
+        self.status = SenderStatus::Disconnected;
+        self.pairing = None;
+        self.sender_nonce = None;
+    }
+
     fn accept_pairing_approval(&mut self) {
-        if self.status != SenderStatus::Pairing {
+        if !matches!(
+            self.status,
+            SenderStatus::Pairing | SenderStatus::Negotiating
+        ) {
             return;
         }
         let Some(pairing) = self.pairing.clone() else {
@@ -305,12 +306,17 @@ impl<T: PicooTransport> SenderSession<T> {
                 pairing.display_name.as_str()
             };
             let previous_trusted = self.trusted.clone();
-            self.trusted.upsert(trusted_device_from_pairing(
-                &pairing.receiver_id,
-                display_name,
-                &pairing.public_key,
-                self.now_ms(),
-            ));
+            if self.trusted.is_paired(&pairing.receiver_id) {
+                self.trusted
+                    .touch_last_connected(&pairing.receiver_id, self.now_ms());
+            } else {
+                self.trusted.upsert(trusted_device_from_pairing(
+                    &pairing.receiver_id,
+                    display_name,
+                    &pairing.public_key,
+                    self.now_ms(),
+                ));
+            }
             if self.persist_trusted().is_err() {
                 self.trusted = previous_trusted;
                 self.last_session_error = Some("PAIRING_STORE_FAILED".into());
@@ -325,18 +331,14 @@ impl<T: PicooTransport> SenderSession<T> {
             self.last_session_error = Some("PAIRING_SESSION_MISSING".into());
             return;
         };
-        let Some(sender_id) = self.sender_id.as_deref() else {
-            self.last_session_error = Some("PAIRING_SENDER_ID_MISSING".into());
-            return;
-        };
         let commit = PairingCommit {
-            challenge_nonce: pairing.challenge_nonce.clone(),
-            transcript_hash: pairing_transcript_hash(
-                &pairing.challenge_nonce,
-                &pairing.receiver_id,
-                sender_id,
+            transcript_hash: pairing.transcript_hash.to_vec(),
+            identity_signature: sign_transcript_phase(
+                &self.identity,
+                &pairing.transcript_hash,
                 PAIRING_COMMIT_PHASE,
-            ),
+            )
+            .to_vec(),
         };
         if self
             .send_control_payload(active_session, ControlPayload::PairingCommit(commit))
@@ -349,7 +351,10 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     fn accept_pairing_complete(&mut self) {
-        if self.status != SenderStatus::Pairing {
+        if !matches!(
+            self.status,
+            SenderStatus::Pairing | SenderStatus::Negotiating
+        ) {
             return;
         }
         let Some(pairing) = self.pairing.as_ref() else {
@@ -377,12 +382,7 @@ impl<T: PicooTransport> SenderSession<T> {
             .and_then(|p| (!p.short_code.is_empty()).then_some(p.short_code.as_str()))
     }
 
-    pub fn send_client_hello(
-        &mut self,
-        sender_id: &str,
-        device_name: &str,
-        public_key: &[u8],
-    ) -> Result<(), SenderError> {
+    pub fn send_client_hello(&mut self) -> Result<(), SenderError> {
         let connection_pending = matches!(
             self.status,
             SenderStatus::Connecting | SenderStatus::Reconnecting
@@ -392,13 +392,7 @@ impl<T: PicooTransport> SenderSession<T> {
         }
 
         self.last_session_error = None;
-        self.sender_id = Some(sender_id.into());
-        let params = ClientHelloParams {
-            sender_id: sender_id.to_string(),
-            device_name: device_name.to_string(),
-            public_key: public_key.to_vec(),
-        };
-        self.hello_params = Some(params.clone());
+        self.hello_requested = true;
 
         // QUIC connect is asynchronous on mobile. Treat ClientHello as the desired
         // first control message and let `on_connected` emit it once a session exists.
@@ -407,48 +401,60 @@ impl<T: PicooTransport> SenderSession<T> {
             return Ok(());
         }
 
-        self.emit_client_hello(&params)?;
+        self.emit_client_hello()?;
         self.status = SenderStatus::Negotiating;
         self.drain_events();
         Ok(())
     }
 
-    pub(super) fn emit_client_hello(
-        &mut self,
-        params: &ClientHelloParams,
-    ) -> Result<(), SenderError> {
+    pub(super) fn emit_client_hello(&mut self) -> Result<(), SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
+        let sender_nonce =
+            random_challenge_nonce().map_err(|error| SenderError::Protocol(error.to_string()))?;
+        self.sender_nonce = Some(sender_nonce);
+        self.pairing = None;
         let hello = ClientHello {
-            sender_id: params.sender_id.clone(),
-            device_name: params.device_name.clone(),
-            public_key: params.public_key.clone(),
+            sender_id: self.identity.device_id().to_owned(),
+            device_name: self.identity.device_name().to_owned(),
+            public_key: self.identity.public_key().to_vec(),
+            sender_nonce: sender_nonce.to_vec(),
         };
         self.send_control_payload(session, ControlPayload::ClientHello(hello))?;
         Ok(())
     }
 
     pub fn send_pairing_confirm(&mut self, receiver_id: &str) -> Result<(), SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
         let pairing = self
             .pairing
             .as_ref()
             .ok_or_else(|| SenderError::Protocol("no pairing challenge".into()))?;
-        let sender_id = self
-            .sender_id
-            .as_deref()
-            .ok_or_else(|| SenderError::Protocol("missing sender id".into()))?;
         if pairing.receiver_id != receiver_id {
             return Err(SenderError::Protocol(
                 "pairing receiver id does not match ServerHello".into(),
             ));
         }
+        if !pairing.pairing_required {
+            return Err(SenderError::Protocol(
+                "trusted reconnect does not require user confirmation".into(),
+            ));
+        }
+        self.send_identity_confirm()
+    }
 
+    fn send_identity_confirm(&mut self) -> Result<(), SenderError> {
+        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let pairing = self
+            .pairing
+            .as_ref()
+            .ok_or_else(|| SenderError::Protocol("no authentication challenge".into()))?;
         let confirm = PairingConfirm {
-            confirm_signature: pairing_confirm_signature(
-                &pairing.challenge_nonce,
-                receiver_id,
-                sender_id,
-            ),
+            transcript_hash: pairing.transcript_hash.to_vec(),
+            identity_signature: sign_transcript_phase(
+                &self.identity,
+                &pairing.transcript_hash,
+                SENDER_CONFIRM_PHASE,
+            )
+            .to_vec(),
         };
         self.send_control_payload(session, ControlPayload::PairingConfirm(confirm))?;
         if let Some(pairing) = self.pairing.as_mut() {

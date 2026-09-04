@@ -75,6 +75,7 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
         sender_id: "android-sender".into(),
         device_name: "Pixel Test".into(),
         public_key: vec![1, 2, 3],
+        sender_nonce: vec![2; 32],
     };
     sender.send_control(
         sender_session,
@@ -101,6 +102,9 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
         display_name: "Work PC".into(),
         public_key: vec![4, 5, 6],
         pairing_required: true,
+        receiver_nonce: vec![3; 32],
+        transcript_hash: vec![4; 32],
+        identity_signature: vec![5; 64],
     };
     receiver.send_control(
         receiver_session,

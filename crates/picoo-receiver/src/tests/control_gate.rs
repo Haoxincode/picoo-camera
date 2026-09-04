@@ -78,9 +78,7 @@ fn unpaired_start_stream_is_rejected() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("unpaired-phone", "Unpaired", &[4, 4, 4])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
 
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -92,21 +90,6 @@ fn unpaired_start_stream_is_rejected() {
     }
     assert!(receiver.pairing_short_code().is_some());
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
-
-    let unauthorized_config = picoo_protocol::control::StreamConfig {
-        codec: "h264".into(),
-        width: 1920,
-        height: 1080,
-        fps: 30,
-        stream_epoch: 1,
-        ..Default::default()
-    };
-    assert!(receiver
-        .inject_control_payload_for_test(
-            picoo_protocol::control::control_envelope::Payload::StreamConfig(unauthorized_config,),
-        )
-        .is_err());
-    assert!(receiver.stream_config().is_none());
 
     let rejected_before = receiver.stats().control_rejected_unpaired;
     sender.send_start_stream().expect("start stream");
@@ -123,6 +106,22 @@ fn unpaired_start_stream_is_rejected() {
     assert_eq!(sender.last_session_error(), Some("UNPAIRED"));
     assert!(receiver.stats().control_rejected_unpaired > rejected_before);
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
+
+    let unauthorized_config = picoo_protocol::control::StreamConfig {
+        codec: "h264".into(),
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        stream_epoch: 1,
+        ..Default::default()
+    };
+    assert!(receiver
+        .inject_control_payload_for_test(
+            picoo_protocol::control::control_envelope::Payload::StreamConfig(unauthorized_config,),
+        )
+        .is_err());
+    assert!(receiver.stream_config().is_none());
+    assert_eq!(receiver.status(), ReceiverStatus::Discovering);
 }
 
 #[test]
@@ -156,9 +155,7 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("ctrl-phone", "Ctrl", &[5, 5, 5])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
@@ -169,7 +166,7 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
     }
     receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("confirm");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
@@ -313,9 +310,7 @@ fn unpaired_stop_stream_is_ignored_without_teardown() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("stop-unpaired", "StopU", &[6, 6, 6])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
@@ -368,9 +363,7 @@ fn camera_command_rejected_while_unpaired() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("cam-rej", "CamRej", &[1, 1, 1])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");

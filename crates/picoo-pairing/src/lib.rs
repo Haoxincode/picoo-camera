@@ -9,16 +9,14 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 pub use handshake::{
-    new_pairing_challenge, pairing_confirm_signature, pairing_transcript_hash,
     public_key_fingerprint, public_key_fingerprint_prefix, random_challenge_nonce,
-    sign_transcript_phase, trusted_device_from_pairing, verify_pairing_confirm,
-    verify_transcript_phase, PairingChallenge, PairingHandshakeError, PairingTranscript,
+    sign_transcript_phase, trusted_device_from_pairing, verify_transcript_phase,
+    PairingHandshakeError, PairingTranscript,
 };
 pub use identity::{
     derive_device_id, verify_identity_signature, DeviceIdentity, IdentityError, PUBLIC_KEY_LEN,
     SECRET_KEY_LEN, SIGNATURE_LEN,
 };
-use sha2::{Digest, Sha256};
 pub use store::StoreError;
 use thiserror::Error;
 
@@ -56,17 +54,6 @@ pub enum PairingError {
     PublicKeyMismatch { device_id: String },
     #[error("device not paired")]
     NotPaired,
-}
-
-/// Derive a six-digit short code from handshake context (deterministic for tests).
-pub fn derive_short_code(challenge_nonce: &[u8], local_id: &str, remote_id: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(challenge_nonce);
-    hasher.update(local_id.as_bytes());
-    hasher.update(remote_id.as_bytes());
-    let digest = hasher.finalize();
-    let value = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]) % 1_000_000;
-    format!("{value:06}")
 }
 
 pub fn verify_public_key(device: &TrustedDevice, observed_key: &[u8]) -> Result<(), PairingError> {
@@ -213,14 +200,6 @@ fn normalized_device_name(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn short_code_is_six_digits_and_deterministic() {
-        let code = derive_short_code(b"nonce", "sender", "receiver");
-        assert_eq!(code.len(), 6);
-        assert!(code.chars().all(|c| c.is_ascii_digit()));
-        assert_eq!(code, derive_short_code(b"nonce", "sender", "receiver"));
-    }
 
     #[test]
     fn rejects_public_key_mismatch() {

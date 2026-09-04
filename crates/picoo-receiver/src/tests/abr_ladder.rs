@@ -66,9 +66,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("abr-phone", "Abr", &[5, 5, 5])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -293,9 +291,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("abr-up-phone", "AbrUp", &[6, 6, 6])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");

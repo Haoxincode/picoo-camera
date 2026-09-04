@@ -71,9 +71,7 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("epoch-phone", "Epoch", &[8, 8, 8])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -223,9 +221,7 @@ fn midstream_resolution_change_openh264_updates_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("res-phone", "Res", &[6, 6, 6])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -402,9 +398,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("idr-phone", "Idr", &[9, 9, 9])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");

@@ -179,7 +179,7 @@ pub extern "C" fn picoo_identity_device_id(
         return -1;
     }
     let identity = unsafe { &*(handle as *mut DeviceIdentity) };
-    copy_str_to_buf(&identity.device_id, out, out_len)
+    copy_str_to_buf(identity.device_id(), out, out_len)
 }
 
 #[no_mangle]
@@ -192,7 +192,7 @@ pub extern "C" fn picoo_identity_device_name(
         return -1;
     }
     let identity = unsafe { &*(handle as *mut DeviceIdentity) };
-    copy_str_to_buf(&identity.device_name, out, out_len)
+    copy_str_to_buf(identity.device_name(), out, out_len)
 }
 
 /// Copy public key bytes into `out`. Returns length, or negative on error.

@@ -1,4 +1,3 @@
-use picoo_pairing::pairing_transcript_hash;
 use picoo_protocol::control::{PairingApproval, PairingComplete};
 
 use super::super::pairing::{PAIRING_APPROVAL_PHASE, PAIRING_COMPLETE_PHASE};
@@ -19,38 +18,24 @@ fn pairing_confirm_waits_for_receiver_completion() {
         port: 4433,
     };
     session.connect(endpoint).expect("connect");
-    session
-        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
-        .expect("client hello");
+    session.send_client_hello().expect("client hello");
 
-    let hello = ServerHello {
-        receiver_id: "windows-receiver".into(),
-        display_name: "Picoo Camera".into(),
-        public_key: vec![4, 5, 6],
-        pairing_required: true,
-    };
+    let receiver = picoo_pairing::DeviceIdentity::generate("Picoo Camera").expect("identity");
+    let (hello, transcript_hash) = signed_server_hello(&session, &receiver, true);
     session
         .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
         .expect("inject hello");
-
-    let challenge_nonce = vec![0xABu8; 32];
-    let challenge = PairingChallenge {
-        short_code: "123456".into(),
-        challenge_nonce: challenge_nonce.clone(),
-    };
-    session
-        .inject_control_payload_for_test(ControlPayload::PairingChallenge(challenge))
-        .expect("inject challenge");
+    assert!(session.pairing_short_code().is_some());
     let _ = session.take_keyframe_request();
 
     let approval = PairingApproval {
-        challenge_nonce: challenge_nonce.clone(),
-        transcript_hash: pairing_transcript_hash(
-            &challenge_nonce,
-            "windows-receiver",
-            "android-sender",
+        transcript_hash: transcript_hash.to_vec(),
+        identity_signature: picoo_pairing::sign_transcript_phase(
+            &receiver,
+            &transcript_hash,
             PAIRING_APPROVAL_PHASE,
-        ),
+        )
+        .to_vec(),
     };
     session
         .inject_control_payload_for_test(ControlPayload::PairingApproval(approval.clone()))
@@ -60,14 +45,14 @@ fn pairing_confirm_waits_for_receiver_completion() {
         session.last_session_error(),
         Some("PAIRING_LOCAL_CONFIRM_MISSING")
     );
-    assert!(!session.trusted_devices().is_paired("windows-receiver"));
+    assert!(!session.trusted_devices().is_paired(receiver.device_id()));
 
     session
-        .send_pairing_confirm("windows-receiver")
+        .send_pairing_confirm(receiver.device_id())
         .expect("confirm");
 
     assert_eq!(session.status(), SenderStatus::Pairing);
-    assert!(!session.trusted_devices().is_paired("windows-receiver"));
+    assert!(!session.trusted_devices().is_paired(receiver.device_id()));
     assert!(!session.take_keyframe_request());
     assert!(matches!(
         session.ingest_access_unit(b"must-not-send", true, 1, INITIAL_STREAM_EPOCH),
@@ -80,23 +65,23 @@ fn pairing_confirm_waits_for_receiver_completion() {
         SessionId(active_session.0 + 1),
         ControlPayload::PairingApproval(approval.clone()),
     );
-    assert!(!session.trusted_devices().is_paired("windows-receiver"));
+    assert!(!session.trusted_devices().is_paired(receiver.device_id()));
 
     session
         .inject_control_payload_for_test(ControlPayload::PairingApproval(approval))
         .expect("inject approval");
     assert_eq!(session.status(), SenderStatus::Pairing);
-    assert!(session.trusted_devices().is_paired("windows-receiver"));
+    assert!(session.trusted_devices().is_paired(receiver.device_id()));
     assert!(!session.take_keyframe_request());
 
     let complete = PairingComplete {
-        challenge_nonce: challenge_nonce.clone(),
-        transcript_hash: pairing_transcript_hash(
-            &challenge_nonce,
-            "windows-receiver",
-            "android-sender",
+        transcript_hash: transcript_hash.to_vec(),
+        identity_signature: picoo_pairing::sign_transcript_phase(
+            &receiver,
+            &transcript_hash,
             PAIRING_COMPLETE_PHASE,
-        ),
+        )
+        .to_vec(),
     };
     session
         .inject_control_payload_for_test(ControlPayload::PairingComplete(complete))
@@ -109,7 +94,7 @@ fn pairing_confirm_waits_for_receiver_completion() {
     );
 
     let loaded = TrustedDeviceStore::load_from_path(&store_path).expect("load");
-    assert!(loaded.is_paired("windows-receiver"));
+    assert!(loaded.is_paired(receiver.device_id()));
 }
 
 #[test]
@@ -141,17 +126,12 @@ fn unknown_receiver_cannot_disable_pairing() {
             port: 4433,
         })
         .expect("connect");
-    session
-        .send_client_hello("sender", "Phone", &[1, 2, 3])
-        .expect("hello");
+    session.send_client_hello().expect("hello");
 
+    let receiver = picoo_pairing::DeviceIdentity::generate("Unknown").expect("identity");
+    let (hello, _) = signed_server_hello(&session, &receiver, false);
     session
-        .inject_control_payload_for_test(ControlPayload::ServerHello(ServerHello {
-            receiver_id: "unknown-receiver".into(),
-            display_name: "Unknown".into(),
-            public_key: vec![9, 9, 9],
-            pairing_required: false,
-        }))
+        .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
         .expect("inject bypass attempt");
 
     assert_eq!(session.status(), SenderStatus::Disconnected);
@@ -159,6 +139,62 @@ fn unknown_receiver_cannot_disable_pairing() {
         session.last_session_error(),
         Some("UNTRUSTED_PAIRING_BYPASS")
     );
+    assert!(!session.is_connected());
+}
+
+#[test]
+fn sender_rejects_receiver_without_matching_private_key_proof() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.send_client_hello().expect("hello");
+
+    let receiver = picoo_pairing::DeviceIdentity::generate("Receiver").expect("identity");
+    session
+        .trusted_devices_mut()
+        .upsert(picoo_pairing::trusted_device_from_pairing(
+            receiver.device_id(),
+            receiver.device_name(),
+            receiver.public_key(),
+            1,
+        ));
+    let (mut hello, _) = signed_server_hello(&session, &receiver, false);
+    hello.identity_signature = vec![0; 64];
+    session
+        .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
+        .expect("inject invalid proof");
+
+    assert_eq!(session.status(), SenderStatus::Disconnected);
+    assert_eq!(session.last_session_error(), Some("INVALID_RECEIVER_PROOF"));
+    assert!(!session.is_connected());
+    assert!(session.pairing_short_code().is_none());
+}
+
+#[test]
+fn old_server_proof_cannot_be_replayed_on_a_new_connection() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    let endpoint = Endpoint {
+        host: "127.0.0.1".into(),
+        port: 4433,
+    };
+    session.connect(endpoint.clone()).expect("first connect");
+    session.send_client_hello().expect("first hello");
+    let receiver = picoo_pairing::DeviceIdentity::generate("Receiver").expect("identity");
+    let (old_hello, _) = signed_server_hello(&session, &receiver, true);
+
+    session.disconnect();
+    session.connect(endpoint).expect("second connect");
+    session.send_client_hello().expect("second hello");
+    session
+        .inject_control_payload_for_test(ControlPayload::ServerHello(old_hello))
+        .expect("inject replayed proof");
+
+    assert_eq!(session.status(), SenderStatus::Disconnected);
+    assert_eq!(session.last_session_error(), Some("INVALID_RECEIVER_PROOF"));
     assert!(!session.is_connected());
 }
 
@@ -173,16 +209,11 @@ fn privileged_control_is_rejected_until_receiver_is_authenticated() {
             port: 4433,
         })
         .expect("connect");
+    session.send_client_hello().expect("hello");
+    let receiver = picoo_pairing::DeviceIdentity::generate("Receiver").expect("identity");
+    let (hello, _) = signed_server_hello(&session, &receiver, true);
     session
-        .send_client_hello("sender", "Phone", &[1, 2, 3])
-        .expect("hello");
-    session
-        .inject_control_payload_for_test(ControlPayload::ServerHello(ServerHello {
-            receiver_id: "receiver".into(),
-            display_name: "Receiver".into(),
-            public_key: vec![4, 5, 6],
-            pairing_required: true,
-        }))
+        .inject_control_payload_for_test(ControlPayload::ServerHello(hello))
         .expect("server hello");
 
     session
@@ -193,7 +224,7 @@ fn privileged_control_is_rejected_until_receiver_is_authenticated() {
         }))
         .expect("inject unauthorized command");
 
-    assert_eq!(session.status(), SenderStatus::Pairing);
+    assert_eq!(session.status(), SenderStatus::Disconnected);
     assert_eq!(
         session.last_session_error(),
         Some("CONTROL_PAYLOAD_NOT_ALLOWED")

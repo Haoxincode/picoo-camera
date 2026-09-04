@@ -31,8 +31,8 @@ struct PersistedIdentity {
 
 #[derive(Clone)]
 pub struct DeviceIdentity {
-    pub device_id: String,
-    pub device_name: String,
+    device_id: String,
+    device_name: String,
     signing_key: SigningKey,
     public_key: [u8; PUBLIC_KEY_LEN],
 }
@@ -96,6 +96,14 @@ impl DeviceIdentity {
 
     pub fn public_key(&self) -> &[u8] {
         &self.public_key
+    }
+
+    pub fn device_id(&self) -> &str {
+        &self.device_id
+    }
+
+    pub fn device_name(&self) -> &str {
+        &self.device_name
     }
 
     pub fn sign(&self, message: &[u8]) -> [u8; SIGNATURE_LEN] {

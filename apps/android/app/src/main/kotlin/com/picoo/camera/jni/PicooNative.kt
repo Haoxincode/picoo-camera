@@ -55,7 +55,7 @@ object PicooNative {
     external fun getProtocolName(): String
 
     /** Create Rust sender pipeline; returns opaque handle (0 = failure). */
-    external fun createSender(): Long
+    external fun createSender(identityHandle: Long): Long
 
     /** Destroy sender pipeline handle. */
     external fun destroySender(handle: Long)
@@ -93,12 +93,7 @@ object PicooNative {
     /** REQ-PICOO-SESSION-001: clear Permission Required after CAMERA granted. */
     external fun clearPermissionRequired(handle: Long): Int
 
-    external fun sendClientHello(
-        handle: Long,
-        senderId: String,
-        deviceName: String,
-        publicKey: ByteArray?,
-    ): Int
+    external fun sendClientHello(handle: Long): Int
 
     external fun sendPairingConfirm(handle: Long, receiverId: String): Int
 

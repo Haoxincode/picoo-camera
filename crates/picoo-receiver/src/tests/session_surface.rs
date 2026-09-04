@@ -122,9 +122,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("hold-phone", "Hold Phone", &[3, 3, 3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -135,7 +133,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     }
     receiver.confirm_pairing_locally().expect("desktop confirm");
     sender
-        .send_pairing_confirm(&identity.receiver_id)
+        .send_pairing_confirm(identity.receiver_id())
         .expect("confirm");
     for _ in 0..200 {
         receiver.pump().expect("rx");
@@ -204,7 +202,7 @@ fn default_jitter_holds_au_until_target_delay() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -221,9 +219,7 @@ fn default_jitter_holds_au_until_target_delay() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("android-sender", "Pixel", &[1, 2, 3])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..100 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");

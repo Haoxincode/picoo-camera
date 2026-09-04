@@ -6,29 +6,12 @@ use std::ffi::CStr;
 
 /// Send ClientHello after QUIC connect (PUC-001 / PUC-008).
 #[no_mangle]
-pub extern "C" fn picoo_sender_send_client_hello(
-    handle: *mut std::ffi::c_void,
-    sender_id: *const std::ffi::c_char,
-    device_name: *const std::ffi::c_char,
-    public_key: *const u8,
-    public_key_len: usize,
-) -> i32 {
-    if handle.is_null() || sender_id.is_null() || device_name.is_null() {
+pub extern "C" fn picoo_sender_send_client_hello(handle: *mut std::ffi::c_void) -> i32 {
+    if handle.is_null() {
         return -1;
     }
-    let sender_id = unsafe { CStr::from_ptr(sender_id) }.to_string_lossy();
-    let device_name = unsafe { CStr::from_ptr(device_name) }.to_string_lossy();
-    let key = if public_key.is_null() || public_key_len == 0 {
-        &[][..]
-    } else {
-        unsafe { std::slice::from_raw_parts(public_key, public_key_len) }
-    };
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    match inner
-        .session
-        .lock_or_recover()
-        .send_client_hello(&sender_id, &device_name, key)
-    {
+    match inner.session.lock_or_recover().send_client_hello() {
         Ok(()) => 0,
         Err(_) => -2,
     }

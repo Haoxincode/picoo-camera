@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
-use picoo_pairing::TrustedDeviceStore;
+use picoo_pairing::{DeviceIdentity, TrustedDeviceStore};
 use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
 };
@@ -24,7 +24,7 @@ use picoo_transport::{Endpoint, PicooTransport, SessionId};
 use crate::stream_config::StreamConfigParams;
 use crate::{SenderPipeline, SenderStats};
 
-use pairing::{ClientHelloParams, SenderPairing};
+use pairing::SenderPairing;
 
 pub const INITIAL_STREAM_EPOCH: u32 = 1;
 /// Mobile FFI exposes epochs as a positive signed 32-bit integer on Android.
@@ -59,9 +59,10 @@ pub struct SenderSession<T: PicooTransport> {
     session: Option<SessionId>,
     sent_datagrams: u64,
     last_sender_stats_sent_at: Option<Instant>,
+    identity: DeviceIdentity,
     pairing: Option<SenderPairing>,
-    sender_id: Option<String>,
-    hello_params: Option<ClientHelloParams>,
+    hello_requested: bool,
+    sender_nonce: Option<[u8; 32]>,
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
     status: SenderStatus,
@@ -105,15 +106,23 @@ pub struct SenderSession<T: PicooTransport> {
 
 impl<T: PicooTransport> SenderSession<T> {
     pub fn new(transport: T) -> Self {
+        let identity = DeviceIdentity::generate("Picoo Test Sender")
+            .expect("OS CSPRNG must be available when constructing a Sender session");
+        Self::new_with_identity(transport, identity)
+    }
+
+    /// Construct a product Sender with its durable platform-backed identity.
+    pub fn new_with_identity(transport: T, identity: DeviceIdentity) -> Self {
         Self {
             pipeline: SenderPipeline::default(),
             transport,
             session: None,
             sent_datagrams: 0,
             last_sender_stats_sent_at: None,
+            identity,
             pairing: None,
-            sender_id: None,
-            hello_params: None,
+            hello_requested: false,
+            sender_nonce: None,
             trusted: TrustedDeviceStore::new(),
             trusted_store_path: None,
             status: SenderStatus::Disconnected,
@@ -145,6 +154,10 @@ impl<T: PicooTransport> SenderSession<T> {
             next_control_message_id: 1,
             last_received_control_message_id: 0,
         }
+    }
+
+    pub fn identity(&self) -> &DeviceIdentity {
+        &self.identity
     }
 
     pub(super) fn send_control_payload(

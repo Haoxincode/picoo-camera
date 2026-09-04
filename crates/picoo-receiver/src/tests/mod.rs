@@ -7,19 +7,28 @@ use crate::ReceiverSession;
 
 fn trust_receiver<T: PicooTransport>(
     sender: &mut picoo_sender::SenderSession<T>,
-    receiver: &ReceiverSession,
+    receiver: &mut ReceiverSession,
 ) {
     let identity = receiver.identity();
     sender
         .trusted_devices_mut()
         .upsert(picoo_pairing::TrustedDevice {
-            device_id: identity.receiver_id.clone(),
-            device_name: identity.display_name.clone(),
-            public_key: identity.public_key.clone(),
+            device_id: identity.receiver_id().to_owned(),
+            device_name: identity.display_name().to_owned(),
+            public_key: identity.public_key().to_vec(),
             certificate_fingerprint: "test-receiver".into(),
             paired_at_ms: 1,
             last_connected_at_ms: None,
         });
+    let sender_identity = sender.identity();
+    receiver
+        .trusted_devices_mut()
+        .upsert(picoo_pairing::trusted_device_from_pairing(
+            sender_identity.device_id(),
+            sender_identity.device_name(),
+            sender_identity.public_key(),
+            1,
+        ));
 }
 
 mod abr_epoch;

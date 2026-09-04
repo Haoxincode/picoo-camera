@@ -186,7 +186,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getIdentityDeviceId
     _this: JObject<'_>,
     handle: jlong,
 ) -> jstring {
-    identity_string(&mut env, handle, |identity| &identity.device_id)
+    identity_string(&mut env, handle, DeviceIdentity::device_id)
 }
 
 #[no_mangle]
@@ -195,7 +195,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getIdentityDeviceNa
     _this: JObject<'_>,
     handle: jlong,
 ) -> jstring {
-    identity_string(&mut env, handle, |identity| &identity.device_name)
+    identity_string(&mut env, handle, DeviceIdentity::device_name)
 }
 
 #[no_mangle]

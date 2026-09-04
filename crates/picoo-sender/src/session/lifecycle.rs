@@ -99,9 +99,10 @@ impl<T: PicooTransport> SenderSession<T> {
         self.last_sender_stats_sent_at = None;
         self.next_control_message_id = 1;
         self.last_received_control_message_id = 0;
-        if let Some(params) = self.hello_params.clone() {
-            if self.emit_client_hello(&params).is_ok() {
-                self.status = SenderStatus::Negotiating;
+        if self.hello_requested {
+            match self.emit_client_hello() {
+                Ok(()) => self.status = SenderStatus::Negotiating,
+                Err(_) => self.reject_authentication("CLIENT_HELLO_SEND_FAILED"),
             }
         }
     }
@@ -118,6 +119,7 @@ impl<T: PicooTransport> SenderSession<T> {
                     self.abort_pending_reconfiguration();
                     self.session = None;
                     self.pairing = None;
+                    self.sender_nonce = None;
                     self.stream_config_sent = false;
                     self.clear_receiver_capabilities();
                     self.pipeline.clear_pending_packets();
@@ -156,6 +158,8 @@ impl<T: PicooTransport> SenderSession<T> {
         self.drain_events();
         self.session = None;
         self.pairing = None;
+        self.sender_nonce = None;
+        self.hello_requested = false;
         self.pipeline.clear_pending_packets();
         self.abort_pending_reconfiguration();
         self.stream_config_sent = false;

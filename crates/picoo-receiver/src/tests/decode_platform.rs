@@ -71,9 +71,7 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    sender
-        .send_client_hello("h264-phone", "H264", &[9, 9, 9])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -172,7 +170,7 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -187,9 +185,7 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("avcc-phone", "Avcc", &[8, 8, 8])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
@@ -276,7 +272,7 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    super::trust_receiver(&mut sender, &receiver);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -291,9 +287,7 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("macos-abr-phone", "macOS ABR", &[4, 8, 0])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("receiver hello");
         sender.pump().expect("sender hello");
@@ -535,9 +529,7 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender
-        .send_client_hello("ring-phone", "Ring", &[4, 4, 4])
-        .expect("hello");
+    sender.send_client_hello().expect("hello");
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
