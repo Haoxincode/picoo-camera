@@ -9,8 +9,8 @@ use crate::ReceiverSession;
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
-fn abr_downshift_updates_stream_config_and_framehub() {
-    // REQ-PICOO-MEDIA-010: sustained congestion → DownshiftResolution → 720p StreamConfig → FrameHub.
+fn abr_downshift_updates_stream_config_and_latest_frame_store() {
+    // REQ-PICOO-MEDIA-010: sustained congestion → DownshiftResolution → 720p StreamConfig → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_frame_hub::nv12_byte_size;
@@ -186,7 +186,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ok, "FrameHub must show post-downshift frames");
+    assert!(ok, "LatestFrameStore must show post-downshift frames");
 
     // Second ABR rung: 720 → 480 (MEDIA-010 / PUC-006 weak-network floor).
     let mut downshift_480 = None;
@@ -264,13 +264,16 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ok480, "FrameHub must show 480p post-downshift frames");
+    assert!(
+        ok480,
+        "LatestFrameStore must show 480p post-downshift frames"
+    );
 }
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
-fn abr_upshift_updates_stream_config_and_framehub() {
-    // REQ-PICOO-MEDIA-010: after downshift, sustained health → UpshiftResolution → 1080p FrameHub.
+fn abr_upshift_updates_stream_config_and_latest_frame_store() {
+    // REQ-PICOO-MEDIA-010: after downshift, sustained health → UpshiftResolution → 1080p LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_frame_hub::nv12_byte_size;
@@ -493,5 +496,5 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ok, "FrameHub must show post-upshift frames");
+    assert!(ok, "LatestFrameStore must show post-upshift frames");
 }

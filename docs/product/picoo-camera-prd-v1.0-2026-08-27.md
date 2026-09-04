@@ -473,7 +473,7 @@ H.264
 
 **FR-DEC-003 最新帧优先**
 
-如果消费者处理速度不足，FrameHub 必须丢弃旧帧并提供最新完整帧。
+如果消费者处理速度不足，LatestFrameStore 必须覆盖旧帧并提供最新完整帧。
 
 系统不能因为消费者变慢而让视频延迟持续累积。
 
@@ -622,7 +622,7 @@ UI 必须区分：
 | macOS | 使用 VideoToolbox 硬件解码 |
 | 桌面内存稳态 | 低于 300 MB |
 | 手机内存稳态 | 低于 250 MB |
-| FrameHub | 固定容量，不随时间增长 |
+| LatestFrameStore | 容量一，不随时间增长 |
 | 视频队列 | 有明确上限 |
 
 ### 8.4 隐私
@@ -669,7 +669,7 @@ UI 必须区分：
 │              │                                │                    │
 │              └──────────── Decoded Frame ─────┘                    │
 │                              │                                     │
-│                         FrameHub                                   │
+│                    LatestFrameStore                               │
 │                    ┌─────────┴─────────┐                           │
 │                    │                   │                           │
 │              GPUI Preview       Shared Frame Ring                  │
@@ -1104,20 +1104,24 @@ Receiver 每秒向 Sender 发送一次统计：
 
 不能通过扩大缓冲区来掩盖带宽不足。
 
-## 15. FrameHub 与进程间帧共享
+## 15. LatestFrameStore 与进程间帧共享
 
-### 15.1 FrameHub
+### 15.1 LatestFrameStore
 
-FrameHub 是桌面端解码帧的统一出口。
+LatestFrameStore 是桌面端解码帧的统一出口。
 
 ```text
 Decoded Frame
-    ↓ FrameHub
+    ↓ LatestFrameStore（容量一、Arc<VideoFrame>）
     ├── GPUI Preview Consumer
-    └── Virtual Camera Producer
+    └── Shared Frame Ring Writer
 ```
 
-FrameHub 采用三槽环形缓冲：
+Receiver 是唯一写入者，并以共享不可变 `Arc<VideoFrame>` 完整替换当前帧。消费者只增加引用计数；
+消费变慢时继续持有旧帧不会阻塞新帧发布，也不会形成历史队列。方向变换需要新缓冲时使用有界
+FrameBufferPool，无变换时直接接管 Decoder 输出。
+
+三槽、ready state、reader lease、sequence 和进程崩溃恢复只属于跨进程 Shared Frame Ring：
 
 ```text
 Slot 0
@@ -1136,15 +1140,15 @@ Slot 2
 - rotation
 - data_length
 - ready_state
+- reader_count
 - pixel_data
 
 写入流程：
 
-1. 选择非活动槽；
-2. 写入帧信息和像素；
-3. 内存屏障；
-4. 更新序列号；
-5. 标记 Ready。
+1. 取得未被读取槽的写租约；
+2. 标记 Writing 并写入元数据和 `[..data_length]` 像素；
+3. 更新序列号并通过 Release 屏障标记 Ready；
+4. 释放写租约并发布最新序列号。
 
 读取者总是选择最新完整序列。
 
@@ -1152,7 +1156,7 @@ Slot 2
 
 Windows 和 macOS 统一使用“共享内存环形帧区”的抽象，但平台实现不同：
 
-- Windows：Named Shared Memory
+- Windows：`%ProgramData%\Picoo Camera` 中的 mmap Shared File；Named Shared Memory 仅用于同会话测试
 - macOS：App Group Container 中的 mmap Shared File
 
 第一版不依赖跨进程 IOSurface 共享。
@@ -1477,7 +1481,7 @@ macOS 包含：
 - 公钥固定
 - 重连状态机
 - 码率控制
-- FrameHub 原子一致性
+- LatestFrameStore latest-only 与 Shared Frame Ring 原子一致性
 - 队列上限
 
 ### 20.2 模糊测试
@@ -1689,7 +1693,7 @@ macOS 虚拟摄像头
 └── Core Media I/O Camera Extension
 
 桌面帧分发
-└── FrameHub + Shared Frame Ring
+└── LatestFrameStore + Shared Frame Ring
 
 视频格式
 └── H.264 480p30 / 720p30 / 1080p30

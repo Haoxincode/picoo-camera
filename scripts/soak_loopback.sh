@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# REQ-PICOO-SESSION-005 soak helper — paired loopback FrameHub stress.
+# REQ-PICOO-SESSION-005 soak helper — paired loopback LatestFrameStore stress.
 #
 # Default: 60s smoke soak (CI-friendly). For PRD §21 2h:
 #   SOAK_SECONDS=7200 ./scripts/soak_loopback.sh

@@ -143,7 +143,7 @@ fn main() {
         "Picoo Camera Desktop (stub) — status: {:?}",
         state.receiver_status
     );
-    println!("Run with --loopback-demo to exercise QUIC → FrameHub on Linux CI.");
+    println!("Run with --loopback-demo to exercise QUIC → LatestFrameStore on Linux CI.");
     println!("Run with --serve to listen and advertise mDNS.");
     println!("Run with --gpui for the GPUI desktop shell (requires gpui-ui feature).");
     println!(
@@ -319,7 +319,7 @@ fn run_loopback_demo() {
     match picoo_receiver::run_paired_loopback_access_unit(b"desktop-loopback-au") {
         Ok(frame) => {
             println!(
-                "Paired loopback OK — FrameHub received {} bytes (pairing path, no unpaired bypass)",
+                "Paired loopback OK — LatestFrameStore received {} bytes (pairing path, no unpaired bypass)",
                 frame.len()
             );
         }

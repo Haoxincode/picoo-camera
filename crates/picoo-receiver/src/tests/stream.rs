@@ -66,7 +66,7 @@ fn receiver_sends_stats_to_paired_sender() {
     sender
         .ingest_and_flush(&[0u8; 1200], true, 1, 1)
         .expect("send video");
-    // Release through the 50ms jitter buffer into FrameHub first.
+    // Release through the 50ms jitter buffer into LatestFrameStore first.
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().ok();
@@ -337,8 +337,8 @@ fn stream_epoch_bump_requests_keyframe() {
 }
 
 #[test]
-fn remote_mirrored_flips_framehub_nv12() {
-    // REQ-PICOO-MEDIA-004 — remote StreamConfig.mirrored applied before FrameHub.
+fn remote_mirrored_flips_latest_frame_store_nv12() {
+    // REQ-PICOO-MEDIA-004 — remote StreamConfig.mirrored applied before LatestFrameStore.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -446,7 +446,7 @@ fn remote_mirrored_flips_framehub_nv12() {
 
 #[test]
 fn stream_config_rotation_overrides_decoder_rotation() {
-    // REQ-PICOO-MEDIA-009 / PUC-005: FrameHub publishes Sender StreamConfig.rotation.
+    // REQ-PICOO-MEDIA-009 / PUC-005: LatestFrameStore publishes Sender StreamConfig.rotation.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_sender::StreamConfigParams;
 

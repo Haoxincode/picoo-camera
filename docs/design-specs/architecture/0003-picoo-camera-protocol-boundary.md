@@ -67,7 +67,7 @@ VideoPacket {
 }
 ```
 
-固定头为 25 字节。Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DISCARDABLE`、
+固定头为 33 字节。Flags 包括：`KEYFRAME`、`START_OF_ACCESS_UNIT`、`END_OF_ACCESS_UNIT`、`DISCARDABLE`、
 `FEC_PARITY`。
 
 单个载荷约 **1150 字节**，控制在路径 MTU 内，避免 IP 分片。

@@ -75,7 +75,7 @@ fn claimed_device_id_must_match_public_key() {
         .verify_paired_key(&trusted_id, &trusted_public_key)
         .is_ok());
 
-    // Video must not reach FrameHub after key-mismatch reject.
+    // Video must not reach LatestFrameStore after key-mismatch reject.
     let _ = sender.ingest_and_flush(b"should-drop", true, 1, 1);
     let _ = receiver.pump();
     assert_eq!(receiver.stats().access_units, 0);

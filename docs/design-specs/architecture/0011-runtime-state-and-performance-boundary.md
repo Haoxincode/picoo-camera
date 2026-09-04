@@ -90,7 +90,7 @@ connection 与 stream generation 门禁。Worker 析构只请求 Shutdown，不�
 
 ### LatestFrameStore 与共享不可变帧
 
-同进程 `FrameHub` 改名为 `LatestFrameStore`，使用 `Arc<VideoFrame>`。Receiver reducer 当前是
+同进程使用 `LatestFrameStore` 与 `Arc<VideoFrame>`。Receiver reducer 当前是
 单一写入者，因此 `Option<Arc<VideoFrame>>` 已经满足容量一语义；只有 Store 本身需要跨线程独立
 写入时才引入 ArcSwap，避免为不存在的并发所有权增加依赖。它不声称拥有 Shared Frame Ring 的
 reader lease/原子协议。`VideoFrame` 内部使用可从 Decoder `Vec<u8>` 零复制接管的 `Bytes`，外层

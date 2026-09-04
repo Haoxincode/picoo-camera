@@ -8,7 +8,7 @@ use picoo_session::ReceiverStatus;
 use super::ReceiverSession;
 use crate::{ReceiverError, ReceiverIdentity};
 
-/// Run sender→receiver loopback until one access unit reaches FrameHub.
+/// Run sender→receiver loopback until one access unit reaches LatestFrameStore.
 ///
 /// Uses the unpaired test bypass — prefer [`run_paired_loopback_access_unit`] for
 /// product-path validation (REQ-PICOO-PAIRING-003).
@@ -63,7 +63,7 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     Err(ReceiverError::LoopbackTimeout)
 }
 
-/// Pairing/session loopback: first-time pairing (short code) then video → FrameHub.
+/// Pairing/session loopback: first-time pairing (short code) then video → LatestFrameStore.
 ///
 /// This explicitly uses `StubDecoder` for arbitrary fixture bytes. It validates
 /// the paired transport/session path, not a platform's production H.264 decoder.

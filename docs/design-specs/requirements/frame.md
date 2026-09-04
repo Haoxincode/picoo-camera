@@ -1,4 +1,4 @@
-# REQ-PICOO-FRAME：FrameHub 与 Shared Frame Ring
+# REQ-PICOO-FRAME：LatestFrameStore 与 Shared Frame Ring
 
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |

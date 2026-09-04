@@ -8,7 +8,7 @@
 
 ## 场景
 
-Sender 与 Receiver 建立传输后，Receiver 将解码帧写入 FrameHub，并同步更新 Shared Frame Ring。虚拟摄像头组件从 Shared Frame Ring 读取最新 NV12 帧，向操作系统注册的标准摄像头设备输出画面。
+Sender 与 Receiver 建立传输后，Receiver 将解码帧发布到 LatestFrameStore，并同步更新 Shared Frame Ring。虚拟摄像头组件从 Shared Frame Ring 读取最新 NV12 帧，向操作系统注册的标准摄像头设备输出画面。
 
 用户在腾讯会议、Zoom、Microsoft Teams、OBS 或 Chrome/Edge/Safari 浏览器会议的视频设置中选择 `Picoo Camera`。会议软件看到的是来自手机摄像头的实时画面，音频仍使用电脑本地麦克风。
 

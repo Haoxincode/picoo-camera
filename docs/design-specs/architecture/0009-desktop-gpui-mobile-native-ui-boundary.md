@@ -44,7 +44,7 @@ VideoSurface 的平台资源必须是有界的。macOS 使用 GPUI 原生 `surfa
 由 latest-only 后台准备器向最多三个 CoreVideo 缓冲写入画面；不得把连续视频帧作为唯一 ID 的
 `RenderImage` 送入静态 Sprite Atlas。GPUI 尚未提供原生视频 Surface 的平台，允许使用
 `RenderImage` 回退，但替换帧时必须同步驱逐上一帧的 atlas entry，任何帧率和运行时长下都只能
-保留常数数量的 CPU/GPU 帧资源。缓冲耗尽时丢弃预览帧，不得反压 FrameHub、解码或网络会话。
+保留常数数量的 CPU/GPU 帧资源。缓冲耗尽时丢弃预览帧，不得反压 LatestFrameStore、解码或网络会话。
 
 ### 桌面状态边界
 
@@ -117,7 +117,7 @@ UI 同样不承担二维码生成、二维码解析或扫码相机预览；连�
 
 ### UI 内嵌解码预览链路
 
-不采用。预览纹理来自 FrameHub 已解码帧，不在 View 层重复解码。
+不采用。预览纹理来自 LatestFrameStore 已解码帧，不在 View 层重复解码。
 
 ## 约束
 

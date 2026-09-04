@@ -181,7 +181,7 @@ context 的普通 Card 颜色模拟取景 HUD。
 
 ### 4.1 技术选型与组件基线
 - [ ] **AC-D-TECH-01**：Windows 与 macOS 共用同一套 Rust GPUI 代码，**严禁引入 Electron、Tauri、WebView 或内嵌浏览器运行环境**。
-- [ ] **AC-D-TECH-02**：视频监视器核心自定义组件必须封装为 **`VideoSurface`**，绑定 FrameHub 解码环形缓冲，保持 16:9 画幅与断流占位画面平滑切换。
+- [ ] **AC-D-TECH-02**：视频监视器核心自定义组件必须封装为 **`VideoSurface`**，绑定 LatestFrameStore 解码帧，保持 16:9 画幅与断流占位画面平滑切换。
 - [ ] **AC-D-TECH-03（gpui-component 与 Tailwind CSS 4.0 对齐）**：
   - 桌面 UI 组件库必须基于 `gpui-component` 体系；
   - `ARCH-PICOO-UI-002` 与本规范中的共享 token 是视觉比例和语义角色的事实源；HTML 原型中的 Tailwind CSS 4.0 类名与 `@theme` 变量是该契约的可视化映射，不是在 Rust 中保留 CSS/Web 运行时的要求；
@@ -190,7 +190,7 @@ context 的普通 Card 颜色模拟取景 HUD。
   - 允许且必须保留经产品确认的原型覆盖项：默认窗口与最小窗口均为 1440×900、不记忆上次窗口尺寸、连接页使用可用宽度而不保留 HTML 的 1160px 上限、实时预览严格保持 16:9；窗口边界属于平台物理尺寸，可使用 `px(...)`。
 - [ ] **AC-D-TECH-04（Windows 产品进程）**：从资源管理器或开机启动打开桌面端时不得附带命令行窗口，状态检测也不得启动 `reg.exe` 等控制台子进程；普通权限启动只通过无注册表写入能力的 API 检测并启动已安装的虚拟摄像头，不得自动尝试写系统级 COM 注册表。修复注册只由 MSI 或用户明确触发的修复动作承担；显式修复必须触发 Windows UAC、避免阻塞 GPUI 线程和重复提交，并在当前虚拟摄像头界面内显示等待、成功或失败结果。
 - [ ] **AC-D-TECH-05（macOS 图标启动）**：从 Finder、Dock 或 `open` 启动打包后的 `Picoo Camera.app` 必须及时显示主窗口；Shared Frame Ring 文件访问不得阻塞主线程启动，暂不可用时应降级为页面内状态而不是留下无窗口进程。
-- [ ] **AC-D-TECH-06（实时预览资源上界）**：连续视频帧不得作为唯一 ID 的静态图片永久累积在 GPUI Sprite Atlas。macOS 使用 `surface(CVPixelBuffer)` 原生视频合成路径并将 CoreVideo 缓冲硬限制为 3 个；其他平台回退到 `RenderImage` 时必须在替换帧时显式驱逐旧 atlas entry。预览缓冲耗尽时丢弃旧帧，不得反压 FrameHub。720p30/1080p30 持续推流时 CPU/GPU 帧资源数量必须保持常数上界，停止推流后不得随历史帧数保留内存。
+- [ ] **AC-D-TECH-06（实时预览资源上界）**：连续视频帧不得作为唯一 ID 的静态图片永久累积在 GPUI Sprite Atlas。macOS 使用 `surface(CVPixelBuffer)` 原生视频合成路径并将 CoreVideo 缓冲硬限制为 3 个；其他平台回退到 `RenderImage` 时必须在替换帧时显式驱逐旧 atlas entry。预览缓冲耗尽时丢弃旧帧，不得反压 LatestFrameStore。720p30/1080p30 持续推流时 CPU/GPU 帧资源数量必须保持常数上界，停止推流后不得随历史帧数保留内存。
 
 ### 4.2 待机与连接主页（Desktop Connect View - 主区域 + 辅助栏）
 - [ ] **AC-D-LAYOUT-01（主区域优先的稳定分栏）**：

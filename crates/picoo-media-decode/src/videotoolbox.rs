@@ -2,7 +2,7 @@
 //!
 //! The Apple production path is pure Rust over generated framework bindings:
 //! Annex-B/AVCC access unit → CoreMedia sample → VideoToolbox → tightly packed
-//! NV12 for FrameHub. OpenH264 is intentionally not linked on Apple targets.
+//! NV12 for LatestFrameStore. OpenH264 is intentionally not linked on Apple targets.
 
 use std::ffi::c_void;
 use std::ptr::{self, NonNull};

@@ -675,7 +675,7 @@ impl PicooDesktopApp {
                                 )
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.prefs.placeholder_mode = mode;
-                                    this.runtime.set_placeholder_mode(mode.to_frame_hub());
+                                    this.runtime.set_placeholder_mode(mode.to_frame_store());
                                     let _ = this.persist_prefs();
                                     cx.notify();
                                 }))

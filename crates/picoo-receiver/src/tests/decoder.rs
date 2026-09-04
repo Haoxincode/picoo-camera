@@ -250,14 +250,14 @@ fn slow_decoder_never_blocks_session_drop() {
 }
 
 #[test]
-fn loopback_sender_to_receiver_frame_hub() {
+fn loopback_sender_to_receiver_latest_frame_store() {
     let payload = b"test-access-unit";
     let frame = run_loopback_access_unit(payload).expect("loopback");
     assert_eq!(&frame.as_ref()[..payload.len()], payload);
 }
 
 #[test]
-fn single_decode_per_access_unit_into_frame_hub() {
+fn single_decode_per_access_unit_into_latest_frame_store() {
     // REQ-PICOO-MEDIA-006: one decode invocation per reassembled AU (hub fans out).
     let payload = b"single-decode-au";
     let mut receiver = ReceiverSession::new();
@@ -311,7 +311,7 @@ fn single_decode_per_access_unit_into_frame_hub() {
 }
 
 #[test]
-fn paired_loopback_reaches_frame_hub_without_unpaired_bypass() {
+fn paired_loopback_reaches_latest_frame_store_without_unpaired_bypass() {
     let payload = b"paired-product-path-au";
     let frame = run_paired_loopback_access_unit(payload).expect("paired loopback");
     assert_eq!(&frame.as_ref()[..payload.len()], payload);

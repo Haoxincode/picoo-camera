@@ -42,7 +42,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             cmd!(sh, "cargo test -p picoo-media-decode --features windows-mf").run()?;
             cmd!(
                 sh,
-                "cargo test -p picoo-receiver --features windows-mf --lib paired_avcc_length_prefixed_au_reaches_frame_hub"
+                "cargo test -p picoo-receiver --features windows-mf --lib paired_avcc_length_prefixed_au_reaches_latest_frame_store"
             )
             .run()?;
         }

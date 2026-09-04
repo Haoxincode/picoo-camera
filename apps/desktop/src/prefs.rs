@@ -71,7 +71,7 @@ impl PlaceholderModePref {
         }
     }
 
-    pub fn to_frame_hub(self) -> picoo_frame_hub::PlaceholderMode {
+    pub fn to_frame_store(self) -> picoo_frame_hub::PlaceholderMode {
         match self {
             PlaceholderModePref::Logo => picoo_frame_hub::PlaceholderMode::Logo,
             PlaceholderModePref::Black => picoo_frame_hub::PlaceholderMode::Black,

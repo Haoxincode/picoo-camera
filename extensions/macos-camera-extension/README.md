@@ -17,7 +17,7 @@ Host 与 Extension 使用 Apple 推荐的显式 App Group `group.com.haoxincode.
 ```text
 Picoo Camera Desktop.app
   -> VideoToolbox decode once
-  -> FrameHub
+  -> LatestFrameStore
   -> App Group mmap Shared Frame Ring
   -> Picoo Camera Extension.systemextension
 ```

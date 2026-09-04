@@ -30,7 +30,7 @@ Requirements 是代码实现、单元测试和验收测试的直接映射层。
 | `PICOO-DISCOVERY` | [discovery.md](discovery.md) | mDNS、手动 IP 直连、配对短码核对 |
 | `PICOO-PAIRING` | [pairing.md](pairing.md) | 配对、公钥固定、撤销 |
 | `PICOO-MEDIA` | [media.md](media.md) | Android/iOS 采集编码、Windows/macOS 解码 |
-| `PICOO-FRAME` | [frame.md](frame.md) | FrameHub、Shared Frame Ring |
+| `PICOO-FRAME` | [frame.md](frame.md) | LatestFrameStore、Shared Frame Ring |
 | `PICOO-VCAM` | [vcam.md](vcam.md) | Windows MF 与 macOS Camera Extension |
 | `PICOO-UI` | [ui.md](ui.md) | Compose / SwiftUI / GPUI 页面与状态 |
 | `PICOO-UI` | [req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md](req-picoo-ui-0001-native-camera-and-desktop-gpui-acceptance.md) | **全端 UI 语义一致与原生适配验收规范**（REQ-PICOO-UI-0001，`planned`） |

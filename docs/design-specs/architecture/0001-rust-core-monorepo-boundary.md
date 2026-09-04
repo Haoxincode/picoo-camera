@@ -55,7 +55,7 @@ Rust Core 负责：
 - 配对、公钥固定与设备模型。
 - 视频分包、重组、`stream_epoch` 隔离与抖动缓冲策略接口。
 - 自适应码率控制与运行指标。
-- FrameHub 与共享帧环的抽象与一致性规则。
+- LatestFrameStore 与共享帧环的抽象与一致性规则。
 - 通过 cbindgen 生成 `picoo_camera.h` 的稳定 FFI。
 
 Rust Core 不负责：

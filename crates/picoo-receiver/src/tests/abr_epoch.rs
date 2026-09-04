@@ -28,8 +28,8 @@ pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Ve
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
-fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
-    // PUC-005 / REQ-PICOO-MEDIA-003: camera/epoch switch → new IDR in FrameHub <3s.
+fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() {
+    // PUC-005 / REQ-PICOO-MEDIA-003: camera/epoch switch → new IDR in LatestFrameStore <3s.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
@@ -179,7 +179,7 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
-fn midstream_resolution_change_openh264_updates_framehub() {
+fn midstream_resolution_change_openh264_updates_latest_frame_store() {
     // REQ-PICOO-MEDIA-002/010: mid-stream 480p → 720p with new SPS/PPS.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
@@ -302,7 +302,7 @@ fn midstream_resolution_change_openh264_updates_framehub() {
     }
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
     eprintln!("resolution_switch recovery_ms={elapsed_ms:.2} ok={ok}");
-    assert!(ok, "FrameHub did not update to 1280x720");
+    assert!(ok, "LatestFrameStore did not update to 1280x720");
     assert!(
         elapsed_ms < 3_000.0,
         "resolution switch {elapsed_ms}ms exceeds 3s budget"
@@ -311,8 +311,8 @@ fn midstream_resolution_change_openh264_updates_framehub() {
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
-fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
-    // REQ-PICOO-SESSION-003: incomplete IDR → RequestKeyframe → fresh IDR → FrameHub.
+fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
+    // REQ-PICOO-SESSION-003: incomplete IDR → RequestKeyframe → fresh IDR → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_frame_hub::nv12_byte_size;
@@ -480,10 +480,10 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     assert_eq!(
         receiver.latest_frame().map(|frame| frame.sequence),
         Some(before_seq),
-        "an incomplete IDR must not publish another FrameHub frame"
+        "an incomplete IDR must not publish another LatestFrameStore frame"
     );
 
-    // A fresh IDR on the current epoch recovers FrameHub.
+    // A fresh IDR on the current epoch recovers LatestFrameStore.
     let before_recovery_seq = receiver
         .latest_frame()
         .map(|frame| frame.sequence)
@@ -510,6 +510,6 @@ fn incomplete_keyframe_requests_idr_and_recovers_framehub() {
     }
     assert!(
         recovered,
-        "FrameHub did not recover after RequestKeyframe IDR"
+        "LatestFrameStore did not recover after RequestKeyframe IDR"
     );
 }

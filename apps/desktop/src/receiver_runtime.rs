@@ -228,8 +228,8 @@ impl ReceiverRuntime {
             .set_auto_accept_paired(prefs.auto_accept_paired);
         runtime
             .receiver
-            .set_placeholder_mode(prefs.placeholder_mode.to_frame_hub());
-        // Refresh FrameHub/ring placeholder to match preference.
+            .set_placeholder_mode(prefs.placeholder_mode.to_frame_store());
+        // Refresh LatestFrameStore/ring placeholder to match preference.
         let _ = runtime.receiver.publish_waiting_placeholder();
         Ok(runtime)
     }

@@ -1,6 +1,6 @@
 //! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006/012.
 //!
-//! Receiver decodes once; output NV12 feeds FrameHub and Shared Frame Ring.
+//! Receiver decodes once; output NV12 feeds LatestFrameStore and Shared Frame Ring.
 //! - Windows: Media Foundation (`windows-mf`)
 //! - macOS: VideoToolbox through pure Rust Apple framework bindings
 //! - Linux/CI: Cisco OpenH264 soft decode, with StubDecoder fallback for fixtures
@@ -69,7 +69,7 @@ impl DecodeOutcome {
     }
 }
 
-/// Decode one H.264 access unit into NV12 for FrameHub consumption.
+/// Decode one H.264 access unit into NV12 for LatestFrameStore consumption.
 pub trait AccessUnitDecoder: Send {
     fn decode_access_unit(
         &mut self,

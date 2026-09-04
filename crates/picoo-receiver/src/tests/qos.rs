@@ -69,7 +69,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
-    // Prefer real H.264 on Linux so soak stresses OpenH264→FrameHub (REQ-PICOO-SESSION-005).
+    // Prefer real H.264 on Linux so soak stresses OpenH264→LatestFrameStore (REQ-PICOO-SESSION-005).
     #[cfg(all(not(windows), not(target_vendor = "apple")))]
     let soak_au: Vec<u8> = {
         use openh264::encoder::Encoder;
@@ -273,7 +273,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     let observed = sender.transport().observed_drop_ratio();
     assert!(
         frames_seen > 20,
-        "expected many FrameHub updates under loss, got {frames_seen}"
+        "expected many LatestFrameStore updates under loss, got {frames_seen}"
     );
     assert!(
         receiver.stats().access_units > 30,
@@ -286,7 +286,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     );
 
     // PRD §21: after recovery, delay must not accumulate past 1s.
-    // Clear loss, push fresh keyframes, then require FrameHub frame_age < 1000ms.
+    // Clear loss, push fresh keyframes, then require LatestFrameStore frame_age < 1000ms.
     sender.transport_mut().set_drop_ratio(0.0);
     for frame_id in 401..=430u64 {
         let payload = format!("recover-au-{frame_id}");
@@ -301,7 +301,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     }
     assert!(
         receiver.latest_frame().is_some(),
-        "expected FrameHub frame after lossless recovery window"
+        "expected LatestFrameStore frame after lossless recovery window"
     );
     // Wait for the 1s ReceiverStats interval, while continuing to publish fresh frames
     // so frame_age reflects live recovery rather than idle stall.
@@ -324,7 +324,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         sender.pump().ok();
         std::thread::sleep(Duration::from_millis(10));
     }
-    // Direct FrameHub age (decode timestamp → now) — PRD §21 recovery bound.
+    // Direct LatestFrameStore age (decode timestamp → now) — PRD §21 recovery bound.
     let frame = receiver.latest_frame().expect("recovered frame");
     let now_us = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -333,7 +333,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     let hub_age_ms = now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0;
     assert!(
         hub_age_ms < 1_000.0,
-        "FrameHub age piled up after recovery: {hub_age_ms}ms (PRD §21 <1s)"
+        "LatestFrameStore age piled up after recovery: {hub_age_ms}ms (PRD §21 <1s)"
     );
     if let Some(stats) = receiver.last_stats() {
         assert!(
@@ -346,7 +346,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
 
 #[test]
 fn paired_loopback_e2e_latency_p50_under_budget() {
-    // PRD §21 / REQ-PICOO-SESSION-007: loopback ingest→FrameHub P50/P95 latency budget.
+    // PRD §21 / REQ-PICOO-SESSION-007: loopback ingest→LatestFrameStore P50/P95 latency budget.
     // Full camera→VCam P95 needs devices; this closes the transport/decode path gate on Linux.
     use picoo_pairing::TrustedDevice;
     use picoo_session::ReceiverStatus;
@@ -433,7 +433,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
     let p50 = samples_ms[samples_ms.len() / 2];
     let p95 = samples_ms[(samples_ms.len() as f64 * 0.95) as usize];
     eprintln!(
-        "loopback ingest→FrameHub latency_ms p50={p50:.2} p95={p95:.2} n={}",
+        "loopback ingest→LatestFrameStore latency_ms p50={p50:.2} p95={p95:.2} n={}",
         samples_ms.len()
     );
     // Healthy LAN budgets from PRD (transport path only on loopback should be far below).
@@ -444,7 +444,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn paired_openh264_remains_usable_under_five_percent_loss() {
-    // SESSION-006 with real H.264 → FrameHub (not stub AUs).
+    // SESSION-006 with real H.264 → LatestFrameStore (not stub AUs).
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -558,7 +558,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn paired_openh264_e2e_latency_p50_under_budget() {
-    // SESSION-007: OpenH264 ingest→FrameHub P50/P95.
+    // SESSION-007: OpenH264 ingest→LatestFrameStore P50/P95.
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -659,7 +659,7 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
     let p50 = samples_ms[samples_ms.len() / 2];
     let p95 = samples_ms[(samples_ms.len() as f64 * 0.95) as usize];
     eprintln!(
-        "openh264 ingest→FrameHub latency_ms p50={p50:.2} p95={p95:.2} n={}",
+        "openh264 ingest→LatestFrameStore latency_ms p50={p50:.2} p95={p95:.2} n={}",
         samples_ms.len()
     );
     assert!(p50 < 150.0, "openh264 P50 {p50}ms exceeds 150ms");

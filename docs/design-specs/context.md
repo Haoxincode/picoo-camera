@@ -66,7 +66,7 @@ Picoo Camera 推荐起步命名：
 - `PICOO-PAIRING`：首次确认、公钥固定与可信设备关系。
 - `PICOO-SESSION`：会话状态、重连、抖动缓冲与码率控制。
 - `PICOO-MEDIA`：采集、编码、解码与方向处理。
-- `PICOO-FRAME`：FrameHub、共享帧环与多路消费。
+- `PICOO-FRAME`：LatestFrameStore、共享帧环与多路消费。
 - `PICOO-VCAM`：Windows 与 macOS 虚拟摄像头。
 - `PICOO-UI`：桌面 GPUI 与手机原生 UI 边界。
 - `PICOO-PRIVACY`：隐私、日志脱敏与本地-only 约束。

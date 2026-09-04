@@ -14,8 +14,8 @@ use crate::ReceiverSession;
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
-fn paired_openh264_access_unit_reaches_frame_hub() {
-    // REQ-PICOO-MEDIA-005/006: real Annex-B H.264 through QUIC → decode → FrameHub.
+fn paired_openh264_access_unit_reaches_latest_frame_store() {
+    // REQ-PICOO-MEDIA-005/006: real Annex-B H.264 through QUIC → decode → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_frame_hub::nv12_byte_size;
@@ -134,7 +134,7 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
         std::thread::sleep(Duration::from_millis(2));
     }
     panic!(
-        "OpenH264 AU did not reach FrameHub at {}x{}; stats={:?}",
+        "OpenH264 AU did not reach LatestFrameStore at {}x{}; stats={:?}",
         width,
         height,
         receiver.stats()
@@ -142,7 +142,7 @@ fn paired_openh264_access_unit_reaches_frame_hub() {
 }
 
 #[test]
-fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
+fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU reaches the
     // platform decoder. The encoded fixture avoids a test-only native codec.
     use picoo_frame_hub::nv12_byte_size;
@@ -223,7 +223,7 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         std::thread::sleep(Duration::from_millis(2));
     }
     // A synchronous MFT may legally retain the first sample while priming. A
-    // short sequence still verifies the live AVCC -> MF -> FrameHub path without
+    // short sequence still verifies the live AVCC -> MF -> LatestFrameStore path without
     // relying on a drain operation that production streaming never performs.
     for pts_us in 1..=3 {
         sender
@@ -247,7 +247,7 @@ fn paired_avcc_length_prefixed_au_reaches_frame_hub() {
         }
     }
     panic!(
-        "AVCC AU did not reach FrameHub; stats={:?}; media_error={:?}",
+        "AVCC AU did not reach LatestFrameStore; stats={:?}; media_error={:?}",
         receiver.stats(),
         receiver.last_media_error()
     );

@@ -74,7 +74,7 @@ Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用
 ```text
 Rust Receiver Core
   → Decode once
-  → FrameHub
+  → LatestFrameStore
   → Shared Frame Ring
   → Virtual Camera Extension / MF Media Source
   → Zoom / Teams / 腾讯会议 / OBS / Browser

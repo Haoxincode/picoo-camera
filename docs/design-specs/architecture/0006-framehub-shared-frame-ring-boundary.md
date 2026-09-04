@@ -1,4 +1,4 @@
-# ARCH-PICOO-FRAME-001: FrameHub 与 Shared Frame Ring 边界
+# ARCH-PICOO-FRAME-001: LatestFrameStore 与 Shared Frame Ring 边界
 
 Status: planned
 Source: product PRD V1.0 / PUC-004
@@ -11,33 +11,32 @@ Source: product PRD V1.0 / PUC-004
 
 ## 架构决策
 
-### FrameHub
+### LatestFrameStore
 
-FrameHub 是解码帧的统一出口，位于桌面主进程内：
+LatestFrameStore 是解码帧的统一出口，位于桌面主进程内：
 
 ```text
 Decoded Frame (NV12)
-  ↓ FrameHub（三槽环形缓冲）
+  ↓ LatestFrameStore（容量一、Arc<VideoFrame>）
   ├── Preview Pipeline（单槽 latest-only 后台转换）→ GPUI VideoSurface
-  └── Virtual Camera Producer → Shared Frame Ring
+  └── Shared Frame Ring Writer → Shared Frame Ring → Virtual Camera
 ```
 
-三槽环形缓冲每个 Slot 包含：
+Receiver reducer 是唯一写入者。Store 完整替换当前 `Arc<VideoFrame>`，消费者只克隆同一个不可变
+帧引用；慢消费者继续持有旧引用时，新帧发布不等待、不覆盖消费者正在读取的内存，也不形成历史队列。
+`VideoFrame` 显式携带：
 
-`sequence`、`timestamp`、`width`、`height`、`stride`、`pixel_format`、`rotation`、`data_length`、`ready_state`、`reader_count`、`pixel_data`
+`sequence`、`stream_generation`、`frame_id`、`source_pts_us`、`encoded_at_us`、`received_at_us`、
+`decode_submitted_at_us`、`decoded_at`、`timestamp_us`、`width`、`height`、`stride`、`rotation`
+与共享不可变 `pixel_data`
 
-写入流程：
-
-1. 在未被读取的槽上原子取得独占写租约；
-2. 标记 Writing，写入帧信息和像素；
-3. 更新序列号并通过 Release 屏障标记 Ready；
-4. 释放写租约并发布最新序列号。
-
-读取者总是选择最新完整序列，并在读取期间持有原子租约；Writer 不覆盖仍被读取的槽。消费者处理速度不足时，**丢弃旧帧并提供最新完整帧**；三个槽都被占用时 Producer 保留上一完整帧而不阻塞。
+同进程 Store 不拥有 ready state、reader lease 或三槽原子协议；这些只属于下述跨进程 Shared
+Frame Ring。需要方向变换时由有界 `FrameBufferPool` 提供 backing storage；无需变换时直接接管
+Decoder 输出，Preview 与 Ring Writer 不得再次深拷贝整帧。
 
 ### 桌面预览转换
 
-GPUI `VideoSurface` 只持有并渲染已经准备好的 `RenderImage`，不得在 UI 更新或绘制阶段执行 NV12 色彩转换、缩放或解码。独立 Preview Pipeline 从 FrameHub 观察最新完整帧，以容量为一的 latest-only 待处理槽把转换放到专用后台线程：新帧可以覆盖尚未开始的旧帧，转换速度不足时主动跳过旧帧，不允许形成增加延迟的队列。
+GPUI `VideoSurface` 只持有并渲染已经准备好的平台 Surface，不得在 UI 更新或绘制阶段执行 NV12 色彩转换、缩放或解码。独立 Preview Pipeline 从 LatestFrameStore 观察最新完整帧，以容量为一的 latest-only 待处理槽把转换放到专用后台线程：新帧可以覆盖尚未开始的旧帧，转换速度不足时主动跳过旧帧，不允许形成增加延迟的队列。
 
 预览保持 BT.709 limited range。Preview Pipeline 根据窗口物理像素宽度自适应准备图像：下限为 1280 像素宽，上限为 1920 像素宽，并且不得放大低分辨率源帧；因此 1080p 源在 Full HD 或高 DPI 窗口中保留原始细节，只在较小窗口中按实际显示需求缩小。缩小时使用有抗锯齿能力的卷积滤波，不允许先以最近邻降到 640 像素再放大。每次只发布完整转换结果；UI 线程只接管缓冲所有权、创建纹理并触发重绘。
 
@@ -45,8 +44,8 @@ GPUI `VideoSurface` 只持有并渲染已经准备好的 `RenderImage`，不得�
 
 | 候选 | 判断 |
 | --- | --- |
-| `yuv` | 采用。纯 Rust，BSD-3-Clause/Apache-2.0，Windows x86 SIMD 与 Apple ARM SIMD 均有运行时路径，直接支持带 stride 的 NV12→BGRA、BT.709 limited range。 |
-| `fast_image_resize` | 采用。MIT/Apache-2.0，提供 SIMD RGBA/BGRA 卷积缩放；仅启用所需 `U8x4` 像素路径，并使用 Catmull-Rom 在实时预览的清晰度、抗锯齿和耗时之间取平衡。 |
+| `yuv` | 采用。纯 Rust，BSD-3-Clause/Apache-2.0；非 macOS 回退路径用其 SIMD NV12→BGRA、BT.709 limited range 转换。macOS 原生 Surface 路径不生成 BGRA 中间帧。 |
+| `fast_image_resize` | 采用。MIT/Apache-2.0，提供 SIMD 卷积缩放；非 macOS 使用 `U8x4` BGRA，macOS 分别使用 `U8`/`U8x2` 缩放 NV12 双平面，并使用 Catmull-Rom 在清晰度、抗锯齿和耗时之间取平衡。 |
 | `libyuv` C/C++ 绑定 | 不采用。能力成熟，但为当前 Rust/Windows/macOS 构建增加原生工具链、绑定与发布维护；现有纯 Rust SIMD 组合已覆盖所需格式。 |
 | GPUI/平台专属 NV12 GPU shader | 暂不作为本次路径。长期可减少纹理上传和 RGB 中间缓冲，但需要扩展 GPUI 平台纹理边界；在统一跨平台 Preview Pipeline 达到验收前不提前分叉。 |
 
@@ -73,7 +72,7 @@ macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`
 
 ### 无画面状态
 
-没有手机连接时，FrameHub / Shared Frame Ring 输出定义的占位画面：
+没有手机连接时，LatestFrameStore / Shared Frame Ring 输出定义的占位画面：
 
 - 纯黑背景；
 - Picoo Camera 标志；
@@ -93,16 +92,16 @@ macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`
 
 ### 无界帧队列
 
-不采用。FrameHub 与 Shared Frame Ring 必须固定容量。
+不采用。LatestFrameStore 与 Shared Frame Ring 必须固定容量。
 
 ## 约束
 
-- 桌面内存稳态低于 300 MB；FrameHub 不随时间增长。
+- 桌面内存稳态低于 300 MB；LatestFrameStore 不随时间增长。
 - 跨进程读写必须通过 sequence 与 ready_state 保证一致性；需有原子一致性测试。
 - Windows 生产共享环必须可由交互用户 Receiver 与 Local Service Frame Server 从不同 Session 打开；安装器必须验证 ProgramData 目录与继承 ACL，不能回退到用户临时目录。
 - Windows 真机性能验收必须观察 720p/1080p30 时的磁盘写入；temporary mmap 不得形成与帧率等比例的持续磁盘写放大。
 - GPUI `VideoSurface` 只接收平台视频纹理，不拥有解码器或网络会话。
-- Preview Pipeline 的待处理帧和已完成帧均为单槽覆盖语义；不得因预览消费变慢反压 Receiver、FrameHub 或 Shared Frame Ring。
+- Preview Pipeline 的待处理帧和已完成帧均为单槽覆盖语义；不得因预览消费变慢反压 Receiver、LatestFrameStore 或 Shared Frame Ring。
 - 720p/1080p30 桌面预览必须保持几何比例，细线和人脸轮廓不得出现明显最近邻锯齿；移动场景中预览转换不得占用 GPUI UI 线程。
 
 ## 相关 Use Case
@@ -118,4 +117,4 @@ macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`
 
 ## 相关 Requirements
 
-- [REQ-PICOO-FRAME-001..007](../requirements/frame.md)
+- [REQ-PICOO-FRAME-001..010](../requirements/frame.md)
