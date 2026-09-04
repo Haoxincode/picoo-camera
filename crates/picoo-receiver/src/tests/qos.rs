@@ -475,6 +475,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         .expect("listen");
     let lossy = LossyVideoTransport::new(QuicSenderTransport::new(), loss_ratio);
     let mut sender = SenderSession::new(lossy);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -583,6 +584,7 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),

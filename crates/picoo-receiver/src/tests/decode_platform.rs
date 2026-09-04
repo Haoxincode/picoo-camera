@@ -56,6 +56,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -579,6 +580,7 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     let placeholder_seq = placeholder.sequence;
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),

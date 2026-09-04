@@ -51,6 +51,7 @@ fn abr_downshift_updates_stream_config_and_latest_frame_store() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -313,6 +314,7 @@ fn abr_upshift_updates_stream_config_and_latest_frame_store() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender.set_preferred_height(1080);
     sender
         .connect(Endpoint {

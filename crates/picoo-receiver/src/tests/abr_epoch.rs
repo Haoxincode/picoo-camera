@@ -57,6 +57,7 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -208,6 +209,7 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -386,6 +388,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
 
     let dropper = DropKeyframeTailTransport::new(QuicSenderTransport::new());
     let mut sender = SenderSession::new(dropper);
+    super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
