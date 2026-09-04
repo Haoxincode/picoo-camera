@@ -133,8 +133,11 @@ OBS 和浏览器实测确认。
 
 - Receiver 无旋转/镜像时直接转移 Decoder buffer 所有权；需要变换时合并整帧遍历，避免
   `rotation → mirror → copy → ring copy` 的连续全帧扫描。
-- macOS Preview 不允许长期保留 `NV12 BT.709 limited → BGRA → NV12 BT.601 full` 双转换；
-  GPUI Surface 应直接消费 NV12/CVPixelBuffer，或由 GPU 只转换一次。
+- macOS Preview 不允许保留 `NV12 BT.709 limited → BGRA → NV12 BT.601 full` 双转换。当前上游 GPUI
+  `surface(CVPixelBuffer)` 只接受 `420f`，Metal Surface shader 固定使用 BT.601 full-range 矩阵，不能
+  直接消费 Picoo 的 `420v` BT.709 limited；平台 adapter 因而使用既有 `fast_image_resize` 分别缩放
+  NV12 双平面，再执行一次直接 YCbCr 矩阵/范围变换并复制到有界 IOSurface pool。该路径不分配 BGRA
+  中间帧；若 GPUI 上游以后支持颜色附件或可配置 shader，应删除这层矩阵适配并直接提交 `420v`。
 - Sender 码流侧以 Rust-owned AU buffer、fragment offset/length descriptor、预编码 Datagram 和
   buffer reuse 减少小对象；其优先级低于解码后 NV12 的全帧复制。
 - FEC 必须按观测损伤自适应：健康链路可为 0 parity，轻微损伤 1 parity，burst loss 2 parity；

@@ -34,7 +34,7 @@ anyhow = "1.0"
 bitflags = "2.6"
 bytes = "1.12.1"
 ed25519-dalek = "2.2.0"
-fast_image_resize = { version = "6.1.0", features = ["only_u8x4"] }
+fast_image_resize = "6.1.0"
 getrandom = "0.3.4"
 prost = "0.13"
 prost-types = "0.13"
