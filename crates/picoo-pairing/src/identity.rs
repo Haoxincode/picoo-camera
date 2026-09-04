@@ -223,6 +223,15 @@ pub fn verify_identity_signature(
         .map_err(|_| IdentityError::Invalid("invalid Ed25519 signature".into()))
 }
 
+pub(crate) fn validate_identity_public_key(public_key: &[u8]) -> Result<(), IdentityError> {
+    let public_key: [u8; PUBLIC_KEY_LEN] = public_key
+        .try_into()
+        .map_err(|_| IdentityError::Invalid("Ed25519 public-key length".into()))?;
+    VerifyingKey::from_bytes(&public_key)
+        .map(|_| ())
+        .map_err(|_| IdentityError::Invalid("invalid Ed25519 public key".into()))
+}
+
 pub fn derive_device_id(public_key: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(b"picoo-camera device identity\0");

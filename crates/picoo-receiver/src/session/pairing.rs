@@ -93,6 +93,7 @@ impl ReceiverSession {
             || replacement.previous_identities.iter().any(|candidate| {
                 self.trusted.get(&candidate.device_id).is_none_or(|device| {
                     device.certificate_fingerprint != candidate.certificate_fingerprint
+                        || device.last_connected_at_ms != candidate.last_connected_at_ms
                 })
             })
         {

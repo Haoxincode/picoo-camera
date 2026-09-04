@@ -75,7 +75,6 @@ fn sender_clones_the_supplied_signing_identity() {
 
 #[test]
 fn sender_remove_trusted_device_c_abi_validates_and_persists_removal() {
-    use picoo_pairing::TrustedDevice;
     use std::ffi::CString;
 
     let missing = CString::new("missing-receiver").unwrap();
@@ -87,14 +86,15 @@ fn sender_remove_trusted_device_c_abi_validates_and_persists_removal() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store_path = dir.path().join("trusted.json");
     let mut seeded_store = TrustedDeviceStore::new();
-    seeded_store.upsert(TrustedDevice {
-        device_id: "paired-receiver".into(),
-        device_name: "Studio Mac".into(),
-        public_key: vec![1, 2, 3],
-        certificate_fingerprint: "test-fingerprint".into(),
-        paired_at_ms: 100,
-        last_connected_at_ms: Some(200),
-    });
+    let paired_identity = picoo_pairing::DeviceIdentity::from_secret_bytes("Studio Mac", &[7; 32])
+        .expect("paired identity");
+    let paired_device_id = paired_identity.device_id().to_owned();
+    seeded_store.upsert(picoo_pairing::trusted_device_from_pairing(
+        paired_identity.device_id(),
+        paired_identity.device_name(),
+        paired_identity.public_key(),
+        100,
+    ));
     seeded_store
         .save_to_path(&store_path)
         .expect("seed trusted store");
@@ -110,13 +110,13 @@ fn sender_remove_trusted_device_c_abi_validates_and_persists_removal() {
         picoo_sender_remove_trusted_device(handle, missing.as_ptr()),
         0
     );
-    let paired = CString::new("paired-receiver").unwrap();
+    let paired = CString::new(paired_device_id.as_str()).unwrap();
     assert_eq!(
         picoo_sender_remove_trusted_device(handle, paired.as_ptr()),
         1
     );
     let persisted = TrustedDeviceStore::load_from_path(&store_path).expect("reload store");
-    assert!(!persisted.is_paired("paired-receiver"));
+    assert!(!persisted.is_paired(&paired_device_id));
     picoo_sender_destroy(handle);
 }
 
@@ -265,7 +265,7 @@ fn export_diagnostics_with_session_includes_redacted_host() {
     let out_path = dir.path().join("diag.json");
     fs::write(
         &store_path,
-        r#"{"format":"picoo-camera-ed25519-trust","devices":[]}"#,
+        r#"{"format":"picoo-camera-ed25519-trust","devices":[],"pending_identity_replacement":null,"next_identity_replacement_revision":1}"#,
     )
     .expect("empty store");
 
