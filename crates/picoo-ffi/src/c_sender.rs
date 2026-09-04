@@ -1,8 +1,8 @@
 use crate::handles::{RecoverMutex, SenderInner};
 use picoo_pairing::DeviceIdentity;
-use picoo_sender::{EncoderDirective, SenderSession, SessionStats};
+use picoo_sender::{EncoderDirective, SenderError, SenderSession, SessionStats};
 use picoo_session::SenderStatus;
-use picoo_transport::{Endpoint, QuicSenderTransport};
+use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 use std::ffi::CStr;
 use std::sync::Mutex;
 
@@ -66,8 +66,29 @@ pub extern "C" fn picoo_sender_connect(
         port,
     }) {
         Ok(_) => 0,
+        Err(SenderError::Transport(TransportError::NetworkBindingFailed(_))) => -3,
         Err(_) => -2,
     }
+}
+
+/// Bind future Sender QUIC sockets to an Apple Network.framework interface index.
+///
+/// The binding is retained by the transport and applied again to automatic reconnect sockets.
+#[no_mangle]
+pub extern "C" fn picoo_sender_set_apple_network_interface(
+    handle: *mut std::ffi::c_void,
+    interface_index: u32,
+) -> i32 {
+    if handle.is_null() || interface_index == 0 {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock_or_recover()
+        .transport_mut()
+        .set_network_binding(ClientNetworkBinding::AppleInterface(interface_index));
+    0
 }
 
 /// User-initiated disconnect (no auto-reconnect until the next connect). PUC-005.

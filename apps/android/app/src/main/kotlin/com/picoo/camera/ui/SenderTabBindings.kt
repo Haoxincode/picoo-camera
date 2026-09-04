@@ -85,7 +85,8 @@ internal fun SenderTabContent(
             wifiPillText = wifiPillText,
             errorText = errorText,
             manualEndpointText = manualEndpointText,
-            manualConnecting = selectedReceiverId.startsWith("manual-") &&
+            manualConnecting = uiState.connectionStartedAtMs != 0L &&
+                selectedReceiverId.startsWith("manual-") &&
                 senderStatus in setOf(
                     PicooNative.STATUS_CONNECTING,
                     PicooNative.STATUS_NEGOTIATING,
@@ -106,7 +107,10 @@ internal fun SenderTabContent(
                 selectedReceiverName = host
                 sessionModel.connect(host, port, selectedReceiverId)
             },
-            onManualEndpointChange = { manualEndpointText = it },
+            onManualEndpointChange = {
+                manualEndpointText = it
+                errorText = null
+            },
             onCheckPermissions = {
                 onRequestNearbyWifi()
                 onRequestNotifications()

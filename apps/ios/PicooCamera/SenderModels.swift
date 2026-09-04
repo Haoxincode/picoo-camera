@@ -75,6 +75,50 @@ nonisolated struct ReceiverSummary: Identifiable, Equatable, Sendable {
     let isTrusted: Bool
 }
 
+nonisolated struct PicooWifiInterface: Equatable, Sendable {
+    let name: String
+    let index: UInt32
+}
+
+/// Network.framework is the source of truth for the physical Wi-Fi interface.
+/// Rust receives only the stable interface index/name needed to scope mDNS and QUIC sockets.
+nonisolated final class PicooWifiNetworkMonitor: @unchecked Sendable {
+    private let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
+    private let queue = DispatchQueue(label: "com.picoo.camera.wifi-path")
+    private let lock = NSLock()
+    private var latest: PicooWifiInterface?
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let value: PicooWifiInterface?
+            if path.status == .satisfied,
+               let interface = path.availableInterfaces.first(where: { $0.type == .wifi }),
+               let index = UInt32(exactly: interface.index),
+               index > 0
+            {
+                value = PicooWifiInterface(name: interface.name, index: index)
+            } else {
+                value = nil
+            }
+            lock.lock()
+            latest = value
+            lock.unlock()
+        }
+        monitor.start(queue: queue)
+    }
+
+    deinit {
+        monitor.cancel()
+    }
+
+    var current: PicooWifiInterface? {
+        lock.lock()
+        defer { lock.unlock() }
+        return latest
+    }
+}
+
 nonisolated enum SenderScreen: Equatable, Sendable {
     case devices
     case pairing

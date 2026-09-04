@@ -34,6 +34,7 @@ _picoocam._udp.local
 
 - `receiver_id`
 - `display_name`
+- `platform`
 - `quic_port`
 - `pairing_state`
 - `public_key_fingerprint_prefix`
@@ -45,6 +46,23 @@ Sender 浏览该服务：
 - Android：NSD / DNS-SD
 - iOS：Bonjour
 - Desktop：Rust mDNS/DNS-SD Adapter
+
+发现与连接必须使用同一条物理局域网边界，而不能让普通 VPN 的默认路由决定出口：Android 用
+NSD `NetworkRequest` 限定 Wi-Fi，并把 `Network.getNetworkHandle()` 交给 Rust 对每个 Quinn UDP
+socket 调用 NDK `android_setsocknetwork`；iOS 用 Network.framework 的 `NWPathMonitor` 选择 Wi-Fi
+接口，mDNS browser 限定到该接口，Quinn socket 使用公开的 `IP_BOUND_IF` / `IPV6_BOUND_IF`。
+绑定配置属于 Transport Adapter，自动重连创建的新 socket 必须重复应用。不得使用影响整个应用
+进程的默认网络切换来替代 socket 级绑定。
+
+若 Android VPN 未开放 bypass、因而拒绝 socket 绑定，但其分流路由明确没有接管 Receiver 地址，
+只有在 Receiver 数字地址同时落入当前 Wi-Fi 的直连前缀时，Sender 才可保留未绑定 socket 并使用
+Android 的该条局域网分流；该判断不能只依赖“私有地址”或 VPN 名称。任何条件无法证明时均失败
+关闭，避免把局域网会话发往隧道。
+
+Windows/macOS Receiver 是在固定 UDP 端口被动监听的一方，可以监听 wildcard 地址以承受局域网
+地址变化；其 mDNS A 记录和组播出口必须只选择物理 Wi-Fi/以太网地址，并明确排除 VPN、utun、
+WireGuard、Docker、Hyper-V、WSL 等隧道或虚拟接口。若 always-on/lockdown VPN 或企业策略禁止
+本地网络，Picoo 不得绕过系统策略，只能明确提示允许局域网访问或关闭 VPN。
 
 ### 配对短码核对与手动 IP 直连
 

@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn synchronous_connect_failure_returns_to_disconnected() {
+    let mut sender = SenderSession::new(RejectConnectTransport);
+    let result = sender.connect(Endpoint {
+        host: "192.168.8.110".into(),
+        port: 4433,
+    });
+
+    assert!(matches!(
+        result,
+        Err(SenderError::Transport(
+            TransportError::NetworkBindingFailed(_)
+        ))
+    ));
+    assert_eq!(sender.status(), SenderStatus::Disconnected);
+}
+
+#[test]
 fn client_hello_queued_before_async_connect_is_sent_when_connected() {
     // REQ-PICOO-DISCOVERY-007: mirrors Android connect() -> sendClientHello().
     let mut sender = SenderSession::new(DeferredConnectTransport::new());

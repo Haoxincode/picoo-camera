@@ -2,20 +2,28 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+use std::os::fd::AsRawFd;
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn::{ClientConfig, Connection, Endpoint, ServerConfig, TransportConfig, VarInt};
+use quinn::{
+    ClientConfig, Connection, Endpoint, EndpointConfig, ServerConfig, TransportConfig, VarInt,
+};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
+use socket2::{Domain, Protocol, Socket, Type};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
 
 use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
-use crate::{ChannelBinding, CloseReason, SessionId, TransportEvent, TransportLinkStats};
+use crate::{
+    ChannelBinding, ClientNetworkBinding, CloseReason, SessionId, TransportEvent,
+    TransportLinkStats,
+};
 
 const COMMAND_CAPACITY: usize = 64;
 // Capacity is measured in complete access units, not fragments. A deep video
@@ -32,6 +40,8 @@ const DATAGRAM_SEND_BUFFER_SIZE: usize = 256 * 1024;
 pub enum QuicTransportError {
     #[error("I/O error: {0}")]
     Io(#[from] io::Error),
+    #[error("network binding: {0}")]
+    NetworkBinding(io::Error),
     #[error("QUIC configuration error: {0}")]
     Config(String),
     #[error("QUIC worker is unavailable")]
@@ -110,16 +120,22 @@ pub(crate) struct TransportActor {
 }
 
 impl TransportActor {
-    pub(crate) fn client(server_addr: SocketAddr) -> Result<Self, QuicTransportError> {
+    pub(crate) fn client(
+        server_addr: SocketAddr,
+        network_binding: ClientNetworkBinding,
+    ) -> Result<Self, QuicTransportError> {
         let runtime = shared_runtime()?;
         let bind_addr = if server_addr.is_ipv4() {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0)
         } else {
             SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0)
         };
+        let socket = client_socket(bind_addr, network_binding)?;
         let mut endpoint = {
             let _runtime_guard = runtime.enter();
-            Endpoint::client(bind_addr)?
+            let endpoint_runtime = quinn::default_runtime()
+                .ok_or_else(|| io::Error::other("no Quinn async runtime available"))?;
+            Endpoint::new(EndpointConfig::default(), None, socket, endpoint_runtime)?
         };
         endpoint.set_default_client_config(client_config()?);
 
@@ -234,6 +250,138 @@ impl TransportActor {
         (state.active_session == Some(session))
             .then_some(state.channel_binding)
             .flatten()
+    }
+}
+
+fn client_socket(
+    bind_addr: SocketAddr,
+    network_binding: ClientNetworkBinding,
+) -> Result<std::net::UdpSocket, QuicTransportError> {
+    let socket = Socket::new(
+        Domain::for_address(bind_addr),
+        Type::DGRAM,
+        Some(Protocol::UDP),
+    )?;
+    if bind_addr.is_ipv6() {
+        let _ = socket.set_only_v6(false);
+    }
+    socket.bind(&bind_addr.into())?;
+    let socket: std::net::UdpSocket = socket.into();
+    apply_client_network_binding(&socket, network_binding)
+        .map_err(QuicTransportError::NetworkBinding)?;
+    Ok(socket)
+}
+
+fn apply_client_network_binding(
+    socket: &std::net::UdpSocket,
+    binding: ClientNetworkBinding,
+) -> io::Result<()> {
+    match binding {
+        ClientNetworkBinding::Default => Ok(()),
+        ClientNetworkBinding::AndroidNetwork {
+            network_handle: 0, ..
+        }
+        | ClientNetworkBinding::AppleInterface(0) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "network handle/interface index must be non-zero",
+        )),
+        ClientNetworkBinding::AndroidNetwork {
+            network_handle,
+            allow_system_lan_route_fallback,
+        } => {
+            #[cfg(target_os = "android")]
+            {
+                let result =
+                    unsafe { ndk_sys::android_setsocknetwork(network_handle, socket.as_raw_fd()) };
+                if result == 0 || allow_system_lan_route_fallback {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+            #[cfg(not(target_os = "android"))]
+            {
+                let _ = (socket, network_handle, allow_system_lan_route_fallback);
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Android Network handles are only supported on Android",
+                ))
+            }
+        }
+        ClientNetworkBinding::AppleInterface(interface_index) => {
+            #[cfg(any(target_os = "ios", target_os = "macos"))]
+            {
+                let interface_index = libc::c_int::try_from(interface_index).map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidInput, "interface index is too large")
+                })?;
+                let (level, option) = if socket.local_addr()?.is_ipv4() {
+                    (libc::IPPROTO_IP, libc::IP_BOUND_IF)
+                } else {
+                    (libc::IPPROTO_IPV6, libc::IPV6_BOUND_IF)
+                };
+                let result = unsafe {
+                    libc::setsockopt(
+                        socket.as_raw_fd(),
+                        level,
+                        option,
+                        (&interface_index as *const libc::c_int).cast(),
+                        std::mem::size_of_val(&interface_index) as libc::socklen_t,
+                    )
+                };
+                if result == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::last_os_error())
+                }
+            }
+            #[cfg(not(any(target_os = "ios", target_os = "macos")))]
+            {
+                let _ = (socket, interface_index);
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "Apple interface indexes are only supported on Apple platforms",
+                ))
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod network_binding_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_zero_platform_network_identifiers() {
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("socket");
+        assert_eq!(
+            apply_client_network_binding(
+                &socket,
+                ClientNetworkBinding::AndroidNetwork {
+                    network_handle: 0,
+                    allow_system_lan_route_fallback: false,
+                },
+            )
+            .expect_err("zero Android handle")
+            .kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(
+            apply_client_network_binding(&socket, ClientNetworkBinding::AppleInterface(0))
+                .expect_err("zero Apple interface")
+                .kind(),
+            io::ErrorKind::InvalidInput
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn binds_an_apple_udp_socket_to_loopback_interface() {
+        let name = std::ffi::CString::new("lo0").expect("interface name");
+        let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+        assert_ne!(index, 0, "lo0 interface index");
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("socket");
+        apply_client_network_binding(&socket, ClientNetworkBinding::AppleInterface(index))
+            .expect("IP_BOUND_IF");
     }
 }
 

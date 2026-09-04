@@ -14,6 +14,7 @@ import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.ParameterSetsListener
 import com.picoo.camera.media.StreamResolution
+import com.picoo.camera.runtime.QuicWifiBindingResult
 import com.picoo.camera.runtime.SenderNativeRuntime
 import com.picoo.camera.ui.SenderHomeState
 import com.picoo.camera.ui.SenderTab
@@ -160,6 +161,17 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val ui = uiState
         ui.suppressAutoConnect = false
         ui.connectionStartedAtMs = 0L
+        when (runtime.configureQuicWifiNetwork(host)) {
+            QuicWifiBindingResult.Bound -> Unit
+            QuicWifiBindingResult.WifiUnavailable -> {
+                ui.errorText = "未连接 Wi-Fi，请连接电脑所在的 Wi-Fi 后重试"
+                return false
+            }
+            QuicWifiBindingResult.Blocked -> {
+                ui.errorText = "当前 VPN 阻止局域网连接，请关闭 VPN 或允许局域网访问后重试"
+                return false
+            }
+        }
         val preferredResolution = StreamResolution.fromLabel(ui.preferredResolutionLabel)
         ui.resolutionLabel = preferredResolution.label
         val preferredBitrate = PicooNative.bitrateInitialForHeight(preferredResolution.height)
@@ -197,7 +209,12 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             }
             return true
         } else {
-            ui.errorText = "连接失败 ($rc)"
+            ui.senderStatus = PicooNative.readSenderSnapshot(runtime.senderHandle).status
+            ui.errorText = if (rc == -3) {
+                "当前 VPN 不允许局域网连接，请允许局域网访问或关闭 VPN 后重试"
+            } else {
+                "连接失败 ($rc)"
+            }
             return false
         }
     }
@@ -247,6 +264,11 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val senderHandle = runtime.senderHandle
         val ui = uiState
         if (senderHandle != 0L) {
+            if (ui.senderStatus == PicooNative.STATUS_RECONNECTING) {
+                // A replacement Wi-Fi network has a new Android Network handle. Refresh the
+                // route before Rust creates its next automatic-reconnect socket.
+                runtime.configureQuicWifiNetwork(ui.hostText)
+            }
             PicooNative.pump(senderHandle)
             var senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
             ui.senderStatus = senderSnapshot.status

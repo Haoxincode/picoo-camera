@@ -8,8 +8,8 @@ use picoo_protocol::VideoPacket;
 
 use crate::quinn_backend::{Command, QuicTransportError, TransportActor};
 use crate::{
-    ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
-    TransportEvent, TransportLinkStats,
+    ChannelBinding, ClientNetworkBinding, CloseReason, Endpoint, PicooTransport, SessionId,
+    TransportError, TransportEvent, TransportLinkStats,
 };
 
 pub struct QuicSenderTransport {
@@ -17,6 +17,7 @@ pub struct QuicSenderTransport {
     pending_session: Option<SessionId>,
     active_session: Option<SessionId>,
     next_session: u64,
+    network_binding: ClientNetworkBinding,
 }
 
 impl Default for QuicSenderTransport {
@@ -32,7 +33,15 @@ impl QuicSenderTransport {
             pending_session: None,
             active_session: None,
             next_session: 1,
+            network_binding: ClientNetworkBinding::Default,
         }
+    }
+
+    /// Configure the route constraint used for the next QUIC socket and every later reconnect.
+    /// Updating this while connected does not move the active socket; it takes effect when the
+    /// transport creates the next connection generation.
+    pub fn set_network_binding(&mut self, binding: ClientNetworkBinding) {
+        self.network_binding = binding;
     }
 
     pub fn is_connected(&self) -> bool {
@@ -40,8 +49,13 @@ impl QuicSenderTransport {
             && self.actor.as_ref().and_then(TransportActor::active_session) == self.active_session
     }
 
-    fn map_connect_error(error: impl ToString) -> TransportError {
-        TransportError::ConnectFailed(error.to_string())
+    fn map_connect_error(error: QuicTransportError) -> TransportError {
+        match error {
+            QuicTransportError::NetworkBinding(error) => {
+                TransportError::NetworkBindingFailed(error.to_string())
+            }
+            error => TransportError::ConnectFailed(error.to_string()),
+        }
     }
 
     fn map_send_error(error: QuicTransportError) -> TransportError {
@@ -59,8 +73,9 @@ impl PicooTransport for QuicSenderTransport {
         }
 
         let server_addr = SocketAddr::from_str(&format!("{}:{}", endpoint.host, endpoint.port))
+            .map_err(|error| TransportError::ConnectFailed(error.to_string()))?;
+        let actor = TransportActor::client(server_addr, self.network_binding)
             .map_err(Self::map_connect_error)?;
-        let actor = TransportActor::client(server_addr).map_err(Self::map_connect_error)?;
         let session = SessionId(self.next_session);
         self.next_session += 1;
         actor
@@ -152,5 +167,31 @@ impl PicooTransport for QuicSenderTransport {
 
     fn link_stats(&self) -> Option<TransportLinkStats> {
         self.actor.as_ref().and_then(TransportActor::link_stats)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_binding_is_retained_for_future_connection_generations() {
+        let mut transport = QuicSenderTransport::new();
+        transport.set_network_binding(ClientNetworkBinding::AndroidNetwork {
+            network_handle: 42,
+            allow_system_lan_route_fallback: true,
+        });
+        assert_eq!(
+            transport.network_binding,
+            ClientNetworkBinding::AndroidNetwork {
+                network_handle: 42,
+                allow_system_lan_route_fallback: true,
+            }
+        );
+        transport.set_network_binding(ClientNetworkBinding::AppleInterface(7));
+        assert_eq!(
+            transport.network_binding,
+            ClientNetworkBinding::AppleInterface(7)
+        );
     }
 }

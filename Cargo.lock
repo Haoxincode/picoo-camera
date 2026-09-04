@@ -5525,10 +5525,13 @@ name = "picoo-transport"
 version = "0.1.1"
 dependencies = [
  "bytes",
+ "libc",
+ "ndk-sys",
  "picoo-protocol",
  "quinn",
  "rcgen",
  "rustls",
+ "socket2 0.6.5",
  "thiserror 2.0.20",
  "tokio",
 ]

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use mdns_sd::{Receiver, ServiceDaemon, ServiceEvent};
+use mdns_sd::{IfKind, Receiver, ServiceDaemon, ServiceEvent};
 use thiserror::Error;
 
 use crate::types::{ReceiverAdvertisement, SERVICE_TYPE};
@@ -32,7 +32,30 @@ pub struct MdnsBrowser {
 
 impl MdnsBrowser {
     pub fn new() -> Result<Self, BrowseError> {
+        Self::new_with_interface(None)
+    }
+
+    /// Browse only on one platform-selected physical LAN interface.
+    ///
+    /// iOS supplies the current Wi-Fi interface from Network.framework so a VPN tunnel cannot
+    /// become the mDNS browse boundary (REQ-PICOO-DISCOVERY-008).
+    pub fn new_on_interface(interface_name: &str) -> Result<Self, BrowseError> {
+        if interface_name.is_empty() {
+            return Err(BrowseError::Mdns("empty interface name".into()));
+        }
+        Self::new_with_interface(Some(interface_name))
+    }
+
+    fn new_with_interface(interface_name: Option<&str>) -> Result<Self, BrowseError> {
         let daemon = ServiceDaemon::new().map_err(|e| BrowseError::Mdns(e.to_string()))?;
+        if let Some(interface_name) = interface_name {
+            daemon
+                .disable_interface(IfKind::All)
+                .map_err(|e| BrowseError::Mdns(e.to_string()))?;
+            daemon
+                .enable_interface(interface_name)
+                .map_err(|e| BrowseError::Mdns(e.to_string()))?;
+        }
         let event_receiver = daemon
             .browse(SERVICE_TYPE)
             .map_err(|e| BrowseError::Mdns(e.to_string()))?;
@@ -117,6 +140,11 @@ mod tests {
     fn browser_starts_without_error() {
         let browser = MdnsBrowser::new();
         assert!(browser.is_ok());
+    }
+
+    #[test]
+    fn interface_scoped_browser_rejects_an_empty_name() {
+        assert!(MdnsBrowser::new_on_interface("").is_err());
     }
 
     #[test]

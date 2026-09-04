@@ -1,5 +1,6 @@
 use crate::handles::{write_field, BrowserInner, RecoverMutex};
 use picoo_discovery::MdnsBrowser;
+use std::ffi::CStr;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -19,7 +20,25 @@ pub struct PicooDiscoveredReceiver {
 /// Create mDNS browser for receiver discovery (PUC-002).
 #[no_mangle]
 pub extern "C" fn picoo_discovery_browser_create() -> *mut std::ffi::c_void {
-    match MdnsBrowser::new() {
+    discovery_browser_handle(MdnsBrowser::new())
+}
+
+/// Create a browser restricted to a platform-selected physical LAN interface.
+#[no_mangle]
+pub extern "C" fn picoo_discovery_browser_create_on_interface(
+    interface_name: *const std::ffi::c_char,
+) -> *mut std::ffi::c_void {
+    if interface_name.is_null() {
+        return std::ptr::null_mut();
+    }
+    let interface_name = unsafe { CStr::from_ptr(interface_name) }.to_string_lossy();
+    discovery_browser_handle(MdnsBrowser::new_on_interface(&interface_name))
+}
+
+fn discovery_browser_handle(
+    browser: Result<MdnsBrowser, picoo_discovery::BrowseError>,
+) -> *mut std::ffi::c_void {
+    match browser {
         Ok(browser) => Box::into_raw(Box::new(BrowserInner {
             browser: Mutex::new(browser),
             receivers: Mutex::new(Vec::new()),

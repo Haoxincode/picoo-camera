@@ -33,6 +33,8 @@ trait PicooTransport {
 | 候选 | 适用性判断 |
 | --- | --- |
 | Quinn + Rustls ring | 采用。支持可靠 Stream 与 Datagram，Android/iOS/Windows/macOS 可由 Cargo 统一构建；ring 可能编译少量 C/汇编，但不依赖 CMake。 |
+| Quinn + `socket2` 预构造 UDP socket | 采用。`socket2 0.6` 是 Quinn 自身使用的 MIT/Apache-2.0 成熟 socket 封装；只用于在 Quinn 接管前保留双栈行为并应用平台官方的单 socket 网络绑定，不自行实现 UDP/QUIC。 |
+| Android NDK `android_setsocknetwork` + `ndk-sys` | 采用。`ndk-sys 0.6` 是 Apache-2.0/MIT 的 NDK 原始绑定；最终 `picoo-ffi` cdylib 还显式链接 `libandroid.so`，避免依赖层链接元数据被 `--as-needed` 丢弃而直到 `System.loadLibrary` 才暴露未解析符号。API 自 Android 6（23）提供，低于项目 minSdk 29。Android `VpnService.Builder.allowBypass()` 文档同时明确：VPN 未开放 bypass 时，应用不能用网络绑定绕开 VPN；此时只有 VPN 路由本身排除 Receiver 直连 Wi-Fi 子网，才允许保留未绑定 socket。 |
 | Cloudflare quiche | 不采用。协议能力满足需求，但默认 BoringSSL 构建要求 CMake，扩大本地与 CI 工具链。 |
 | s2n-quic | 不采用。能力完整且可接 Rustls，但高层异步 Provider 模型与当前 `PicooTransport` 同步事件边界的适配成本不低于 Quinn，移动端验证积累也不是本项目的优先选择。 |
 
@@ -52,6 +54,22 @@ QUIC Connection
 ```
 
 QUIC ALPN：`picoocam`
+
+### 移动端物理 Wi-Fi 绑定
+
+`picoo-transport` 接受平台解析后的不透明网络约束，但不负责枚举平台网络：Android Adapter 提供
+`Network` handle，Apple Adapter 提供 Network.framework interface index。Sender 每次建立或自动
+重建 Quinn Endpoint 时，先用 `socket2` 创建 UDP socket，再分别调用 NDK
+`android_setsocknetwork` 或 Darwin `IP_BOUND_IF` / `IPV6_BOUND_IF`，最后把 socket 交给 Quinn。
+默认路由、DNS 或整个应用进程不得被全局切换。Receiver 保持 wildcard 被动监听，局域网出口由
+对端目标路由和显式绑定的 mDNS Adapter 决定。
+
+Android 的非 bypassable 分流 VPN 可能在路由表排除局域网的同时，仍拒绝
+`android_setsocknetwork`。平台 Adapter 只在目标是数字地址、确实位于当前 Wi-Fi 直连前缀，且
+当前 VPN 的 `LinkProperties.routes` 没有任何路由匹配该目标时，允许 Quinn 保留未绑定 socket，
+由 Android 已确认的局域网分流送往 Wi-Fi。目标不在直连子网、VPN 接管该目标、路由信息不可读，
+或其他无法证明出口的情况一律失败关闭。同步建连失败必须把 Sender 状态恢复为
+`Disconnected`，不得让 UI 残留“正在连接”。
 
 ### 重连与退避
 
@@ -81,6 +99,7 @@ QUIC ALPN：`picoocam`
 - QUIC 构建不得要求 CMake、BoringSSL 或 NASM；平台仍可使用 Cargo、NDK Clang、MSVC 与系统 SDK。
 - 视频 Datagram 不请求重传旧片段。
 - 控制 Stream 消息丢失或乱序由 QUIC 保证；应用层仍需校验 Envelope generation/message ID 与配对状态。
+- 移动 Sender 的普通 VPN 绕行优先使用平台公开的 socket 级绑定；Android 只允许前述可证明的直连 Wi-Fi 分流兜底，系统强制禁止或接管局域网时必须失败并交还 UI 解释。
 
 ## 相关 Use Case
 

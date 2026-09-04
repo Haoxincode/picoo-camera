@@ -3,9 +3,9 @@
 //! Receiver binds `0.0.0.0` but must advertise a reachable unicast IPv4 to phones
 //! on the same LAN (never loopback / unspecified / link-local).
 //!
-//! Virtual adapters (Docker Desktop, WSL/Hyper-V, VMware) often expose RFC1918
-//! addresses such as `172.18.0.1` that phones cannot reach; interface-aware scoring
-//! prefers Wi‑Fi / Ethernet over those bridges.
+//! Virtual adapters (VPN, Docker Desktop, WSL/Hyper-V, VMware) often expose RFC1918
+//! addresses that phones cannot reach; interface-aware selection excludes those adapters
+//! and prefers Wi‑Fi / Ethernet among the remaining physical-LAN candidates.
 
 use std::net::{IpAddr, Ipv4Addr};
 
@@ -35,7 +35,7 @@ pub fn select_advertise_ipv4(candidates: &[Ipv4Addr]) -> Option<Ipv4Addr> {
 pub fn select_advertise_ipv4_with_interfaces(ifaces: &[(String, Ipv4Addr)]) -> Option<Ipv4Addr> {
     let mut scored: Vec<(i32, Ipv4Addr)> = ifaces
         .iter()
-        .filter(|(_, ip)| is_advertise_candidate(*ip))
+        .filter(|(name, ip)| is_advertise_candidate(*ip) && !is_virtual_or_tunnel_interface(name))
         .map(|(name, ip)| (score_advertise_candidate(name, *ip), *ip))
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.octets().cmp(&b.1.octets())));
@@ -57,23 +57,38 @@ pub fn score_advertise_candidate(interface_name: &str, ip: Ipv4Addr) -> i32 {
         score += 150;
     }
 
-    if lower.contains("docker")
-        || lower.contains("wsl")
-        || lower.contains("hyper-v")
-        || lower.contains("vethernet")
-        || lower.contains("virtual")
-        || lower.contains("vmware")
-        || lower.contains("vbox")
-        || lower.contains("npcap")
-        || lower.contains("loopback")
-        || lower.contains("tunnel")
-        || lower.contains("tailscale")
-        || lower.contains("zerotier")
-    {
+    if is_virtual_or_tunnel_interface(&lower) {
         score -= 500;
     }
 
     score
+}
+
+fn is_virtual_or_tunnel_interface(interface_name: &str) -> bool {
+    let lower = interface_name.to_lowercase();
+    [
+        "docker",
+        "wsl",
+        "hyper-v",
+        "vethernet",
+        "virtual",
+        "vmware",
+        "vbox",
+        "npcap",
+        "loopback",
+        "tunnel",
+        "tailscale",
+        "zerotier",
+        "wireguard",
+        "openvpn",
+        "vpn",
+        "utun",
+        "ppp",
+        "tap",
+        "tun",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
 }
 
 fn score_ip_only(ip: Ipv4Addr) -> i32 {
@@ -110,10 +125,7 @@ pub fn local_advertise_ipv4() -> Option<Ipv4Addr> {
     if v4.is_empty() {
         return None;
     }
-    select_advertise_ipv4_with_interfaces(&v4).or_else(|| {
-        let addrs: Vec<Ipv4Addr> = v4.iter().map(|(_, ip)| *ip).collect();
-        select_advertise_ipv4(&addrs)
-    })
+    select_advertise_ipv4_with_interfaces(&v4)
 }
 
 /// Same as [`local_advertise_ipv4`] but as a display string for UI / logs.
@@ -185,12 +197,9 @@ mod tests {
     }
 
     #[test]
-    fn docker_only_still_returns_something() {
+    fn virtual_adapter_only_is_not_advertised_to_phones() {
         let ifaces = [("DockerNAT".into(), "172.18.0.1".parse().unwrap())];
-        assert_eq!(
-            select_advertise_ipv4_with_interfaces(&ifaces),
-            Some("172.18.0.1".parse().unwrap())
-        );
+        assert_eq!(select_advertise_ipv4_with_interfaces(&ifaces), None);
     }
 
     #[test]
@@ -202,6 +211,19 @@ mod tests {
         assert_eq!(
             select_advertise_ipv4_with_interfaces(&ifaces),
             Some("192.168.0.20".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn excludes_macos_and_windows_vpn_interfaces() {
+        let ifaces = [
+            ("utun4".into(), "10.20.0.2".parse().unwrap()),
+            ("WireGuard Tunnel".into(), "192.168.90.2".parse().unwrap()),
+            ("en0".into(), "192.168.8.110".parse().unwrap()),
+        ];
+        assert_eq!(
+            select_advertise_ipv4_with_interfaces(&ifaces),
+            Some("192.168.8.110".parse().unwrap())
         );
     }
 

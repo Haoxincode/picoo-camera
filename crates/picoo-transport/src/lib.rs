@@ -25,6 +25,25 @@ pub struct Endpoint {
     pub port: u16,
 }
 
+/// Platform-owned route constraint applied to each Sender UDP socket before Quinn takes it over.
+///
+/// Android's opaque value comes from `Network.getNetworkHandle()`. Apple interface indexes come
+/// from Network.framework. The transport owns the socket operation so reconnects cannot silently
+/// fall back to a VPN-selected default route (REQ-PICOO-DISCOVERY-007/008).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ClientNetworkBinding {
+    #[default]
+    Default,
+    AndroidNetwork {
+        network_handle: u64,
+        /// A non-bypassable split-tunnel VPN can reject `android_setsocknetwork` even when its
+        /// routing table explicitly leaves the Receiver's directly connected Wi-Fi subnet out of
+        /// the tunnel. Android validates that narrow fallback before enabling it.
+        allow_system_lan_route_fallback: bool,
+    },
+    AppleInterface(u32),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionId(pub u64);
 
@@ -54,6 +73,8 @@ pub enum CloseReason {
 pub enum TransportError {
     #[error("connection failed: {0}")]
     ConnectFailed(String),
+    #[error("network binding failed: {0}")]
+    NetworkBindingFailed(String),
     #[error("not connected")]
     NotConnected,
     /// The bounded media queue is full. Callers should drop this stale access

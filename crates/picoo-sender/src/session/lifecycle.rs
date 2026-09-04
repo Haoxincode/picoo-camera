@@ -137,10 +137,14 @@ impl<T: PicooTransport> SenderSession<T> {
         self.reconnect_after = None;
         self.last_endpoint = Some(endpoint.clone());
         self.status = SenderStatus::Connecting;
-        let session = self
-            .transport
-            .connect(endpoint)
-            .map_err(SenderError::Transport)?;
+        let session = match self.transport.connect(endpoint) {
+            Ok(session) => session,
+            Err(error) => {
+                self.last_endpoint = None;
+                self.status = SenderStatus::Disconnected;
+                return Err(SenderError::Transport(error));
+            }
+        };
         self.drain_events();
         Ok(session)
     }

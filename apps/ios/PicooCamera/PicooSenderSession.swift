@@ -6,6 +6,7 @@ nonisolated enum PicooSenderSessionError: Error, Equatable {
     case identityCreationFailed
     case discoveryCreationFailed
     case storageUnavailable
+    case networkBindingFailed
     case operationFailed(name: String, code: Int32)
 }
 
@@ -152,9 +153,16 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         }
     }
 
-    func connect(to endpoint: ReceiverEndpoint) throws {
+    func connect(to endpoint: ReceiverEndpoint, wifiInterfaceIndex: UInt32) throws {
+        let bindingCode = picoo_sender_set_apple_network_interface(sender, wifiInterfaceIndex)
+        guard bindingCode == 0 else {
+            throw PicooSenderSessionError.networkBindingFailed
+        }
         let connectCode = endpoint.host.withCString { host in
             picoo_sender_connect(sender, host, endpoint.port)
+        }
+        if connectCode == -3 {
+            throw PicooSenderSessionError.networkBindingFailed
         }
         try check(connectCode, operation: "sender_connect")
 
@@ -408,8 +416,11 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
 final class PicooDiscoveryBrowser {
     private let browser: UnsafeMutableRawPointer
 
-    init() throws {
-        guard let browser = picoo_discovery_browser_create() else {
+    init(interfaceName: String) throws {
+        let handle = interfaceName.withCString { name in
+            picoo_discovery_browser_create_on_interface(name)
+        }
+        guard let browser = handle else {
             throw PicooSenderSessionError.discoveryCreationFailed
         }
         self.browser = browser

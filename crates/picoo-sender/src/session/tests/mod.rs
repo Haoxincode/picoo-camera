@@ -236,3 +236,35 @@ impl PicooTransport for DeferredConnectTransport {
         }
     }
 }
+
+struct RejectConnectTransport;
+
+impl PicooTransport for RejectConnectTransport {
+    fn connect(&mut self, _endpoint: Endpoint) -> Result<SessionId, TransportError> {
+        Err(TransportError::NetworkBindingFailed(
+            "platform rejected Wi-Fi socket binding".into(),
+        ))
+    }
+
+    fn send_control(&mut self, _session: SessionId, _message: Bytes) -> Result<(), TransportError> {
+        Err(TransportError::NotConnected)
+    }
+
+    fn send_video(
+        &mut self,
+        _session: SessionId,
+        _packet: VideoPacket,
+    ) -> Result<(), TransportError> {
+        Err(TransportError::NotConnected)
+    }
+
+    fn poll_event(&mut self) -> Option<TransportEvent> {
+        None
+    }
+
+    fn close(&mut self, _session: SessionId, _reason: CloseReason) {}
+
+    fn channel_binding(&self, _session: SessionId) -> Result<ChannelBinding, TransportError> {
+        Err(TransportError::ChannelBindingUnavailable)
+    }
+}

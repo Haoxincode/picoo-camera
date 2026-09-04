@@ -77,6 +77,13 @@ object PicooNative {
 
     external fun connect(handle: Long, host: String, port: Int): Int
 
+    /** Route future QUIC sockets through an Android Wi-Fi [android.net.Network] handle. */
+    external fun setNetworkHandle(
+        handle: Long,
+        networkHandle: Long,
+        allowSystemLanRouteFallback: Boolean,
+    ): Int
+
     /** User-initiated stop; does not auto-reconnect until the next connect (PUC-005). */
     external fun disconnect(handle: Long): Int
 

@@ -67,6 +67,8 @@ final class SenderAppModel {
     @ObservationIgnored private var lastHandledSessionError = ""
     @ObservationIgnored private let encoderApply = SenderEncoderApplyCoordinator()
     @ObservationIgnored private let discovery = SenderDiscoveryCoordinator()
+    @ObservationIgnored private let wifiNetwork = PicooWifiNetworkMonitor()
+    @ObservationIgnored private var discoveryInterfaceName: String?
 
     private static let autoConnectPreferenceKey = "sender.autoConnectEnabled"
     private static let resolutionPreferenceKey = "sender.preferredResolution"
@@ -114,12 +116,7 @@ final class SenderAppModel {
         guard runtimeTask == nil, session != nil else { return }
         trustedReceivers = session?.trustedReceivers() ?? []
 
-        do {
-            discoveryBrowser = try PicooDiscoveryBrowser()
-        } catch {
-            isDiscovering = false
-            errorMessage = "局域网发现暂不可用，仍可输入 IP 地址直连。"
-        }
+        refreshDiscoveryBrowserForWifi()
 
         runtimeTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -297,6 +294,10 @@ final class SenderAppModel {
     @discardableResult
     func connect(to endpoint: ReceiverEndpoint) -> Bool {
         guard let session else { return false }
+        guard let wifiInterface = wifiNetwork.current else {
+            errorMessage = "未连接 Wi-Fi，请连接电脑所在的 Wi-Fi 后重试。"
+            return false
+        }
         suspendMediaSending()
         selectedInitialResolution = false
         phoneConfirmedPairing = false
@@ -314,8 +315,12 @@ final class SenderAppModel {
             )
             try session.setPreferredHeight(UInt32(preferredResolution.rawValue))
             try session.setStreamConfiguration(initialStreamConfiguration)
-            try session.connect(to: endpoint)
+            try session.connect(to: endpoint, wifiInterfaceIndex: wifiInterface.index)
             return true
+        } catch PicooSenderSessionError.networkBindingFailed {
+            isConnecting = false
+            errorMessage = "当前 VPN 不允许局域网连接，请允许局域网访问或关闭 VPN 后重试。"
+            return false
         } catch {
             isConnecting = false
             errorMessage = "无法连接 \(endpoint.displayText)，请确认电脑端已启动。"
@@ -445,7 +450,28 @@ final class SenderAppModel {
 
     func pollDiscovery() {
         guard let session else { return }
+        refreshDiscoveryBrowserForWifi()
         discovery.poll(session: session, browser: discoveryBrowser, host: self)
+    }
+
+    private func refreshDiscoveryBrowserForWifi() {
+        let currentInterface = wifiNetwork.current
+        guard currentInterface?.name != discoveryInterfaceName else { return }
+        discoveryBrowser = nil
+        discoveryInterfaceName = currentInterface?.name
+        receivers = []
+        guard let currentInterface else {
+            isDiscovering = false
+            return
+        }
+        do {
+            discoveryBrowser = try PicooDiscoveryBrowser(interfaceName: currentInterface.name)
+            isDiscovering = true
+        } catch {
+            isDiscovering = false
+            discoveryInterfaceName = nil
+            errorMessage = "局域网发现暂不可用，仍可输入 IP 地址直连。"
+        }
     }
 
     private func activateCamera() async {

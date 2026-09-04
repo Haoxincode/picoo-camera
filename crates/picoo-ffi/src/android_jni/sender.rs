@@ -6,8 +6,8 @@ use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jobjectArray, js
 use jni::JNIEnv;
 use picoo_packet::extract_sps_pps;
 use picoo_rate_control::BitrateLadder;
-use picoo_sender::{SenderSession, StreamConfigParams};
-use picoo_transport::{Endpoint, QuicSenderTransport};
+use picoo_sender::{SenderError, SenderSession, StreamConfigParams};
+use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 
 use super::{identities, java_string, new_java_string, senders, with_sender};
 use crate::c_sender::sender_snapshot;
@@ -132,13 +132,41 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_connect(
         let Ok(mut session) = inner.session.lock() else {
             return -1;
         };
+        match session.connect(Endpoint {
+            host,
+            port: port as u16,
+        }) {
+            Ok(_) => 0,
+            Err(SenderError::Transport(TransportError::NetworkBindingFailed(_))) => -3,
+            Err(_) => -2,
+        }
+    })
+    .unwrap_or(-1)
+}
+
+/// Bind future Quinn UDP sockets to Android's physical Wi-Fi `Network`.
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setNetworkHandle(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    network_handle: jlong,
+    allow_system_lan_route_fallback: jni::sys::jboolean,
+) -> jint {
+    if network_handle <= 0 {
+        return -1;
+    }
+    with_sender(handle, |inner| {
+        let Ok(mut session) = inner.session.lock() else {
+            return -1;
+        };
         session
-            .connect(Endpoint {
-                host,
-                port: port as u16,
-            })
-            .map(|_| 0)
-            .unwrap_or(-2)
+            .transport_mut()
+            .set_network_binding(ClientNetworkBinding::AndroidNetwork {
+                network_handle: network_handle as u64,
+                allow_system_lan_route_fallback: allow_system_lan_route_fallback != 0,
+            });
+        0
     })
     .unwrap_or(-1)
 }

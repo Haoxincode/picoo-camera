@@ -153,16 +153,20 @@ impl ReceiverRuntime {
 
         let advertise_host = local_advertise_host().unwrap_or_else(|| {
             tracing::warn!(
-                "no LAN IPv4 for mDNS/manual connection; falling back to 127.0.0.1 (phones on LAN will not connect)"
+                "no physical LAN IPv4 for mDNS/manual connection; discovery remains offline"
             );
-            "127.0.0.1".into()
+            String::new()
         });
 
-        let mut mdns = match MdnsAdvertiser::new() {
-            Ok(advertiser) => Some(advertiser),
-            Err(err) => {
-                tracing::warn!("mDNS unavailable: {err}");
-                None
+        let mut mdns = if advertise_host.is_empty() {
+            None
+        } else {
+            match MdnsAdvertiser::new() {
+                Ok(advertiser) => Some(advertiser),
+                Err(err) => {
+                    tracing::warn!("mDNS unavailable: {err}");
+                    None
+                }
             }
         };
 

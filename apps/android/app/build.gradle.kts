@@ -151,4 +151,7 @@ tasks.register<Exec>("cargoBuildFfi") {
 // stay independent from the NDK and cargo-ndk toolchain.
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("JniLibFolders") }.configureEach {
     dependsOn("cargoBuildFfi")
+    // cargo-ndk replaces the source-set .so during this build. Gradle can otherwise retain a
+    // previously merged native library even though cargoBuildFfi just produced new Rust code.
+    outputs.upToDateWhen { false }
 }
