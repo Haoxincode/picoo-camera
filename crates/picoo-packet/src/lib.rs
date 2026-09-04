@@ -286,6 +286,19 @@ impl ReassemblyMap {
         &mut self,
         packet: VideoPacket,
     ) -> Result<Option<AssembledAccessUnit>, ReassemblyError> {
+        self.ingest_at(packet, Instant::now())
+    }
+
+    /// Ingest a fragment at an explicit monotonic instant.
+    ///
+    /// Product callers use [`Self::ingest`]. Deterministic simulation passes
+    /// its virtual monotonic clock here so reassembly deadlines and inferred
+    /// whole-AU gaps can be exercised without wall-clock sleeps.
+    pub fn ingest_at(
+        &mut self,
+        packet: VideoPacket,
+        now: Instant,
+    ) -> Result<Option<AssembledAccessUnit>, ReassemblyError> {
         if packet.stream_epoch < self.current_epoch {
             return Ok(None);
         }
@@ -300,7 +313,7 @@ impl ReassemblyMap {
             frame_id: packet.frame_id,
         };
 
-        let inferred_first_fragment_at = self.observe_frame_id(packet.frame_id);
+        let inferred_first_fragment_at = self.observe_frame_id(packet.frame_id, now);
 
         if self
             .expired_through_frame_id
@@ -354,7 +367,7 @@ impl ReassemblyMap {
                 fragments: HashMap::new(),
                 recovered_fragments: HashSet::new(),
                 parity_shards: HashMap::new(),
-                first_fragment_at: inferred_first_fragment_at.unwrap_or_else(Instant::now),
+                first_fragment_at: inferred_first_fragment_at.unwrap_or(now),
             });
 
             if entry.fragment_count != packet.fragment_count {
@@ -530,7 +543,7 @@ impl ReassemblyMap {
         }
     }
 
-    fn observe_frame_id(&mut self, frame_id: u64) -> Option<Instant> {
+    fn observe_frame_id(&mut self, frame_id: u64, now: Instant) -> Option<Instant> {
         let inferred_first_fragment_at =
             self.frame_gaps.remove(&frame_id).map(|gap| gap.noticed_at);
         if inferred_first_fragment_at.is_some() {
@@ -565,7 +578,7 @@ impl ReassemblyMap {
                 "video frame-id gap exceeded bounded tracking capacity"
             );
         } else {
-            let noticed_at = Instant::now();
+            let noticed_at = now;
             for missing_id in first_missing..frame_id {
                 self.frame_gaps
                     .entry(missing_id)

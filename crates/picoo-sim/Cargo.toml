@@ -1,0 +1,16 @@
+[package]
+name = "picoo-sim"
+description = "Deterministic virtual-time full-pipeline simulator for Picoo Camera"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+picoo-frame-hub.workspace = true
+picoo-jitter.workspace = true
+picoo-packet.workspace = true
+picoo-protocol.workspace = true
+picoo-sender.workspace = true
+picoo-transport.workspace = true
+thiserror.workspace = true

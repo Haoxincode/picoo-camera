@@ -5508,6 +5508,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "picoo-sim"
+version = "0.1.1"
+dependencies = [
+ "bytes",
+ "picoo-frame-hub",
+ "picoo-jitter",
+ "picoo-packet",
+ "picoo-protocol",
+ "picoo-sender",
+ "picoo-transport",
+ "thiserror 2.0.20",
+]
+
+[[package]]
 name = "picoo-testkit"
 version = "0.1.1"
 dependencies = [

@@ -17,6 +17,7 @@ members = [
   "crates/picoo-receiver",
   "crates/picoo-ffi",
   "crates/picoo-testkit",
+  "crates/picoo-sim",
   "xtask",
   "apps/desktop",
   "extensions/windows-virtual-camera/mf-source",
@@ -68,6 +69,7 @@ picoo-sender = { path = "crates/picoo-sender" }
 picoo-receiver = { path = "crates/picoo-receiver" }
 picoo-ffi = { path = "crates/picoo-ffi" }
 picoo-testkit = { path = "crates/picoo-testkit" }
+picoo-sim = { path = "crates/picoo-sim" }
 
 [profile.release]
 lto = "thin"

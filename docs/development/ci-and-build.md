@@ -21,7 +21,7 @@ Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依
 ```text
 Cloud Agent（Linux）
 ├── Rust Core crate 开发与 cargo test
-├── picoo-testkit 协议模拟（Sender ↔ Receiver）
+├── picoo-testkit QUIC 边界测试 + picoo-sim 虚拟时钟全链路模拟
 ├── Android APK/AAB（NDK + Gradle）
 ├── .github/workflows/ 维护与 CI 修复
 └── push 后订阅 CI 结果并迭代

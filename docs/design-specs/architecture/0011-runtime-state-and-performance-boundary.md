@@ -189,6 +189,13 @@ Receiver 重启、控制消息重复/越序/非法阶段、UI 不消费和 VCam 
 - 每个 AU 最多解码一次；
 - 旧 connection generation 的事件不能修改新会话。
 
+模拟边界评审过 `tokio::time::pause` 与 `turmoil`。前者只虚拟 Tokio timer，无法驱动当前以显式
+单调时间戳为契约的 Reassembly/Jitter；后者适合 Tokio TCP/UDP 应用的网络故障注入，但不能直接
+承载 Quinn Datagram、PCP 整 AU/FEC 语义和平台 Codec 事实。Picoo 因而保留一个无异步 runtime 的
+最小离散事件适配器，并直接复用生产 `ControlEnvelope`、`SenderPipeline`、Reassembly、Jitter 和
+`LatestFrameStore`。生产 Reassembly 同时提供显式 monotonic instant 入口，产品路径仍使用系统
+`Instant`；模拟器不得复制 packet/FEC/jitter 算法。
+
 补充 ControlEnvelope、pairing transcript、reassembly/FEC fuzz，Shared Ring kill/restart stress，unsafe
 Miri，原子协议 Loom model，夜间网络损伤/soak，以及 Windows 安装、注册、枚举和启动 VCam 的
 主机级 Runner。单纯 bundle smoke 不构成 VCam 验收。

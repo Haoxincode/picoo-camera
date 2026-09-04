@@ -42,7 +42,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
         TestSuite::Protocol => {
             cmd!(
                 sh,
-                "cargo test -p picoo-protocol -p picoo-packet -p picoo-transport -p picoo-testkit"
+                "cargo test -p picoo-protocol -p picoo-packet -p picoo-transport -p picoo-testkit -p picoo-sim"
             )
             .run()?;
         }

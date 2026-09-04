@@ -390,3 +390,31 @@ fn late_duplicate_cannot_recreate_a_completed_frame() {
     assert!(map.ingest(fragment(1, 1, 0, 1, b"late")).unwrap().is_none());
     assert_eq!(map.drop_count(), 0);
 }
+
+#[test]
+fn explicit_ingest_time_drives_gap_and_fragment_deadlines() {
+    let origin = Instant::now();
+    let mut map = ReassemblyMap::new(8, 16);
+    assert!(map
+        .ingest_at(fragment(1, 1, 0, 1, b"one"), origin)
+        .unwrap()
+        .is_some());
+    assert!(map
+        .ingest_at(
+            fragment(1, 3, 0, 1, b"three"),
+            origin + Duration::from_millis(5),
+        )
+        .unwrap()
+        .is_some());
+
+    map.expire_incomplete_older_than(
+        origin + Duration::from_millis(14),
+        Duration::from_millis(10),
+    );
+    assert_eq!(map.whole_access_unit_gap_drop_count(), 0);
+    map.expire_incomplete_older_than(
+        origin + Duration::from_millis(15),
+        Duration::from_millis(10),
+    );
+    assert_eq!(map.whole_access_unit_gap_drop_count(), 1);
+}
