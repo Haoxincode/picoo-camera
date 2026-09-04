@@ -194,6 +194,7 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
     let reader_harness = build_macos_shared_ring_reader_harness(sh)?;
     let _reader_harness = sh.push_env("PICOO_MACOS_RING_READER_HARNESS", &reader_harness);
+    test_macos_system_identity_store(sh)?;
     cmd!(sh, "cargo test -p picoo-frame-hub --lib").run()?;
     cmd!(
         sh,
@@ -239,6 +240,67 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+fn test_macos_system_identity_store(sh: &Shell) -> Result<()> {
+    let original_default = cmd!(sh, "security default-keychain -d user")
+        .read()?
+        .trim()
+        .trim_matches('"')
+        .to_owned();
+    let original_search = cmd!(sh, "security list-keychains -d user")
+        .read()?
+        .lines()
+        .map(|line| line.trim().trim_matches('"').to_owned())
+        .filter(|path| !path.is_empty())
+        .collect::<Vec<_>>();
+    if original_default.is_empty() || original_search.is_empty() {
+        bail!("macOS user Keychain configuration is unavailable");
+    }
+
+    let keychain_dir = cargo_target_dir(sh)?.join("apple/macos-tests");
+    std::fs::create_dir_all(&keychain_dir)?;
+    let keychain = keychain_dir.join(format!(
+        "picoo-identity-contract-{}.keychain-db",
+        std::process::id()
+    ));
+    let password = format!("picoo-identity-contract-{}", std::process::id());
+    if keychain.exists() {
+        let _ = cmd!(sh, "security delete-keychain {keychain}").run();
+        let _ = std::fs::remove_file(&keychain);
+    }
+
+    let test_result = (|| -> Result<()> {
+        cmd!(sh, "security create-keychain -p {password} {keychain}").run()?;
+        cmd!(sh, "security set-keychain-settings -lut 21600 {keychain}").run()?;
+        cmd!(sh, "security unlock-keychain -p {password} {keychain}").run()?;
+        cmd!(sh, "security default-keychain -d user -s {keychain}").run()?;
+        cmd!(sh, "security list-keychains -d user -s {keychain}").run()?;
+        cmd!(
+            sh,
+            "cargo test -p picoo-pairing --lib identity::tests::system_store_persists_and_fails_closed -- --ignored --exact"
+        )
+        .run()?;
+        Ok(())
+    })();
+
+    let restore_default = cmd!(
+        sh,
+        "security default-keychain -d user -s {original_default}"
+    )
+    .run();
+    let restore_search = cmd!(
+        sh,
+        "security list-keychains -d user -s {original_search...}"
+    )
+    .run();
+    let delete_test_keychain = cmd!(sh, "security delete-keychain {keychain}").run();
+
+    test_result?;
+    restore_default?;
+    restore_search?;
+    delete_test_keychain?;
     Ok(())
 }
 

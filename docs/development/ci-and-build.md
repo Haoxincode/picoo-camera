@@ -40,11 +40,11 @@ GitHub Actions
 | --- | --- | --- | --- |
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz、30 分钟 paired loopback soak、Shared Ring/FFI Miri 与原子协议 Loom model | `cargo xtask test fuzz/soak/miri/loom` |
-| `android` | `ubuntu-latest` | 独立 application ID 的 Android Sender Debug APK | `cargo xtask build android` |
-| `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
+| `android` | `ubuntu-latest` | 独立 application ID 的 Android Sender Debug APK；编译 Android Keystore 平台身份 instrumentation contract | `cargo xtask build android`；`assembleDebugAndroidTest` |
+| `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包；Windows Credential Manager 身份持久化/fail-closed 合约 | `cargo xtask test windows`、`cargo xtask build windows`、`cargo xtask package windows` |
 | `Windows VCam host contract` | `self-hosted, Windows, X64, picoo-vcam`（专用管理员 Win11 client） | MSI 安装/repair/卸载、exact-link 枚举、MF Source 激活与 Start/Stop/Shutdown | `cargo xtask package windows`、`scripts/test_windows_vcam_host.ps1` |
-| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
-| `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、隔离 Keychain 身份持久化/fail-closed 合约、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
+| `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 与 Keychain 跨 Session 身份稳定性测试 | `cargo xtask build ios`；`cargo xtask test ios` |
 | `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 + `apple-release` protected Environment | workspace SemVer 与递增 Host/Extension build；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple；SBOM/provenance | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
 | `Apple Release / ios` | `macos-26` ARM64 + Xcode 26.6 + `apple-release` protected Environment | workspace SemVer 与递增 build；Apple Distribution/App Store profile 绑定；Archive→IPA；签名、Team/Bundle/version/arm64/entitlements/profile 复核；SBOM/provenance | `cargo xtask release ios`；首次真实凭据绿测、App Store Connect 与真机覆盖安装仍是独立验收 |
 | `Windows Release` | `windows-latest` + `windows-release` protected Environment | 固定 Authenticode identity 签署三个 PE 与内嵌这些 PE 的 MSI，核验 timestamp/signer/version，生成 SBOM/provenance | `cargo xtask release windows` |
@@ -125,7 +125,7 @@ Apple 基线保持三个独立 artifact：
 - `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
 - `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 
-`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，将最终 Apple 产品稳定输出到仓库 `target/apple/`，再由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke、由 `xcodebuild -create-xcframework` 组合 device/simulator 产物并编译 SwiftUI App。上传前使用 macOS `ditto` 生成保留 bundle 外层目录、权限和符号链接的 zip。`xtask test ios` 按数值版本选择 runner 上最新的可用 iPhone Simulator，执行 Swift Testing 覆盖 Rust Sender handle 生命周期、手动 Endpoint、UI 状态映射和编码策略。iOS 工程使用 Swift 6 语言模式、strict concurrency、默认 `MainActor` 与 Swift Observation；构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake、第三方 Swift Package 或额外项目生成器。
+`xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，将最终 Apple 产品稳定输出到仓库 `target/apple/`，再由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke、由 `xcodebuild -create-xcframework` 组合 device/simulator 产物并编译 SwiftUI App。上传前使用 macOS `ditto` 生成保留 bundle 外层目录、权限和符号链接的 zip。`xtask test ios` 按数值版本选择 runner 上最新的可用 iPhone Simulator，执行 Swift Testing 覆盖 Rust Sender handle 生命周期、Keychain 身份跨 Session 重载、手动 Endpoint、UI 状态映射和编码策略。`xtask test macos` 为系统身份合约创建独立、已解锁的临时 Keychain，测试后无论成功失败都恢复原默认 Keychain 与搜索列表并删除测试 Keychain，避免依赖交互式登录 Keychain。iOS 工程使用 Swift 6 语言模式、strict concurrency、默认 `MainActor` 与 Swift Observation；构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake、第三方 Swift Package 或额外项目生成器。
 
 ### Apple 正式发布边界
 
@@ -201,6 +201,7 @@ Apple Release 把 Developer ID 或 Apple Distribution P12 只导入临时 Keycha
 | 验证类型 | 执行位置 |
 | --- | --- |
 | Rust 单元/集成/协议测试 | `ubuntu-latest`（Cloud Agent 本地亦可） |
+| Android Keystore 身份合约 | `androidTest` APK 在普通 CI 编译；本地 AVD/设备以 `connectedDebugAndroidTest` 执行重载、非明文和损坏 fail-closed 合约 |
 | Android 安装与采集发送 | CI artifact + 真机（人工或后续设备 farm） |
 | Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建/静态契约 + 专用 self-hosted Win11 Host Contract；系统相机 UI 与会议软件仍人工验证 |
 | Apple 正式签名产物 | 受保护 `Apple Release` workflow；真实凭据首次绿测、iOS 覆盖安装/App Store Connect 与 macOS 扩展激活仍需真机验收 |

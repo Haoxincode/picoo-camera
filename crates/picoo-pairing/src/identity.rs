@@ -357,6 +357,77 @@ mod tests {
         assert!(DeviceIdentity::load_from_path(path).is_err());
     }
 
+    #[cfg(any(target_os = "macos", windows))]
+    #[test]
+    #[ignore = "run through the platform xtask suite with an isolated credential store"]
+    fn system_store_persists_and_fails_closed() {
+        let mut random_suffix = [0_u8; 8];
+        getrandom::fill(&mut random_suffix).expect("test CSPRNG");
+        let service = format!(
+            "site.nebula-tech.picoo-camera.identity-test.{}.{}",
+            std::process::id(),
+            hex_encode(&random_suffix)
+        );
+        let account = "ed25519-test";
+        let cleanup = SystemCredentialCleanup::new(&service, account);
+
+        let first = DeviceIdentity::load_or_create_system(&service, account, "First")
+            .expect("create protected identity");
+        let second = DeviceIdentity::load_or_create_system(&service, account, "Second")
+            .expect("reload protected identity");
+        assert_eq!(first.device_id(), second.device_id());
+        assert_eq!(first.public_key(), second.public_key());
+
+        cleanup
+            .entry
+            .set_secret(&[0xA5; SECRET_KEY_LEN - 1])
+            .expect("corrupt credential fixture");
+        assert!(matches!(
+            DeviceIdentity::load_or_create_system(&service, account, "Corrupt"),
+            Err(IdentityError::Invalid(_))
+        ));
+        assert_eq!(
+            cleanup
+                .entry
+                .get_secret()
+                .expect("credential remains")
+                .len(),
+            SECRET_KEY_LEN - 1,
+            "a corrupt credential must not be silently replaced"
+        );
+
+        let repaired =
+            DeviceIdentity::replace_system(&service, account, "Repaired").expect("explicit repair");
+        assert_ne!(repaired.device_id(), first.device_id());
+        assert_eq!(
+            DeviceIdentity::load_or_create_system(&service, account, "Reloaded")
+                .expect("reload repaired identity")
+                .device_id(),
+            repaired.device_id()
+        );
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    struct SystemCredentialCleanup {
+        entry: keyring::Entry,
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    impl SystemCredentialCleanup {
+        fn new(service: &str, account: &str) -> Self {
+            let entry = keyring::Entry::new(service, account).expect("test credential entry");
+            let _ = entry.delete_credential();
+            Self { entry }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", windows))]
+    impl Drop for SystemCredentialCleanup {
+        fn drop(&mut self) {
+            let _ = self.entry.delete_credential();
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn file_adapter_restricts_identity_permissions() {

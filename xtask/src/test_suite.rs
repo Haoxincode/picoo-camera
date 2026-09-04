@@ -31,6 +31,11 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
+                "cargo test -p picoo-pairing --lib identity::tests::system_store_persists_and_fails_closed -- --ignored --exact"
+            )
+            .run()?;
+            cmd!(
+                sh,
                 "cargo test -p picoo-desktop --features gpui-ui,windows-vcam"
             )
             .run()?;

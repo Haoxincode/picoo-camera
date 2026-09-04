@@ -24,6 +24,19 @@ struct PicooSenderSessionTests {
         #expect(releasedSession == nil)
     }
 
+    @Test("Sender identity survives a session restart in the iOS Keychain")
+    func senderIdentityPersistsAcrossSessionRestart() throws {
+        let firstID = try autoreleasepool {
+            try PicooSenderSession(defaultDeviceName: "Keychain First").localDeviceID
+        }
+        let secondID = try autoreleasepool {
+            try PicooSenderSession(defaultDeviceName: "Keychain Second").localDeviceID
+        }
+
+        #expect(firstID.hasPrefix("picoo-"))
+        #expect(secondID == firstID)
+    }
+
     @Test(
         "Manual endpoints accept explicit local IPv4 and bracketed IPv6",
         arguments: [

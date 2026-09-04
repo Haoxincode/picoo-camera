@@ -142,6 +142,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         }
     }
 
+    var localDeviceID: String { identity.deviceID }
+
     var connectedReceiverID: String {
         readCString(maxLength: 128) { buffer, length in
             picoo_sender_connected_receiver_id(sender, buffer, length)
