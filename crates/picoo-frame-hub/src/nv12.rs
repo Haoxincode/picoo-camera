@@ -3,7 +3,7 @@
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::placeholder::nv12_byte_size;
+use crate::{placeholder::nv12_byte_size, FrameBuffer, FrameBufferPool};
 
 /// An upright NV12 frame produced by [`transform_nv12`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,6 +51,48 @@ pub fn transform_nv12(
     mirrored: bool,
     pixels: Bytes,
 ) -> Result<TransformedNv12, Nv12TransformError> {
+    transform_nv12_impl(
+        width,
+        height,
+        stride,
+        rotation_degrees,
+        mirrored,
+        pixels,
+        None,
+    )
+}
+
+/// [`transform_nv12`] using reusable output storage for transformed frames.
+/// The no-op path still transfers the Decoder-owned input allocation directly.
+pub fn transform_nv12_with_pool(
+    width: u32,
+    height: u32,
+    stride: u32,
+    rotation_degrees: u32,
+    mirrored: bool,
+    pixels: Bytes,
+    pool: &FrameBufferPool,
+) -> Result<TransformedNv12, Nv12TransformError> {
+    transform_nv12_impl(
+        width,
+        height,
+        stride,
+        rotation_degrees,
+        mirrored,
+        pixels,
+        Some(pool),
+    )
+}
+
+fn transform_nv12_impl(
+    width: u32,
+    height: u32,
+    stride: u32,
+    rotation_degrees: u32,
+    mirrored: bool,
+    pixels: Bytes,
+    pool: Option<&FrameBufferPool>,
+) -> Result<TransformedNv12, Nv12TransformError> {
     let required = validate_layout(width, height, stride, pixels.len())?;
     let pixels = pixels.slice(..required);
     let rotation = normalize_rotation_degrees(rotation_degrees);
@@ -69,7 +111,11 @@ pub fn transform_nv12(
         (width, height)
     };
     let out_stride = out_width;
-    let mut output = vec![0_u8; nv12_byte_size(out_width, out_height)];
+    let output_size = nv12_byte_size(out_width, out_height);
+    let mut output_storage = pool.map_or_else(
+        || TransformOutput::Owned(vec![0_u8; output_size]),
+        |pool| TransformOutput::Pooled(pool.checkout(output_size)),
+    );
     let width = width as usize;
     let height = height as usize;
     let stride = stride as usize;
@@ -79,41 +125,44 @@ pub fn transform_nv12(
     let source_y_bytes = stride * height;
     let output_y_bytes = out_stride * out_height;
 
-    for output_y in 0..out_height {
-        for output_x in 0..out_width {
-            let rotated_x = if mirrored {
-                out_width - 1 - output_x
-            } else {
-                output_x
-            };
-            let (source_x, source_y) =
-                map_output_to_source(rotation, rotated_x, output_y, width, height);
-            output[output_y * out_stride + output_x] = pixels[source_y * stride + source_x];
+    {
+        let output = output_storage.as_mut();
+        for output_y in 0..out_height {
+            for output_x in 0..out_width {
+                let rotated_x = if mirrored {
+                    out_width - 1 - output_x
+                } else {
+                    output_x
+                };
+                let (source_x, source_y) =
+                    map_output_to_source(rotation, rotated_x, output_y, width, height);
+                output[output_y * out_stride + output_x] = pixels[source_y * stride + source_x];
+            }
         }
-    }
 
-    let source_chroma_width = width / 2;
-    let source_chroma_height = height / 2;
-    let output_chroma_width = out_width / 2;
-    let output_chroma_height = out_height / 2;
-    for output_y in 0..output_chroma_height {
-        for output_x in 0..output_chroma_width {
-            // Mirror whole interleaved UV pairs, never individual U/V bytes.
-            let rotated_x = if mirrored {
-                output_chroma_width - 1 - output_x
-            } else {
-                output_x
-            };
-            let (source_x, source_y) = map_output_to_source(
-                rotation,
-                rotated_x,
-                output_y,
-                source_chroma_width,
-                source_chroma_height,
-            );
-            let source = source_y * stride + source_x * 2 + source_y_bytes;
-            let destination = output_y * out_stride + output_x * 2 + output_y_bytes;
-            output[destination..destination + 2].copy_from_slice(&pixels[source..source + 2]);
+        let source_chroma_width = width / 2;
+        let source_chroma_height = height / 2;
+        let output_chroma_width = out_width / 2;
+        let output_chroma_height = out_height / 2;
+        for output_y in 0..output_chroma_height {
+            for output_x in 0..output_chroma_width {
+                // Mirror whole interleaved UV pairs, never individual U/V bytes.
+                let rotated_x = if mirrored {
+                    output_chroma_width - 1 - output_x
+                } else {
+                    output_x
+                };
+                let (source_x, source_y) = map_output_to_source(
+                    rotation,
+                    rotated_x,
+                    output_y,
+                    source_chroma_width,
+                    source_chroma_height,
+                );
+                let source = source_y * stride + source_x * 2 + source_y_bytes;
+                let destination = output_y * out_stride + output_x * 2 + output_y_bytes;
+                output[destination..destination + 2].copy_from_slice(&pixels[source..source + 2]);
+            }
         }
     }
 
@@ -121,8 +170,31 @@ pub fn transform_nv12(
         width: out_width as u32,
         height: out_height as u32,
         stride: out_stride as u32,
-        pixels: Bytes::from(output),
+        pixels: output_storage.freeze(),
     })
+}
+
+enum TransformOutput {
+    Owned(Vec<u8>),
+    Pooled(FrameBuffer),
+}
+
+impl AsMut<[u8]> for TransformOutput {
+    fn as_mut(&mut self) -> &mut [u8] {
+        match self {
+            Self::Owned(output) => output,
+            Self::Pooled(output) => output.as_mut_slice(),
+        }
+    }
+}
+
+impl TransformOutput {
+    fn freeze(self) -> Bytes {
+        match self {
+            Self::Owned(output) => Bytes::from(output),
+            Self::Pooled(output) => output.freeze(),
+        }
+    }
 }
 
 fn validate_layout(
@@ -256,5 +328,22 @@ mod tests {
         assert_eq!(normalize_rotation_degrees(180), 180);
         assert_eq!(normalize_rotation_degrees(270), 270);
         assert_eq!(normalize_rotation_degrees(360), 0);
+    }
+
+    #[test]
+    fn transformed_storage_returns_to_pool_after_all_pixel_views_drop() {
+        let pool = FrameBufferPool::with_limits(1, 64);
+        let first = transform_nv12_with_pool(4, 2, 4, 90, false, fixture(), &pool)
+            .expect("first transform");
+        let first_pointer = first.pixels.as_ptr();
+        let consumer = first.pixels.clone();
+        drop(first);
+        assert_eq!(pool.stats().retained_buffers, 0);
+        drop(consumer);
+
+        let second = transform_nv12_with_pool(4, 2, 4, 90, false, fixture(), &pool)
+            .expect("second transform");
+        assert_eq!(second.pixels.as_ptr(), first_pointer);
+        assert_eq!(pool.stats().reuses, 1);
     }
 }

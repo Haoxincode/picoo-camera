@@ -126,6 +126,7 @@ impl ReceiverSession {
             return Ok(());
         }
         self.decoder_worker.reset();
+        self.frame_buffer_pool.clear();
         // Sender-initiated stop: tear down session video without auto-reconnect wait.
         self.active_sender = None;
         self.pending_pairing = None;

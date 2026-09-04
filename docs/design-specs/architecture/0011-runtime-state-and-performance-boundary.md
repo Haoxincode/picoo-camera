@@ -97,6 +97,14 @@ reader lease/原子协议。`VideoFrame` 内部使用可从 Decoder `Vec<u8>` �
 Decoder 输出只分配一次，Preview、Shared Ring Writer 和可选 Recorder Sink 只持有共享引用；
 慢消费者不得反压 Decoder。需要反复分配的像素缓冲进入有界 `FrameBufferPool`。
 
+`FrameBufferPool` 复用 `bytes 1.12.1+` 的 `Bytes::from_owner`，由最后一个不可变 `Bytes` 视图的
+析构归还 backing `Vec`；无需引入面向连接或异步资源的通用对象池。`bytes` 为项目既有、维护活跃
+且 MIT 许可的跨平台依赖；最低版本包含 `from_owner` 的已知内存泄漏修复。`BytesMut` 无法在最后
+一个不可变消费者释放时自动回收到 Receiver 池，
+`object-pool`/`deadpool` 等通用池则会增加依赖和不需要的阻塞/异步语义，因此不采用。池只限制
+空闲保留的 buffer 数和总 capacity；所有 buffer 被慢消费者持有时临时分配并在归还时丢弃超额
+存储，绝不能等待消费者或反压 Decoder。会话 teardown 清空池并使尚未归还的旧 lease 失效。
+
 Shared Frame Ring 保留现有跨进程三槽、ready state、sequence、reader lease 与进程崩溃恢复协议。
 Consumer 只读取 `data_length`，Producer 因而不得每帧清零最大 slot：正常帧只覆盖有效范围；
 创建、关闭和 generation 重建时清零，若隐私评审要求，则仅在大帧切换为小帧时清理一次尾部。

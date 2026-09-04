@@ -1,12 +1,20 @@
 //! LatestFrameStore and Shared Frame Ring — REQ-PICOO-FRAME-001..010.
 
+mod frame_buffer_pool;
 mod latest_frame_store;
 mod nv12;
 mod placeholder;
 mod shared_ring;
 
+pub use frame_buffer_pool::{
+    FrameBuffer, FrameBufferPool, FrameBufferPoolStats, DEFAULT_FRAME_BUFFER_POOL_BUFFERS,
+    DEFAULT_FRAME_BUFFER_POOL_BYTES,
+};
 pub use latest_frame_store::{LatestFrameStore, VideoFrame};
-pub use nv12::{normalize_rotation_degrees, transform_nv12, Nv12TransformError, TransformedNv12};
+pub use nv12::{
+    normalize_rotation_degrees, transform_nv12, transform_nv12_with_pool, Nv12TransformError,
+    TransformedNv12,
+};
 pub use placeholder::{
     color_bars_placeholder, nv12_black, nv12_byte_size, reconnecting_placeholder,
     waiting_placeholder, waiting_placeholder_for_size, PlaceholderMode, PLACEHOLDER_HEIGHT,

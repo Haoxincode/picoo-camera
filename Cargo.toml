@@ -32,7 +32,7 @@ repository = "https://github.com/Haoxincode/picoo-camera"
 [workspace.dependencies]
 anyhow = "1.0"
 bitflags = "2.6"
-bytes = "1.9"
+bytes = "1.12.1"
 ed25519-dalek = "2.2.0"
 fast_image_resize = { version = "6.1.0", features = ["only_u8x4"] }
 getrandom = "0.3.4"

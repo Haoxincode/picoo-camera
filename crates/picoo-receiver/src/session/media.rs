@@ -102,6 +102,38 @@ mod tests {
 
         assert!(!receiver.decoder_timeline_is_current(timeline));
     }
+
+    #[test]
+    fn receiver_reuses_transformed_pixels_after_latest_frame_releases_them() {
+        let mut receiver = receiver_for_generation(2);
+        for frame_id in 1..=3 {
+            receiver
+                .publish_decoded_frame(
+                    FrameTimeline {
+                        stream_generation: 2,
+                        frame_id,
+                        source_pts_us: frame_id * 1_000,
+                        received_at_us: frame_id * 1_100,
+                        decoded_at: Some(Instant::now()),
+                    },
+                    DecodedFrame {
+                        width: 4,
+                        height: 2,
+                        stride: 4,
+                        rotation: 90,
+                        timestamp_us: frame_id * 1_200,
+                        nv12: Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]),
+                    },
+                )
+                .expect("publish transformed frame");
+        }
+
+        let stats = receiver.frame_buffer_pool.stats();
+        assert_eq!(stats.allocations, 2);
+        assert_eq!(stats.reuses, 1);
+        assert_eq!(stats.retained_buffers, 1);
+        assert_eq!(receiver.latest_frame().map(|frame| frame.frame_id), Some(3));
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -551,8 +583,15 @@ impl ReceiverSession {
             .as_ref()
             .is_some_and(|c| c.mirrored);
         // REQ-PICOO-MEDIA-004/009/017: rotate then mirror in one output pass.
-        let transformed =
-            picoo_frame_hub::transform_nv12(width, height, stride, rotation, mirrored, nv12)?;
+        let transformed = picoo_frame_hub::transform_nv12_with_pool(
+            width,
+            height,
+            stride,
+            rotation,
+            mirrored,
+            nv12,
+            &self.frame_buffer_pool,
+        )?;
         let (width, height, stride, pixels) = (
             transformed.width,
             transformed.height,
@@ -563,7 +602,7 @@ impl ReceiverSession {
         // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
         let published_rotation = 0u32;
 
-        self.latest_frame_store.publish(VideoFrame::new(
+        let published = self.latest_frame_store.publish(VideoFrame::new(
             timeline.stream_generation,
             timeline.frame_id,
             timeline.source_pts_us,
@@ -574,7 +613,7 @@ impl ReceiverSession {
             height,
             stride,
             published_rotation,
-            pixels.clone(),
+            pixels,
         ));
         if let Some(ring) = self.shared_ring.as_mut() {
             ring.publish_nv12(
@@ -583,7 +622,7 @@ impl ReceiverSession {
                 stride,
                 published_rotation,
                 timestamp_us,
-                &pixels,
+                &published.pixel_data,
             )?;
         }
         Ok(())

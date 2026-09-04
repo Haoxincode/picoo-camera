@@ -13,12 +13,14 @@ const SAMPLE_TIME: Duration = Duration::from_millis(500);
 struct CountingAllocator;
 
 static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
 
 // SAFETY: every operation delegates unchanged pointers and layouts to the
 // process System allocator; only an independent atomic counter is added.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
         // SAFETY: `layout` is forwarded unchanged to the wrapped allocator.
         unsafe { System.alloc(layout) }
     }
@@ -30,6 +32,7 @@ unsafe impl GlobalAlloc for CountingAllocator {
 
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
         ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
+        ALLOCATED_BYTES.fetch_add(size as u64, Ordering::Relaxed);
         // SAFETY: all values are forwarded unchanged to the wrapped allocator.
         unsafe { System.realloc(pointer, layout, size) }
     }
@@ -42,11 +45,14 @@ fn main() {
     run("no-op ownership transfer", 0, false);
     run("mirror", 0, true);
     run("rotate 90 + mirror", 90, true);
+    run_pooled("mirror pooled", 0, true);
+    run_pooled("rotate 90 + mirror pooled", 90, true);
 }
 
 fn run(label: &str, rotation: u32, mirrored: bool) {
     let source = Bytes::from(vec![128_u8; nv12_byte_size(WIDTH, HEIGHT)]);
     ALLOCATIONS.store(0, Ordering::Relaxed);
+    ALLOCATED_BYTES.store(0, Ordering::Relaxed);
     let started = Instant::now();
     let mut frames = 0_u64;
     while started.elapsed() < SAMPLE_TIME {
@@ -57,12 +63,63 @@ fn run(label: &str, rotation: u32, mirrored: bool) {
     }
     let elapsed = started.elapsed().as_secs_f64();
     let allocations = ALLOCATIONS.load(Ordering::Relaxed);
+    let allocated_bytes = ALLOCATED_BYTES.load(Ordering::Relaxed);
     let mib_per_second =
         nv12_byte_size(WIDTH, HEIGHT) as f64 * frames as f64 / elapsed / (1024.0 * 1024.0);
     println!(
-        "{label}: {:.1} frames/s, {:.2} allocations/frame, {:.1} MiB/s output-equivalent",
+        "{label}: {:.1} frames/s, {:.2} allocations/frame, {:.1} allocated bytes/frame, {:.1} MiB/s output-equivalent",
         frames as f64 / elapsed,
         allocations as f64 / frames as f64,
+        allocated_bytes as f64 / frames as f64,
+        mib_per_second,
+    );
+}
+
+fn run_pooled(label: &str, rotation: u32, mirrored: bool) {
+    let source = Bytes::from(vec![128_u8; nv12_byte_size(WIDTH, HEIGHT)]);
+    let pool = picoo_frame_hub::FrameBufferPool::default();
+    // Warm the large pixel allocation; the measured loop still includes the
+    // small Bytes owner allocation needed for shared immutable lifetime.
+    drop(
+        picoo_frame_hub::transform_nv12_with_pool(
+            WIDTH,
+            HEIGHT,
+            WIDTH,
+            rotation,
+            mirrored,
+            source.clone(),
+            &pool,
+        )
+        .expect("valid benchmark warmup"),
+    );
+    ALLOCATIONS.store(0, Ordering::Relaxed);
+    ALLOCATED_BYTES.store(0, Ordering::Relaxed);
+    let started = Instant::now();
+    let mut frames = 0_u64;
+    while started.elapsed() < SAMPLE_TIME {
+        let output = picoo_frame_hub::transform_nv12_with_pool(
+            WIDTH,
+            HEIGHT,
+            WIDTH,
+            rotation,
+            mirrored,
+            source.clone(),
+            &pool,
+        )
+        .expect("valid pooled benchmark frame");
+        black_box(output);
+        frames += 1;
+    }
+    let elapsed = started.elapsed().as_secs_f64();
+    let allocations = ALLOCATIONS.load(Ordering::Relaxed);
+    let allocated_bytes = ALLOCATED_BYTES.load(Ordering::Relaxed);
+    let mib_per_second =
+        nv12_byte_size(WIDTH, HEIGHT) as f64 * frames as f64 / elapsed / (1024.0 * 1024.0);
+    println!(
+        "{label}: {:.1} frames/s, {:.2} allocations/frame, {:.1} allocated bytes/frame, {:.1} MiB/s output-equivalent",
+        frames as f64 / elapsed,
+        allocations as f64 / frames as f64,
+        allocated_bytes as f64 / frames as f64,
         mib_per_second,
     );
 }

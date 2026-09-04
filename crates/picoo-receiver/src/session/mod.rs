@@ -17,7 +17,9 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use bytes::Bytes;
-use picoo_frame_hub::{LatestFrameStore, PlaceholderMode, SharedFrameRingProducer};
+use picoo_frame_hub::{
+    FrameBufferPool, LatestFrameStore, PlaceholderMode, SharedFrameRingProducer,
+};
 use picoo_jitter::JitterBuffer;
 use picoo_packet::ReassemblyMap;
 use picoo_pairing::TrustedDeviceStore;
@@ -46,6 +48,7 @@ pub struct ReceiverSession {
     transport: QuicReceiverTransport,
     reassembly: ReassemblyMap,
     latest_frame_store: LatestFrameStore,
+    frame_buffer_pool: FrameBufferPool,
     identity: ReceiverIdentity,
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
@@ -109,6 +112,7 @@ impl ReceiverSession {
             transport: QuicReceiverTransport::new(),
             reassembly: ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT),
             latest_frame_store: LatestFrameStore::new(),
+            frame_buffer_pool: FrameBufferPool::default(),
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),
             trusted_store_path: None,
@@ -426,6 +430,7 @@ impl ReceiverSession {
 
     fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
         self.decoder_worker.reset();
+        self.frame_buffer_pool.clear();
         let had_live_frame =
             self.status == ReceiverStatus::Streaming && self.latest_frame_store.latest().is_some();
         self.active_sender = None;
@@ -640,6 +645,7 @@ impl ReceiverSession {
         // close is intentionally infallible for UI teardown, but decoder state
         // must never survive into a later session.
         self.decoder_worker.reset();
+        self.frame_buffer_pool.clear();
         self.transport.close_active(CloseReason::LocalClose);
         self.placeholder_after = None;
         self.status = ReceiverStatus::Disconnected;
