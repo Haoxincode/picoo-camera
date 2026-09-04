@@ -2,6 +2,8 @@
 
 use std::time::{Duration, Instant};
 
+use picoo_session::StreamState;
+
 use super::ReceiverSession;
 use crate::ReceiverError;
 
@@ -94,6 +96,14 @@ impl ReceiverSession {
         reset_decoder: bool,
     ) -> Result<(), ReceiverError> {
         let newly_awaiting = self.decoder_recovery.enter(reason);
+        if self.runtime_state.stream().is_streaming() {
+            let generation = self
+                .current_stream_config
+                .as_ref()
+                .map_or(0, |config| config.stream_epoch);
+            self.runtime_state
+                .set_stream(StreamState::AwaitingRefresh { generation });
+        }
         if newly_awaiting {
             match reason {
                 RecoveryReason::ReferenceAccessUnitLost => {
@@ -144,6 +154,17 @@ impl ReceiverSession {
 
     pub(crate) fn mark_decoder_refresh_accepted(&mut self) {
         self.decoder_recovery.mark_recovered();
+        if matches!(
+            self.runtime_state.stream(),
+            StreamState::AwaitingRefresh { .. }
+        ) {
+            let generation = self
+                .current_stream_config
+                .as_ref()
+                .map_or(0, |config| config.stream_epoch);
+            self.runtime_state
+                .set_stream(StreamState::Streaming { generation });
+        }
     }
 
     pub(crate) fn accepts_access_unit_for_decode(&self, keyframe: bool) -> bool {
@@ -155,6 +176,14 @@ impl ReceiverSession {
         reason: RecoveryReason,
     ) -> Result<(), ReceiverError> {
         let newly_awaiting = self.decoder_recovery.enter(reason);
+        if self.runtime_state.stream().is_streaming() {
+            let generation = self
+                .current_stream_config
+                .as_ref()
+                .map_or(0, |config| config.stream_epoch);
+            self.runtime_state
+                .set_stream(StreamState::AwaitingRefresh { generation });
+        }
         if newly_awaiting {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();

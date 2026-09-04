@@ -4,7 +4,7 @@ use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, SenderStats as SenderStatsMsg, StartStream,
     StopStream,
 };
-use picoo_session::SenderStatus;
+use picoo_session::{ConnectionState, OutputState, SessionRuntimeState, StreamState};
 use picoo_transport::{Endpoint, PicooTransport, SessionId, TransportEvent};
 
 use super::SenderSession;
@@ -15,19 +15,14 @@ const SENDER_STATS_INTERVAL: Duration = Duration::from_secs(1);
 impl<T: PicooTransport> SenderSession<T> {
     /// Surface camera/mic permission gate to UI (REQ-PICOO-SESSION-001).
     pub fn mark_permission_required(&mut self) {
-        if self.status != SenderStatus::PermissionRequired {
-            self.permission_resume_status = Some(self.status);
-        }
-        self.status = SenderStatus::PermissionRequired;
+        self.runtime_state
+            .set_output(OutputState::PermissionRequired);
     }
 
     /// Clear permission gate once the host grants access (REQ-PICOO-SESSION-001).
     pub fn clear_permission_required(&mut self) {
-        if self.status == SenderStatus::PermissionRequired {
-            self.status = self
-                .permission_resume_status
-                .take()
-                .unwrap_or(SenderStatus::Disconnected);
+        if self.runtime_state.output() == OutputState::PermissionRequired {
+            self.runtime_state.set_output(OutputState::Ready);
         }
     }
 
@@ -42,7 +37,10 @@ impl<T: PicooTransport> SenderSession<T> {
 
     /// 1-based reconnect attempt while in [`SenderStatus::Reconnecting`].
     pub fn reconnect_attempt(&self) -> u32 {
-        if self.status == SenderStatus::Reconnecting {
+        if matches!(
+            self.runtime_state.connection(),
+            ConnectionState::Reconnecting { .. }
+        ) {
             self.reconnect_backoff.attempt()
         } else {
             0
@@ -67,13 +65,16 @@ impl<T: PicooTransport> SenderSession<T> {
 
     fn schedule_reconnect(&mut self) {
         if !self.auto_reconnect || self.last_endpoint.is_none() {
-            self.status = SenderStatus::Disconnected;
+            self.runtime_state.reset_session(ConnectionState::Idle);
             return;
         }
         let delay_ms = self.reconnect_backoff.next_delay_ms();
         self.last_scheduled_reconnect_delay_ms = Some(delay_ms);
         self.reconnect_after = Some(Instant::now() + Duration::from_millis(delay_ms));
-        self.status = SenderStatus::Reconnecting;
+        self.runtime_state
+            .reset_session(ConnectionState::Reconnecting {
+                attempt: self.reconnect_backoff.attempt(),
+            });
     }
 
     fn try_reconnect(&mut self) -> Result<(), SenderError> {
@@ -95,13 +96,16 @@ impl<T: PicooTransport> SenderSession<T> {
     fn on_connected(&mut self) {
         self.reconnect_backoff.reset();
         self.reconnect_after = None;
-        self.status = SenderStatus::Connecting;
+        self.runtime_state
+            .reset_session(ConnectionState::Connected {
+                generation: self.session.map_or(0, |session| session.0),
+            });
         self.last_sender_stats_sent_at = None;
         self.next_control_message_id = 1;
         self.last_received_control_message_id = 0;
         if self.hello_requested {
             match self.emit_client_hello() {
-                Ok(()) => self.status = SenderStatus::Negotiating,
+                Ok(()) => self.runtime_state.set_stream(StreamState::Negotiating),
                 Err(_) => self.reject_authentication("CLIENT_HELLO_SEND_FAILED"),
             }
         }
@@ -136,12 +140,13 @@ impl<T: PicooTransport> SenderSession<T> {
         self.auto_reconnect = true;
         self.reconnect_after = None;
         self.last_endpoint = Some(endpoint.clone());
-        self.status = SenderStatus::Connecting;
+        self.runtime_state
+            .reset_session(ConnectionState::Connecting);
         let session = match self.transport.connect(endpoint) {
             Ok(session) => session,
             Err(error) => {
                 self.last_endpoint = None;
-                self.status = SenderStatus::Disconnected;
+                self.runtime_state.reset_session(ConnectionState::Idle);
                 return Err(SenderError::Transport(error));
             }
         };
@@ -168,20 +173,20 @@ impl<T: PicooTransport> SenderSession<T> {
         self.abort_pending_reconfiguration();
         self.stream_config_sent = false;
         self.clear_receiver_capabilities();
-        self.status = SenderStatus::Disconnected;
+        self.runtime_state = SessionRuntimeState::default();
     }
 
     pub fn pump(&mut self) -> Result<(), SenderError> {
         self.drain_events();
         self.expire_encoder_transaction(Instant::now());
-        if self.status == SenderStatus::Reconnecting {
+        if matches!(
+            self.runtime_state.connection(),
+            ConnectionState::Reconnecting { .. }
+        ) {
             self.try_reconnect()?;
             self.drain_events();
         }
-        if matches!(
-            self.status,
-            SenderStatus::Streaming | SenderStatus::NetworkUnstable
-        ) {
+        if self.runtime_state.stream().is_streaming() {
             self.send_pending_stream_config()?;
             self.maybe_send_sender_stats();
         }

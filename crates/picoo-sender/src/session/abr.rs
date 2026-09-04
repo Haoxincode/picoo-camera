@@ -1,7 +1,7 @@
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_protocol::control::{Capabilities, ReceiverStats as ReceiverStatsMsg};
 use picoo_rate_control::{BitrateAction, BitrateLadder};
-use picoo_session::SenderStatus;
+use picoo_session::{HealthState, StreamState};
 use picoo_transport::PicooTransport;
 
 use super::{EncoderDirective, EncoderDirectiveKind, SenderSession};
@@ -124,14 +124,11 @@ impl<T: PicooTransport> SenderSession<T> {
             }
         }
         // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
-        if matches!(
-            self.status,
-            SenderStatus::Streaming | SenderStatus::NetworkUnstable
-        ) {
+        if self.runtime_state.stream().is_streaming() {
             if metrics.packet_loss > 0.03 {
-                self.status = SenderStatus::NetworkUnstable;
+                self.runtime_state.set_health(HealthState::NetworkDegraded);
             } else if metrics.packet_loss < 0.01 {
-                self.status = SenderStatus::Streaming;
+                self.runtime_state.set_health(HealthState::Healthy);
             }
         }
     }
@@ -147,7 +144,7 @@ impl<T: PicooTransport> SenderSession<T> {
             self.receiver_capabilities = Some(capabilities);
             self.bitrate
                 .set_preferred_height(self.cap_to_receiver_height(self.requested_preferred_height));
-            if self.status == SenderStatus::Negotiating {
+            if self.runtime_state.stream() == StreamState::Negotiating {
                 self.enter_streaming();
             }
             true

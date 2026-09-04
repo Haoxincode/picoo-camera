@@ -2,19 +2,14 @@
 
 use std::time::Instant;
 
-use picoo_session::{NetworkHealth, ReceiverStatus};
+use picoo_session::{HealthState, NetworkHealth, ReceiverStatus};
 
 use super::ReceiverSession;
 
 impl ReceiverSession {
-    /// Compatibility display projection. The lifecycle state remains
-    /// `Streaming`; network degradation is an independent health dimension.
+    /// Compatibility display projection derived from orthogonal Core state.
     pub fn status(&self) -> ReceiverStatus {
-        if self.status == ReceiverStatus::Streaming && self.network_health.health().is_degraded() {
-            ReceiverStatus::NetworkUnstable
-        } else {
-            self.status
-        }
+        self.runtime_state.receiver_status()
     }
 
     pub fn network_health(&self) -> &NetworkHealth {
@@ -24,10 +19,17 @@ impl ReceiverSession {
     pub(super) fn observe_network_packet_loss(&mut self, packet_loss: f64) {
         self.network_health
             .observe_packet_loss(packet_loss, Instant::now());
+        self.runtime_state
+            .set_health(if self.network_health.health().is_degraded() {
+                HealthState::NetworkDegraded
+            } else {
+                HealthState::Healthy
+            });
     }
 
     pub(super) fn reset_network_health(&mut self) {
         self.network_health.reset();
+        self.runtime_state.set_health(HealthState::Healthy);
     }
 
     #[cfg(test)]
@@ -37,6 +39,10 @@ impl ReceiverSession {
 
     #[cfg(test)]
     pub(crate) fn lifecycle_status_for_test(&self) -> ReceiverStatus {
-        self.status
+        if self.runtime_state.stream().is_streaming() {
+            ReceiverStatus::Streaming
+        } else {
+            self.runtime_state.receiver_status()
+        }
     }
 }

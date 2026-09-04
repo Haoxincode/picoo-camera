@@ -19,7 +19,7 @@ use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
 };
 use picoo_rate_control::{BitrateAction, BitrateController};
-use picoo_session::{ReconnectBackoff, SenderStatus};
+use picoo_session::{ReconnectBackoff, SenderStatus, SessionRuntimeState};
 use picoo_transport::{Endpoint, PicooTransport, SessionId};
 
 use crate::stream_config::StreamConfigParams;
@@ -89,9 +89,7 @@ pub struct SenderSession<T: PicooTransport> {
     sender_nonce: Option<[u8; 32]>,
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
-    status: SenderStatus,
-    /// Session state suspended by the platform camera permission gate.
-    permission_resume_status: Option<SenderStatus>,
+    runtime_state: SessionRuntimeState,
     last_endpoint: Option<Endpoint>,
     reconnect_backoff: ReconnectBackoff,
     reconnect_after: Option<Instant>,
@@ -148,8 +146,7 @@ impl<T: PicooTransport> SenderSession<T> {
             sender_nonce: None,
             trusted: TrustedDeviceStore::new(),
             trusted_store_path: None,
-            status: SenderStatus::Disconnected,
-            permission_resume_status: None,
+            runtime_state: SessionRuntimeState::default(),
             last_endpoint: None,
             reconnect_backoff: ReconnectBackoff::default(),
             reconnect_after: None,
@@ -195,7 +192,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn status(&self) -> SenderStatus {
-        self.status
+        self.runtime_state.sender_status()
+    }
+
+    pub fn runtime_state(&self) -> SessionRuntimeState {
+        self.runtime_state
     }
 
     /// Access the underlying transport (loss injection / diagnostics in tests).

@@ -8,7 +8,7 @@ use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingCommit,
     PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
-use picoo_session::SenderStatus;
+use picoo_session::{ConnectionState, SenderStatus, SessionRuntimeState, StreamState, TrustState};
 use picoo_transport::{PicooTransport, SessionId};
 
 use super::SenderSession;
@@ -257,9 +257,11 @@ impl<T: PicooTransport> SenderSession<T> {
         });
 
         if hello.pairing_required {
-            self.status = SenderStatus::Pairing;
+            self.runtime_state.set_trust(TrustState::Pairing);
+            self.runtime_state.set_stream(StreamState::Negotiating);
         } else {
-            self.status = SenderStatus::Negotiating;
+            self.runtime_state.set_trust(TrustState::Unknown);
+            self.runtime_state.set_stream(StreamState::Negotiating);
             if self.send_identity_confirm().is_err() {
                 self.reject_authentication("SENDER_PROOF_SEND_FAILED");
             }
@@ -274,14 +276,14 @@ impl<T: PicooTransport> SenderSession<T> {
             self.transport
                 .close(session, picoo_transport::CloseReason::LocalClose);
         }
-        self.status = SenderStatus::Disconnected;
+        self.runtime_state = SessionRuntimeState::default();
         self.pairing = None;
         self.sender_nonce = None;
     }
 
     fn accept_pairing_approval(&mut self) {
         if !matches!(
-            self.status,
+            self.status(),
             SenderStatus::Pairing | SenderStatus::Negotiating
         ) {
             return;
@@ -352,7 +354,7 @@ impl<T: PicooTransport> SenderSession<T> {
 
     fn accept_pairing_complete(&mut self) {
         if !matches!(
-            self.status,
+            self.status(),
             SenderStatus::Pairing | SenderStatus::Negotiating
         ) {
             return;
@@ -384,8 +386,8 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn send_client_hello(&mut self) -> Result<(), SenderError> {
         let connection_pending = matches!(
-            self.status,
-            SenderStatus::Connecting | SenderStatus::Reconnecting
+            self.runtime_state.connection(),
+            ConnectionState::Connecting | ConnectionState::Reconnecting { .. }
         );
         if self.session.is_none() && !connection_pending {
             return Err(SenderError::NotConnected);
@@ -402,7 +404,7 @@ impl<T: PicooTransport> SenderSession<T> {
         }
 
         self.emit_client_hello()?;
-        self.status = SenderStatus::Negotiating;
+        self.runtime_state.set_stream(StreamState::Negotiating);
         self.drain_events();
         Ok(())
     }

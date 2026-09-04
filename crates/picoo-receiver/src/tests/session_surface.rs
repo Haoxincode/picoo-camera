@@ -17,6 +17,12 @@ fn session_status_markers_cover_vcam_permission_and_network() {
 
     receiver.mark_permission_required();
     assert_eq!(receiver.status(), ReceiverStatus::PermissionRequired);
+    receiver.mark_virtual_camera_unavailable();
+    assert_eq!(
+        receiver.status(),
+        ReceiverStatus::PermissionRequired,
+        "an output diagnostic must not erase the permission gate"
+    );
 
     receiver
         .listen(Endpoint {

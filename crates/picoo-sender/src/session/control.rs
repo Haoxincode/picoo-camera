@@ -1,5 +1,5 @@
 use picoo_protocol::control::control_envelope::Payload as ControlPayload;
-use picoo_session::SenderStatus;
+use picoo_session::{ConnectionState, StreamState, TrustState};
 use picoo_transport::{PicooTransport, SessionId};
 
 use super::SenderSession;
@@ -56,21 +56,27 @@ impl<T: PicooTransport> SenderSession<T> {
 
     fn control_payload_allowed(&self, payload: &ControlPayload) -> bool {
         match payload {
-            ControlPayload::ServerHello(_) => self.status == SenderStatus::Negotiating,
-            ControlPayload::PairingApproval(_) | ControlPayload::PairingComplete(_) => {
+            ControlPayload::ServerHello(_) => {
                 matches!(
-                    self.status,
-                    SenderStatus::Pairing | SenderStatus::Negotiating
-                )
+                    self.runtime_state.connection(),
+                    ConnectionState::Connected { .. }
+                ) && self.runtime_state.stream() == StreamState::Negotiating
+                    && self.runtime_state.trust() == TrustState::Unknown
+            }
+            ControlPayload::PairingApproval(_) | ControlPayload::PairingComplete(_) => {
+                self.runtime_state.stream() == StreamState::Negotiating
+                    && matches!(
+                        self.runtime_state.trust(),
+                        TrustState::Unknown | TrustState::Pairing
+                    )
             }
             ControlPayload::Capabilities(_)
             | ControlPayload::ReceiverStats(_)
             | ControlPayload::EncoderCommand(_)
             | ControlPayload::CameraCommand(_) => {
-                matches!(
-                    self.status,
-                    SenderStatus::Streaming | SenderStatus::NetworkUnstable
-                ) && self.receiver_is_authenticated()
+                self.runtime_state.stream().is_streaming()
+                    && self.runtime_state.trust() == TrustState::Authenticated
+                    && self.receiver_is_authenticated()
             }
             ControlPayload::SessionError(_) => true,
             _ => false,

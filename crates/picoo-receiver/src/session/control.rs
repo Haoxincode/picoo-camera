@@ -11,7 +11,7 @@ use picoo_protocol::control::{
     EncoderCommand, Resolution, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
 };
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
-use picoo_session::ReceiverStatus;
+use picoo_session::StreamState;
 use picoo_transport::{CloseReason, SessionId};
 
 impl ReceiverSession {
@@ -146,11 +146,7 @@ impl ReceiverSession {
         self.placeholder_after = None;
         let _ = self.publish_waiting_placeholder();
         self.transport.close(session, CloseReason::LocalClose);
-        self.status = if self.bind_addr().is_some() {
-            ReceiverStatus::Discovering
-        } else {
-            ReceiverStatus::Disconnected
-        };
+        self.reset_runtime_to_idle();
         Ok(())
     }
 
@@ -196,25 +192,16 @@ impl ReceiverSession {
         }
 
         // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.
-        if self.video_allowed()
-            && matches!(
-                self.status,
-                ReceiverStatus::Connecting
-                    | ReceiverStatus::Pairing
-                    | ReceiverStatus::Negotiating
-                    | ReceiverStatus::Streaming
-            )
-            && self.status != ReceiverStatus::Streaming
-        {
-            self.status = ReceiverStatus::Negotiating;
+        if self.video_allowed() && !self.runtime_state.stream().is_streaming() {
+            self.runtime_state.set_stream(StreamState::Negotiating);
         }
         if self.receiver_capabilities_sent.is_none() {
             self.send_capabilities(session)?;
             self.receiver_capabilities_sent = Some(());
         }
         // After capabilities, paired receivers are ready to stream.
-        if self.video_allowed() && self.status == ReceiverStatus::Negotiating {
-            self.status = ReceiverStatus::Streaming;
+        if self.video_allowed() && self.runtime_state.stream() == StreamState::Negotiating {
+            self.begin_streaming(session)?;
         }
 
         // PUC-005 / REQ-PICOO-MEDIA-003 / SESSION-004: request IDR on first

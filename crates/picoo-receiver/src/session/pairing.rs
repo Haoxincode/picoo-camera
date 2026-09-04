@@ -13,7 +13,7 @@ use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingCommit,
     PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
-use picoo_session::ReceiverStatus;
+use picoo_session::{StreamState, TrustState};
 use picoo_transport::{CloseReason, SessionId};
 
 use super::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
@@ -234,11 +234,7 @@ impl ReceiverSession {
             session,
             CloseReason::Error("pairing challenge expired".into()),
         );
-        self.status = if self.bind_addr().is_some() {
-            ReceiverStatus::Discovering
-        } else {
-            ReceiverStatus::Disconnected
-        };
+        self.reset_runtime_to_idle();
     }
 
     /// User confirmed the six-digit code on desktop (PUC-001).
@@ -269,11 +265,7 @@ impl ReceiverSession {
         self.transport.close(session, CloseReason::LocalClose);
         self.active_sender = None;
         self.pending_pairing = None;
-        self.status = if self.bind_addr().is_some() {
-            ReceiverStatus::Discovering
-        } else {
-            ReceiverStatus::Disconnected
-        };
+        self.reset_runtime_to_idle();
         Ok(())
     }
 
@@ -319,11 +311,7 @@ impl ReceiverSession {
             self.transport.close(session, CloseReason::LocalClose);
             self.active_sender = None;
             self.pending_pairing = None;
-            self.status = if self.bind_addr().is_some() {
-                ReceiverStatus::Discovering
-            } else {
-                ReceiverStatus::Disconnected
-            };
+            self.reset_runtime_to_idle();
             return Ok(());
         }
 
@@ -393,11 +381,12 @@ impl ReceiverSession {
             public_key: hello.public_key,
             video_allowed: false,
         });
-        self.status = if auto_accept {
-            ReceiverStatus::Negotiating
+        self.runtime_state.set_trust(if auto_accept {
+            TrustState::Unknown
         } else {
-            ReceiverStatus::Pairing
-        };
+            TrustState::Pairing
+        });
+        self.runtime_state.set_stream(StreamState::Negotiating);
         Ok(())
     }
 
@@ -413,9 +402,8 @@ impl ReceiverSession {
 
         if Instant::now() >= pending.expires_at {
             self.pending_pairing = None;
-            if matches!(self.status, ReceiverStatus::Pairing) {
-                self.status = ReceiverStatus::Connecting;
-            }
+            self.runtime_state.set_trust(TrustState::Unknown);
+            self.runtime_state.set_stream(StreamState::Idle);
             return Err(ReceiverError::Protocol("pairing challenge expired".into()));
         }
 

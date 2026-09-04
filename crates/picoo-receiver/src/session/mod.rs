@@ -28,7 +28,10 @@ use picoo_protocol::control::{
     SenderStats as SenderStatsMsg, StreamConfig,
 };
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
-use picoo_session::{NetworkHealthTracker, ReceiverStatus};
+use picoo_session::{
+    ConnectionState, NetworkHealthTracker, OutputState, SessionRuntimeState, StreamState,
+    TrustState,
+};
 use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
@@ -54,7 +57,7 @@ pub struct ReceiverSession {
     trusted_store_path: Option<PathBuf>,
     active_sender: Option<ActiveSender>,
     pending_pairing: Option<PendingPairing>,
-    status: ReceiverStatus,
+    runtime_state: SessionRuntimeState,
     network_health: NetworkHealthTracker,
     ingress: IngressStats,
     stats_reporter: StatsReporter,
@@ -121,7 +124,7 @@ impl ReceiverSession {
             trusted_store_path: None,
             active_sender: None,
             pending_pairing: None,
-            status: ReceiverStatus::Disconnected,
+            runtime_state: SessionRuntimeState::default(),
             network_health: NetworkHealthTracker::default(),
             ingress: IngressStats::default(),
             stats_reporter: StatsReporter::new(),
@@ -201,30 +204,23 @@ impl ReceiverSession {
     /// Surface Virtual Camera Unavailable to UI (REQ-PICOO-SESSION-001 / PUC-004).
     /// Only applied while idle so an active session is not clobbered.
     pub fn mark_virtual_camera_unavailable(&mut self) {
-        if matches!(
-            self.status,
-            ReceiverStatus::Discovering
-                | ReceiverStatus::Disconnected
-                | ReceiverStatus::VirtualCameraUnavailable
-        ) {
-            self.status = ReceiverStatus::VirtualCameraUnavailable;
+        if self.runtime_state.output() != OutputState::PermissionRequired {
+            self.runtime_state
+                .set_output(OutputState::VirtualCameraUnavailable);
         }
     }
 
     /// Clear Virtual Camera Unavailable after install/repair (REQ-PICOO-SESSION-001).
     pub fn clear_virtual_camera_unavailable(&mut self) {
-        if self.status == ReceiverStatus::VirtualCameraUnavailable {
-            self.status = if self.bind_addr().is_some() {
-                ReceiverStatus::Discovering
-            } else {
-                ReceiverStatus::Disconnected
-            };
+        if self.runtime_state.output() == OutputState::VirtualCameraUnavailable {
+            self.runtime_state.set_output(OutputState::Ready);
         }
     }
 
     /// Surface permission gate to UI (REQ-PICOO-SESSION-001).
     pub fn mark_permission_required(&mut self) {
-        self.status = ReceiverStatus::PermissionRequired;
+        self.runtime_state
+            .set_output(OutputState::PermissionRequired);
     }
 
     pub fn ingress_stats(&self) -> IngressStats {
@@ -268,9 +264,24 @@ impl ReceiverSession {
         self.transport.bind_addr()
     }
 
+    pub fn runtime_state(&self) -> SessionRuntimeState {
+        self.runtime_state
+    }
+
+    pub(super) fn reset_runtime_to_idle(&mut self) {
+        let connection = if self.bind_addr().is_some() {
+            ConnectionState::Listening
+        } else {
+            ConnectionState::Idle
+        };
+        self.runtime_state.reset_session(connection);
+    }
+
     pub fn listen(&mut self, endpoint: Endpoint) -> Result<std::net::SocketAddr, ReceiverError> {
         let addr = self.transport.bind(endpoint)?;
-        self.status = ReceiverStatus::Discovering;
+        self.runtime_state.set_output(OutputState::Ready);
+        self.runtime_state
+            .set_connection(ConnectionState::Listening);
         Ok(addr)
     }
 
@@ -288,7 +299,10 @@ impl ReceiverSession {
                     self.control_generation = None;
                     self.next_control_message_id = 1;
                     self.last_received_control_message_id = 0;
-                    self.status = ReceiverStatus::Connecting;
+                    self.runtime_state
+                        .reset_session(ConnectionState::Connected {
+                            generation: session.0,
+                        });
                 }
                 TransportEvent::Disconnected(_, _) if self.transport.active_session().is_none() => {
                     self.on_peer_disconnected()?;
@@ -435,8 +449,8 @@ impl ReceiverSession {
     fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
         self.decoder_worker.reset();
         self.frame_buffer_pool.clear();
-        let had_live_frame =
-            self.status == ReceiverStatus::Streaming && self.latest_frame_store.latest().is_some();
+        let had_live_frame = self.runtime_state.stream().is_streaming()
+            && self.latest_frame_store.latest().is_some();
         self.active_sender = None;
         self.pending_pairing = None;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
@@ -456,16 +470,13 @@ impl ReceiverSession {
 
         if had_live_frame && !self.last_frame_hold.is_zero() {
             // Briefly keep last frame for VCam/UI, then switch to placeholder.
-            self.status = ReceiverStatus::Reconnecting;
+            self.runtime_state
+                .reset_session(ConnectionState::Reconnecting { attempt: 1 });
             self.placeholder_after = Some(Instant::now() + self.last_frame_hold);
         } else {
             self.placeholder_after = None;
             let _ = self.publish_waiting_placeholder();
-            self.status = if self.bind_addr().is_some() {
-                ReceiverStatus::Discovering
-            } else {
-                ReceiverStatus::Disconnected
-            };
+            self.reset_runtime_to_idle();
         }
         Ok(())
     }
@@ -480,16 +491,12 @@ impl ReceiverSession {
         self.placeholder_after = None;
         // After last-frame hold, show reconnect copy before returning to idle Discovering.
         self.publish_reconnecting_placeholder()?;
-        self.status = if self.bind_addr().is_some() {
-            ReceiverStatus::Discovering
-        } else {
-            ReceiverStatus::Disconnected
-        };
+        self.reset_runtime_to_idle();
         Ok(())
     }
 
     fn maybe_send_receiver_stats(&mut self) -> Result<(), ReceiverError> {
-        if self.status != ReceiverStatus::Streaming {
+        if !self.runtime_state.stream().is_streaming() {
             return Ok(());
         }
         if !self.stats_reporter.due() {
@@ -625,8 +632,23 @@ impl ReceiverSession {
             .is_some_and(|sender| sender.video_allowed)
     }
 
-    pub(crate) fn begin_streaming(&mut self, _session: SessionId) -> Result<(), ReceiverError> {
-        self.status = ReceiverStatus::Streaming;
+    pub(crate) fn begin_streaming(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        if !matches!(
+            self.runtime_state.connection(),
+            ConnectionState::Connected { .. }
+        ) {
+            self.runtime_state
+                .set_connection(ConnectionState::Connected {
+                    generation: session.0,
+                });
+        }
+        self.runtime_state.set_trust(TrustState::Authenticated);
+        let generation = self
+            .current_stream_config
+            .as_ref()
+            .map_or(0, |config| config.stream_epoch);
+        self.runtime_state
+            .set_stream(StreamState::Streaming { generation });
         Ok(())
     }
 
@@ -653,7 +675,7 @@ impl ReceiverSession {
         self.frame_buffer_pool.clear();
         self.transport.close_active(CloseReason::LocalClose);
         self.placeholder_after = None;
-        self.status = ReceiverStatus::Disconnected;
+        self.runtime_state = SessionRuntimeState::default();
         self.active_sender = None;
         self.pending_pairing = None;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
@@ -682,11 +704,7 @@ impl ReceiverSession {
         );
         self.active_sender = None;
         self.pending_pairing = None;
-        self.status = if self.bind_addr().is_some() {
-            ReceiverStatus::Discovering
-        } else {
-            ReceiverStatus::Disconnected
-        };
+        self.reset_runtime_to_idle();
     }
 
     /// Test-only: shorten/extend last-frame hold before placeholder (REQ-PICOO-FRAME-005).

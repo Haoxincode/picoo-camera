@@ -1,6 +1,9 @@
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
 use picoo_protocol::VideoPacket;
-use picoo_session::SenderStatus;
+use picoo_session::{
+    ConnectionState, HealthState, OutputState, SenderStatus, SessionRuntimeState, StreamState,
+    TrustState,
+};
 use picoo_transport::{PicooTransport, SessionId};
 
 use super::{EncoderDirectiveKind, NativeEncoderAccessUnit, SenderSession};
@@ -8,7 +11,11 @@ use crate::SenderError;
 
 impl<T: PicooTransport> SenderSession<T> {
     pub(super) fn enter_streaming(&mut self) {
-        self.status = SenderStatus::Streaming;
+        self.runtime_state.set_trust(TrustState::Authenticated);
+        self.runtime_state.set_stream(StreamState::Streaming {
+            generation: self.current_stream_epoch,
+        });
+        self.runtime_state.set_health(HealthState::Healthy);
         // Fresh streaming (including post-reconnect) needs an IDR (REQ-PICOO-SESSION-004).
         self.keyframe_requested = true;
         let _ = self.send_pending_stream_config();
@@ -63,10 +70,7 @@ impl<T: PicooTransport> SenderSession<T> {
         if self.session.is_none() {
             return Err(SenderError::NotConnected);
         }
-        if !matches!(
-            self.status,
-            SenderStatus::Streaming | SenderStatus::NetworkUnstable
-        ) {
+        if !self.runtime_state.stream().is_streaming() {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
@@ -173,10 +177,7 @@ impl<T: PicooTransport> SenderSession<T> {
         if self.session.is_none() {
             return Err(SenderError::NotConnected);
         }
-        if !matches!(
-            self.status,
-            SenderStatus::Streaming | SenderStatus::NetworkUnstable
-        ) {
+        if !self.runtime_state.stream().is_streaming() {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
@@ -198,10 +199,7 @@ impl<T: PicooTransport> SenderSession<T> {
     /// Send all pending VideoPackets over QUIC datagrams.
     pub fn flush_pending(&mut self) -> Result<usize, SenderError> {
         let session = self.session.ok_or(SenderError::NotConnected)?;
-        if !matches!(
-            self.status,
-            SenderStatus::Streaming | SenderStatus::NetworkUnstable
-        ) {
+        if !self.runtime_state.stream().is_streaming() {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
@@ -235,10 +233,17 @@ impl<T: PicooTransport> SenderSession<T> {
         pts_us: u64,
         stream_epoch: u32,
     ) -> Result<usize, SenderError> {
-        let previous_status = self.status;
-        self.status = SenderStatus::Streaming;
+        let previous_state = self.runtime_state;
+        self.runtime_state
+            .set_connection(ConnectionState::Connected {
+                generation: self.session.map_or(0, |session| session.0),
+            });
+        self.runtime_state.set_trust(TrustState::Authenticated);
+        self.runtime_state.set_stream(StreamState::Streaming {
+            generation: stream_epoch,
+        });
         let result = self.ingest_and_flush(data, is_keyframe, pts_us, stream_epoch);
-        self.status = previous_status;
+        self.runtime_state = previous_state;
         result
     }
 
@@ -285,7 +290,45 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn force_status_for_test(&mut self, status: SenderStatus) {
-        self.status = status;
+        self.runtime_state = SessionRuntimeState::default();
+        let generation = self.session.map_or(1, |session| session.0);
+        match status {
+            SenderStatus::Disconnected => {}
+            SenderStatus::Discovering => self
+                .runtime_state
+                .set_connection(ConnectionState::Listening),
+            SenderStatus::Connecting => self
+                .runtime_state
+                .set_connection(ConnectionState::Connecting),
+            SenderStatus::Reconnecting => self
+                .runtime_state
+                .set_connection(ConnectionState::Reconnecting { attempt: 1 }),
+            SenderStatus::Pairing => {
+                self.runtime_state
+                    .set_connection(ConnectionState::Connected { generation });
+                self.runtime_state.set_trust(TrustState::Pairing);
+                self.runtime_state.set_stream(StreamState::Negotiating);
+            }
+            SenderStatus::Negotiating => {
+                self.runtime_state
+                    .set_connection(ConnectionState::Connected { generation });
+                self.runtime_state.set_stream(StreamState::Negotiating);
+            }
+            SenderStatus::Streaming | SenderStatus::NetworkUnstable => {
+                self.runtime_state
+                    .set_connection(ConnectionState::Connected { generation });
+                self.runtime_state.set_trust(TrustState::Authenticated);
+                self.runtime_state.set_stream(StreamState::Streaming {
+                    generation: self.current_stream_epoch,
+                });
+                if status == SenderStatus::NetworkUnstable {
+                    self.runtime_state.set_health(HealthState::NetworkDegraded);
+                }
+            }
+            SenderStatus::PermissionRequired => self
+                .runtime_state
+                .set_output(OutputState::PermissionRequired),
+        }
     }
 
     /// Close the active transport session (used by reconnect / recovery tests across crates).

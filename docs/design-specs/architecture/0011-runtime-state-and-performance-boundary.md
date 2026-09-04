@@ -45,7 +45,8 @@ QUIC、Decoder、时钟、磁盘可信存储、Frame Sink 和平台生命周期�
 Rust Core 是编码重配置事务的唯一语义所有者，显式保存 transaction ID、候选 stream epoch、
 预期 encoder generation、目标配置与 rollback 状态。Android/iOS 只执行
 `ApplyEncoderConfiguration`，再报告 `EncoderStarted`、`EncodedAccessUnit` 或 `EncoderFailed`。
-只有匹配 transaction、generation、epoch 和目标分辨率的首个 IDR 才允许 Core commit 并发送 ACK。
+只有匹配 transaction、generation、epoch 和目标分辨率的首个 IDR 完整进入 packetization 后，Core
+才允许 commit；原生层只从 Rust snapshot 观察结果，不发送 ACK/NACK。
 原生层继续拥有 Camera2/MediaCodec/AVFoundation/VideoToolbox 生命周期，但不独立决定协议提交。
 
 ### 类型化媒体时间线
