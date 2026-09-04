@@ -8,7 +8,7 @@ mod session;
 use std::time::Duration;
 
 use picoo_media_decode::DecodeError;
-use picoo_pairing::{PairingError, StoreError};
+use picoo_pairing::{IdentityError, PairingError, StoreError};
 use picoo_transport::TransportError;
 use thiserror::Error;
 
@@ -38,6 +38,8 @@ pub enum ReceiverError {
     SharedRing(#[from] picoo_frame_hub::SharedRingError),
     #[error("pairing store: {0}")]
     Store(#[from] StoreError),
+    #[error("device identity: {0}")]
+    Identity(#[from] IdentityError),
     #[error("decode: {0}")]
     Decode(#[from] DecodeError),
     #[error("not listening")]

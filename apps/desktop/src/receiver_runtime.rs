@@ -48,14 +48,14 @@ pub struct ReceiverRuntimeConfig {
     pub bind_host: String,
 }
 
-impl Default for ReceiverRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            identity: load_receiver_identity("Picoo Camera"),
+impl ReceiverRuntimeConfig {
+    pub fn load() -> Result<Self, ReceiverError> {
+        Ok(Self {
+            identity: load_receiver_identity("Picoo Camera")?,
             trusted_store_path: default_trusted_store_path(),
             shared_ring_name: DEFAULT_SHARED_RING_NAME.into(),
             bind_host: "0.0.0.0".into(),
-        }
+        })
     }
 }
 
@@ -196,7 +196,7 @@ impl ReceiverRuntime {
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
-        let mut config = ReceiverRuntimeConfig::default();
+        let mut config = ReceiverRuntimeConfig::load()?;
         config.identity.display_name = prefs.display_name.clone();
         // Persist renamed display name into durable identity file.
         if let Ok(mut identity) =
@@ -564,14 +564,9 @@ fn default_identity_path() -> PathBuf {
     }
 }
 
-fn load_receiver_identity(default_name: &str) -> ReceiverIdentity {
-    match DeviceIdentity::load_or_create(default_identity_path(), default_name) {
-        Ok(identity) => receiver_identity_from_device(&identity),
-        Err(err) => {
-            tracing::warn!("receiver identity load failed, using ephemeral: {err}");
-            ReceiverIdentity::default()
-        }
-    }
+fn load_receiver_identity(default_name: &str) -> Result<ReceiverIdentity, ReceiverError> {
+    let identity = DeviceIdentity::load_or_create(default_identity_path(), default_name)?;
+    Ok(receiver_identity_from_device(&identity))
 }
 
 fn receiver_identity_from_device(identity: &DeviceIdentity) -> ReceiverIdentity {

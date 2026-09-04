@@ -11,12 +11,12 @@ use thiserror::Error;
 
 use crate::{TrustedDevice, TrustedDeviceStore, TrustedIdentityReplacement};
 
-const STORE_VERSION: u32 = 1;
+const STORE_FORMAT: &str = "picoo-camera-ed25519-trust";
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PersistedTrustedDevices {
-    version: u32,
+    format: String,
     devices: Vec<TrustedDevice>,
     #[serde(default)]
     pending_identity_replacement: Option<TrustedIdentityReplacement>,
@@ -34,8 +34,8 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("unsupported store version: {0}")]
-    UnsupportedVersion(u32),
+    #[error("unsupported trust store format: {0}")]
+    UnsupportedFormat(String),
 }
 
 impl TrustedDeviceStore {
@@ -51,7 +51,7 @@ impl TrustedDeviceStore {
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         let path = path.as_ref();
         let payload = PersistedTrustedDevices {
-            version: STORE_VERSION,
+            format: STORE_FORMAT.into(),
             devices: self.list().cloned().collect(),
             pending_identity_replacement: self.identity_replacement().cloned(),
             next_identity_replacement_revision: self.next_identity_replacement_revision,
@@ -130,8 +130,8 @@ fn create_temporary_file(
 
 fn self_from_json(raw: &str) -> Result<TrustedDeviceStore, StoreError> {
     let persisted: PersistedTrustedDevices = serde_json::from_str(raw)?;
-    if persisted.version != STORE_VERSION {
-        return Err(StoreError::UnsupportedVersion(persisted.version));
+    if persisted.format != STORE_FORMAT {
+        return Err(StoreError::UnsupportedFormat(persisted.format));
     }
     let mut store = TrustedDeviceStore::new();
     for device in persisted.devices {
@@ -169,6 +169,18 @@ mod tests {
             loaded.get("phone-1").map(|d| d.device_name.as_str()),
             Some("Pixel")
         );
+    }
+
+    #[test]
+    fn rejects_legacy_pseudo_key_trust_store() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("trusted.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"devices":[],"pending_identity_replacement":null,"next_identity_replacement_revision":1}"#,
+        )
+        .expect("legacy fixture");
+        assert!(TrustedDeviceStore::load_from_path(path).is_err());
     }
 
     #[test]

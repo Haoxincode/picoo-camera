@@ -354,7 +354,13 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
 }
 
 fn run_serve_mode() {
-    let config = ReceiverRuntimeConfig::default();
+    let config = match ReceiverRuntimeConfig::load() {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("Failed to load receiver identity: {err}");
+            std::process::exit(1);
+        }
+    };
     let trusted_path = config.trusted_store_path.clone();
     let mut runtime = match ReceiverRuntime::start(config) {
         Ok(runtime) => runtime,
