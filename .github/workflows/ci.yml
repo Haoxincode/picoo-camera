@@ -57,20 +57,27 @@ jobs:
       - run: cargo run -p xtask -- build android
       - name: Android unit tests
         run: ./apps/android/gradlew -p apps/android testDebugUnitTest
-      - run: cargo run -p xtask -- package android
       - name: Verify arm64 .so 16KB page alignment
-        run: bash scripts/check_android_so_16k.sh
+        run: bash scripts/check_android_so_16k.sh apps/android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Verify debug application identity is isolated
+        run: |
+          source apps/android/toolchain.properties
+          app_id="$("${ANDROID_HOME}/cmdline-tools/latest/bin/apkanalyzer" manifest application-id apps/android/app/build/outputs/apk/debug/app-debug.apk)"
+          test "$app_id" = "com.picoo.camera.debug"
+      - name: Verify Release packaging fails closed without a signer
+        run: |
+          if ./apps/android/gradlew -p apps/android assembleRelease; then
+            echo "unsigned Android Release unexpectedly succeeded" >&2
+            exit 1
+          fi
+          if PICOO_ANDROID_KEY_ALIAS=incomplete ./apps/android/gradlew -p apps/android help; then
+            echo "partial Android signing configuration unexpectedly succeeded" >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v7
         with:
           name: android-apk-debug
           path: apps/android/app/build/outputs/apk/debug/
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v7
-        with:
-          name: android-release
-          path: |
-            apps/android/app/build/outputs/apk/release/
-            apps/android/app/build/outputs/bundle/release/
           if-no-files-found: error
 
   windows:

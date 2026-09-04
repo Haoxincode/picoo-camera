@@ -47,9 +47,10 @@ gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
 
 | Artifact 名 | 约大小 | zip 内路径 | 用途 |
 | --- | --- | --- | --- |
-| `android-apk-debug` | ~10 MB | `app-debug.apk` | 快速迭代调试 |
-| `android-release` | ~18 MB | `app-release.apk` | **真机 V1 验证首选** |
-| | | `app-release.aab` | Play 分发形态（ sideload 用 APK 即可） |
+| `android-apk-debug` | ~10 MB | `app-debug.apk` | 普通 CI 快速迭代，application ID 为 `com.picoo.camera.debug` |
+| `android-signed-release` | ~18 MB | `app-release.apk` | 受保护 Android Release workflow 产物，**真机发行/覆盖升级验证首选** |
+| | | `app-release.aab` | 同一稳定 signer 的 Play 分发形态（sideload 用 APK） |
+| | | `android-release.spdx.json` | Anchore Syft 生成的 SPDX SBOM；APK/AAB 另附 GitHub provenance attestation |
 | `windows-msi` | ~8 MB | `PicooCamera.msi` | **Win11 安装首选** |
 | `windows-bundle` | ~18 MB | 见下表 | 开发态 / 免安装验证 |
 | `macos-app-unsigned` | 待 CI 记录 | `PicooCamera-macOS-unsigned.zip` + `PicooCamera-macOS.entitlements` | macOS 15+ ARM64 Host `.app` 与已展开签名输入 scaffold；未签名、未公证、不可激活 |
@@ -97,12 +98,13 @@ Major/Minor 加 `github.run_number` 生成三字段版本，保证后生成的�
 编译、导出与加载 smoke，不能写系统 COM 注册；**不**在 CI 上执行 `msiexec /i`（perMachine
 需 Win11 管理员真机验收）。
 
-### `android-release` 解压后布局
+### `android-signed-release` 解压后布局
 
 ```text
-android-release/
-├── app-release.apk                # com.picoo.camera v0.1.1, arm64-v8a
-└── app-release.aab
+android-signed-release/
+├── app-release.apk                # com.picoo.camera，版本来自 workspace/build number
+├── app-release.aab
+└── android-release.spdx.json
 ```
 
 安装 APK（启用未知来源后）：
@@ -110,6 +112,10 @@ android-release/
 ```bash
 adb install -r app-release.apk
 ```
+
+普通 `ci.yml` 不再生成 debug-key 签名的伪 Release。正式产物由 `release-android.yml` 的受保护
+Environment 注入稳定 keystore，并在上传前核对 APK/AAB certificate SHA-256、application ID、
+versionName 与 versionCode；缺少任一签名输入时 Gradle Release task 直接失败。
 
 ## 真机最小组合
 

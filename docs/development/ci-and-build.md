@@ -40,7 +40,7 @@ GitHub Actions
 | --- | --- | --- | --- |
 | `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
 | `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz、30 分钟 paired loopback soak、Shared Ring/FFI Miri 与原子协议 Loom model | `cargo xtask test fuzz/soak/miri/loom` |
-| `android` | `ubuntu-latest` | Android Sender APK/AAB | `cargo xtask build android` |
+| `android` | `ubuntu-latest` | 独立 application ID 的 Android Sender Debug APK | `cargo xtask build android` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包 | `cargo xtask build windows`、`cargo xtask package windows` |
 | `Windows VCam host contract` | `self-hosted, Windows, X64, picoo-vcam`（专用管理员 Win11 client） | MSI 安装/repair/卸载、exact-link 枚举、MF Source 激活与 Start/Stop/Shutdown | `cargo xtask package windows`、`scripts/test_windows_vcam_host.ps1` |
 | `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
@@ -61,7 +61,7 @@ Foundation Frame Server 的专用 Windows 11 client runner。脚本要求 runner
 
 - `android` / `windows` / `macos` / `ios` 与 `rust-and-docs` **并行**：平台产物不等待通用测试矩阵；同一 ref 的新 push 仍由 concurrency 取消旧 run。
 - 各 job 通过 `actions/upload-artifact` 上传产物（APK、MSI、DLL 等），供人工验证或后续 release workflow 消费。
-- 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File`、`InstallExecuteSequence` 与 `CustomAction` 表，强制 late MajorUpgrade 的受限窗口只包含 `RemoveExistingProducts`，并运行 ICE27/ICE63/ICE77。最终虚拟摄像头注册在 `InstallExecute` 前写入 commit script，于旧产品移除并成功提交后执行。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。macOS 签名发布仍可用经过校验的 `PICOO_RELEASE_BUILD_NUMBER` 显式覆盖普通 CI 构建号。
+- 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android Debug 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。Android 正式 APK/AAB 只由 `release-android.yml` 在受保护 Environment 中注入稳定 keystore 后调用 `xtask package android`；Gradle 遇到任意 Release task 且签名输入不完整时立即失败。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File`、`InstallExecuteSequence` 与 `CustomAction` 表，强制 late MajorUpgrade 的受限窗口只包含 `RemoveExistingProducts`，并运行 ICE27/ICE63/ICE77。最终虚拟摄像头注册在 `InstallExecute` 前写入 commit script，于旧产品移除并成功提交后执行。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。macOS 签名发布仍可用经过校验的 `PICOO_RELEASE_BUILD_NUMBER` 显式覆盖普通 CI 构建号。
 - **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
 
@@ -154,7 +154,8 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 
 | Secret（示例名） | 用途 | 必需阶段 |
 | --- | --- | --- |
-| `ANDROID_KEYSTORE` / 相关 signing 配置 | Android Release 签名 | 发布 AAB 前 |
+| `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | Android Release 稳定签名 | 发布 APK/AAB 前，缺一即失败 |
+| `ANDROID_SIGNER_SHA256` | Android release certificate 固定指纹 | 签名后 APK/AAB 双重核验 |
 | `WINDOWS_CERTIFICATE` | Windows 安装包代码签名 | 可选，发布前建议 |
 | `APPLE_DEVELOPER_ID_P12_BASE64` / `APPLE_DEVELOPER_ID_P12_PASSWORD` / `APPLE_KEYCHAIN_PASSWORD` | 导入临时 Developer ID Application identity | macOS 发布 |
 | `APPLE_TEAM_ID` / `APPLE_MACOS_SIGNING_IDENTITY` | 校验并选择 Host/Extension 共用签名团队与 identity | macOS 发布 |
@@ -163,7 +164,12 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 
 Apple Release 手动触发时还必须填写一至三段数字的 marketing version 与严格递增的正整数 build number；tag `vX.Y.Z` 触发时从 tag 取得 marketing version，并使用单调递增的 GitHub run number 作为 build number。两者分别注入 `PICOO_RELEASE_VERSION` 与 `PICOO_RELEASE_BUILD_NUMBER`，不是 secret。
 
-未配置签名 secret 时，CI 仍应能产出 **未签名** 的 debug/CI 构建供功能验证。
+未配置签名 secret 时，普通 CI 仍产出 `com.picoo.camera.debug` Debug APK；不得产出使用 debug key
+冒充正式身份的 Release APK/AAB。
+
+Android 产物签名与包元数据使用 Android SDK `apksigner` / `apkanalyzer` 和 JDK `jarsigner` /
+`keytool` 验证。SBOM 采用维护活跃、Apache-2.0 的 Anchore Syft Action，provenance 采用 GitHub
+官方 artifact attestation；release workflow 中所有 Action 固定到审核过的 commit SHA。
 
 ## 与 xtask 的边界
 

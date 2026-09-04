@@ -23,10 +23,11 @@ pub(crate) fn package() -> Result<()> {
     if let Ok(sdk) = std::env::var("ANDROID_HOME") {
         sh.write_file("apps/android/local.properties", format!("sdk.dir={sdk}\n"))?;
     }
-    // REQ-PICOO-STACK-005 / TRANSPORT-005: release APK + AAB (debug-signed, 签名前可用).
+    // REQ-PICOO-STACK-005/008: Release packaging is allowed only with the
+    // stable signer environment; Gradle fails closed if it is absent.
     cmd!(
         sh,
-        "./apps/android/gradlew -p apps/android assembleRelease bundleRelease"
+        "./apps/android/gradlew -p apps/android --no-daemon assembleRelease bundleRelease"
     )
     .run()?;
     // Xiaomi 15 / Android 15: cold-start .so must be 16 KB page-aligned.

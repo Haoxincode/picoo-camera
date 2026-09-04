@@ -29,6 +29,37 @@ val picooVersionCode = providers.environmentVariable("PICOO_BUILD_NUMBER")
     .toIntOrNull()
     ?.takeIf { it > 0 }
     ?: error("PICOO_BUILD_NUMBER must be a positive Android versionCode")
+val releaseSigningEnvironment = listOf(
+    "PICOO_ANDROID_KEYSTORE_PATH",
+    "PICOO_ANDROID_KEYSTORE_PASSWORD",
+    "PICOO_ANDROID_KEY_ALIAS",
+    "PICOO_ANDROID_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull }
+val releaseSigningConfigured = releaseSigningEnvironment.values.all { !it.isNullOrBlank() }
+val releaseSigningPartiallyConfigured = releaseSigningEnvironment.values.any { !it.isNullOrBlank() }
+val releaseTaskRequested = gradle.startParameter.taskNames.any {
+    it.contains("release", ignoreCase = true)
+}
+
+if (releaseSigningPartiallyConfigured && !releaseSigningConfigured) {
+    error("Android release signing environment is incomplete; configure all PICOO_ANDROID_KEY* values")
+}
+if (releaseTaskRequested && !releaseSigningConfigured) {
+    error("Android Release tasks require the stable Picoo release signer; debug-key fallback is forbidden")
+}
+
+// Aggregate invocations such as `assemble` do not name a variant in
+// startParameter.taskNames. Guard every Release task as well so no alias can
+// emit an unsigned or debug-signed production artifact.
+tasks.configureEach {
+    if (name.contains("release", ignoreCase = true)) {
+        doFirst {
+            require(releaseSigningConfigured) {
+                "Android Release tasks require the stable Picoo release signer; debug-key fallback is forbidden"
+            }
+        }
+    }
+}
 
 android {
     namespace = "com.picoo.camera"
@@ -51,11 +82,30 @@ android {
 
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                val keystore = file(releaseSigningEnvironment.getValue("PICOO_ANDROID_KEYSTORE_PATH")!!)
+                require(keystore.isFile) { "PICOO_ANDROID_KEYSTORE_PATH does not name a file" }
+                storeFile = keystore
+                storePassword = releaseSigningEnvironment.getValue("PICOO_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = releaseSigningEnvironment.getValue("PICOO_ANDROID_KEY_ALIAS")
+                keyPassword = releaseSigningEnvironment.getValue("PICOO_ANDROID_KEY_PASSWORD")
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
-            // Pre-signing local/CI artifacts (PRD §19 — 签名前可用).
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

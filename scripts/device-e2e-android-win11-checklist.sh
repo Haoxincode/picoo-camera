@@ -14,7 +14,7 @@ echo "  - $DOC"
 echo "  - $VCAM"
 echo "  - $CI"
 echo
-echo "0) Download CI artifacts (android-release + windows-msi) from tip green run."
+echo "0) Download android-signed-release from a protected release run and windows-msi from tip green CI."
 echo "1) Win11 admin: install PicooCamera.msi; confirm system camera lists Picoo Camera."
 echo "2) Android 10+ ARM64: install APK; grant Camera / Nearby Wi-Fi / Notifications."
 echo "3) Same LAN: mDNS discovery or manual IP endpoint; enter the Receiver's 6-digit code."
