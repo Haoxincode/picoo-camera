@@ -187,7 +187,9 @@ pub fn derive_device_id(public_key: &[u8]) -> String {
     hasher.update(b"picoo-camera device identity\0");
     hasher.update(public_key);
     let digest = hasher.finalize();
-    format!("picoo-{}", hex_encode(&digest[..8]))
+    // 128 bits keeps identifiers compact for UI/FFI while providing ample
+    // collision resistance for a long-lived authorization key.
+    format!("picoo-{}", hex_encode(&digest[..16]))
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

@@ -340,7 +340,9 @@ impl ReceiverSession {
             return self.begin_streaming(session);
         }
 
-        let nonce = random_challenge_nonce();
+        let nonce = random_challenge_nonce()
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?
+            .to_vec();
         let challenge = new_pairing_challenge(&nonce, &self.identity.receiver_id, &hello.sender_id);
         let challenge_msg = PairingChallengeMsg {
             short_code: challenge.short_code.clone(),

@@ -206,13 +206,7 @@ pub fn trusted_device_from_pairing(
     }
 }
 
-pub fn random_challenge_nonce() -> Vec<u8> {
-    let mut nonce = vec![0_u8; 32];
-    getrandom::fill(&mut nonce).expect("OS CSPRNG unavailable");
-    nonce
-}
-
-pub fn try_random_nonce() -> Result<[u8; 32], PairingHandshakeError> {
+pub fn random_challenge_nonce() -> Result<[u8; 32], PairingHandshakeError> {
     let mut nonce = [0_u8; 32];
     getrandom::fill(&mut nonce)
         .map_err(|error| PairingHandshakeError::Random(error.to_string()))?;
@@ -249,6 +243,14 @@ mod tests {
             challenge.short_code,
             derive_short_code(nonce, "recv", "send")
         );
+    }
+
+    #[test]
+    fn challenge_nonce_comes_from_os_csprng() {
+        let first = random_challenge_nonce().expect("nonce");
+        let second = random_challenge_nonce().expect("nonce");
+        assert_ne!(first, second);
+        assert_ne!(first, [0; 32]);
     }
 
     #[test]

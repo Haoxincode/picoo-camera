@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub use handshake::{
     new_pairing_challenge, pairing_confirm_signature, pairing_transcript_hash,
     public_key_fingerprint, public_key_fingerprint_prefix, random_challenge_nonce,
-    sign_transcript_phase, trusted_device_from_pairing, try_random_nonce, verify_pairing_confirm,
+    sign_transcript_phase, trusted_device_from_pairing, verify_pairing_confirm,
     verify_transcript_phase, PairingChallenge, PairingHandshakeError, PairingTranscript,
 };
 pub use identity::{
