@@ -9,6 +9,19 @@ Source: product PRD V1.0 / PUC-001 / PUC-002 / PUC-007 / PUC-008
 
 ## 架构决策
 
+### 密码学与安全存储生态选择
+
+身份签名使用 `ed25519-dalek 2.2`，随机数直接使用 `getrandom 0.3` 读取平台 OS CSPRNG，
+channel binding 使用 Quinn 0.11 原生的 `Connection::export_keying_material`。三者均覆盖当前 Rust
+工具链与 Android、Apple、Windows 目标；许可证分别为 BSD-3-Clause、MIT/Apache-2.0 和
+MIT/Apache-2.0。这里不自行实现椭圆曲线、随机数生成器或 TLS exporter。
+
+通用 `keyring` crate 经过评估：3.6 的稳定原生后端不覆盖 Android，4.2 虽提供 Android native
+store，但移动端接入仍处于 beta，并要求额外的平台初始化；它不能作为四端统一且已验证的身份
+存储边界。因此 Picoo 只自研极薄的 `IdentityStore` adapter 契约，底层分别调用 Android
+Keystore、Apple Keychain 与 Windows DPAPI/CNG。权限受限、原子替换的普通文件 adapter 仅用于
+Linux 工具和测试，不是产品平台的降级路径。
+
 ### mDNS / DNS-SD 自动发现
 
 Receiver 启动后广播服务类型：

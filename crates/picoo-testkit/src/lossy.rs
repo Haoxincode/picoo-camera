@@ -6,8 +6,8 @@
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use picoo_transport::{
-    CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent,
-    TransportLinkStats,
+    ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
+    TransportEvent, TransportLinkStats,
 };
 
 /// Deterministic LCG so loss patterns are reproducible in CI.
@@ -98,6 +98,10 @@ impl<T: PicooTransport> PicooTransport for LossyVideoTransport<T> {
 
     fn close(&mut self, session: SessionId, reason: CloseReason) {
         self.inner.close(session, reason)
+    }
+
+    fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError> {
+        self.inner.channel_binding(session)
     }
 
     fn link_stats(&self) -> Option<TransportLinkStats> {

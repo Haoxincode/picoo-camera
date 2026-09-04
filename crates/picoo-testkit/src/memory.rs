@@ -5,7 +5,8 @@ use std::collections::VecDeque;
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use picoo_transport::{
-    CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent,
+    ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
+    TransportEvent,
 };
 
 pub struct MemoryTransport {
@@ -75,6 +76,14 @@ impl PicooTransport for MemoryTransport {
         }
         self.events
             .push_back(TransportEvent::Disconnected(session, reason));
+    }
+
+    fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError> {
+        if self.connected == Some(session) {
+            Ok([0x42; 32])
+        } else {
+            Err(TransportError::ChannelBindingUnavailable)
+        }
     }
 }
 

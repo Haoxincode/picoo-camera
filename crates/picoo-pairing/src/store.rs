@@ -62,7 +62,7 @@ impl TrustedDeviceStore {
     }
 }
 
-fn atomic_replace(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn atomic_replace(path: &Path, contents: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -109,11 +109,14 @@ fn create_temporary_file(
         temporary_name.push(file_name);
         temporary_name.push(format!(".{}.{}.tmp", std::process::id(), sequence));
         let temporary_path = parent.join(temporary_name);
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary_path)
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        match options.open(&temporary_path) {
             Ok(file) => return Ok((temporary_path, file)),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),

@@ -8,8 +8,8 @@ use picoo_protocol::VideoPacket;
 
 use crate::quinn_backend::{Command, QuicTransportError, TransportActor};
 use crate::{
-    CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent,
-    TransportLinkStats,
+    ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
+    TransportEvent, TransportLinkStats,
 };
 
 pub struct QuicSenderTransport {
@@ -141,6 +141,13 @@ impl PicooTransport for QuicSenderTransport {
                 let _ = actor.command(Command::Close { session, reason });
             }
         }
+    }
+
+    fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError> {
+        self.actor
+            .as_ref()
+            .and_then(|actor| actor.channel_binding(session))
+            .ok_or(TransportError::ChannelBindingUnavailable)
     }
 
     fn link_stats(&self) -> Option<TransportLinkStats> {

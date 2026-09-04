@@ -28,6 +28,9 @@ pub struct Endpoint {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionId(pub u64);
 
+/// RFC 5705/8446 exporter bytes unique to one QUIC TLS connection.
+pub type ChannelBinding = [u8; 32];
+
 #[derive(Debug, Clone)]
 pub enum TransportEvent {
     Connected(SessionId),
@@ -59,6 +62,8 @@ pub enum TransportError {
     VideoBackpressure,
     #[error("send failed: {0}")]
     SendFailed(String),
+    #[error("TLS exporter channel binding is unavailable")]
+    ChannelBindingUnavailable,
 }
 
 /// Path/connection counters for ReceiverStats (REQ-PICOO-PROTOCOL-006).
@@ -109,6 +114,7 @@ pub trait PicooTransport {
     }
     fn poll_event(&mut self) -> Option<TransportEvent>;
     fn close(&mut self, session: SessionId, reason: CloseReason);
+    fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError>;
 
     /// Optional QUIC path stats for ReceiverStats / ABR (REQ-PICOO-PROTOCOL-006).
     fn link_stats(&self) -> Option<TransportLinkStats> {

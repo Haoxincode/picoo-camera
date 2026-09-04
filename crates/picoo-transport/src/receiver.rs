@@ -6,7 +6,10 @@ use std::str::FromStr;
 use bytes::Bytes;
 
 use crate::quinn_backend::{Command, TransportActor};
-use crate::{CloseReason, Endpoint, SessionId, TransportError, TransportEvent, TransportLinkStats};
+use crate::{
+    ChannelBinding, CloseReason, Endpoint, SessionId, TransportError, TransportEvent,
+    TransportLinkStats,
+};
 
 pub struct QuicReceiverTransport {
     actor: Option<TransportActor>,
@@ -86,6 +89,13 @@ impl QuicReceiverTransport {
         if let Some(session) = self.active_session() {
             self.close(session, reason);
         }
+    }
+
+    pub fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError> {
+        self.actor
+            .as_ref()
+            .and_then(|actor| actor.channel_binding(session))
+            .ok_or(TransportError::ChannelBindingUnavailable)
     }
 }
 

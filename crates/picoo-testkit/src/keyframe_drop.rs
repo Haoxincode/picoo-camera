@@ -6,8 +6,8 @@
 use bytes::Bytes;
 use picoo_protocol::{VideoPacket, VideoPacketFlags};
 use picoo_transport::{
-    CloseReason, Endpoint, PicooTransport, SessionId, TransportError, TransportEvent,
-    TransportLinkStats,
+    ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
+    TransportEvent, TransportLinkStats,
 };
 
 /// When armed, drops non-zero-index fragments of keyframe access units.
@@ -102,6 +102,10 @@ impl<T: PicooTransport> PicooTransport for DropKeyframeTailTransport<T> {
 
     fn close(&mut self, session: SessionId, reason: CloseReason) {
         self.inner.close(session, reason)
+    }
+
+    fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError> {
+        self.inner.channel_binding(session)
     }
 
     fn link_stats(&self) -> Option<TransportLinkStats> {

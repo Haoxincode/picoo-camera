@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use picoo_pairing::{
     new_pairing_challenge, pairing_transcript_hash, random_challenge_nonce,
-    trusted_device_from_pairing, verify_pairing_confirm, PairingHandshakeError, TrustedDeviceStore,
+    trusted_device_from_pairing, verify_pairing_confirm, TrustedDeviceStore,
 };
 use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, ClientHello, PairingApproval,
@@ -402,11 +402,7 @@ impl ReceiverSession {
             sender_id,
             &confirm.confirm_signature,
         )
-        .map_err(|e| match e {
-            PairingHandshakeError::InvalidSignature => {
-                ReceiverError::Protocol("invalid pairing signature".into())
-            }
-        })?;
+        .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
 
         if let Some(pending) = self.pending_pairing.as_mut() {
             pending.remote_confirmed = true;

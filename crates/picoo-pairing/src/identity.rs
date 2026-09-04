@@ -1,39 +1,50 @@
-//! Durable local device identity — REQ-PICOO-PAIRING-001 / PUC-001.
+//! Ed25519 device identity and the restricted file adapter used by Linux/tests.
 //!
-//! Generates a stable public key (derived from a random seed) and device_id so
-//! ClientHello no longer uses hard-coded stub bytes on Android.
+//! REQ-PICOO-PAIRING-007/010. Product platforms should persist the secret in
+//! their OS credential store; the file adapter exists for tests and Linux tools.
 
 use std::fs;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::StoreError;
+use crate::{store::atomic_replace, StoreError};
 
-const IDENTITY_VERSION: u32 = 1;
-const SEED_LEN: usize = 32;
-const PUBLIC_KEY_LEN: usize = 32;
+const IDENTITY_ALGORITHM: &str = "Ed25519";
+pub const SECRET_KEY_LEN: usize = 32;
+pub const PUBLIC_KEY_LEN: usize = 32;
+pub const SIGNATURE_LEN: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PersistedIdentity {
-    version: u32,
+    algorithm: String,
     device_id: String,
     device_name: String,
-    /// Hex-encoded seed (never sent on the wire).
-    secret_seed_hex: String,
-    /// Hex-encoded public key material advertised in ClientHello.
+    /// Hex encoding is only the Linux/test file-adapter representation.
+    signing_key_hex: String,
     public_key_hex: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct DeviceIdentity {
     pub device_id: String,
     pub device_name: String,
-    secret_seed: Vec<u8>,
-    public_key: Vec<u8>,
+    signing_key: SigningKey,
+    public_key: [u8; PUBLIC_KEY_LEN],
+}
+
+impl std::fmt::Debug for DeviceIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeviceIdentity")
+            .field("device_id", &self.device_id)
+            .field("device_name", &self.device_name)
+            .field("public_key", &hex_encode(self.public_key()))
+            .finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Error)]
@@ -42,23 +53,55 @@ pub enum IdentityError {
     Store(#[from] StoreError),
     #[error("invalid identity file: {0}")]
     Invalid(String),
+    #[error("OS CSPRNG failed: {0}")]
+    Random(String),
 }
 
 impl DeviceIdentity {
-    pub fn generate(device_name: &str) -> Self {
-        let seed = random_seed();
-        let public_key = derive_public_key(&seed);
+    pub fn generate(device_name: &str) -> Result<Self, IdentityError> {
+        let mut secret = [0_u8; SECRET_KEY_LEN];
+        getrandom::fill(&mut secret).map_err(|error| IdentityError::Random(error.to_string()))?;
+        Ok(Self::from_signing_key(
+            device_name,
+            SigningKey::from_bytes(&secret),
+        ))
+    }
+
+    pub fn from_secret_bytes(device_name: &str, secret: &[u8]) -> Result<Self, IdentityError> {
+        let bytes: [u8; SECRET_KEY_LEN] = secret
+            .try_into()
+            .map_err(|_| IdentityError::Invalid("Ed25519 signing-key length".into()))?;
+        Ok(Self::from_signing_key(
+            device_name,
+            SigningKey::from_bytes(&bytes),
+        ))
+    }
+
+    fn from_signing_key(device_name: &str, signing_key: SigningKey) -> Self {
+        let public_key = signing_key.verifying_key().to_bytes();
         let device_id = derive_device_id(&public_key);
         Self {
             device_id,
             device_name: device_name.to_string(),
-            secret_seed: seed,
+            signing_key,
             public_key,
         }
     }
 
     pub fn public_key(&self) -> &[u8] {
         &self.public_key
+    }
+
+    pub fn sign(&self, message: &[u8]) -> [u8; SIGNATURE_LEN] {
+        self.signing_key.sign(message).to_bytes()
+    }
+
+    /// Serialize the signing key for an OS credential-store adapter.
+    ///
+    /// Callers must move this value directly into protected platform storage
+    /// and must never log it or persist it in an ordinary product data file.
+    pub fn secret_bytes_for_secure_store(&self) -> [u8; SECRET_KEY_LEN] {
+        self.signing_key.to_bytes()
     }
 
     pub fn set_device_name(&mut self, name: &str) {
@@ -73,7 +116,7 @@ impl DeviceIdentity {
         if path.exists() {
             Self::load_from_path(path)
         } else {
-            let identity = Self::generate(default_name);
+            let identity = Self::generate(default_name)?;
             identity.save_to_path(path)?;
             Ok(identity)
         }
@@ -82,28 +125,26 @@ impl DeviceIdentity {
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
         let raw = fs::read_to_string(path).map_err(StoreError::from)?;
         let persisted: PersistedIdentity = serde_json::from_str(&raw).map_err(StoreError::from)?;
-        if persisted.version != IDENTITY_VERSION {
+        if persisted.algorithm != IDENTITY_ALGORITHM {
             return Err(IdentityError::Invalid(format!(
-                "unsupported version {}",
-                persisted.version
+                "unsupported identity algorithm {}",
+                persisted.algorithm
             )));
         }
-        let secret_seed = hex_decode(&persisted.secret_seed_hex)
-            .map_err(|e| IdentityError::Invalid(format!("seed hex: {e}")))?;
+        let secret = hex_decode(&persisted.signing_key_hex)
+            .map_err(|e| IdentityError::Invalid(format!("signing key hex: {e}")))?;
         let public_key = hex_decode(&persisted.public_key_hex)
             .map_err(|e| IdentityError::Invalid(format!("pubkey hex: {e}")))?;
-        if secret_seed.len() != SEED_LEN || public_key.len() != PUBLIC_KEY_LEN {
+        if secret.len() != SECRET_KEY_LEN || public_key.len() != PUBLIC_KEY_LEN {
             return Err(IdentityError::Invalid("key length".into()));
         }
-        if derive_public_key(&secret_seed) != public_key {
-            return Err(IdentityError::Invalid("pubkey/seed mismatch".into()));
+        let identity = Self::from_secret_bytes(&persisted.device_name, &secret)?;
+        if identity.public_key() != public_key || identity.device_id != persisted.device_id {
+            return Err(IdentityError::Invalid(
+                "device id/public key/signing key mismatch".into(),
+            ));
         }
-        Ok(Self {
-            device_id: persisted.device_id,
-            device_name: persisted.device_name,
-            secret_seed,
-            public_key,
-        })
+        Ok(identity)
     }
 
     pub fn save_to_path(&self, path: impl AsRef<Path>) -> Result<(), IdentityError> {
@@ -112,46 +153,39 @@ impl DeviceIdentity {
             fs::create_dir_all(parent).map_err(StoreError::from)?;
         }
         let persisted = PersistedIdentity {
-            version: IDENTITY_VERSION,
+            algorithm: IDENTITY_ALGORITHM.into(),
             device_id: self.device_id.clone(),
             device_name: self.device_name.clone(),
-            secret_seed_hex: hex_encode(&self.secret_seed),
-            public_key_hex: hex_encode(&self.public_key),
+            signing_key_hex: hex_encode(&self.signing_key.to_bytes()),
+            public_key_hex: hex_encode(self.public_key()),
         };
         let json = serde_json::to_string_pretty(&persisted).map_err(StoreError::from)?;
-        fs::write(path, json).map_err(StoreError::from)?;
+        atomic_replace(path, json.as_bytes()).map_err(StoreError::from)?;
         Ok(())
     }
 }
 
-fn random_seed() -> Vec<u8> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let mut hasher = Sha256::new();
-    hasher.update(nanos.to_le_bytes());
-    hasher.update(b"picoo-device-seed-v1");
-    // Mix in another clock sample to reduce collision in rapid tests.
-    let nanos2 = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    hasher.update(nanos2.to_le_bytes());
-    hasher.finalize().to_vec()
+pub fn verify_identity_signature(
+    public_key: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), IdentityError> {
+    let public_key: [u8; PUBLIC_KEY_LEN] = public_key
+        .try_into()
+        .map_err(|_| IdentityError::Invalid("Ed25519 public-key length".into()))?;
+    let signature = Signature::from_slice(signature)
+        .map_err(|_| IdentityError::Invalid("Ed25519 signature length".into()))?;
+    let verifying_key = VerifyingKey::from_bytes(&public_key)
+        .map_err(|_| IdentityError::Invalid("invalid Ed25519 public key".into()))?;
+    verifying_key
+        .verify(message, &signature)
+        .map_err(|_| IdentityError::Invalid("invalid Ed25519 signature".into()))
 }
 
-fn derive_public_key(seed: &[u8]) -> Vec<u8> {
+pub fn derive_device_id(public_key: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(seed);
-    hasher.update(b"picoo-device-pubkey-v1");
-    hasher.finalize().to_vec()
-}
-
-fn derive_device_id(public_key: &[u8]) -> String {
-    let mut hasher = Sha256::new();
+    hasher.update(b"picoo-camera device identity\0");
     hasher.update(public_key);
-    hasher.update(b"picoo-device-id-v1");
     let digest = hasher.finalize();
     format!("picoo-{}", hex_encode(&digest[..8]))
 }
@@ -178,7 +212,7 @@ mod tests {
     fn generate_stable_roundtrip() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("identity.json");
-        let identity = DeviceIdentity::generate("Pixel Test");
+        let identity = DeviceIdentity::generate("Pixel Test").expect("generate");
         assert!(identity.device_id.starts_with("picoo-"));
         assert_eq!(identity.public_key().len(), PUBLIC_KEY_LEN);
         identity.save_to_path(&path).expect("save");
@@ -198,5 +232,45 @@ mod tests {
         assert_eq!(first.device_id, second.device_id);
         assert_eq!(first.public_key(), second.public_key());
         assert_eq!(second.device_name, "Phone");
+    }
+
+    #[test]
+    fn signatures_require_the_matching_private_key() {
+        let identity = DeviceIdentity::generate("Phone").expect("identity");
+        let attacker = DeviceIdentity::generate("Attacker").expect("identity");
+        let message = b"channel-bound transcript";
+        let signature = identity.sign(message);
+        verify_identity_signature(identity.public_key(), message, &signature).expect("valid");
+        assert!(verify_identity_signature(attacker.public_key(), message, &signature).is_err());
+        assert!(verify_identity_signature(identity.public_key(), b"replayed", &signature).is_err());
+    }
+
+    #[test]
+    fn rejects_legacy_pseudo_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("identity.json");
+        fs::write(
+            &path,
+            r#"{"version":1,"device_id":"legacy","device_name":"Phone","secret_seed_hex":"00","public_key_hex":"00"}"#,
+        )
+        .expect("legacy fixture");
+        assert!(DeviceIdentity::load_from_path(path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_adapter_restricts_identity_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("identity.json");
+        DeviceIdentity::generate("Phone")
+            .expect("identity")
+            .save_to_path(&path)
+            .expect("save");
+        assert_eq!(
+            fs::metadata(path).expect("metadata").permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

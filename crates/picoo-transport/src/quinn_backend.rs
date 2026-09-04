@@ -15,7 +15,7 @@ use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
 
 use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
-use crate::{CloseReason, SessionId, TransportEvent, TransportLinkStats};
+use crate::{ChannelBinding, CloseReason, SessionId, TransportEvent, TransportLinkStats};
 
 const COMMAND_CAPACITY: usize = 64;
 // Capacity is measured in complete access units, not fragments. A deep video
@@ -68,6 +68,7 @@ struct VideoCommand {
 #[derive(Default)]
 struct SharedState {
     active_session: Option<SessionId>,
+    channel_binding: Option<ChannelBinding>,
     stats: Option<TransportLinkStats>,
     video_queue_age_ms: f64,
     video_dropped_access_units: u64,
@@ -226,6 +227,13 @@ impl TransportActor {
 
     pub(crate) fn link_stats(&self) -> Option<TransportLinkStats> {
         self.state.lock().expect("QUIC state mutex poisoned").stats
+    }
+
+    pub(crate) fn channel_binding(&self, session: SessionId) -> Option<ChannelBinding> {
+        let state = self.state.lock().expect("QUIC state mutex poisoned");
+        (state.active_session == Some(session))
+            .then_some(state.channel_binding)
+            .flatten()
     }
 }
 
@@ -490,9 +498,26 @@ async fn run_connection(
     events: &EventSender,
     state: &Arc<Mutex<SharedState>>,
 ) {
+    let mut channel_binding = [0_u8; 32];
+    if connection
+        .export_keying_material(
+            &mut channel_binding,
+            b"EXPORTER-Picoo-Camera-Channel-Binding",
+            b"picoocam",
+        )
+        .is_err()
+    {
+        connection.close(VarInt::from_u32(1), b"picoo-exporter-failed");
+        events.critical(TransportEvent::Disconnected(
+            session,
+            CloseReason::Error("TLS exporter channel binding failed".into()),
+        ));
+        return;
+    }
     {
         let mut shared = state.lock().expect("QUIC state mutex poisoned");
         shared.active_session = Some(session);
+        shared.channel_binding = Some(channel_binding);
         let stats = link_stats(&connection, &shared);
         shared.stats = Some(stats);
     }
@@ -633,6 +658,7 @@ async fn run_connection(
         let mut shared = state.lock().expect("QUIC state mutex poisoned");
         if shared.active_session == Some(session) {
             shared.active_session = None;
+            shared.channel_binding = None;
             shared.stats = None;
         }
     }

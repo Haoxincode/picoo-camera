@@ -11,9 +11,13 @@ use serde::{Deserialize, Serialize};
 pub use handshake::{
     new_pairing_challenge, pairing_confirm_signature, pairing_transcript_hash,
     public_key_fingerprint, public_key_fingerprint_prefix, random_challenge_nonce,
-    trusted_device_from_pairing, verify_pairing_confirm, PairingChallenge, PairingHandshakeError,
+    sign_transcript_phase, trusted_device_from_pairing, try_random_nonce, verify_pairing_confirm,
+    verify_transcript_phase, PairingChallenge, PairingHandshakeError, PairingTranscript,
 };
-pub use identity::{DeviceIdentity, IdentityError};
+pub use identity::{
+    derive_device_id, verify_identity_signature, DeviceIdentity, IdentityError, PUBLIC_KEY_LEN,
+    SECRET_KEY_LEN, SIGNATURE_LEN,
+};
 use sha2::{Digest, Sha256};
 pub use store::StoreError;
 use thiserror::Error;

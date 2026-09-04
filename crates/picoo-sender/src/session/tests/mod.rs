@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
-use picoo_transport::{PicooTransport, TransportError, TransportEvent};
+use picoo_transport::{ChannelBinding, PicooTransport, TransportError, TransportEvent};
 
 pub(super) use std::time::Duration;
 
@@ -77,5 +77,13 @@ impl PicooTransport for DeferredConnectTransport {
         self.connected = false;
         self.events
             .push_back(TransportEvent::Disconnected(session, reason));
+    }
+
+    fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError> {
+        if self.connected && session == self.session {
+            Ok([0x42; 32])
+        } else {
+            Err(TransportError::ChannelBindingUnavailable)
+        }
     }
 }
