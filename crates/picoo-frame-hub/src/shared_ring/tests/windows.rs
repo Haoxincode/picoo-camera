@@ -8,7 +8,7 @@ fn file_ring_path() -> std::path::PathBuf {
 }
 
 fn cleanup_file_ring(path: &std::path::Path) {
-    for index in 0..crate::SLOT_COUNT {
+    for index in 0..crate::RING_SLOT_COUNT {
         let _ = std::fs::remove_file(crate::shared_ring::lock::slot_lock_path(path, index));
     }
     let _ = std::fs::remove_file(crate::shared_ring::lock::producer_lock_path(path));

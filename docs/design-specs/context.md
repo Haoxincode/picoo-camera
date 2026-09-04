@@ -104,8 +104,8 @@ User request / product requirement
 | `Receiver` | 运行在 Windows 或 macOS 上的桌面应用，负责发现、配对、接收、解码、预览和驱动虚拟摄像头。 | 不称为 Server 作为用户可见产品名；协议层 Receiver 承担 QUIC Server 角色。 |
 | `Rust Core` | 由多个 `picoo-*` crate 组成的共享业务核心，统一协议、传输、会话、配对、分包、抖动缓冲、码率控制、指标和 FFI。 | 不负责各平台 Camera、MediaCodec、VideoToolbox、虚拟摄像头安装 UI 和系统权限弹窗。 |
 | `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 为 `picoocam`；不维护数字版本或旧协议兼容解析器。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
-| `FrameHub` | 桌面端解码帧的统一出口，采用固定容量三槽环形缓冲，同时服务 GPUI 预览与虚拟摄像头 Producer。 | 一条视频流只解码一次；消费者变慢时丢弃旧帧。 |
-| `Shared Frame Ring` | 主应用与虚拟摄像头扩展/组件之间的跨进程 NV12 帧共享区。Windows 使用 Named Shared Memory；macOS 使用 App Group mmap。 | 第一版不依赖 IOSurface 或跨进程 GPU 纹理共享。 |
+| `LatestFrameStore` | 桌面端解码帧的同进程容量一出口，发布 `Arc<VideoFrame>`，同时服务 GPUI Preview Worker 与 Shared Frame Ring Writer。 | 一条视频流只解码一次；消费者持有共享不可变帧，变慢时只跳过旧帧，不反压 Decoder。 |
+| `Shared Frame Ring` | 主应用与虚拟摄像头扩展/组件之间的跨进程三槽 NV12 帧共享区。Windows 使用 Named Shared Memory；macOS 使用 App Group mmap。 | ready state、reader lease 与进程恢复只属于跨进程 Ring；不得套用到 `LatestFrameStore`。第一版不依赖 IOSurface 或跨进程 GPU 纹理共享。 |
 | `Virtual Camera` | 向操作系统注册的标准摄像头设备，统一名称为 `Picoo Camera`。 | Windows 使用 MF Virtual Camera；macOS 使用 CMIO Camera Extension。 |
 | `Pairing` | 首次加密连接建立后，Receiver 基于本次挑战生成六位配对短码并通过可靠控制 Stream 发给 Sender；两端显示相同短码，用户分别确认一致后固定双方公钥并建立可信设备关系。 | 短码是本次握手的人工核对值，不由用户输入，也不负责解析网络地址；未配对设备不得接收视频或驱动虚拟摄像头输出。 |
 | `stream_epoch` | 标识一次连续视频流世代的递增计数，用于摄像头切换、分辨率变化、编码器重建和连接恢复后的帧重组隔离。 | Receiver 不得将不同 epoch 的片段组成同一帧。 |

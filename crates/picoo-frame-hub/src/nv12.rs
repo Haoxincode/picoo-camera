@@ -50,7 +50,7 @@ pub fn normalize_rotation_degrees(degrees: u32) -> u32 {
     }
 }
 
-/// Clockwise-rotate NV12 pixels so FrameHub / VCam receive upright frames
+/// Clockwise-rotate NV12 pixels so LatestFrameStore / VCam receive upright frames
 /// (REQ-PICOO-MEDIA-009). Returns `(out_w, out_h, out_stride, pixels)`.
 ///
 /// `rotation_degrees` is snapped to 0/90/180/270. For 0°, returns `None` so the

@@ -451,6 +451,7 @@ impl ReceiverRuntime {
         Ok(removed)
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn replace_trusted_identity_history(
         &mut self,
         revision: u64,
@@ -462,6 +463,7 @@ impl ReceiverRuntime {
         Ok(removed)
     }
 
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn dismiss_trusted_identity_replacement(
         &mut self,
         revision: u64,

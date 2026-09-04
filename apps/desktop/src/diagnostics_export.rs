@@ -84,7 +84,7 @@ fn build_diagnostics_json(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use picoo_pairing::TrustedDevice;
+    use picoo_pairing::{public_key_fingerprint, DeviceIdentity, TrustedDevice};
     use std::path::PathBuf;
 
     fn temp_paths(tag: &str) -> (PathBuf, PathBuf) {
@@ -101,11 +101,13 @@ mod tests {
     fn export_redacts_hosts_and_device_names_never_includes_video() {
         let (store_path, out_path) = temp_paths("export");
         let mut store = TrustedDeviceStore::new();
+        let identity = DeviceIdentity::from_secret_bytes("Pixel 9 Pro", &[7; 32])
+            .expect("valid deterministic Ed25519 fixture");
         store.upsert(TrustedDevice {
-            device_id: "pixel-9-pro-id".into(),
+            device_id: identity.device_id().into(),
             device_name: "Pixel 9 Pro".into(),
-            public_key: vec![1, 2, 3, 4],
-            certificate_fingerprint: "abcdef0123456789deadbeef".into(),
+            public_key: identity.public_key().to_vec(),
+            certificate_fingerprint: public_key_fingerprint(identity.public_key()),
             paired_at_ms: 1,
             last_connected_at_ms: Some(2),
         });

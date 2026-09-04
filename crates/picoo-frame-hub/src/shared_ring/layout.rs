@@ -1,7 +1,5 @@
 use std::sync::atomic::{AtomicU32, AtomicU64};
 
-use crate::hub::SLOT_COUNT;
-
 use super::SharedRingError;
 
 pub const RING_MAGIC: u32 = 0x5049_434F; // "PICO"
@@ -12,7 +10,7 @@ pub const DEFAULT_MAX_FRAME_BYTES: usize = 1920 * 1080 * 3 / 2;
 
 pub const RING_META_SIZE: usize = 64;
 pub const RING_SLOT_META_SIZE: usize = 64;
-pub const RING_SLOT_COUNT: usize = SLOT_COUNT;
+pub const RING_SLOT_COUNT: usize = 3;
 
 pub(super) const READY_EMPTY: u32 = 0;
 pub(super) const READY_WRITING: u32 = 1;
@@ -46,7 +44,7 @@ pub(super) struct SlotMeta {
 }
 
 pub(super) fn layout_size(max_frame_bytes: usize) -> usize {
-    RING_META_SIZE + SLOT_COUNT * (RING_SLOT_META_SIZE + max_frame_bytes)
+    RING_META_SIZE + RING_SLOT_COUNT * (RING_SLOT_META_SIZE + max_frame_bytes)
 }
 
 fn slot_offset(max_frame_bytes: usize, index: usize) -> usize {
@@ -86,7 +84,7 @@ pub(super) fn validate_ring_header(
     let meta = unsafe { &*const_meta_at(base) };
     if meta.magic != RING_MAGIC
         || meta.version != RING_VERSION
-        || meta.slot_count != SLOT_COUNT as u32
+        || meta.slot_count != RING_SLOT_COUNT as u32
     {
         return Err(SharedRingError::InvalidHeader);
     }

@@ -1,6 +1,6 @@
 [package]
 name = "picoo-frame-hub"
-description = "Three-slot decoded frame ring for preview and virtual camera"
+description = "Latest decoded-frame store and cross-process shared frame ring"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

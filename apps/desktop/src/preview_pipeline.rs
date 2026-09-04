@@ -1,16 +1,15 @@
 //! Bounded desktop preview preparation — ARCH-PICOO-FRAME-001 / REQ-PICOO-UI-004.
 //!
-//! FrameHub remains the decoded-frame authority. This consumer keeps one pending
+//! LatestFrameStore remains the decoded-frame authority. This consumer keeps one pending
 //! latest frame and performs SIMD color conversion and filtered scaling away
 //! from the GPUI thread.
 
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
-use bytes::Bytes;
 use fast_image_resize::images::{Image, ImageRef};
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
-use picoo_frame_hub::FrameSlot;
+use picoo_frame_hub::VideoFrame;
 use yuv::{yuv_nv12_to_bgra, YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix};
 
 #[cfg(target_os = "macos")]
@@ -43,12 +42,8 @@ const PREVIEW_MAX_DETAIL_WIDTH: u32 = 1920;
 
 #[derive(Debug)]
 struct PreviewRequest {
-    sequence: u64,
-    width: u32,
-    height: u32,
-    stride: u32,
+    frame: Arc<VideoFrame>,
     target_width: u32,
-    pixels: Bytes,
 }
 
 #[derive(Debug)]
@@ -150,20 +145,16 @@ impl PreviewPipeline {
         self.target_width = target_width_for_viewport(width);
     }
 
-    /// Submit a newer FrameHub slot without copying its ref-counted pixel buffer.
+    /// Submit a newer shared VideoFrame without copying pixels or timeline data.
     /// A not-yet-started older request is replaced instead of queued.
-    pub(crate) fn submit_latest(&mut self, slot: &FrameSlot) -> bool {
-        if slot.sequence <= self.last_submitted_sequence {
+    pub(crate) fn submit_latest(&mut self, frame: &Arc<VideoFrame>) -> bool {
+        if frame.sequence <= self.last_submitted_sequence {
             return false;
         }
-        self.last_submitted_sequence = slot.sequence;
+        self.last_submitted_sequence = frame.sequence;
         let request = PreviewRequest {
-            sequence: slot.sequence,
-            width: slot.width,
-            height: slot.height,
-            stride: slot.stride,
+            frame: Arc::clone(frame),
             target_width: self.target_width,
-            pixels: slot.pixel_data.clone(),
         };
         let (state, ready) = &*self.shared;
         state.lock().unwrap().enqueue_latest(request);
@@ -228,7 +219,7 @@ fn prepare_preview(
     request: PreviewRequest,
     platform_resources: &mut PlatformPreviewResources,
 ) -> Option<PreparedPreview> {
-    let sequence = request.sequence;
+    let sequence = request.frame.sequence;
     let prepared = prepare_bgra(request)?;
 
     #[cfg(target_os = "macos")]
@@ -260,31 +251,32 @@ struct PreparedBgra {
 }
 
 fn prepare_bgra(request: PreviewRequest) -> Option<PreparedBgra> {
-    if request.width == 0
-        || request.height == 0
-        || !request.width.is_multiple_of(2)
-        || !request.height.is_multiple_of(2)
-        || request.stride < request.width
+    let frame = request.frame;
+    if frame.width == 0
+        || frame.height == 0
+        || !frame.width.is_multiple_of(2)
+        || !frame.height.is_multiple_of(2)
+        || frame.stride < frame.width
     {
         return None;
     }
-    let y_len = (request.stride as usize).checked_mul(request.height as usize)?;
-    let uv_len = (request.stride as usize).checked_mul(request.height as usize / 2)?;
+    let y_len = (frame.stride as usize).checked_mul(frame.height as usize)?;
+    let uv_len = (frame.stride as usize).checked_mul(frame.height as usize / 2)?;
     let required = y_len.checked_add(uv_len)?;
-    if request.pixels.len() < required {
+    if frame.pixel_data.len() < required {
         return None;
     }
 
     let source = YuvBiPlanarImage {
-        y_plane: &request.pixels[..y_len],
-        y_stride: request.stride,
-        uv_plane: &request.pixels[y_len..required],
-        uv_stride: request.stride,
-        width: request.width,
-        height: request.height,
+        y_plane: &frame.pixel_data[..y_len],
+        y_stride: frame.stride,
+        uv_plane: &frame.pixel_data[y_len..required],
+        uv_stride: frame.stride,
+        width: frame.width,
+        height: frame.height,
     };
-    let bgra_stride = request.width.checked_mul(4)?;
-    let bgra_len = (bgra_stride as usize).checked_mul(request.height as usize)?;
+    let bgra_stride = frame.width.checked_mul(4)?;
+    let bgra_len = (bgra_stride as usize).checked_mul(frame.height as usize)?;
     let mut full_bgra = vec![0_u8; bgra_len];
     yuv_nv12_to_bgra(
         &source,
@@ -296,23 +288,23 @@ fn prepare_bgra(request: PreviewRequest) -> Option<PreparedBgra> {
     )
     .ok()?;
 
-    if request.width <= request.target_width {
+    if frame.width <= request.target_width {
         return Some(PreparedBgra {
-            width: request.width,
-            height: request.height,
+            width: frame.width,
+            height: frame.height,
             bgra: full_bgra,
         });
     }
 
     let output_width = request.target_width;
     let output_height = u32::try_from(
-        (u64::from(request.height) * u64::from(output_width) + u64::from(request.width) / 2)
-            / u64::from(request.width),
+        (u64::from(frame.height) * u64::from(output_width) + u64::from(frame.width) / 2)
+            / u64::from(frame.width),
     )
     .ok()?
     .max(1);
     let source_image =
-        ImageRef::new(request.width, request.height, &full_bgra, PixelType::U8x4).ok()?;
+        ImageRef::new(frame.width, frame.height, &full_bgra, PixelType::U8x4).ok()?;
     let mut output_image = Image::new(output_width, output_height, PixelType::U8x4);
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
     Resizer::new()
@@ -455,15 +447,42 @@ unsafe fn cf_string(value: core_foundation::string::CFStringRef) -> CFString {
 mod tests {
     use super::*;
     use picoo_frame_hub::nv12_black;
+    use std::time::Instant;
 
     fn request(sequence: u64, width: u32, height: u32, target_width: u32) -> PreviewRequest {
-        PreviewRequest {
+        request_with_pixels(
             sequence,
             width,
             height,
-            stride: width,
             target_width,
-            pixels: nv12_black(width, height).into(),
+            nv12_black(width, height).into(),
+        )
+    }
+
+    fn request_with_pixels(
+        sequence: u64,
+        width: u32,
+        height: u32,
+        target_width: u32,
+        pixels: bytes::Bytes,
+    ) -> PreviewRequest {
+        let mut frame = VideoFrame::new(
+            1,
+            sequence,
+            sequence * 1_000,
+            sequence * 1_000,
+            Instant::now(),
+            sequence * 1_000,
+            width,
+            height,
+            width,
+            0,
+            pixels,
+        );
+        frame.sequence = sequence;
+        PreviewRequest {
+            frame: Arc::new(frame),
+            target_width,
         }
     }
 
@@ -481,7 +500,7 @@ mod tests {
         let mut state = WorkerState::default();
         state.enqueue_latest(request(1, 2, 2, PREVIEW_MIN_DETAIL_WIDTH));
         state.enqueue_latest(request(2, 2, 2, PREVIEW_MIN_DETAIL_WIDTH));
-        assert_eq!(state.pending.expect("latest request").sequence, 2);
+        assert_eq!(state.pending.expect("latest request").frame.sequence, 2);
     }
 
     #[test]
@@ -516,14 +535,13 @@ mod tests {
         let height = 2;
         let mut pixels = vec![81_u8; (width * height * 3 / 2) as usize];
         pixels[(width * height) as usize..].copy_from_slice(&[90, 240]);
-        let preview = prepare_bgra(PreviewRequest {
-            sequence: 8,
+        let preview = prepare_bgra(request_with_pixels(
+            8,
             width,
             height,
-            stride: width,
-            target_width: PREVIEW_MIN_DETAIL_WIDTH,
-            pixels: pixels.into(),
-        })
+            PREVIEW_MIN_DETAIL_WIDTH,
+            pixels.into(),
+        ))
         .expect("prepare red fixture");
 
         assert!(preview.bgra[0] < 32, "blue channel should remain dark");

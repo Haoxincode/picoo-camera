@@ -1,17 +1,17 @@
 use super::*;
-use crate::hub::SLOT_COUNT;
 use crate::shared_ring::file_mapping::open_file_mapping;
 use crate::shared_ring::layout::{
     const_slot_meta_at, layout_size, meta_at, slot_meta_at, WRITER_LEASE,
 };
 use crate::shared_ring::lock::{producer_lock_path, slot_lock_path};
 use crate::shared_ring::mapping::SlotLockAttempt;
+use crate::RING_SLOT_COUNT;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 fn cleanup_file_ring(path: &Path) {
     let _ = std::fs::remove_file(path);
-    for index in 0..SLOT_COUNT {
+    for index in 0..RING_SLOT_COUNT {
         let _ = std::fs::remove_file(slot_lock_path(path, index));
     }
     let _ = std::fs::remove_file(producer_lock_path(path));

@@ -1,16 +1,18 @@
-//! FrameHub, Shared Frame Ring, placeholders, and H.264 decode publish.
+//! LatestFrameStore, Shared Frame Ring, placeholders, and H.264 decode publish.
 //!
 //! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009.
 
 use bytes::Bytes;
 use picoo_frame_hub::{
-    FrameSlot, PlaceholderMode, SharedFrameRingProducer, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
+    PlaceholderMode, SharedFrameRingProducer, VideoFrame, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
 #[cfg(test)]
 use picoo_media_decode::AccessUnitDecoder;
+use picoo_media_decode::DecodedFrame;
 use picoo_packet::ReassemblyError;
 use picoo_protocol::VideoPacket;
+use std::sync::Arc;
 use std::time::Instant;
 
 use super::recovery::RecoveryReason;
@@ -18,6 +20,98 @@ use super::ReceiverSession;
 use crate::ReceiverError;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::DEFAULT_SHARED_RING_NAME;
+
+#[derive(Debug)]
+pub(super) struct EncodedAccessUnit {
+    pub(super) stream_generation: u64,
+    pub(super) frame_id: u64,
+    pub(super) source_pts_us: u64,
+    pub(super) received_at_us: u64,
+    pub(super) kind: FrameKind,
+    pub(super) data: Bytes,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use picoo_media_decode::StubDecoder;
+    use picoo_protocol::control::StreamConfig;
+
+    fn receiver_for_generation(generation: u32) -> ReceiverSession {
+        let mut receiver = ReceiverSession::new();
+        receiver.decoder = Box::new(StubDecoder::new());
+        receiver.current_stream_config = Some(StreamConfig {
+            codec: "h264".into(),
+            width: 1280,
+            height: 720,
+            fps: 30,
+            stream_epoch: generation,
+            ..Default::default()
+        });
+        receiver
+    }
+
+    fn access_unit(generation: u64, frame_id: u64) -> EncodedAccessUnit {
+        EncodedAccessUnit {
+            stream_generation: generation,
+            frame_id,
+            source_pts_us: 42_000,
+            received_at_us: 50_000,
+            kind: FrameKind::Key,
+            data: Bytes::from_static(b"typed-au"),
+        }
+    }
+
+    #[test]
+    fn stale_generation_never_reaches_decoder_or_latest_store() {
+        let mut receiver = receiver_for_generation(2);
+
+        receiver
+            .publish_timeline_access_unit(access_unit(1, 9))
+            .expect("stale completion is an expected drop");
+
+        assert_eq!(receiver.ingress.decode_invocations, 0);
+        assert_eq!(receiver.ingress.recovery_dropped_access_units, 1);
+        assert!(receiver.latest_frame_store.latest().is_none());
+    }
+
+    #[test]
+    fn matching_generation_preserves_access_unit_timeline() {
+        let mut receiver = receiver_for_generation(2);
+
+        receiver
+            .publish_timeline_access_unit(access_unit(2, 9))
+            .expect("matching generation");
+
+        let frame = receiver.latest_frame_store.latest().expect("video frame");
+        assert_eq!(frame.stream_generation, 2);
+        assert_eq!(frame.frame_id, 9);
+        assert_eq!(frame.source_pts_us, 42_000);
+        assert_eq!(frame.received_at_us, 50_000);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum FrameKind {
+    Key,
+    ReferenceDelta,
+    DiscardableDelta,
+}
+
+impl FrameKind {
+    fn is_keyframe(self) -> bool {
+        self == Self::Key
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FrameTimeline {
+    stream_generation: u64,
+    frame_id: u64,
+    source_pts_us: u64,
+    received_at_us: u64,
+    decoded_at: Option<Instant>,
+}
 
 impl ReceiverSession {
     pub(super) fn ingest_video_packet(&mut self, packet: VideoPacket) -> Result<(), ReceiverError> {
@@ -113,8 +207,10 @@ impl ReceiverSession {
                     .as_micros() as u64;
                 let outcome = self.jitter.push_at(
                     JitterFrame {
+                        stream_generation: u64::from(access_unit.stream_epoch),
                         frame_id: access_unit.frame_id,
                         pts_us,
+                        received_at_us: completed_at_us,
                         data: access_unit.data,
                         keyframe: access_unit.keyframe,
                         discardable: access_unit.discardable,
@@ -190,26 +286,32 @@ impl ReceiverSession {
 
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.waiting_frame();
-        self.publish_nv12_frame(
-            PLACEHOLDER_WIDTH,
-            PLACEHOLDER_HEIGHT,
-            PLACEHOLDER_WIDTH,
-            0,
-            0,
-            Bytes::from(nv12),
+        self.publish_decoded_frame(
+            FrameTimeline::default(),
+            DecodedFrame {
+                width: PLACEHOLDER_WIDTH,
+                height: PLACEHOLDER_HEIGHT,
+                stride: PLACEHOLDER_WIDTH,
+                rotation: 0,
+                timestamp_us: 0,
+                nv12: Bytes::from(nv12),
+            },
         )
     }
 
     /// Publish reconnect-branded placeholder (REQ-PICOO-FRAME-005).
     pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.reconnecting_frame();
-        self.publish_nv12_frame(
-            PLACEHOLDER_WIDTH,
-            PLACEHOLDER_HEIGHT,
-            PLACEHOLDER_WIDTH,
-            0,
-            0,
-            Bytes::from(nv12),
+        self.publish_decoded_frame(
+            FrameTimeline::default(),
+            DecodedFrame {
+                width: PLACEHOLDER_WIDTH,
+                height: PLACEHOLDER_HEIGHT,
+                stride: PLACEHOLDER_WIDTH,
+                rotation: 0,
+                timestamp_us: 0,
+                nv12: Bytes::from(nv12),
+            },
         )
     }
 
@@ -242,14 +344,49 @@ impl ReceiverSession {
         self.decoder = decoder;
     }
 
-    /// Decode H.264 access unit once → FrameHub + Shared Frame Ring.
+    /// Test adapter for decoder recovery fixtures without a network timeline.
+    #[cfg(test)]
     pub(crate) fn publish_access_unit(
         &mut self,
         access_unit: Bytes,
         keyframe: bool,
     ) -> Result<(), ReceiverError> {
+        self.publish_timeline_access_unit(EncodedAccessUnit {
+            stream_generation: self
+                .current_stream_config
+                .as_ref()
+                .map_or(0, |config| u64::from(config.stream_epoch)),
+            frame_id: 0,
+            source_pts_us: 0,
+            received_at_us: self.timing_origin.elapsed().as_micros() as u64,
+            kind: if keyframe {
+                FrameKind::Key
+            } else {
+                FrameKind::ReferenceDelta
+            },
+            data: access_unit,
+        })
+    }
+
+    /// Decode one typed H.264 access unit into one shared VideoFrame.
+    pub(super) fn publish_timeline_access_unit(
+        &mut self,
+        access_unit: EncodedAccessUnit,
+    ) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
-        if !self.accepts_access_unit_for_decode(keyframe) {
+        if self
+            .current_stream_config
+            .as_ref()
+            .is_some_and(|config| u64::from(config.stream_epoch) != access_unit.stream_generation)
+        {
+            // A future Decoder Worker can complete after a generation switch.
+            // Keep this gate at the session boundary even though today's
+            // synchronous adapter normally clears the jitter queue first.
+            self.ingress.recovery_dropped_access_units =
+                self.ingress.recovery_dropped_access_units.saturating_add(1);
+            return Ok(());
+        }
+        if !self.accepts_access_unit_for_decode(access_unit.kind.is_keyframe()) {
             self.ingress.recovery_dropped_access_units =
                 self.ingress.recovery_dropped_access_units.saturating_add(1);
             return Ok(());
@@ -258,7 +395,8 @@ impl ReceiverSession {
         let decode_started = Instant::now();
         let decode_result = self
             .decoder
-            .decode_access_unit(&access_unit, self.current_stream_config.as_ref());
+            .decode_access_unit(&access_unit.data, self.current_stream_config.as_ref());
+        let decoded_at = Instant::now();
         self.jitter
             .observe_decode_time_us(decode_started.elapsed().as_micros() as u64);
         let outcome = match decode_result {
@@ -271,24 +409,26 @@ impl ReceiverSession {
                 return Ok(());
             }
         };
-        if keyframe && outcome.refresh_accepted {
+        if access_unit.kind.is_keyframe() && outcome.refresh_accepted {
             self.mark_decoder_refresh_accepted();
         }
         match outcome.frame {
-            Some(frame) => {
+            Some(mut frame) => {
                 // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
-                let rotation = self
+                frame.rotation = self
                     .current_stream_config
                     .as_ref()
                     .map(|c| c.rotation)
                     .unwrap_or(frame.rotation);
-                self.publish_nv12_frame(
-                    frame.width,
-                    frame.height,
-                    frame.stride,
-                    rotation,
-                    frame.timestamp_us,
-                    frame.nv12,
+                self.publish_decoded_frame(
+                    FrameTimeline {
+                        stream_generation: access_unit.stream_generation,
+                        frame_id: access_unit.frame_id,
+                        source_pts_us: access_unit.source_pts_us,
+                        received_at_us: access_unit.received_at_us,
+                        decoded_at: Some(decoded_at),
+                    },
+                    frame,
                 )?;
                 self.ingress.decoded_frames += 1;
                 self.stats_reporter.record_decoded_frame();
@@ -301,16 +441,20 @@ impl ReceiverSession {
         Ok(())
     }
 
-    fn publish_nv12_frame(
+    fn publish_decoded_frame(
         &mut self,
-        width: u32,
-        height: u32,
-        stride: u32,
-        rotation: u32,
-        timestamp_us: u64,
-        nv12: Bytes,
+        timeline: FrameTimeline,
+        frame: DecodedFrame,
     ) -> Result<(), ReceiverError> {
-        // REQ-PICOO-MEDIA-009: rotate pixels to upright before FrameHub / Shared Ring / VCam.
+        let DecodedFrame {
+            width,
+            height,
+            stride,
+            rotation,
+            timestamp_us,
+            nv12,
+        } = frame;
+        // REQ-PICOO-MEDIA-009: rotate before LatestFrameStore / Shared Ring / VCam.
         // REQ-PICOO-MEDIA-004: then apply remote StreamConfig.mirrored in upright space.
         let rotated_buf =
             picoo_frame_hub::nv12_rotate_clockwise(width, height, stride, rotation, &nv12);
@@ -334,16 +478,19 @@ impl ReceiverSession {
         // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
         let published_rotation = 0u32;
 
-        let index = self.frame_hub.begin_write()?;
-        self.frame_hub.commit_write(
-            index,
+        self.latest_frame_store.publish(VideoFrame::new(
+            timeline.stream_generation,
+            timeline.frame_id,
+            timeline.source_pts_us,
+            timeline.received_at_us,
+            timeline.decoded_at.unwrap_or_else(Instant::now),
+            timestamp_us,
             width,
             height,
             stride,
             published_rotation,
-            timestamp_us,
             pixels.clone(),
-        );
+        ));
         if let Some(ring) = self.shared_ring.as_mut() {
             ring.publish_nv12(
                 width,
@@ -357,7 +504,7 @@ impl ReceiverSession {
         Ok(())
     }
 
-    pub fn latest_frame(&self) -> Option<&FrameSlot> {
-        self.frame_hub.latest_ready()
+    pub fn latest_frame(&self) -> Option<&Arc<VideoFrame>> {
+        self.latest_frame_store.latest()
     }
 }

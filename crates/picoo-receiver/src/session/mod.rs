@@ -7,13 +7,14 @@ mod loopback;
 mod media;
 mod pairing;
 mod recovery;
+mod stats;
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use bytes::Bytes;
-use picoo_frame_hub::{FrameHub, PlaceholderMode, SharedFrameRingProducer};
+use picoo_frame_hub::{LatestFrameStore, PlaceholderMode, SharedFrameRingProducer};
 use picoo_jitter::JitterBuffer;
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder};
 use picoo_packet::ReassemblyMap;
@@ -30,157 +31,18 @@ use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use pairing::{ActiveSender, PendingPairing};
 use recovery::DecoderRecovery;
 use recovery::RecoveryReason;
+use stats::{
+    media_deadline_from_observations, observed_fragment_loss_ratio,
+    playout_blocked_by_older_reassembly, InterarrivalJitter, StatsReporter,
+};
 
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 pub use picoo_pairing::{TrustedIdentityCandidate, TrustedIdentityReplacement};
 
-const MEDIA_DEADLINE_MIN_MS: f64 = 200.0;
-const MEDIA_DEADLINE_MAX_MS: f64 = 300.0;
-
-fn media_deadline_from_observations(
-    rtt_ms: f64,
-    jitter_ms: f64,
-    frame_ms: f64,
-    playout_target_ms: f64,
-) -> Duration {
-    // A failure boundary must sit materially beyond normal playout. Two
-    // current playout budgets plus one source frame absorbs a single delayed
-    // receiver/OS scheduling turn; RTT + 3*jitter + one frame remains the
-    // independent network-burst bound. The hard cap still prevents latency
-    // from growing without limit.
-    let playout_bound_ms = 2.0 * playout_target_ms + frame_ms;
-    let network_bound_ms = rtt_ms + 3.0 * jitter_ms + frame_ms;
-    let deadline_ms = playout_bound_ms
-        .max(network_bound_ms)
-        .clamp(MEDIA_DEADLINE_MIN_MS, MEDIA_DEADLINE_MAX_MS);
-    Duration::from_secs_f64(deadline_ms / 1_000.0)
-}
-
-struct StatsReporter {
-    last_sent: Instant,
-    window_bytes: u64,
-    last_reassembly_drops: u64,
-    last_missing_fragments: u64,
-    last_resolved_fragments: u64,
-    window_decoder_drops: u64,
-    window_decoded_frames: u64,
-}
-
-/// RFC 3550-style inter-arrival jitter estimate without requiring synchronized
-/// sender/receiver wall clocks. Both deltas are durations, so clock offset cancels.
-#[derive(Default)]
-struct InterarrivalJitter {
-    last: Option<(Instant, u64)>,
-    estimate_us: f64,
-}
-
-impl InterarrivalJitter {
-    fn observe(&mut self, arrived_at: Instant, pts_us: u64) {
-        let Some((last_arrival, last_pts_us)) = self.last else {
-            self.last = Some((arrived_at, pts_us));
-            return;
-        };
-        // Ignore an older AU that completed after a newer one. It will still be
-        // ordered/dropped by JitterBuffer, but must not corrupt this estimator.
-        if pts_us <= last_pts_us {
-            return;
-        }
-        let arrival_delta_us = arrived_at.duration_since(last_arrival).as_micros() as f64;
-        let pts_delta_us = pts_us.saturating_sub(last_pts_us) as f64;
-        let variation_us = (arrival_delta_us - pts_delta_us).abs();
-        self.estimate_us += (variation_us - self.estimate_us) / 16.0;
-        self.last = Some((arrived_at, pts_us));
-    }
-
-    fn milliseconds(&self) -> f64 {
-        self.estimate_us / 1_000.0
-    }
-
-    fn reset(&mut self) {
-        *self = Self::default();
-    }
-}
-
-#[cfg(test)]
-mod interarrival_jitter_tests {
-    use super::InterarrivalJitter;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn stable_arrivals_have_zero_jitter_and_variation_uses_ewma() {
-        let start = Instant::now();
-        let mut jitter = InterarrivalJitter::default();
-        jitter.observe(start, 1_000_000);
-        jitter.observe(start + Duration::from_millis(33), 1_033_000);
-        assert_eq!(jitter.milliseconds(), 0.0);
-
-        jitter.observe(start + Duration::from_millis(86), 1_066_000);
-        // 20ms variation / RFC-style gain 16 = 1.25ms.
-        assert!((jitter.milliseconds() - 1.25).abs() < 0.001);
-    }
-
-    #[test]
-    fn late_older_access_unit_does_not_corrupt_estimate() {
-        let start = Instant::now();
-        let mut jitter = InterarrivalJitter::default();
-        jitter.observe(start, 100_000);
-        jitter.observe(start + Duration::from_millis(40), 90_000);
-        assert_eq!(jitter.milliseconds(), 0.0);
-        jitter.observe(start + Duration::from_millis(33), 133_000);
-        assert_eq!(jitter.milliseconds(), 0.0);
-    }
-}
-
-impl StatsReporter {
-    fn new() -> Self {
-        Self {
-            last_sent: Instant::now(),
-            window_bytes: 0,
-            last_reassembly_drops: 0,
-            last_missing_fragments: 0,
-            last_resolved_fragments: 0,
-            window_decoder_drops: 0,
-            window_decoded_frames: 0,
-        }
-    }
-
-    fn record_packet(&mut self, payload_len: usize) {
-        self.window_bytes += payload_len as u64;
-    }
-
-    fn record_decoder_drop(&mut self) {
-        self.window_decoder_drops += 1;
-    }
-
-    fn record_decoded_frame(&mut self) {
-        self.window_decoded_frames += 1;
-    }
-
-    fn due(&self) -> bool {
-        self.last_sent.elapsed() >= Duration::from_secs(1)
-    }
-}
-
-fn observed_fragment_loss_ratio(resolved_fragments: u64, missing_fragments: u64) -> f64 {
-    if resolved_fragments == 0 {
-        0.0
-    } else {
-        missing_fragments.min(resolved_fragments) as f64 / resolved_fragments as f64
-    }
-}
-
-fn playout_blocked_by_older_reassembly(
-    oldest_unresolved_frame_id: Option<u64>,
-    candidate_frame_id: u64,
-) -> bool {
-    oldest_unresolved_frame_id
-        .is_some_and(|unresolved_frame_id| unresolved_frame_id < candidate_frame_id)
-}
-
 pub struct ReceiverSession {
     transport: QuicReceiverTransport,
     reassembly: ReassemblyMap,
-    frame_hub: FrameHub,
+    latest_frame_store: LatestFrameStore,
     identity: ReceiverIdentity,
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
@@ -216,7 +78,7 @@ pub struct ReceiverSession {
     /// Monotonic identity of the latest complete ReceiverStats window.
     /// Consumers use this to avoid counting the same one-second window twice.
     last_stats_revision: u64,
-    /// Measured decoded FrameHub output rate over the latest stats window.
+    /// Measured decoded LatestFrameStore output rate over the latest stats window.
     last_decoded_fps: u32,
     /// Max height advertised in Capabilities (MEDIA-002); default both 720+1080.
     advertised_max_height: u32,
@@ -240,7 +102,7 @@ impl ReceiverSession {
         Self {
             transport: QuicReceiverTransport::new(),
             reassembly: ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT),
-            frame_hub: FrameHub::new(),
+            latest_frame_store: LatestFrameStore::new(),
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),
             trusted_store_path: None,
@@ -403,8 +265,8 @@ impl ReceiverSession {
         self.transport.is_connected()
     }
 
-    pub fn frame_hub(&self) -> &FrameHub {
-        &self.frame_hub
+    pub fn latest_frame_store(&self) -> &LatestFrameStore {
+        &self.latest_frame_store
     }
 
     pub fn bind_addr(&self) -> Option<std::net::SocketAddr> {
@@ -529,7 +391,20 @@ impl ReceiverSession {
             let Some(frame) = self.jitter.pop_ready(now_us) else {
                 break;
             };
-            self.publish_access_unit(frame.data, frame.keyframe)?;
+            self.publish_timeline_access_unit(media::EncodedAccessUnit {
+                stream_generation: frame.stream_generation,
+                frame_id: frame.frame_id,
+                source_pts_us: frame.pts_us,
+                received_at_us: frame.received_at_us,
+                kind: if frame.keyframe {
+                    media::FrameKind::Key
+                } else if frame.discardable {
+                    media::FrameKind::DiscardableDelta
+                } else {
+                    media::FrameKind::ReferenceDelta
+                },
+                data: frame.data,
+            })?;
         }
         Ok(())
     }
@@ -561,7 +436,7 @@ impl ReceiverSession {
         // error; otherwise transport state from a dead peer can survive.
         let decoder_reset = self.decoder.reset();
         let had_live_frame =
-            self.status == ReceiverStatus::Streaming && self.frame_hub.latest_ready().is_some();
+            self.status == ReceiverStatus::Streaming && self.latest_frame_store.latest().is_some();
         self.active_sender = None;
         self.pending_pairing = None;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
@@ -651,8 +526,8 @@ impl ReceiverSession {
             .saturating_sub(self.stats_reporter.last_resolved_fragments);
 
         let frame_age_ms = self
-            .frame_hub
-            .latest_ready()
+            .latest_frame_store
+            .latest()
             .map(|frame| {
                 let now_us = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -864,46 +739,5 @@ impl ReceiverSession {
             self.reject_control_session(session);
         }
         result
-    }
-}
-
-#[cfg(test)]
-mod stats_tests {
-    use std::time::Duration;
-
-    use super::{
-        media_deadline_from_observations, observed_fragment_loss_ratio,
-        playout_blocked_by_older_reassembly,
-    };
-
-    #[test]
-    fn fragment_loss_compares_received_and_missing_fragments_in_the_same_unit() {
-        assert_eq!(observed_fragment_loss_ratio(0, 0), 0.0);
-        assert_eq!(observed_fragment_loss_ratio(10, 1), 0.1);
-        assert_eq!(observed_fragment_loss_ratio(1, 1), 1.0);
-    }
-
-    #[test]
-    fn newer_playout_waits_for_an_older_unresolved_access_unit() {
-        assert!(playout_blocked_by_older_reassembly(Some(100), 200));
-        assert!(!playout_blocked_by_older_reassembly(Some(200), 200));
-        assert!(!playout_blocked_by_older_reassembly(Some(300), 200));
-        assert!(!playout_blocked_by_older_reassembly(None, 200));
-    }
-
-    #[test]
-    fn media_failure_deadline_stays_beyond_playout_and_is_hard_bounded() {
-        assert_eq!(
-            media_deadline_from_observations(20.0, 2.0, 33.0, 33.0),
-            Duration::from_millis(200),
-        );
-        assert_eq!(
-            media_deadline_from_observations(40.0, 20.0, 33.0, 80.0),
-            Duration::from_millis(200),
-        );
-        assert_eq!(
-            media_deadline_from_observations(150.0, 80.0, 33.0, 80.0),
-            Duration::from_millis(300),
-        );
     }
 }

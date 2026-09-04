@@ -178,7 +178,11 @@ fn single_decode_per_access_unit_into_frame_hub() {
     let stats = receiver.stats();
     assert_eq!(stats.access_units, 1);
     assert_eq!(stats.decode_invocations, 1);
-    assert!(receiver.latest_frame().is_some());
+    let frame = receiver.latest_frame().expect("typed video frame");
+    assert_eq!(frame.stream_generation, 1);
+    assert_eq!(frame.frame_id, 1);
+    assert_eq!(frame.source_pts_us, 1);
+    assert!(frame.received_at_us > 0);
 }
 
 #[test]

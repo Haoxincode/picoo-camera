@@ -2,11 +2,9 @@ use std::sync::atomic::Ordering;
 
 use shared_memory::ShmemConf;
 
-use crate::hub::SLOT_COUNT;
-
 use super::layout::{
     const_meta_at, const_slot_meta_at, const_slot_pixels_at, layout_size, validate_ring_header,
-    PIXEL_FORMAT_NV12, RING_MAGIC, RING_READY_DONE, WRITER_LEASE,
+    PIXEL_FORMAT_NV12, RING_MAGIC, RING_READY_DONE, RING_SLOT_COUNT, WRITER_LEASE,
 };
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::mapping::SlotLockAttempt;
@@ -89,8 +87,8 @@ impl SharedFrameRingConsumer {
                 return None;
             }
 
-            let mut candidates = Vec::with_capacity(SLOT_COUNT);
-            for i in 0..SLOT_COUNT {
+            let mut candidates = Vec::with_capacity(RING_SLOT_COUNT);
+            for i in 0..RING_SLOT_COUNT {
                 let slot = &*const_slot_meta_at(base, self.max_frame_bytes, i);
                 if slot.ready_state.load(Ordering::Acquire) != RING_READY_DONE {
                     continue;

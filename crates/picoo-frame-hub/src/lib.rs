@@ -1,11 +1,11 @@
-//! FrameHub and Shared Frame Ring — REQ-PICOO-FRAME-001..006.
+//! LatestFrameStore and Shared Frame Ring — REQ-PICOO-FRAME-001..010.
 
-mod hub;
+mod latest_frame_store;
 mod nv12;
 mod placeholder;
 mod shared_ring;
 
-pub use hub::{FrameHub, FrameHubError, FrameSlot, ReadyState, SLOT_COUNT};
+pub use latest_frame_store::{LatestFrameStore, VideoFrame};
 pub use nv12::{normalize_rotation_degrees, nv12_mirror_horizontal, nv12_rotate_clockwise};
 pub use placeholder::{
     color_bars_placeholder, nv12_black, nv12_byte_size, reconnecting_placeholder,

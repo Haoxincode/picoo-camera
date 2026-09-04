@@ -1,4 +1,4 @@
-//! Desktop receiver session: QUIC ingress → reassembly → FrameHub.
+//! Desktop receiver session: QUIC ingress → reassembly → LatestFrameStore.
 //!
 //! REQ-PICOO-FRAME-001, REQ-PICOO-MEDIA-005/006 via picoo-media-decode.
 //! REQ-PICOO-PAIRING-*: ClientHello/ServerHello gate before video ingress.
@@ -28,8 +28,6 @@ pub enum ReceiverError {
     Transport(#[from] TransportError),
     #[error("sender: {0}")]
     Sender(#[from] picoo_sender::SenderError),
-    #[error("frame hub: {0}")]
-    FrameHub(#[from] picoo_frame_hub::FrameHubError),
     #[error("pairing: {0}")]
     Pairing(#[from] PairingError),
     #[error("protocol: {0}")]
@@ -103,7 +101,7 @@ pub struct IngressStats {
     pub packets_dropped_unpaired: u64,
     /// Times the decoder was invoked (REQ-PICOO-MEDIA-006: once per AU).
     pub decode_invocations: u64,
-    /// Frames successfully decoded and committed to FrameHub.
+    /// Frames successfully decoded and committed to LatestFrameStore.
     pub decoded_frames: u64,
     /// Delta AUs discarded while the decoder waits for a fresh IDR.
     pub recovery_dropped_access_units: u64,

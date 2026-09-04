@@ -3,11 +3,10 @@ use std::sync::atomic::Ordering;
 
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
-use crate::hub::SLOT_COUNT;
-
 use super::layout::{
     layout_size, meta_at, slot_meta_at, slot_pixels_at, validate_ring_header, PIXEL_FORMAT_NV12,
-    READY_EMPTY, READY_WRITING, RING_MAGIC, RING_READY_DONE, RING_VERSION, WRITER_LEASE,
+    READY_EMPTY, READY_WRITING, RING_MAGIC, RING_READY_DONE, RING_SLOT_COUNT, RING_VERSION,
+    WRITER_LEASE,
 };
 #[cfg(target_os = "windows")]
 use super::lock::acquire_producer_lock;
@@ -179,11 +178,11 @@ impl SharedFrameRingProducer {
             let meta = &mut *meta_at(base);
             meta.magic = RING_MAGIC;
             meta.version = RING_VERSION;
-            meta.slot_count = SLOT_COUNT as u32;
+            meta.slot_count = RING_SLOT_COUNT as u32;
             meta.max_frame_bytes = self.max_frame_bytes as u32;
             meta.write_index.store(0, Ordering::Relaxed);
             meta.latest_sequence.store(0, Ordering::Relaxed);
-            for i in 0..SLOT_COUNT {
+            for i in 0..RING_SLOT_COUNT {
                 let slot = &mut *slot_meta_at(base, self.max_frame_bytes, i);
                 slot.sequence.store(0, Ordering::Relaxed);
                 slot.ready_state.store(READY_EMPTY, Ordering::Relaxed);
@@ -215,10 +214,10 @@ impl SharedFrameRingProducer {
         let base = self.mapping.as_ptr();
         unsafe {
             let meta = &*meta_at(base);
-            let start = meta.write_index.load(Ordering::Relaxed) as usize % SLOT_COUNT;
+            let start = meta.write_index.load(Ordering::Relaxed) as usize % RING_SLOT_COUNT;
             let mut writable = None;
-            for offset in 0..SLOT_COUNT {
-                let index = (start + offset) % SLOT_COUNT;
+            for offset in 0..RING_SLOT_COUNT {
+                let index = (start + offset) % RING_SLOT_COUNT;
                 let slot = &mut *slot_meta_at(base, self.max_frame_bytes, index);
                 #[cfg(any(target_os = "macos", target_os = "windows"))]
                 let slot_lock = match self.mapping.try_slot_lock(index)? {
@@ -281,8 +280,10 @@ impl SharedFrameRingProducer {
             slot.ready_state.store(RING_READY_DONE, Ordering::Release);
             slot.reader_count.store(0, Ordering::SeqCst);
             meta.latest_sequence.store(sequence, Ordering::Release);
-            meta.write_index
-                .store((index as u32 + 1) % SLOT_COUNT as u32, Ordering::Release);
+            meta.write_index.store(
+                (index as u32 + 1) % RING_SLOT_COUNT as u32,
+                Ordering::Release,
+            );
             Ok(sequence)
         }
     }

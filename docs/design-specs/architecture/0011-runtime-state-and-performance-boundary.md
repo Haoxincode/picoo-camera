@@ -50,7 +50,7 @@ Rust Core 是编码重配置事务的唯一语义所有者，显式保存 transa
 
 ### 类型化媒体时间线
 
-Decoder 前后使用拥有所有权的类型，而不是裸 `&[u8]` 与散落字段：
+Receiver 的 Decoder Effect 前后使用拥有所有权的类型，而不是把媒体身份散落在调用栈之外：
 
 ```rust
 struct EncodedAccessUnit {
@@ -71,7 +71,7 @@ struct VideoFrame {
     height: u32,
     stride: u32,
     rotation: Rotation,
-    pixels: Arc<[u8]>,
+    pixels: Bytes,
 }
 ```
 
@@ -80,8 +80,11 @@ struct VideoFrame {
 
 ### LatestFrameStore 与共享不可变帧
 
-同进程 `FrameHub` 改名为 `LatestFrameStore`，使用 `Arc<VideoFrame>`（可由 ArcSwap 或容量一
-latest-only channel 实现）。它不声称拥有 Shared Frame Ring 的 reader lease/原子协议。
+同进程 `FrameHub` 改名为 `LatestFrameStore`，使用 `Arc<VideoFrame>`。Receiver reducer 当前是
+单一写入者，因此 `Option<Arc<VideoFrame>>` 已经满足容量一语义；只有 Store 本身需要跨线程独立
+写入时才引入 ArcSwap，避免为不存在的并发所有权增加依赖。它不声称拥有 Shared Frame Ring 的
+reader lease/原子协议。`VideoFrame` 内部使用可从 Decoder `Vec<u8>` 零复制接管的 `Bytes`，外层
+`Arc` 同时共享完整时间线与像素 backing storage。
 Decoder 输出只分配一次，Preview、Shared Ring Writer 和可选 Recorder Sink 只持有共享引用；
 慢消费者不得反压 Decoder。需要反复分配的像素缓冲进入有界 `FrameBufferPool`。
 
