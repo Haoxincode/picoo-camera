@@ -147,6 +147,13 @@ OBS 和浏览器实测确认。
 - 端到端延迟只有在 sender monotonic timestamp、ping/pong 与按 generation 重置的 affine clock
   mapping 建立后才可发布；RTT 不得冒充 glass-to-glass latency。
 
+时钟同步复用已认证 PCP 控制流传递 NTP 风格四时间戳，并以有界低延迟样本拟合
+`receiver_time = slope × sender_time + offset`。评审过 `ntp-proto 1.9.0`（Apache-2.0 OR MIT，
+Rust 1.88）：它维护活跃且适合标准 NTP 报文、认证与系统校时，但会引入 Picoo 不使用的 UDP NTP、
+墙钟与密码套件边界，默认 feature 体积也不适合四个移动/桌面目标。Picoo 因而只自行维护固定样本数、
+低 RTT 筛选和 affine 拟合这一最小 estimator，不实现 NTP 网络栈或修改系统时钟。少于三个低延迟
+样本、采样跨度不足或 generation 已切换时，映射必须不可用，UI/ABR 不得发布或消费伪造的总延迟。
+
 NV12 方向变换优先保持一个跨平台 Rust 边界：`libyuv` 支持相关操作，但会为全部桌面目标引入
 C/C++ 构建与 ABI 维护；`fast_image_resize` 不直接表达 NV12 双平面 rotate+mirror 融合语义。当前
 `transform_nv12` 因而只维护坐标映射这一 Picoo 特有最小实现：无变换转移原 `Bytes`，有变换只

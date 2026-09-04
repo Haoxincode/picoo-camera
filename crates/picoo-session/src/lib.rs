@@ -1,11 +1,16 @@
 //! Session states and reconnect backoff — REQ-PICOO-SESSION-001, REQ-PICOO-TRANSPORT-004.
 
+mod clock_sync;
 mod network_health;
 mod runtime_state;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use clock_sync::{
+    AffineClockMapper, ClockMappingEstimate, ClockSyncError, ClockSyncExchange,
+    MAX_CLOCK_SYNC_SAMPLES,
+};
 pub use network_health::{
     NetworkDegradation, NetworkEpisode, NetworkHealth, NetworkHealthTracker,
     BAD_PACKET_LOSS_THRESHOLD, BAD_WINDOWS_TO_ENTER, CLEAN_PACKET_LOSS_THRESHOLD,
