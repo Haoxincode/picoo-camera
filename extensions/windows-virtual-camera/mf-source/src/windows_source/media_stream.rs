@@ -30,6 +30,7 @@ use crate::format::{
 };
 use crate::frame_provider::{FrameProvider, OwnedNv12Frame};
 use crate::metrics::{VcamMetrics, VcamMetricsSnapshot};
+use crate::sample_clock::SampleClock;
 
 use super::{lock, ObjectTracker};
 
@@ -43,6 +44,7 @@ pub(super) struct StreamState {
     allocator: Option<IMFVideoSampleAllocator>,
     frames: Arc<Mutex<FrameProvider>>,
     metrics: VcamMetrics,
+    sample_clock: SampleClock,
     output_width: u32,
     output_height: u32,
     state: MF_STREAM_STATE,
@@ -96,6 +98,7 @@ impl MediaStream {
                 allocator: None,
                 frames: Arc::new(Mutex::new(FrameProvider::new())),
                 metrics: VcamMetrics::new(),
+                sample_clock: SampleClock::new(SAMPLE_DURATION_100NS),
                 output_width: 1280,
                 output_height: 720,
                 state: MF_STREAM_STATE_STOPPED,
@@ -195,6 +198,7 @@ pub(super) fn set_stream_state(
                     Err(Error::from(MF_E_INVALID_STATE_TRANSITION))
                 } else {
                     state.state = requested;
+                    state.sample_clock.reset();
                     state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
                     Ok(())
                 }
@@ -528,8 +532,8 @@ fn deliver_sample(
     // Revalidate immediately before touching MF objects so a Stop/Shutdown can
     // never uninitialize the allocator or overtake this sample event.
     let _operation = lock(&lifecycle_operation)?;
-    let (allocator, queue) = {
-        let state = lock(shared)?;
+    let (allocator, queue, sample_time_100ns) = {
+        let mut state = lock(shared)?;
         if state.state != MF_STREAM_STATE_RUNNING
             || state.transitioning
             || state.lifecycle_revision != lifecycle_revision
@@ -543,9 +547,19 @@ fn deliver_sample(
             .as_ref()
             .cloned()
             .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
-        (allocator, queue)
+        let now_100ns = unsafe { windows::Win32::Media::MediaFoundation::MFGetSystemTime() };
+        let sample_time_100ns = state
+            .sample_clock
+            .next_timestamp(now_100ns)
+            .ok_or_else(|| Error::from(E_FAIL))?;
+        (allocator, queue, sample_time_100ns)
     };
-    let sample = create_sample(allocator.as_ref(), &frame, token.as_ref())?;
+    let sample = create_sample(
+        allocator.as_ref(),
+        &frame,
+        token.as_ref(),
+        sample_time_100ns,
+    )?;
 
     unsafe {
         queue.QueueEventParamUnk(
@@ -581,6 +595,7 @@ fn create_sample(
     allocator: Option<&IMFVideoSampleAllocator>,
     frame: &OwnedNv12Frame,
     token: Option<&IUnknown>,
+    sample_time_100ns: i64,
 ) -> Result<IMFSample> {
     unsafe {
         let sample = if let Some(allocator) = allocator {
@@ -609,7 +624,7 @@ fn create_sample(
         copy_result?;
         unlock_result?;
 
-        sample.SetSampleTime(windows::Win32::Media::MediaFoundation::MFGetSystemTime())?;
+        sample.SetSampleTime(sample_time_100ns)?;
         sample.SetSampleDuration(SAMPLE_DURATION_100NS)?;
         if let Some(token) = token {
             sample.SetUnknown(&MFSampleExtension_Token, token)?;

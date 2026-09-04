@@ -7,6 +7,8 @@ mod format;
 mod frame_provider;
 #[cfg(any(windows, test))]
 mod metrics;
+#[cfg(any(windows, test))]
+mod sample_clock;
 
 #[cfg(windows)]
 mod windows_source;
