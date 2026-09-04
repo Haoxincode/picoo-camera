@@ -66,10 +66,21 @@ cargo xtask test ios
 
 工程不使用 CocoaPods、Carthage、第三方 Swift Package 或项目生成器。当前 `.app` 是无签名的 Simulator 验证产物，不包含 Provisioning Profile 或 App Store 配置。
 
+## 正式发布
+
+受保护的 `Apple Release` workflow 使用临时 Keychain 导入固定 Apple Distribution identity，并将 App Store provisioning profile 以其 UUID 安装到 runner。以下命令由该 workflow 调用，缺少任一身份、版本或 profile 输入时直接失败：
+
+```bash
+cargo xtask release ios
+```
+
+该命令从 workspace SemVer 取得 `CFBundleShortVersionString`，使用显式递增的 `CFBundleVersion`，生成 device ARM64 Archive 并导出 `target/apple/PicooCamera-iOS.ipa`。导出后会复核 signature、Apple Distribution authority、Team ID、leaf certificate、`com.picoo.camera`、版本、arm64 slice、effective entitlements 与 embedded profile UUID。workflow 在生成 SPDX SBOM 和 provenance 前删除 P12、临时 Keychain 与安装的 profile。真实凭据首次绿测、App Store Connect 校验和真机覆盖安装仍需作为外部验收证据记录。
+
 ## 追溯
 
 - `REQ-PICOO-STACK-003`
 - `REQ-PICOO-STACK-007`
+- `REQ-PICOO-STACK-008`
 - `REQ-PICOO-MEDIA-011`
 - `REQ-PICOO-DISCOVERY-008`
 - `REQ-PICOO-UI-010`

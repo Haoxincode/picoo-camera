@@ -28,7 +28,7 @@ enum Command {
         #[arg(value_enum)]
         platform: PackagePlatform,
     },
-    /// Produce a signed and notarized release artifact.
+    /// Produce a signed release artifact, including notarization where required.
     Release {
         #[arg(value_enum)]
         platform: ReleasePlatform,
@@ -64,6 +64,7 @@ enum PackagePlatform {
 
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum ReleasePlatform {
+    Ios,
     Macos,
     Windows,
 }
@@ -131,6 +132,7 @@ fn package(platform: PackagePlatform) -> Result<()> {
 
 fn release(platform: ReleasePlatform) -> Result<()> {
     match platform {
+        ReleasePlatform::Ios => apple::ios::release(),
         ReleasePlatform::Macos => apple::macos::release(),
         ReleasePlatform::Windows => windows::release(),
     }

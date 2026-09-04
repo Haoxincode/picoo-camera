@@ -3,12 +3,8 @@ name: Apple Release
 on:
   workflow_dispatch:
     inputs:
-      version:
-        description: CFBundleShortVersionString（例如 1.2.0）
-        required: true
-        type: string
       build_number:
-        description: 递增的 CFBundleVersion 正整数
+        description: Monotonically increasing Apple CFBundleVersion
         required: true
         type: string
   push:
@@ -16,6 +12,8 @@ on:
 
 permissions:
   contents: read
+  id-token: write
+  attestations: write
 
 concurrency:
   group: apple-release-${{ github.ref }}
@@ -32,21 +30,22 @@ jobs:
           toolchain: stable
       - name: Select Xcode 26.6
         run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
-      - name: Resolve monotonically increasing bundle version
+      - name: Resolve release build identity
         env:
-          DISPATCH_VERSION: ${{ inputs.version }}
           DISPATCH_BUILD_NUMBER: ${{ inputs.build_number }}
         run: |
           set -euo pipefail
+          workspace_version="$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          test -n "$workspace_version"
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            release_version="${GITHUB_REF_NAME#v}"
-            release_build="$GITHUB_RUN_NUMBER"
+            test "${GITHUB_REF_NAME#v}" = "$workspace_version"
+            build_number="$GITHUB_RUN_NUMBER"
           else
-            release_version="$DISPATCH_VERSION"
-            release_build="$DISPATCH_BUILD_NUMBER"
+            build_number="$DISPATCH_BUILD_NUMBER"
           fi
-          echo "PICOO_RELEASE_VERSION=$release_version" >> "$GITHUB_ENV"
-          echo "PICOO_RELEASE_BUILD_NUMBER=$release_build" >> "$GITHUB_ENV"
+          [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          echo "PICOO_RELEASE_VERSION=$workspace_version" >> "$GITHUB_ENV"
+          echo "PICOO_RELEASE_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
       - name: Import Developer ID identity and release profiles
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
@@ -58,7 +57,10 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          release_dir="$RUNNER_TEMP/picoo-apple-release"
+          for value in "$APPLE_DEVELOPER_ID_P12_BASE64" "$APPLE_DEVELOPER_ID_P12_PASSWORD" "$APPLE_KEYCHAIN_PASSWORD" "$APPLE_NOTARY_KEY_BASE64" "$APPLE_MACOS_HOST_PROFILE_BASE64" "$APPLE_MACOS_EXTENSION_PROFILE_BASE64"; do
+            test -n "$value"
+          done
+          release_dir="$RUNNER_TEMP/picoo-macos-release"
           keychain="$release_dir/picoo-signing.keychain-db"
           original_keychain="$(security default-keychain -d user | tr -d '"')"
           mkdir -p "$release_dir"
@@ -66,6 +68,11 @@ jobs:
           printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 -D > "$release_dir/notary-key.p8"
           printf '%s' "$APPLE_MACOS_HOST_PROFILE_BASE64" | base64 -D > "$release_dir/host.provisionprofile"
           printf '%s' "$APPLE_MACOS_EXTENSION_PROFILE_BASE64" | base64 -D > "$release_dir/extension.provisionprofile"
+          echo "PICOO_MACOS_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "PICOO_MACOS_ORIGINAL_KEYCHAIN=$original_keychain" >> "$GITHUB_ENV"
+          echo "PICOO_NOTARY_KEY_PATH=$release_dir/notary-key.p8" >> "$GITHUB_ENV"
+          echo "PICOO_MACOS_HOST_PROFILE_PATH=$release_dir/host.provisionprofile" >> "$GITHUB_ENV"
+          echo "PICOO_MACOS_EXTENSION_PROFILE_PATH=$release_dir/extension.provisionprofile" >> "$GITHUB_ENV"
           security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
@@ -73,12 +80,6 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
           security list-keychains -d user -s "$keychain" "$original_keychain"
           security find-identity -v -p codesigning "$keychain"
-          echo "PICOO_RELEASE_DIR=$release_dir" >> "$GITHUB_ENV"
-          echo "PICOO_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
-          echo "PICOO_ORIGINAL_KEYCHAIN=$original_keychain" >> "$GITHUB_ENV"
-          echo "PICOO_NOTARY_KEY_PATH=$release_dir/notary-key.p8" >> "$GITHUB_ENV"
-          echo "PICOO_MACOS_HOST_PROFILE_PATH=$release_dir/host.provisionprofile" >> "$GITHUB_ENV"
-          echo "PICOO_MACOS_EXTENSION_PROFILE_PATH=$release_dir/extension.provisionprofile" >> "$GITHUB_ENV"
       - name: Build, sign, notarize, and staple macOS app
         env:
           PICOO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -86,21 +87,174 @@ jobs:
           PICOO_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           PICOO_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: cargo run -p xtask -- release macos
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: macos-app-signed-notarized
-          path: target/apple/PicooCamera-macOS.zip
-          if-no-files-found: error
-      - name: Remove temporary Apple release credentials
+      - name: Remove macOS release credentials before third-party artifact processing
         if: always()
         run: |
-          expected_release_dir="$RUNNER_TEMP/picoo-apple-release"
-          release_keychain="${PICOO_RELEASE_KEYCHAIN:-$expected_release_dir/picoo-signing.keychain-db}"
-          if [[ -n "${PICOO_ORIGINAL_KEYCHAIN:-}" ]]; then
-            security list-keychains -d user -s "$PICOO_ORIGINAL_KEYCHAIN" || true
+          expected_release_dir="$RUNNER_TEMP/picoo-macos-release"
+          release_keychain="${PICOO_MACOS_RELEASE_KEYCHAIN:-$expected_release_dir/picoo-signing.keychain-db}"
+          if [[ -n "${PICOO_MACOS_ORIGINAL_KEYCHAIN:-}" ]]; then
+            security list-keychains -d user -s "$PICOO_MACOS_ORIGINAL_KEYCHAIN" || true
           fi
           if [[ -f "$release_keychain" ]]; then
             security delete-keychain "$release_keychain" || true
+          fi
+          if [[ -d "$expected_release_dir" ]]; then
+            rm -rf -- "$expected_release_dir"
+          fi
+      - name: Generate SPDX SBOM for notarized macOS release
+        uses: anchore/sbom-action@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
+        with:
+          path: target/apple/PicooCamera-macOS.zip
+          format: spdx-json
+          output-file: target/apple/macos-release.spdx.json
+      - name: Attest notarized macOS release provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: target/apple/PicooCamera-macOS.zip
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-signed-notarized-release
+          path: |
+            target/apple/PicooCamera-macOS.zip
+            target/apple/macos-release.spdx.json
+          if-no-files-found: error
+      - name: Ensure macOS release credentials are absent
+        if: always()
+        run: |
+          expected_release_dir="$RUNNER_TEMP/picoo-macos-release"
+          release_keychain="${PICOO_MACOS_RELEASE_KEYCHAIN:-$expected_release_dir/picoo-signing.keychain-db}"
+          if [[ -n "${PICOO_MACOS_ORIGINAL_KEYCHAIN:-}" ]]; then
+            security list-keychains -d user -s "$PICOO_MACOS_ORIGINAL_KEYCHAIN" || true
+          fi
+          if [[ -f "$release_keychain" ]]; then
+            security delete-keychain "$release_keychain" || true
+          fi
+          if [[ -d "$expected_release_dir" ]]; then
+            rm -rf -- "$expected_release_dir"
+          fi
+
+  ios:
+    runs-on: macos-26
+    environment: apple-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+      - name: Select Xcode 26.6
+        run: sudo xcode-select -s /Applications/Xcode_26.6.app/Contents/Developer
+      - name: Resolve release build identity
+        env:
+          DISPATCH_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          workspace_version="$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          test -n "$workspace_version"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$workspace_version"
+            build_number="$GITHUB_RUN_NUMBER"
+          else
+            build_number="$DISPATCH_BUILD_NUMBER"
+          fi
+          [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          echo "PICOO_RELEASE_VERSION=$workspace_version" >> "$GITHUB_ENV"
+          echo "PICOO_RELEASE_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+      - name: Import Apple Distribution identity and App Store profile
+        env:
+          APPLE_IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.APPLE_IOS_DISTRIBUTION_P12_BASE64 }}
+          APPLE_IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.APPLE_IOS_DISTRIBUTION_P12_PASSWORD }}
+          APPLE_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.APPLE_IOS_APP_STORE_PROFILE_BASE64 }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          for value in "$APPLE_IOS_DISTRIBUTION_P12_BASE64" "$APPLE_IOS_DISTRIBUTION_P12_PASSWORD" "$APPLE_IOS_APP_STORE_PROFILE_BASE64" "$APPLE_KEYCHAIN_PASSWORD"; do
+            test -n "$value"
+          done
+          release_dir="$RUNNER_TEMP/picoo-ios-release"
+          keychain="$release_dir/picoo-signing.keychain-db"
+          profile_source="$release_dir/app-store.mobileprovision"
+          profile_plist="$release_dir/app-store.plist"
+          original_keychain="$(security default-keychain -d user | tr -d '"')"
+          mkdir -p "$release_dir"
+          printf '%s' "$APPLE_IOS_DISTRIBUTION_P12_BASE64" | base64 -D > "$release_dir/distribution.p12"
+          printf '%s' "$APPLE_IOS_APP_STORE_PROFILE_BASE64" | base64 -D > "$profile_source"
+          security cms -D -i "$profile_source" -o "$profile_plist"
+          profile_name="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$profile_plist")"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$profile_plist")"
+          test -n "$profile_name"
+          [[ "$profile_name" != *$'\n'* && "$profile_name" != *$'\r'* ]]
+          [[ "$profile_uuid" =~ ^[A-Fa-f0-9]{8}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{4}-[A-Fa-f0-9]{12}$ ]]
+          profile_dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          installed_profile="$profile_dir/$profile_uuid.mobileprovision"
+          mkdir -p "$profile_dir"
+          test ! -e "$installed_profile"
+          cp "$profile_source" "$installed_profile"
+          echo "PICOO_IOS_RELEASE_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "PICOO_IOS_ORIGINAL_KEYCHAIN=$original_keychain" >> "$GITHUB_ENV"
+          echo "PICOO_IOS_PROFILE_PATH=$profile_source" >> "$GITHUB_ENV"
+          echo "PICOO_IOS_INSTALLED_PROFILE=$installed_profile" >> "$GITHUB_ENV"
+          echo "PICOO_IOS_PROFILE_NAME=$profile_name" >> "$GITHUB_ENV"
+          security create-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
+          security import "$release_dir/distribution.p12" -k "$keychain" -P "$APPLE_IOS_DISTRIBUTION_P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$APPLE_KEYCHAIN_PASSWORD" "$keychain"
+          security list-keychains -d user -s "$keychain" "$original_keychain"
+          security find-identity -v -p codesigning "$keychain"
+      - name: Build, sign, export, and verify iOS IPA
+        env:
+          PICOO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PICOO_IOS_SIGNING_IDENTITY: ${{ secrets.APPLE_IOS_SIGNING_IDENTITY }}
+        run: cargo run -p xtask -- release ios
+      - name: Remove iOS release credentials before third-party artifact processing
+        if: always()
+        run: |
+          expected_release_dir="$RUNNER_TEMP/picoo-ios-release"
+          release_keychain="${PICOO_IOS_RELEASE_KEYCHAIN:-$expected_release_dir/picoo-signing.keychain-db}"
+          if [[ -n "${PICOO_IOS_ORIGINAL_KEYCHAIN:-}" ]]; then
+            security list-keychains -d user -s "$PICOO_IOS_ORIGINAL_KEYCHAIN" || true
+          fi
+          if [[ -f "$release_keychain" ]]; then
+            security delete-keychain "$release_keychain" || true
+          fi
+          if [[ -n "${PICOO_IOS_INSTALLED_PROFILE:-}" && -f "$PICOO_IOS_INSTALLED_PROFILE" ]]; then
+            rm -f -- "$PICOO_IOS_INSTALLED_PROFILE"
+          fi
+          if [[ -d "$expected_release_dir" ]]; then
+            rm -rf -- "$expected_release_dir"
+          fi
+      - name: Generate SPDX SBOM for signed iOS release
+        uses: anchore/sbom-action@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
+        with:
+          path: target/apple/PicooCamera-iOS.ipa
+          format: spdx-json
+          output-file: target/apple/ios-release.spdx.json
+      - name: Attest signed iOS release provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: target/apple/PicooCamera-iOS.ipa
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-signed-app-store-release
+          path: |
+            target/apple/PicooCamera-iOS.ipa
+            target/apple/ios-release.spdx.json
+          if-no-files-found: error
+      - name: Ensure iOS release credentials are absent
+        if: always()
+        run: |
+          expected_release_dir="$RUNNER_TEMP/picoo-ios-release"
+          release_keychain="${PICOO_IOS_RELEASE_KEYCHAIN:-$expected_release_dir/picoo-signing.keychain-db}"
+          if [[ -n "${PICOO_IOS_ORIGINAL_KEYCHAIN:-}" ]]; then
+            security list-keychains -d user -s "$PICOO_IOS_ORIGINAL_KEYCHAIN" || true
+          fi
+          if [[ -f "$release_keychain" ]]; then
+            security delete-keychain "$release_keychain" || true
+          fi
+          if [[ -n "${PICOO_IOS_INSTALLED_PROFILE:-}" && -f "$PICOO_IOS_INSTALLED_PROFILE" ]]; then
+            rm -f -- "$PICOO_IOS_INSTALLED_PROFILE"
           fi
           if [[ -d "$expected_release_dir" ]]; then
             rm -rf -- "$expected_release_dir"

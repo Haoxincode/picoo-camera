@@ -4,7 +4,7 @@
 
 Requirements 是代码实现、单元测试和验收测试的直接映射层。
 
-当前实现审查包含两类证据：**Android Sender + Windows Receiver** 的功能实现与产物验证，以及 **iOS Sender + macOS Receiver** 的 Apple 原生边界实现。iOS SwiftUI 设备流程、发现/手动直连、AVFoundation 420v 采集、VideoToolbox 硬件 H.264 与 Rust FFI 媒体入口，以及 macOS VideoToolbox→NV12 解码已进入 `implemented`；macOS Camera Extension 的 Rust Host 激活/停用边界与签名、公证流水线已进入仓库。iPhone→macOS 真机媒体验收、使用真实 Developer ID 凭据的首次 release 绿测、Camera Extension 用户批准/重启枚举和会议软件验收仍按对应 Requirement 独立推进。
+当前实现审查包含两类证据：**Android Sender + Windows Receiver** 的功能实现与产物验证，以及 **iOS Sender + macOS Receiver** 的 Apple 原生边界实现。iOS SwiftUI 设备流程、发现/手动直连、AVFoundation 420v 采集、VideoToolbox 硬件 H.264 与 Rust FFI 媒体入口，以及 macOS VideoToolbox→NV12 解码已进入 `implemented`；macOS Camera Extension 的 Rust Host 激活/停用边界与四平台受保护签名、Apple 公证、SBOM/provenance 流水线已进入仓库。iPhone→macOS 真机媒体验收、使用真实保护凭据的首次 release 绿测、覆盖安装、Camera Extension 用户批准/重启枚举和会议软件验收仍按对应 Requirement 独立推进。
 
 ## ID 状态
 

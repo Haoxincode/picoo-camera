@@ -4,6 +4,13 @@ use xshell::{cmd, Shell};
 
 use super::{apple_bundle_versions, archive_apple_bundle, cargo_target_dir};
 
+pub(crate) fn release() -> Result<()> {
+    super::ios_sign::validate_ios_release_environment()?;
+    let sh = Shell::new()?;
+    build_ios(&sh)?;
+    super::ios_sign::archive_sign_and_export_ios(&sh)
+}
+
 pub(crate) fn build_ios(sh: &Shell) -> Result<()> {
     if !cfg!(target_os = "macos") {
         bail!("iOS Core must be built on a macOS host with Xcode");

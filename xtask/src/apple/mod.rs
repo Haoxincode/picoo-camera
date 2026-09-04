@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use xshell::{cmd, Shell};
 
 pub(crate) mod ios;
+mod ios_sign;
 pub(crate) mod macos;
 pub(crate) mod macos_sign;
 pub(crate) mod macos_validate;

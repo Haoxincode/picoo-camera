@@ -29,7 +29,7 @@ Cloud Agent（Linux）
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
 ├── windows-latest  → GPUI 桌面、MF 解码、Virtual Camera DLL、安装包
-└── macos-26 ARM64 → GPUI 桌面、CMIO Camera Extension、iOS Rust XCFramework 与 SwiftUI App；release workflow 负责 macOS 签名/公证，Apple 真机链路另行验收
+└── macos-26 ARM64 → GPUI 桌面、CMIO Camera Extension、iOS Rust XCFramework 与 SwiftUI App；release workflow 负责 macOS 签名/公证与 iOS App Store 签名导出，Apple 真机链路另行验收
 ```
 
 ## GitHub Actions Runner 矩阵
@@ -45,7 +45,8 @@ GitHub Actions
 | `Windows VCam host contract` | `self-hosted, Windows, X64, picoo-vcam`（专用管理员 Win11 client） | MSI 安装/repair/卸载、exact-link 枚举、MF Source 激活与 Start/Stop/Shutdown | `cargo xtask package windows`、`scripts/test_windows_vcam_host.ps1` |
 | `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
-| `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 | 递增 Host/Extension 版本；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
+| `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 + `apple-release` protected Environment | workspace SemVer 与递增 Host/Extension build；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple；SBOM/provenance | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
+| `Apple Release / ios` | `macos-26` ARM64 + Xcode 26.6 + `apple-release` protected Environment | workspace SemVer 与递增 build；Apple Distribution/App Store profile 绑定；Archive→IPA；签名、Team/Bundle/version/arm64/entitlements/profile 复核；SBOM/provenance | `cargo xtask release ios`；首次真实凭据绿测、App Store Connect 与真机覆盖安装仍是独立验收 |
 | `Windows Release` | `windows-latest` + `windows-release` protected Environment | 固定 Authenticode identity 签署三个 PE 与内嵌这些 PE 的 MSI，核验 timestamp/signer/version，生成 SBOM/provenance | `cargo xtask release windows` |
 
 Nightly validation 使用 `nightly-2026-09-03`，并由 `xtask` 持有同一常量；更新 Miri 或
@@ -62,7 +63,7 @@ Foundation Frame Server 的专用 Windows 11 client runner。脚本要求 runner
 
 - `android` / `windows` / `macos` / `ios` 与 `rust-and-docs` **并行**：平台产物不等待通用测试矩阵；同一 ref 的新 push 仍由 concurrency 取消旧 run。
 - 各 job 通过 `actions/upload-artifact` 上传产物（APK、MSI、DLL 等），供人工验证或后续 release workflow 消费。
-- 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android Debug 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。Android 正式 APK/AAB 只由 `release-android.yml` 在受保护 Environment 中注入稳定 keystore 后调用 `xtask package android`；Gradle 遇到任意 Release task 且签名输入不完整时立即失败。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File`、`InstallExecuteSequence` 与 `CustomAction` 表，强制 late MajorUpgrade 的受限窗口只包含 `RemoveExistingProducts`，并运行 ICE27/ICE63/ICE77。最终虚拟摄像头注册在 `InstallExecute` 前写入 commit script，于旧产品移除并成功提交后执行。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。macOS 签名发布仍可用经过校验的 `PICOO_RELEASE_BUILD_NUMBER` 显式覆盖普通 CI 构建号。
+- 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android Debug 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。Android 正式 APK/AAB 只由 `release-android.yml` 在受保护 Environment 中注入稳定 keystore 后调用 `xtask package android`；Gradle 遇到任意 Release task 且签名输入不完整时立即失败。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File`、`InstallExecuteSequence` 与 `CustomAction` 表，强制 late MajorUpgrade 的受限窗口只包含 `RemoveExistingProducts`，并运行 ICE27/ICE63/ICE77。最终虚拟摄像头注册在 `InstallExecute` 前写入 commit script，于旧产品移除并成功提交后执行。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。Apple Release 始终复核 tag 与 workspace SemVer 一致，并以显式正整数 `PICOO_RELEASE_BUILD_NUMBER` 覆盖普通 CI 构建号。
 - **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
 
@@ -126,6 +127,12 @@ Apple 基线保持三个独立 artifact：
 
 `xtask build ios` 使用 Cargo 编译 ARM64 `picoo-ffi` staticlib，将最终 Apple 产品稳定输出到仓库 `target/apple/`，再由 iPhone Simulator SDK 的 Clang 完整链接一次 C ABI smoke、由 `xcodebuild -create-xcframework` 组合 device/simulator 产物并编译 SwiftUI App。上传前使用 macOS `ditto` 生成保留 bundle 外层目录、权限和符号链接的 zip。`xtask test ios` 按数值版本选择 runner 上最新的可用 iPhone Simulator，执行 Swift Testing 覆盖 Rust Sender handle 生命周期、手动 Endpoint、UI 状态映射和编码策略。iOS 工程使用 Swift 6 语言模式、strict concurrency、默认 `MainActor` 与 Swift Observation；构建固定 iOS 18.0 deployment target，macOS Receiver 固定 15.0，不随 runner 的 Xcode SDK 默认值漂移。Apple 产物不包含 Intel 架构，整条路径不引入 CocoaPods、Carthage、CMake、第三方 Swift Package 或额外项目生成器。
 
+### Apple 正式发布边界
+
+`release-apple.yml` 的 macOS 与 iOS job 独立运行，但共享 workspace SemVer 和受保护 `apple-release` Environment。手动触发只输入递增 build number；tag 触发要求 `vX.Y.Z` 与 workspace SemVer 完全一致并使用 `github.run_number`。macOS job 生成 Developer ID 签名、公证并 staple 的 zip；iOS job 生成 Apple Distribution 签名并绑定 App Store profile 的 device ARM64 IPA。两个 job 都在调用第三方 SBOM Action 前恢复 Keychain 搜索列表并删除临时 Keychain、P12、profile 和 Notary key，然后分别生成 SPDX JSON 与 GitHub build provenance。
+
+`cargo xtask release ios` 不依赖 workflow 对身份正确性的声明：它会独立校验 Apple Team ID、Distribution identity、profile 有效期/平台/分发类型/Bundle entitlement/授权证书，并在导出 IPA 后再次检查实际 signer leaf、Team、Bundle、marketing/build version、arm64 slice、effective distribution entitlements 与 embedded profile UUID。`cargo xtask release macos` 同样保留 Developer ID、Hardened Runtime、secure timestamp、profile capability、公证和 Gatekeeper 门禁。保护凭据首次绿测、App Store Connect 校验、覆盖安装以及 macOS Camera Extension 真机激活仍需单独记录，不能由无签名 CI 或静态验证替代。
+
 ## 为何 Windows 不在 Linux 上交叉编译
 
 按 [ARCH-PICOO-UI-001](../design-specs/architecture/0009-desktop-gpui-mobile-native-ui-boundary.md)、[ARCH-PICOO-MEDIA-001](../design-specs/architecture/0004-cross-platform-media-pipeline-boundary.md) 与 [ARCH-PICOO-VCAM-001](../design-specs/architecture/0007-virtual-camera-platform-boundary.md)：
@@ -163,8 +170,10 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 | `APPLE_TEAM_ID` / `APPLE_MACOS_SIGNING_IDENTITY` | 校验并选择 Host/Extension 共用签名团队与 identity | macOS 发布 |
 | `APPLE_MACOS_HOST_PROFILE_BASE64` / `APPLE_MACOS_EXTENSION_PROFILE_BASE64` | 授权 Host 与 Camera Extension 的 Bundle ID、App Group 和 System Extension capability | macOS 发布 |
 | `APPLE_NOTARY_KEY_BASE64` / `APPLE_NOTARY_KEY_ID` / `APPLE_NOTARY_ISSUER_ID` | `notarytool` App Store Connect API Key | macOS 发布 |
+| `APPLE_IOS_DISTRIBUTION_P12_BASE64` / `APPLE_IOS_DISTRIBUTION_P12_PASSWORD` / `APPLE_IOS_SIGNING_IDENTITY` | 导入并固定 Apple Distribution identity | iOS App Store 发布 |
+| `APPLE_IOS_APP_STORE_PROFILE_BASE64` | 授权 `com.picoo.camera` 且绑定 Distribution certificate 的 App Store profile | iOS App Store 发布 |
 
-Apple Release 手动触发时还必须填写一至三段数字的 marketing version 与严格递增的正整数 build number；tag `vX.Y.Z` 触发时从 tag 取得 marketing version，并使用单调递增的 GitHub run number 作为 build number。两者分别注入 `PICOO_RELEASE_VERSION` 与 `PICOO_RELEASE_BUILD_NUMBER`，不是 secret。
+Apple Release 的 marketing version 只来自 workspace SemVer，不提供手工覆盖。手动触发必须填写严格递增的正整数 build number；tag `vX.Y.Z` 触发时必须与 workspace version 一致，并使用单调递增的 GitHub run number。两者分别注入 `PICOO_RELEASE_VERSION` 与 `PICOO_RELEASE_BUILD_NUMBER`，不是 secret。
 
 未配置签名 secret 时，普通 CI 仍产出 `com.picoo.camera.debug` Debug APK；不得产出使用 debug key
 冒充正式身份的 Release APK/AAB。
@@ -179,6 +188,8 @@ desktop、ring reader 和 VCam DLL，再用已签 PE 重建 MSI 并签署 MSI。
 第三方 artifact 处理前删除，并由 `always()` 清理再次兜底。普通 Windows CI 产物仍明确是
 未签名的工程验证包。
 
+Apple Release 把 Developer ID 或 Apple Distribution P12 只导入临时 Keychain；iOS profile 以签名内容中的 UUID 安装，避免依赖可漂移文件名。`xtask` 复核 profile 对实际 leaf certificate 的授权关系。临时 Keychain、P12、profile、Notary key 在 Syft 等第三方 artifact 处理前删除，并由 `always()` 清理再次兜底。普通 Apple CI 仍只生成无签名构建基线。
+
 ## 与 xtask 的边界
 
 - **xtask**（见 ARCH-PICOO-STACK-001）：封装各平台 build/package 命令，供本地与 CI 统一调用。
@@ -192,6 +203,7 @@ desktop、ring reader 和 VCam DLL，再用已签 PE 重建 MSI 并签署 MSI。
 | Rust 单元/集成/协议测试 | `ubuntu-latest`（Cloud Agent 本地亦可） |
 | Android 安装与采集发送 | CI artifact + 真机（人工或后续设备 farm） |
 | Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建/静态契约 + 专用 self-hosted Win11 Host Contract；系统相机 UI 与会议软件仍人工验证 |
+| Apple 正式签名产物 | 受保护 `Apple Release` workflow；真实凭据首次绿测、iOS 覆盖安装/App Store Connect 与 macOS 扩展激活仍需真机验收 |
 | 会议软件（Zoom/Teams 等）兼容性 | 不在 CI 内自动化；[会议软件验收清单](../design-specs/verification/vcam-meeting-apps.md) |
 | Android→Windows 真机 E2E | [真机 E2E 清单](../design-specs/verification/device-e2e-android-win11.md) |
 

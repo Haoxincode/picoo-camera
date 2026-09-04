@@ -1,6 +1,6 @@
 # CI 产物下载与目录结构
 
-> 映射 **REQ-PICOO-STACK-005 / REQ-PICOO-STACK-007**。Workflow：`.github/workflows/ci.yml`
+> 映射 **REQ-PICOO-STACK-005 / REQ-PICOO-STACK-007 / REQ-PICOO-STACK-008**。普通构建 Workflow：`.github/workflows/ci.yml`；正式发布 Workflow：`release-android.yml`、`release-windows.yml`、`release-apple.yml`。
 
 ## 最近绿 run（四平台构建基线）
 
@@ -57,8 +57,10 @@ gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
 | `macos-app-unsigned` | 待 CI 记录 | `PicooCamera-macOS-unsigned.zip` + `PicooCamera-macOS.entitlements` | macOS 15+ ARM64 Host `.app` 与已展开签名输入 scaffold；未签名、未公证、不可激活 |
 | `ios-rust-core-xcframework` | ~30 MB | `PicooCore.xcframework.zip` | iOS 18+ ARM64 device/simulator Rust C ABI；解压后保留 `.xcframework` 外层目录 |
 | `ios-app-unsigned` | ~2.5 MB | `PicooCamera.app.zip` | iOS 18+ ARM64 Simulator SwiftUI/C ABI 编译基线；解压后保留 `.app` 与执行权限，不可安装到真机 |
+| `macos-signed-notarized-release` | 待首次发布记录 | `PicooCamera-macOS.zip` + `macos-release.spdx.json` | Developer ID 签名、Hardened Runtime、公证并 staple 的正式 macOS 产物；zip 另附 GitHub provenance |
+| `ios-signed-app-store-release` | 待首次发布记录 | `PicooCamera-iOS.ipa` + `ios-release.spdx.json` | Apple Distribution 签名并绑定 App Store profile 的 device ARM64 IPA；IPA 另附 GitHub provenance |
 
-Apple artifact 只证明原生链接、SwiftUI App、macOS Host/Camera Extension 结构和边界打包成功。设备/配对 UI、签名、公证、系统扩展激活和真机媒体链路必须继续由对应 Requirement 验收。
+普通 CI 的 Apple artifact 只证明原生链接、SwiftUI App、macOS Host/Camera Extension 结构和边界打包成功。受保护 Release artifact 增加签名、身份与公证门禁，但系统扩展激活、覆盖安装、App Store Connect 和真机媒体链路仍必须由对应 Requirement 验收。
 
 ### `macos-app-unsigned` 解压后布局
 
@@ -129,4 +131,4 @@ versionName 与 versionCode；缺少任一签名输入时 Gradle Release task �
 
 ## 签名说明
 
-当前 CI 产出为 **debug/未商店签名**（Android release 使用 debug keystore；Windows MSI 无 Authenticode）。功能验证足够；对外发布前需配置 GitHub Secrets 签名（见 [ci-and-build.md](../../development/ci-and-build.md) §Secrets）。
+普通 `ci.yml` 只产出 Debug Android 与未签名 Windows/Apple 工程验证包。稳定发行身份仅由三个受保护 Release workflow 注入：Android 固定 keystore、Windows Authenticode certificate、macOS Developer ID + Notary、iOS Apple Distribution + App Store profile。所有正式产物附 SPDX SBOM 与 GitHub provenance；保护凭据首次绿测和真实覆盖升级仍需另行记录（见 [ci-and-build.md](../../development/ci-and-build.md) §Secrets）。
