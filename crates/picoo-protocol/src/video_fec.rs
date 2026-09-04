@@ -173,4 +173,16 @@ mod tests {
         assert_eq!(rebuilt[1].as_deref(), Some(owned[1]));
         assert_eq!(rebuilt[2].as_deref(), Some(owned[2]));
     }
+
+    #[test]
+    fn one_transmitted_parity_recovers_one_missing_data_shard() {
+        let owned = [b"aaaa".as_slice(), b"bbbb", b"cc"];
+        let parity = make_fec_parity(0, &owned).expect("parity");
+        let data = [Some(owned[0]), None, Some(owned[2])];
+        let parity_refs = [Some(parity[0].bytes.as_slice()), None];
+        let rebuilt = reconstruct_fec_group(&data, &parity_refs, 2).expect("reconstruct");
+        assert_eq!(rebuilt[0].as_deref(), Some(owned[0]));
+        assert_eq!(rebuilt[1].as_deref(), Some(owned[1]));
+        assert_eq!(rebuilt[2].as_deref(), Some(owned[2]));
+    }
 }

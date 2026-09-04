@@ -77,11 +77,15 @@ VideoPacket {
 入队前拒绝更大的 AU；Receiver 最多并行保留 8 个不完整 AU，因此真实 480p/720p/1080p
 IDR 不会被早期 16 片测试上限误丢弃，同时异常 `fragment_count` 仍有明确内存边界。
 
-每个 AU 的系统数据片按最多 6 片组成一个平衡组；每组额外生成 2 个 Reed-Solomon 校验片。Sender
-按 shard position 在各组间轮转数据片，然后才发送校验片：这样连续丢包会分散到不同恢复组，而
-健康路径能先用原始数据完成 AU，不会把正常在途尾片误当成丢失并消耗重建 CPU。
+每个 AU 的系统数据片按最多 6 片组成一个平衡组；每组按最近一次 ReceiverStats 的损伤与帧重要性
+自适应生成 0、1 或 2 个 Reed-Solomon 校验片。健康链路的普通 delta 使用 0 parity，1% 至 3%
+可观测片损伤使用 1 parity，3% 以上使用 2 parity；负责修复参考链的 IDR 始终使用 2 parity。
+Sender 按 shard position 在各组间轮转数据片，然后才发送校验片：这样连续丢包会分散到不同恢复组，
+而健康路径能先用原始数据完成 AU，不会固定承担 33% payload 开销，也不会把正常在途尾片误当成
+丢失并消耗重建 CPU。
 校验片复用 `fragment_index` 表示组起点，payload 前缀携带校验片序号与组内最后一个数据片长度。
-Receiver 在 deadline 前收到足够片时，最多恢复组内任意 2 个缺片，不等待 RTT、不重传旧视频。
+Receiver 在 deadline 前收到足够片时，按实际收到的 parity 数恢复组内最多 2 个缺片，不等待 RTT、
+不重传旧视频。
 无丢片时数据片优先完成 AU，迟到校验片由 terminal tombstone 忽略；超过恢复能力仍丢弃整帧。
 
 `SenderStats` 每秒通过可靠控制流上报完整 AU 提交数、Datagram 提交数、Sender 队列龄与整帧丢弃、

@@ -4,10 +4,9 @@
 //! control messages reliably. Used to prove the session stays usable under ~5% loss.
 
 use bytes::Bytes;
-use picoo_protocol::VideoPacket;
 use picoo_transport::{
     ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
-    TransportEvent, TransportLinkStats,
+    TransportEvent, TransportLinkStats, VideoDatagramBatch,
 };
 
 /// Deterministic LCG so loss patterns are reproducible in CI.
@@ -79,17 +78,27 @@ impl<T: PicooTransport> PicooTransport for LossyVideoTransport<T> {
         self.inner.send_control(session, message)
     }
 
-    fn send_video(
+    fn send_video_batch(
         &mut self,
         session: SessionId,
-        packet: VideoPacket,
+        batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
-        self.attempted_video += 1;
-        if self.should_drop() {
-            self.dropped_video += 1;
-            return Ok(());
+        let mut forwarded = Vec::with_capacity(batch.len());
+        for datagram in batch.into_datagrams() {
+            self.attempted_video += 1;
+            if self.should_drop() {
+                self.dropped_video += 1;
+            } else {
+                forwarded.push(datagram);
+            }
         }
-        self.inner.send_video(session, packet)
+        if forwarded.is_empty() {
+            Ok(())
+        } else {
+            let batch = VideoDatagramBatch::new(forwarded)
+                .map_err(|error| TransportError::SendFailed(error.to_string()))?;
+            self.inner.send_video_batch(session, batch)
+        }
     }
 
     fn poll_event(&mut self) -> Option<TransportEvent> {
@@ -113,7 +122,7 @@ impl<T: PicooTransport> PicooTransport for LossyVideoTransport<T> {
 mod tests {
     use super::*;
     use crate::MemoryTransport;
-    use picoo_protocol::VideoPacketFlags;
+    use picoo_protocol::{VideoPacket, VideoPacketFlags};
 
     #[test]
     fn drops_approximately_five_percent() {
@@ -134,7 +143,13 @@ mod tests {
                 flags: VideoPacketFlags::empty(),
                 payload: Bytes::from_static(b"x"),
             };
-            transport.send_video(session, packet).expect("send");
+            let datagram = packet.encode().expect("encode");
+            transport
+                .send_video_batch(
+                    session,
+                    VideoDatagramBatch::new(vec![datagram]).expect("valid batch"),
+                )
+                .expect("send");
         }
         let ratio = transport.observed_drop_ratio();
         assert!(

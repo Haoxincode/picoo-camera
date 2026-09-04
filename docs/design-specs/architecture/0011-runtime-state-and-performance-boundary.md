@@ -153,6 +153,12 @@ C/C++ 构建与 ABI 维护；`fast_image_resize` 不直接表达 NV12 双平面 
 分配一个紧凑缓冲并直接写入最终方向。若未来 resize 与方向处理需要统一 SIMD pipeline，再依据
 profile 重新评审 `libyuv`，不得仅因为已有自研代码而拒绝迁移。
 
+FEC 继续采用已有 `reed-solomon-erasure 6.0.0`：该 crate 为 MIT 许可、纯 Rust、覆盖当前全部目标，
+其系统码语义允许 Receiver 保持两槽恢复矩阵，同时让 Sender 只发送当前策略需要的 parity。Picoo
+只自行维护 AU 分组、重要性策略和 Datagram 调度这些产品特有边界，不重复实现有限域编码。发送热
+路径把原生借用 AU 复制到可复用的 Rust backing buffer，复用 fragment descriptor 容量，并直接
+生成最终 wire Datagram；Transport 只接收完整 AU batch，不再次创建 `VideoPacket` 或编码 payload。
+
 ## 验证边界
 
 建立使用虚拟时钟的 `picoo-sim`：Scripted Camera/Encoder → Sender Core → Simulated Transport →

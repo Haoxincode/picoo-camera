@@ -52,9 +52,10 @@ occupancy 在 30 FPS 下天然以约 33.3 ms 离散变化，不能当成 target�
 
 ### 丢包处理
 
-Receiver 在判定 AU 不完整前，先按 PCP 的平衡 6+2 Reed-Solomon 组尝试就地恢复。每组最多
-6 个数据片和 2 个校验片，可在不等待重传的情况下恢复任意 2 个缺失数据片；FEC 无法恢复时才进入
-下列丢帧与参考链恢复语义。桌面诊断同时显示 FEC 已恢复 fragment 累计值和 FEC 后残余丢片，避免
+Receiver 在判定 AU 不完整前，先按 PCP 的平衡 Reed-Solomon 组尝试就地恢复。每组最多 6 个数据片，
+Sender 根据最近可观测损伤和帧重要性发送 0、1 或 2 个校验片，可在不等待重传的情况下恢复与实际
+parity 数相同数量的缺失数据片；FEC 无法恢复时才进入下列丢帧与参考链恢复语义。桌面诊断同时显示
+FEC 已恢复 fragment 累计值和 FEC 后残余丢片，避免
 把“已修复的损伤”误判为健康网络。
 
 ```text
@@ -110,7 +111,8 @@ Quinn Datagram receive buffer 为 2 MiB，send buffer 仅为 256 KiB；send buff
 
 Receiver 每秒向 Sender 发送 `ReceiverStats`：
 
-`RTT`、`packet_loss`、`jitter`、`reassembly_drop`、`decoder_drop`、`frame_age`、`receive_bitrate`、
+`RTT`、FEC 后残余 `packet_loss`、`pre_fec_packet_loss`、`jitter`、`reassembly_drop`、
+`decoder_drop`、`frame_age`、`receive_bitrate`、
 `jitter_buffer_target`、`jitter_buffer_actual_delay`、`jitter_buffer_occupancy`
 
 Sender 每秒向 Receiver 发送 `SenderStats`：
@@ -131,6 +133,8 @@ packet sequence 前无法由该指标观察，因此该指标不是 transport-wi
 `lost_packets / sent_packets` 只描述本端发出的包；在 Receiver 端它主要是控制流，不能作为
 Android 视频丢包率反馈给 ABR。未建立双端时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；
 Receiver 解码完成后的本地 `frame_age` 不得与 RTT 相加并标成端到端延迟。
+`pre_fec_packet_loss` 在同一分母上把成功恢复的 fragment 也计入原始缺片，只用于选择 FEC 强度；
+ABR 和 UI 健康仍读取 FEC 后的 `packet_loss`，避免把已经修复的无线损伤误报为实际媒体损失。
 
 控制策略：
 

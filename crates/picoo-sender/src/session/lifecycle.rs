@@ -209,7 +209,9 @@ impl<T: PicooTransport> SenderSession<T> {
             access_units: pipeline.access_units,
             submitted_datagrams: self.sent_datagrams,
             video_queue_age_ms: link.video_queue_age_ms,
-            video_dropped_access_units: link.video_dropped_access_units,
+            video_dropped_access_units: link
+                .video_dropped_access_units
+                .saturating_add(pipeline.dropped_access_units),
             quic_lost_packets: link.lost_packets,
             quic_sent_packets: link.sent_packets,
             video_buffered_bytes: link.video_buffered_bytes,

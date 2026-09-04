@@ -3,8 +3,9 @@ use super::*;
 use std::collections::VecDeque;
 
 use bytes::Bytes;
-use picoo_protocol::VideoPacket;
-use picoo_transport::{ChannelBinding, PicooTransport, TransportError, TransportEvent};
+use picoo_transport::{
+    ChannelBinding, PicooTransport, TransportError, TransportEvent, VideoDatagramBatch,
+};
 
 pub(super) use std::time::Duration;
 
@@ -73,10 +74,10 @@ impl PicooTransport for MemoryTransport {
         }
     }
 
-    fn send_video(
+    fn send_video_batch(
         &mut self,
         session: SessionId,
-        _packet: VideoPacket,
+        _batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
         if self.connected == Some(session) {
             Ok(())
@@ -227,10 +228,10 @@ impl PicooTransport for DeferredConnectTransport {
         Ok(())
     }
 
-    fn send_video(
+    fn send_video_batch(
         &mut self,
         _session: SessionId,
-        _packet: VideoPacket,
+        _batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
         Ok(())
     }
@@ -267,10 +268,10 @@ impl PicooTransport for RejectConnectTransport {
         Err(TransportError::NotConnected)
     }
 
-    fn send_video(
+    fn send_video_batch(
         &mut self,
         _session: SessionId,
-        _packet: VideoPacket,
+        _batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
         Err(TransportError::NotConnected)
     }

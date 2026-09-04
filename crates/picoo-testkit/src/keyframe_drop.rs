@@ -7,7 +7,7 @@ use bytes::Bytes;
 use picoo_protocol::{VideoPacket, VideoPacketFlags};
 use picoo_transport::{
     ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
-    TransportEvent, TransportLinkStats,
+    TransportEvent, TransportLinkStats, VideoDatagramBatch,
 };
 
 /// When armed, drops non-zero-index fragments of keyframe access units.
@@ -54,37 +54,24 @@ impl<T: PicooTransport> PicooTransport for DropKeyframeTailTransport<T> {
         self.inner.send_control(session, message)
     }
 
-    fn send_video(
-        &mut self,
-        session: SessionId,
-        packet: VideoPacket,
-    ) -> Result<(), TransportError> {
-        let is_key_tail = packet.flags.contains(VideoPacketFlags::KEYFRAME)
-            && packet.fragment_index > 0
-            && packet.fragment_count > 1;
-        if self.armed && is_key_tail {
-            self.dropped_tail_fragments += 1;
-            return Ok(());
-        }
-        self.forwarded_video += 1;
-        self.inner.send_video(session, packet)
-    }
-
     fn send_video_batch(
         &mut self,
         session: SessionId,
-        packets: Vec<VideoPacket>,
+        batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
-        let mut forwarded = Vec::with_capacity(packets.len());
-        for packet in packets {
-            let is_key_tail = packet.flags.contains(VideoPacketFlags::KEYFRAME)
-                && packet.fragment_index > 0
-                && packet.fragment_count > 1;
+        let mut forwarded = Vec::with_capacity(batch.len());
+        for datagram in batch.into_datagrams() {
+            let packet = VideoPacket::decode_bytes(datagram.clone()).ok();
+            let is_key_tail = packet.as_ref().is_some_and(|packet| {
+                packet.flags.contains(VideoPacketFlags::KEYFRAME)
+                    && packet.fragment_index > 0
+                    && packet.fragment_count > 1
+            });
             if self.armed && is_key_tail {
                 self.dropped_tail_fragments += 1;
             } else {
                 self.forwarded_video += 1;
-                forwarded.push(packet);
+                forwarded.push(datagram);
             }
         }
         if forwarded.is_empty() {
@@ -92,7 +79,9 @@ impl<T: PicooTransport> PicooTransport for DropKeyframeTailTransport<T> {
         } else {
             // Preserve the inner transport's one-command-per-access-unit
             // backpressure boundary after applying deterministic packet loss.
-            self.inner.send_video_batch(session, forwarded)
+            let batch = VideoDatagramBatch::new(forwarded)
+                .map_err(|error| TransportError::SendFailed(error.to_string()))?;
+            self.inner.send_video_batch(session, batch)
         }
     }
 
@@ -147,8 +136,9 @@ mod tests {
             fragment_count: 2,
             payload: Bytes::from_static(b"k1"),
         };
-        t.send_video(session, head).unwrap();
-        t.send_video(session, tail).unwrap();
+        let batch =
+            VideoDatagramBatch::new(vec![head.encode().unwrap(), tail.encode().unwrap()]).unwrap();
+        t.send_video_batch(session, batch).unwrap();
         assert_eq!(t.dropped_tail_fragments, 1);
         assert_eq!(t.forwarded_video, 1);
     }
@@ -180,8 +170,9 @@ mod tests {
             ..head.clone()
         };
 
-        t.send_video_batch(session, vec![head, tail])
-            .expect("filtered batch");
+        let batch =
+            VideoDatagramBatch::new(vec![head.encode().unwrap(), tail.encode().unwrap()]).unwrap();
+        t.send_video_batch(session, batch).expect("filtered batch");
 
         assert_eq!(t.dropped_tail_fragments, 1);
         assert_eq!(t.forwarded_video, 1);

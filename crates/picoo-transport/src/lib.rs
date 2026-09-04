@@ -8,7 +8,7 @@ mod receiver;
 mod sender;
 
 use bytes::Bytes;
-use picoo_protocol::VideoPacket;
+use picoo_protocol::{VideoPacket, MAX_DATAGRAM_SIZE};
 use thiserror::Error;
 
 pub use control_framing::{
@@ -46,6 +46,72 @@ pub enum ClientNetworkBinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SessionId(pub u64);
+
+/// One complete encoded access unit ready for unreliable QUIC transmission.
+///
+/// The packetizer creates final wire bytes exactly once. The transport keeps
+/// the AU boundary explicit so application and Quinn backpressure can only
+/// accept or reject the complete frame (REQ-PICOO-MEDIA-020).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VideoDatagramBatch {
+    datagrams: Vec<Bytes>,
+    encoded_bytes: usize,
+    keyframe: bool,
+}
+
+#[derive(Debug, Error, PartialEq, Eq)]
+pub enum VideoDatagramBatchError {
+    #[error("video datagram batch must contain one complete access unit")]
+    Empty,
+    #[error("video datagram exceeds maximum size of {MAX_DATAGRAM_SIZE} bytes")]
+    DatagramTooLarge,
+    #[error("invalid video datagram: {0}")]
+    InvalidDatagram(#[from] picoo_protocol::VideoPacketError),
+}
+
+impl VideoDatagramBatch {
+    pub fn new(datagrams: Vec<Bytes>) -> Result<Self, VideoDatagramBatchError> {
+        if datagrams.is_empty() {
+            return Err(VideoDatagramBatchError::Empty);
+        }
+        if datagrams.iter().any(|item| item.len() > MAX_DATAGRAM_SIZE) {
+            return Err(VideoDatagramBatchError::DatagramTooLarge);
+        }
+        let keyframe = VideoPacket::decode_bytes(datagrams[0].clone())?
+            .flags
+            .contains(picoo_protocol::VideoPacketFlags::KEYFRAME);
+        let encoded_bytes = datagrams.iter().map(Bytes::len).sum();
+        Ok(Self {
+            datagrams,
+            encoded_bytes,
+            keyframe,
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.datagrams.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.datagrams.is_empty()
+    }
+
+    pub fn encoded_bytes(&self) -> usize {
+        self.encoded_bytes
+    }
+
+    pub fn is_keyframe(&self) -> bool {
+        self.keyframe
+    }
+
+    pub fn datagrams(&self) -> &[Bytes] {
+        &self.datagrams
+    }
+
+    pub fn into_datagrams(self) -> Vec<Bytes> {
+        self.datagrams
+    }
+}
 
 /// RFC 5705/8446 exporter bytes unique to one QUIC TLS connection.
 pub type ChannelBinding = [u8; 32];
@@ -119,20 +185,13 @@ impl TransportLinkStats {
 pub trait PicooTransport {
     fn connect(&mut self, endpoint: Endpoint) -> Result<SessionId, TransportError>;
     fn send_control(&mut self, session: SessionId, message: Bytes) -> Result<(), TransportError>;
-    fn send_video(&mut self, session: SessionId, packet: VideoPacket)
-        -> Result<(), TransportError>;
     /// Queue one encoded access unit atomically. Implementations with a lossy
     /// transport must drop the whole batch rather than leaving a partial frame.
     fn send_video_batch(
         &mut self,
         session: SessionId,
-        packets: Vec<VideoPacket>,
-    ) -> Result<(), TransportError> {
-        for packet in packets {
-            self.send_video(session, packet)?;
-        }
-        Ok(())
-    }
+        batch: VideoDatagramBatch,
+    ) -> Result<(), TransportError>;
     fn poll_event(&mut self) -> Option<TransportEvent>;
     fn close(&mut self, session: SessionId, reason: CloseReason);
     fn channel_binding(&self, session: SessionId) -> Result<ChannelBinding, TransportError>;
@@ -156,5 +215,21 @@ mod link_stats_tests {
             ..Default::default()
         };
         assert!((stats.sent_loss_ratio() - 0.05).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn video_batch_rejects_empty_and_oversized_datagrams() {
+        assert_eq!(
+            VideoDatagramBatch::new(Vec::new()),
+            Err(VideoDatagramBatchError::Empty)
+        );
+        assert_eq!(
+            VideoDatagramBatch::new(vec![Bytes::from(vec![0; MAX_DATAGRAM_SIZE + 1])]),
+            Err(VideoDatagramBatchError::DatagramTooLarge)
+        );
+        assert!(matches!(
+            VideoDatagramBatch::new(vec![Bytes::from_static(b"short")]),
+            Err(VideoDatagramBatchError::InvalidDatagram(_))
+        ));
     }
 }

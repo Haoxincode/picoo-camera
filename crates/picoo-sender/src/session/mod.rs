@@ -101,6 +101,9 @@ pub struct SenderSession<T: PicooTransport> {
     requested_preferred_height: u32,
     last_bitrate_action: BitrateAction,
     last_receiver_stats: Option<MetricsReceiverStats>,
+    /// Raw video-fragment loss before successful FEC recovery. Kept separate
+    /// from residual packet loss so FEC and ABR do not feed back on each other.
+    pre_fec_packet_loss: f64,
     pending_stream_config: Option<StreamConfigParams>,
     receiver_capabilities: Option<Capabilities>,
     stream_config_sent: bool,
@@ -156,6 +159,7 @@ impl<T: PicooTransport> SenderSession<T> {
             requested_preferred_height: 1080,
             last_bitrate_action: BitrateAction::Hold,
             last_receiver_stats: None,
+            pre_fec_packet_loss: 0.0,
             pending_stream_config: Some(StreamConfigParams::default()),
             receiver_capabilities: None,
             stream_config_sent: false,

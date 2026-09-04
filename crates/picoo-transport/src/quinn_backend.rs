@@ -22,7 +22,7 @@ use tokio::sync::mpsc;
 use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
 use crate::{
     ChannelBinding, ClientNetworkBinding, CloseReason, SessionId, TransportEvent,
-    TransportLinkStats,
+    TransportLinkStats, VideoDatagramBatch,
 };
 
 const COMMAND_CAPACITY: usize = 64;
@@ -71,7 +71,7 @@ pub(crate) enum Command {
 #[derive(Debug)]
 struct VideoCommand {
     session: SessionId,
-    packets: Vec<VideoPacket>,
+    batch: VideoDatagramBatch,
     enqueued_at: Instant,
 }
 
@@ -204,12 +204,12 @@ impl TransportActor {
     pub(crate) fn send_video_batch(
         &self,
         session: SessionId,
-        packets: Vec<VideoPacket>,
+        batch: VideoDatagramBatch,
     ) -> Result<(), QuicTransportError> {
         self.video_commands
             .try_send(VideoCommand {
                 session,
-                packets,
+                batch,
                 enqueued_at: Instant::now(),
             })
             .map_err(|error| match error {
@@ -343,45 +343,6 @@ fn apply_client_network_binding(
                 ))
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod network_binding_tests {
-    use super::*;
-
-    #[test]
-    fn rejects_zero_platform_network_identifiers() {
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("socket");
-        assert_eq!(
-            apply_client_network_binding(
-                &socket,
-                ClientNetworkBinding::AndroidNetwork {
-                    network_handle: 0,
-                    allow_system_lan_route_fallback: false,
-                },
-            )
-            .expect_err("zero Android handle")
-            .kind(),
-            io::ErrorKind::InvalidInput
-        );
-        assert_eq!(
-            apply_client_network_binding(&socket, ClientNetworkBinding::AppleInterface(0))
-                .expect_err("zero Apple interface")
-                .kind(),
-            io::ErrorKind::InvalidInput
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn binds_an_apple_udp_socket_to_loopback_interface() {
-        let name = std::ffi::CString::new("lo0").expect("interface name");
-        let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
-        assert_ne!(index, 0, "lo0 interface index");
-        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("socket");
-        apply_client_network_binding(&socket, ClientNetworkBinding::AppleInterface(index))
-            .expect("IP_BOUND_IF");
     }
 }
 
@@ -727,20 +688,12 @@ async fn run_connection(
             }
             command = video.recv() => {
                 match command {
-                    Some(VideoCommand { session: target, packets, enqueued_at }) if target == session => {
+                    Some(VideoCommand { session: target, batch, enqueued_at }) if target == session => {
                         {
                             let mut shared = state.lock().expect("QUIC state mutex poisoned");
                             shared.video_queue_age_ms = enqueued_at.elapsed().as_secs_f64() * 1_000.0;
                         }
-                        let encoded = match packets
-                            .into_iter()
-                            .map(|packet| packet.encode())
-                            .collect::<Result<Vec<_>, _>>()
-                        {
-                            Ok(encoded) => encoded,
-                            Err(error) => break CloseReason::Error(error.to_string()),
-                        };
-                        let required = encoded.iter().map(Bytes::len).sum::<usize>();
+                        let required = batch.encoded_bytes();
                         // Quinn evicts oldest individual datagrams when its send buffer
                         // fills. Every AU, including a keyframe, must therefore fit in the
                         // currently available space before its first fragment is enqueued.
@@ -749,7 +702,8 @@ async fn run_connection(
                         // the keyframe has already repaired the decoder.
                         let available = connection.datagram_send_buffer_space();
                         if should_enqueue_access_unit(available, required) {
-                            if let Err(error) = encoded
+                            if let Err(error) = batch
+                                .into_datagrams()
                                 .into_iter()
                                 .try_for_each(|datagram| connection.send_datagram(datagram))
                             {
@@ -781,7 +735,7 @@ async fn run_connection(
                     Some(Inbound::Datagrams(datagrams)) => {
                         let packets = datagrams
                             .into_iter()
-                            .filter_map(|datagram| VideoPacket::decode(&datagram).ok())
+                            .filter_map(|datagram| VideoPacket::decode_bytes(datagram).ok())
                             .collect::<Vec<_>>();
                         if !packets.is_empty() {
                             events.video(TransportEvent::VideoPackets(session, packets));
@@ -834,25 +788,5 @@ fn link_stats(connection: &Connection, shared: &SharedState) -> TransportLinkSta
 }
 
 #[cfg(test)]
-mod access_unit_queue_tests {
-    use super::*;
-
-    #[test]
-    fn congested_delta_is_dropped_as_a_complete_access_unit() {
-        assert!(!should_enqueue_access_unit(1_000, 1_001));
-        assert!(should_enqueue_access_unit(1_001, 1_001));
-    }
-
-    #[test]
-    fn recovery_keyframe_cannot_evict_fragments_from_older_access_units() {
-        assert!(!should_enqueue_access_unit(0, DATAGRAM_SEND_BUFFER_SIZE));
-        assert!(!should_enqueue_access_unit(
-            DATAGRAM_SEND_BUFFER_SIZE - 1,
-            DATAGRAM_SEND_BUFFER_SIZE
-        ));
-        assert!(should_enqueue_access_unit(
-            DATAGRAM_SEND_BUFFER_SIZE,
-            DATAGRAM_SEND_BUFFER_SIZE
-        ));
-    }
-}
+#[path = "quinn_backend_tests.rs"]
+mod tests;

@@ -58,6 +58,53 @@ fn receiver_stats_adjusts_bitrate() {
 }
 
 #[test]
+fn fec_tracks_frame_importance_and_receiver_loss() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
+    let payload = vec![3_u8; picoo_protocol::MAX_FEC_FRAGMENT_PAYLOAD * 2];
+
+    let healthy_delta = session
+        .ingest_access_unit(&payload, false, 0, 1)
+        .expect("healthy delta");
+    assert_eq!(healthy_delta, 2);
+    session.flush_pending().expect("flush healthy delta");
+
+    let protected_idr = session
+        .ingest_access_unit(&payload, true, 1, 1)
+        .expect("protected IDR");
+    assert_eq!(protected_idr, 4);
+    session.flush_pending().expect("flush IDR");
+
+    session.apply_receiver_stats_for_test(ReceiverStatsMsg {
+        packet_loss: 0.0,
+        pre_fec_packet_loss: 0.02,
+        ..Default::default()
+    });
+    assert_eq!(session.last_bitrate_action(), BitrateAction::Hold);
+    let light_delta = session
+        .ingest_access_unit(&payload, false, 2, 1)
+        .expect("light FEC delta");
+    assert_eq!(light_delta, 3);
+    session.flush_pending().expect("flush light FEC delta");
+
+    session.apply_receiver_stats_for_test(ReceiverStatsMsg {
+        packet_loss: 0.0,
+        pre_fec_packet_loss: 0.04,
+        ..Default::default()
+    });
+    let strong_delta = session
+        .ingest_access_unit(&payload, false, 3, 1)
+        .expect("strong FEC delta");
+    assert_eq!(strong_delta, 4);
+}
+
+#[test]
 fn sustained_floor_congestion_requests_resolution_downshift() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session

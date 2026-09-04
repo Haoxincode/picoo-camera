@@ -25,6 +25,7 @@ pub(super) struct StatsReporter {
     pub(super) last_reassembly_drops: u64,
     pub(super) last_missing_fragments: u64,
     pub(super) last_resolved_fragments: u64,
+    pub(super) last_fec_recovered_fragments: u64,
     pub(super) window_decoder_drops: u64,
     pub(super) window_decoded_frames: u64,
 }
@@ -37,6 +38,7 @@ impl StatsReporter {
             last_reassembly_drops: 0,
             last_missing_fragments: 0,
             last_resolved_fragments: 0,
+            last_fec_recovered_fragments: 0,
             window_decoder_drops: 0,
             window_decoded_frames: 0,
         }

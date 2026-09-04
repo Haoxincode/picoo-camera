@@ -1,5 +1,4 @@
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
-use picoo_protocol::VideoPacket;
 use picoo_session::{
     ConnectionState, HealthState, OutputState, SenderStatus, SessionRuntimeState, StreamState,
     TrustState,
@@ -7,9 +6,20 @@ use picoo_session::{
 use picoo_transport::{PicooTransport, SessionId};
 
 use super::{EncoderDirectiveKind, NativeEncoderAccessUnit, SenderSession};
-use crate::SenderError;
+use crate::{FecProtection, SenderError};
 
 impl<T: PicooTransport> SenderSession<T> {
+    fn fec_protection_for(&self, is_keyframe: bool) -> FecProtection {
+        let packet_loss = self.pre_fec_packet_loss;
+        if is_keyframe || packet_loss >= 0.03 {
+            FecProtection::Strong
+        } else if packet_loss >= 0.01 {
+            FecProtection::Light
+        } else {
+            FecProtection::None
+        }
+    }
+
     pub(super) fn enter_streaming(&mut self) {
         self.runtime_state.set_trust(TrustState::Authenticated);
         self.runtime_state.set_stream(StreamState::Streaming {
@@ -108,9 +118,10 @@ impl<T: PicooTransport> SenderSession<T> {
             // generation. Packetization can still reject an oversized AU or
             // an exhausted frame id; in either case the transaction must stay
             // pending so a later valid IDR can complete it.
-            let packets = self
-                .pipeline
-                .ingest_access_unit(data, true, pts_us, stream_epoch)?;
+            let fec = self.fec_protection_for(true);
+            let packets =
+                self.pipeline
+                    .ingest_access_unit(data, true, pts_us, stream_epoch, fec)?;
             let Some(transaction) = self.encoder_apply_state.take_matching_keyframe(
                 transaction_id,
                 encoder_generation,
@@ -158,9 +169,10 @@ impl<T: PicooTransport> SenderSession<T> {
                 stream_epoch: self.current_stream_epoch,
             });
         }
-        let packets = self
-            .pipeline
-            .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch)?;
+        let fec = self.fec_protection_for(is_keyframe);
+        let packets =
+            self.pipeline
+                .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch, fec)?;
         if is_keyframe {
             self.keyframe_requested = false;
         }
@@ -192,8 +204,9 @@ impl<T: PicooTransport> SenderSession<T> {
                 stream_epoch: self.current_stream_epoch,
             });
         }
+        let fec = self.fec_protection_for(is_keyframe);
         self.pipeline
-            .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch)
+            .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch, fec)
     }
 
     /// Send all pending VideoPackets over QUIC datagrams.
@@ -203,12 +216,16 @@ impl<T: PicooTransport> SenderSession<T> {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
-        let packets: Vec<VideoPacket> = self.pipeline.take_pending_packets();
-        let sent = packets.len();
-        self.transport
-            .send_video_batch(session, packets)
-            .map_err(SenderError::Transport)?;
-        self.sent_datagrams += sent as u64;
+        let batches = self.pipeline.take_pending_batches();
+        let mut sent = 0;
+        for batch in batches {
+            let batch_len = batch.len();
+            self.transport
+                .send_video_batch(session, batch)
+                .map_err(SenderError::Transport)?;
+            sent += batch_len;
+            self.sent_datagrams = self.sent_datagrams.saturating_add(batch_len as u64);
+        }
         Ok(sent)
     }
 
@@ -248,7 +265,7 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn pending_packets(&self) -> usize {
-        self.pipeline.pending_packets().len()
+        self.pipeline.pending_datagram_count()
     }
 
     /// Inject a decoded control message (tests / ABR loopback harnesses).

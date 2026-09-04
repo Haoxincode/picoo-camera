@@ -138,6 +138,9 @@ message ReceiverStats {
   double jitter_buffer_target_ms = 8;
   double jitter_buffer_actual_delay_ms = 9;
   double jitter_buffer_occupancy_ms = 10;
+  // Missing fragments before successful Reed-Solomon recovery. FEC adapts
+  // from this value; ABR continues to use residual packet_loss above.
+  double pre_fec_packet_loss = 11;
 }
 
 // Sender -> Receiver transport observability. This travels on the reliable

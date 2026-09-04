@@ -529,6 +529,10 @@ impl ReceiverSession {
             .reassembly
             .resolved_fragment_count()
             .saturating_sub(self.stats_reporter.last_resolved_fragments);
+        let fec_recovered_fragments = self
+            .reassembly
+            .fec_recovered_fragment_count()
+            .saturating_sub(self.stats_reporter.last_fec_recovered_fragments);
 
         let frame_age_ms = self
             .latest_frame_store
@@ -550,6 +554,10 @@ impl ReceiverSession {
         // false quality drops. Compare missing and received video fragments in
         // the same unit instead (REQ-PICOO-PROTOCOL-009).
         let packet_loss = observed_fragment_loss_ratio(resolved_fragments, missing_fragments);
+        let pre_fec_packet_loss = observed_fragment_loss_ratio(
+            resolved_fragments,
+            missing_fragments.saturating_add(fec_recovered_fragments),
+        );
 
         let jitter_timing = self.jitter.take_timing_stats();
         let stats = ReceiverStatsMsg {
@@ -563,6 +571,7 @@ impl ReceiverSession {
             jitter_buffer_target_ms: jitter_timing.target_delay_ms,
             jitter_buffer_actual_delay_ms: jitter_timing.actual_delay_ms,
             jitter_buffer_occupancy_ms: jitter_timing.occupancy_ms,
+            pre_fec_packet_loss,
         };
 
         let sender_stats = self.last_sender_stats.as_ref();
@@ -598,6 +607,7 @@ impl ReceiverSession {
             jitter_expired_recoveries = self.ingress.recovery_jitter_expired,
             fec_recovered_fragments = self.ingress.fec_recovered_fragments,
             packet_loss,
+            pre_fec_packet_loss,
             rtt_ms = stats.rtt_ms,
             jitter_ms = stats.jitter_ms,
             target_ms = stats.jitter_buffer_target_ms,
@@ -619,6 +629,8 @@ impl ReceiverSession {
         self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
         self.stats_reporter.last_missing_fragments = self.reassembly.missing_fragment_count();
         self.stats_reporter.last_resolved_fragments = self.reassembly.resolved_fragment_count();
+        self.stats_reporter.last_fec_recovered_fragments =
+            self.reassembly.fec_recovered_fragment_count();
 
         Ok(())
     }

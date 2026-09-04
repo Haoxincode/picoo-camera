@@ -4,12 +4,11 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use bytes::Bytes;
-use picoo_protocol::VideoPacket;
 
 use crate::quinn_backend::{Command, QuicTransportError, TransportActor};
 use crate::{
     ChannelBinding, ClientNetworkBinding, CloseReason, Endpoint, PicooTransport, SessionId,
-    TransportError, TransportEvent, TransportLinkStats,
+    TransportError, TransportEvent, TransportLinkStats, VideoDatagramBatch,
 };
 
 pub struct QuicSenderTransport {
@@ -100,25 +99,10 @@ impl PicooTransport for QuicSenderTransport {
             .map_err(Self::map_send_error)
     }
 
-    fn send_video(
-        &mut self,
-        session: SessionId,
-        packet: VideoPacket,
-    ) -> Result<(), TransportError> {
-        if self.active_session != Some(session) {
-            return Err(TransportError::NotConnected);
-        }
-        self.actor
-            .as_ref()
-            .ok_or(TransportError::NotConnected)?
-            .send_video_batch(session, vec![packet])
-            .map_err(Self::map_send_error)
-    }
-
     fn send_video_batch(
         &mut self,
         session: SessionId,
-        packets: Vec<VideoPacket>,
+        batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
         if self.active_session != Some(session) {
             return Err(TransportError::NotConnected);
@@ -126,7 +110,7 @@ impl PicooTransport for QuicSenderTransport {
         self.actor
             .as_ref()
             .ok_or(TransportError::NotConnected)?
-            .send_video_batch(session, packets)
+            .send_video_batch(session, batch)
             .map_err(Self::map_send_error)
     }
 

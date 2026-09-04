@@ -37,27 +37,88 @@ pub enum VideoPacketError {
 
 impl VideoPacket {
     pub fn encode(&self) -> Result<Bytes, VideoPacketError> {
-        if self.fragment_index >= self.fragment_count {
+        Self::encode_datagram(
+            self.flags,
+            self.stream_epoch,
+            self.frame_id,
+            self.pts_us,
+            self.fragment_index,
+            self.fragment_count,
+            &self.payload,
+        )
+    }
+
+    /// Encode a final wire datagram directly from an AU-backed payload slice.
+    ///
+    /// Sender packetization uses this entry point so it never creates an
+    /// intermediate `VideoPacket` whose payload must be copied a second time.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_datagram(
+        flags: VideoPacketFlags,
+        stream_epoch: u32,
+        frame_id: u64,
+        pts_us: u64,
+        fragment_index: u16,
+        fragment_count: u16,
+        payload: &[u8],
+    ) -> Result<Bytes, VideoPacketError> {
+        Self::encode_datagram_segments(
+            flags,
+            stream_epoch,
+            frame_id,
+            pts_us,
+            fragment_index,
+            fragment_count,
+            &[payload],
+        )
+    }
+
+    /// Encode a final datagram from adjacent payload segments without first
+    /// joining them into a temporary allocation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_datagram_segments(
+        flags: VideoPacketFlags,
+        stream_epoch: u32,
+        frame_id: u64,
+        pts_us: u64,
+        fragment_index: u16,
+        fragment_count: u16,
+        payload_segments: &[&[u8]],
+    ) -> Result<Bytes, VideoPacketError> {
+        if fragment_index >= fragment_count {
             return Err(VideoPacketError::InvalidFragmentIndex);
         }
 
-        let total = VIDEO_PACKET_HEADER_SIZE + self.payload.len();
+        let payload_len = payload_segments
+            .iter()
+            .try_fold(0_usize, |total, segment| total.checked_add(segment.len()));
+        let Some(total) = payload_len.and_then(|len| VIDEO_PACKET_HEADER_SIZE.checked_add(len))
+        else {
+            return Err(VideoPacketError::DatagramTooLarge);
+        };
         if total > MAX_DATAGRAM_SIZE {
             return Err(VideoPacketError::DatagramTooLarge);
         }
 
         let mut buf = BytesMut::with_capacity(total);
-        buf.put_u8(self.flags.bits());
-        buf.put_u32(self.stream_epoch);
-        buf.put_u64(self.frame_id);
-        buf.put_u64(self.pts_us);
-        buf.put_u16(self.fragment_index);
-        buf.put_u16(self.fragment_count);
-        buf.put(self.payload.clone());
+        buf.put_u8(flags.bits());
+        buf.put_u32(stream_epoch);
+        buf.put_u64(frame_id);
+        buf.put_u64(pts_us);
+        buf.put_u16(fragment_index);
+        buf.put_u16(fragment_count);
+        for segment in payload_segments {
+            buf.put_slice(segment);
+        }
         Ok(buf.freeze())
     }
 
-    pub fn decode(mut buf: &[u8]) -> Result<Self, VideoPacketError> {
+    pub fn decode(buf: &[u8]) -> Result<Self, VideoPacketError> {
+        Self::decode_bytes(Bytes::copy_from_slice(buf))
+    }
+
+    /// Decode a Quinn-owned datagram while retaining its payload storage.
+    pub fn decode_bytes(mut buf: Bytes) -> Result<Self, VideoPacketError> {
         if buf.len() < VIDEO_PACKET_HEADER_SIZE {
             return Err(VideoPacketError::BufferTooShort);
         }
@@ -71,7 +132,7 @@ impl VideoPacket {
         let pts_us = buf.get_u64();
         let fragment_index = buf.get_u16();
         let fragment_count = buf.get_u16();
-        let payload = Bytes::copy_from_slice(buf);
+        let payload = buf;
 
         let packet = Self {
             flags,
@@ -114,6 +175,16 @@ mod tests {
         );
         let decoded = VideoPacket::decode(&encoded).unwrap();
         assert_eq!(decoded, packet);
+    }
+
+    #[test]
+    fn owned_datagram_decode_reuses_payload_storage() {
+        let encoded =
+            VideoPacket::encode_datagram(VideoPacketFlags::empty(), 1, 2, 3, 0, 1, b"payload")
+                .expect("encode");
+        let expected_payload = encoded[VIDEO_PACKET_HEADER_SIZE..].as_ptr();
+        let decoded = VideoPacket::decode_bytes(encoded).expect("decode");
+        assert_eq!(decoded.payload.as_ptr(), expected_payload);
     }
 
     #[test]

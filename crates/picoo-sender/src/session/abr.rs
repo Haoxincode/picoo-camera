@@ -88,6 +88,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn apply_receiver_stats(&mut self, stats: ReceiverStatsMsg) {
+        self.pre_fec_packet_loss = if stats.pre_fec_packet_loss.is_finite() {
+            stats.pre_fec_packet_loss.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
         let local_link = self.transport.link_stats().unwrap_or_default();
         let metrics = MetricsReceiverStats {
             rtt_ms: stats.rtt_ms,
@@ -101,7 +106,9 @@ impl<T: PicooTransport> SenderSession<T> {
             jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms,
             jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms,
             sender_queue_age_ms: local_link.video_queue_age_ms,
-            sender_queue_dropped_access_units: local_link.video_dropped_access_units,
+            sender_queue_dropped_access_units: local_link
+                .video_dropped_access_units
+                .saturating_add(self.pipeline.stats().dropped_access_units),
             sender_quic_lost_packets: local_link.lost_packets,
             sender_quic_sent_packets: local_link.sent_packets,
             sender_video_buffered_bytes: local_link.video_buffered_bytes,

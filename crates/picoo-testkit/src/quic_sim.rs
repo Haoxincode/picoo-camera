@@ -147,9 +147,14 @@ pub fn run_quic_protocol_simulation() -> Result<(), QuicSimulationError> {
             payload: Bytes::from_static(b"def"),
         },
     ];
-    for packet in fragments {
-        sender.send_video(sender_session, packet)?;
-    }
+    let datagrams = fragments
+        .into_iter()
+        .map(|packet| packet.encode())
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| QuicSimulationError::Protocol(error.to_string()))?;
+    let batch = picoo_transport::VideoDatagramBatch::new(datagrams)
+        .map_err(|error| QuicSimulationError::Protocol(error.to_string()))?;
+    sender.send_video_batch(sender_session, batch)?;
 
     let mut reassembly = ReassemblyMap::new(8, 16);
     let frame = wait_for(|| match receiver.poll_event() {

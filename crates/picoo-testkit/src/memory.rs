@@ -3,10 +3,9 @@
 use std::collections::VecDeque;
 
 use bytes::Bytes;
-use picoo_protocol::VideoPacket;
 use picoo_transport::{
     ChannelBinding, CloseReason, Endpoint, PicooTransport, SessionId, TransportError,
-    TransportEvent,
+    TransportEvent, VideoDatagramBatch,
 };
 
 pub struct MemoryTransport {
@@ -53,16 +52,23 @@ impl PicooTransport for MemoryTransport {
         Ok(())
     }
 
-    fn send_video(
+    fn send_video_batch(
         &mut self,
         session: SessionId,
-        packet: VideoPacket,
+        batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
         if self.connected != Some(session) {
             return Err(TransportError::NotConnected);
         }
-        self.events
-            .push_back(TransportEvent::VideoPackets(session, vec![packet]));
+        let packets = batch
+            .into_datagrams()
+            .into_iter()
+            .filter_map(|datagram| picoo_protocol::VideoPacket::decode_bytes(datagram).ok())
+            .collect::<Vec<_>>();
+        if !packets.is_empty() {
+            self.events
+                .push_back(TransportEvent::VideoPackets(session, packets));
+        }
         Ok(())
     }
 
@@ -90,7 +96,7 @@ impl PicooTransport for MemoryTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use picoo_protocol::VideoPacketFlags;
+    use picoo_protocol::{VideoPacket, VideoPacketFlags};
 
     #[test]
     fn memory_transport_connect_and_send() {
