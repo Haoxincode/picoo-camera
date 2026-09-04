@@ -53,6 +53,7 @@ gh run list --branch main --limit 1 --json databaseId,conclusion,headSha \
 | | | `android-release.spdx.json` | Anchore Syft 生成的 SPDX SBOM；APK/AAB 另附 GitHub provenance attestation |
 | `windows-msi` | ~8 MB | `PicooCamera.msi` | **Win11 安装首选** |
 | `windows-bundle` | ~18 MB | 见下表 | 开发态 / 免安装验证 |
+| `windows-signed-release` | 待首次发布记录 | `bundle/PicooCamera.msi` + 三个 Authenticode PE + `windows-release-identity.json` + SPDX SBOM | 受保护 Windows Release workflow 正式发行；真机安装首选 |
 | `macos-app-unsigned` | 待 CI 记录 | `PicooCamera-macOS-unsigned.zip` + `PicooCamera-macOS.entitlements` | macOS 15+ ARM64 Host `.app` 与已展开签名输入 scaffold；未签名、未公证、不可激活 |
 | `ios-rust-core-xcframework` | ~30 MB | `PicooCore.xcframework.zip` | iOS 18+ ARM64 device/simulator Rust C ABI；解压后保留 `.xcframework` 外层目录 |
 | `ios-app-unsigned` | ~2.5 MB | `PicooCamera.app.zip` | iOS 18+ ARM64 Simulator SwiftUI/C ABI 编译基线；解压后保留 `.app` 与执行权限，不可安装到真机 |

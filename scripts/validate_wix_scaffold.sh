@@ -17,6 +17,9 @@ DESKTOP_BUILD="$ROOT/apps/desktop/build.rs"
 MF_SOURCE_BUILD="$ROOT/extensions/windows-virtual-camera/mf-source/build.rs"
 RING_READER_BUILD="$ROOT/extensions/windows-virtual-camera/ring-reader/build.rs"
 XTASK_WINDOWS="$ROOT/xtask/src/windows.rs"
+XTASK_MAIN="$ROOT/xtask/src/main.rs"
+SIGN_WINDOWS="$ROOT/scripts/sign_windows_release.ps1"
+WINDOWS_RELEASE_WORKFLOW="$ROOT/.github/workflows/release-windows.yml"
 CLSID="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F"
 CLSID_RUST="0xa7c4e2f1_8b3d_4c6a_9e5f_1d2c3b4a5e6f"
 fail=0
@@ -236,6 +239,14 @@ need "$DESKTOP_BUILD" 'windows_resource::apply_package_version'
 need "$MF_SOURCE_BUILD" 'windows_resource::apply_package_version'
 need "$RING_READER_BUILD" 'windows_resource::apply_package_version'
 need "$XTASK_WINDOWS" 'PICOO_WINDOWS_FILE_VERSION'
+need "$XTASK_WINDOWS" 'PICOO_WINDOWS_CERT_THUMBPRINT'
+need "$XTASK_MAIN" 'ReleasePlatform::Windows => windows::release()'
+need "$SIGN_WINDOWS" 'PICOO_WINDOWS_SIGNER_SHA256'
+need "$SIGN_WINDOWS" 'TimeStamperCertificate'
+need "$SIGN_WINDOWS" 'Authenticode signer'
+need "$WINDOWS_RELEASE_WORKFLOW" 'environment: windows-release'
+need "$WINDOWS_RELEASE_WORKFLOW" 'cargo run -p xtask -- release windows'
+need "$WINDOWS_RELEASE_WORKFLOW" 'actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a'
 if awk '/Id="RegisterVcamOnInstall"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
   echo "ok: per-machine VCam registration runs elevated for AllUsers access"
 else

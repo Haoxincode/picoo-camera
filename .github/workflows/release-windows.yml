@@ -1,0 +1,132 @@
+name: Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: Monotonically increasing Windows MSI build field
+        required: true
+        type: string
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    environment: windows-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+      - name: Resolve release build identity
+        shell: bash
+        env:
+          DISPATCH_BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          workspace_version="$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$workspace_version"
+            build_number="$GITHUB_RUN_NUMBER"
+          else
+            build_number="$DISPATCH_BUILD_NUMBER"
+          fi
+          [[ "$build_number" =~ ^[1-9][0-9]*$ ]]
+          (( build_number <= 65535 ))
+          echo "PICOO_BUILD_NUMBER=$build_number" >> "$GITHUB_ENV"
+      - name: Install WiX v5
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2 --verbosity quiet
+          $tools = Join-Path $env:USERPROFILE ".dotnet\tools"
+          Add-Content -Path $env:GITHUB_PATH -Value $tools
+          $env:Path = "$tools;$env:Path"
+          wix extension add WixToolset.Firewall.wixext/5.0.2
+          wix extension add WixToolset.Util.wixext/5.0.2
+      - name: Import protected Authenticode identity
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_P12_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 }}
+          WINDOWS_CERTIFICATE_P12_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_P12_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $releaseDir = Join-Path $env:RUNNER_TEMP "picoo-windows-release"
+          New-Item -ItemType Directory -Path $releaseDir -Force | Out-Null
+          $pfx = Join-Path $releaseDir "codesign.pfx"
+          if ([string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_P12_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:WINDOWS_CERTIFICATE_P12_PASSWORD)) {
+            throw "Windows release PFX and password are required"
+          }
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_P12_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_P12_PASSWORD -AsPlainText -Force
+          $imported = @(Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable:$false)
+          echo "PICOO_WINDOWS_IMPORTED_THUMBPRINTS=$(($imported.Thumbprint -join ';'))" >> $env:GITHUB_ENV
+          $signers = @($imported | Where-Object { $_.HasPrivateKey })
+          if ($signers.Count -ne 1) {
+            throw "Windows release PFX must contain exactly one private-key signing certificate"
+          }
+          echo "PICOO_WINDOWS_CERT_THUMBPRINT=$($signers[0].Thumbprint)" >> $env:GITHUB_ENV
+          echo "PICOO_WINDOWS_RELEASE_DIR=$releaseDir" >> $env:GITHUB_ENV
+      - name: Build, Authenticode-sign, and verify Windows release
+        env:
+          PICOO_WINDOWS_SIGNER_SHA256: ${{ secrets.WINDOWS_SIGNER_SHA256 }}
+          PICOO_WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: cargo run -p xtask -- release windows
+      - name: Verify signed bundle and MSI database contract
+        shell: pwsh
+        run: ./scripts/verify_windows_bundle.ps1
+      - name: Remove Windows release identity before third-party artifact processing
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($thumbprint in ($env:PICOO_WINDOWS_IMPORTED_THUMBPRINTS -split ';')) {
+            if (-not [string]::IsNullOrWhiteSpace($thumbprint)) {
+              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue
+            }
+          }
+          $releaseDir = Join-Path $env:RUNNER_TEMP "picoo-windows-release"
+          if (Test-Path -LiteralPath $releaseDir) {
+            Remove-Item -LiteralPath $releaseDir -Recurse -Force
+          }
+      - name: Generate SPDX SBOM for signed Windows bundle
+        uses: anchore/sbom-action@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
+        with:
+          path: target/release/bundle
+          format: spdx-json
+          output-file: target/windows-release.spdx.json
+      - name: Attest signed Windows artifacts
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: |
+            target/release/bundle/picoo-desktop.exe
+            target/release/bundle/picoo-vcam-ring-reader.exe
+            target/release/bundle/PicooVirtualCameraSource.dll
+            target/release/bundle/msi/PicooCamera.msi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-signed-release
+          path: |
+            target/release/bundle/
+            target/windows-release.spdx.json
+          if-no-files-found: error
+      - name: Ensure Windows release credentials are absent
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($thumbprint in ($env:PICOO_WINDOWS_IMPORTED_THUMBPRINTS -split ';')) {
+            if (-not [string]::IsNullOrWhiteSpace($thumbprint)) {
+              Remove-Item -LiteralPath "Cert:\CurrentUser\My\$thumbprint" -Force -ErrorAction SilentlyContinue
+            }
+          }
+          $releaseDir = Join-Path $env:RUNNER_TEMP "picoo-windows-release"
+          if (Test-Path -LiteralPath $releaseDir) {
+            Remove-Item -LiteralPath $releaseDir -Recurse -Force
+          }

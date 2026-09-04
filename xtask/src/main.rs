@@ -65,6 +65,7 @@ enum PackagePlatform {
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum ReleasePlatform {
     Macos,
+    Windows,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -131,5 +132,6 @@ fn package(platform: PackagePlatform) -> Result<()> {
 fn release(platform: ReleasePlatform) -> Result<()> {
     match platform {
         ReleasePlatform::Macos => apple::macos::release(),
+        ReleasePlatform::Windows => windows::release(),
     }
 }

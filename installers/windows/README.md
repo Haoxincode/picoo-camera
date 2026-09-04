@@ -3,6 +3,10 @@
 Creates `target/release/bundle/` with the desktop exe, ring-reader, VCam DLL, and MSI.
 The loose bundle is for build/export/load smoke only; it is not a portable system installer.
 
+正式发布必须通过受保护的 `release-windows.yml` 调用 `cargo xtask release windows`：先对三个
+PE 做 Authenticode + RFC3161 timestamp，再将已签 PE 封入 MSI 并签署 MSI；普通
+`cargo xtask package windows` 产物保持未签名，仅用于工程验证。
+
 ```powershell
 cargo xtask package windows
 msiexec /i target/release/bundle/msi/PicooCamera.msi

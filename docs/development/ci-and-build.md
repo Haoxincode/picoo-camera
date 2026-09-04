@@ -46,6 +46,7 @@ GitHub Actions
 | `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 单测 | `cargo xtask build ios`；`cargo xtask test ios` |
 | `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 | 递增 Host/Extension 版本；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
+| `Windows Release` | `windows-latest` + `windows-release` protected Environment | 固定 Authenticode identity 签署三个 PE 与内嵌这些 PE 的 MSI，核验 timestamp/signer/version，生成 SBOM/provenance | `cargo xtask release windows` |
 
 Nightly validation 使用 `nightly-2026-09-03`，并由 `xtask` 持有同一常量；更新 Miri 或
 cargo-fuzz 工具链时必须同时本地复核 strict-provenance、四个 fuzz target 和 workflow。
@@ -156,7 +157,8 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 | --- | --- | --- |
 | `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | Android Release 稳定签名 | 发布 APK/AAB 前，缺一即失败 |
 | `ANDROID_SIGNER_SHA256` | Android release certificate 固定指纹 | 签名后 APK/AAB 双重核验 |
-| `WINDOWS_CERTIFICATE` | Windows 安装包代码签名 | 可选，发布前建议 |
+| `WINDOWS_CERTIFICATE_P12_BASE64` / `WINDOWS_CERTIFICATE_P12_PASSWORD` | 临时导入 CurrentUser 证书库的 Windows Code Signing identity | Windows 正式发布，缺一即失败 |
+| `WINDOWS_SIGNER_SHA256` | 固定 Windows leaf signing certificate 的 SHA-256 | 所有 PE/MSI 签名后强制核验 |
 | `APPLE_DEVELOPER_ID_P12_BASE64` / `APPLE_DEVELOPER_ID_P12_PASSWORD` / `APPLE_KEYCHAIN_PASSWORD` | 导入临时 Developer ID Application identity | macOS 发布 |
 | `APPLE_TEAM_ID` / `APPLE_MACOS_SIGNING_IDENTITY` | 校验并选择 Host/Extension 共用签名团队与 identity | macOS 发布 |
 | `APPLE_MACOS_HOST_PROFILE_BASE64` / `APPLE_MACOS_EXTENSION_PROFILE_BASE64` | 授权 Host 与 Camera Extension 的 Bundle ID、App Group 和 System Extension capability | macOS 发布 |
@@ -170,6 +172,12 @@ Apple Release 手动触发时还必须填写一至三段数字的 marketing vers
 Android 产物签名与包元数据使用 Android SDK `apksigner` / `apkanalyzer` 和 JDK `jarsigner` /
 `keytool` 验证。SBOM 采用维护活跃、Apache-2.0 的 Anchore Syft Action，provenance 采用 GitHub
 官方 artifact attestation；release workflow 中所有 Action 固定到审核过的 commit SHA。
+
+Windows Release 使用 repository variable `WINDOWS_TIMESTAMP_URL` 指向 RFC3161 服务。受保护
+workflow 将 PFX 只导入当前用户证书库，验证 Code Signing EKU、有效期与固定 SHA-256；先签
+desktop、ring reader 和 VCam DLL，再用已签 PE 重建 MSI 并签署 MSI。证书与 PFX 在 Syft 等
+第三方 artifact 处理前删除，并由 `always()` 清理再次兜底。普通 Windows CI 产物仍明确是
+未签名的工程验证包。
 
 ## 与 xtask 的边界
 

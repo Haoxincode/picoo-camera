@@ -58,7 +58,9 @@ if ($null -ne $VcamDll) {
 }
 
 $BuildMsi = Join-Path $Root "installers/windows/build-msi.ps1"
-if (Test-Path $BuildMsi) {
+if ($env:PICOO_SKIP_MSI -eq "1") {
+    Write-Host "MSI build deferred until release binaries are Authenticode-signed"
+} elseif (Test-Path $BuildMsi) {
     Write-Host "Attempting MSI build (optional; requires WiX)"
     & powershell -ExecutionPolicy Bypass -File $BuildMsi
     if ($LASTEXITCODE -ne 0) {

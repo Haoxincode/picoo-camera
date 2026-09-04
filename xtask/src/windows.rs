@@ -37,6 +37,41 @@ pub(crate) fn package() -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn release() -> Result<()> {
+    if !cfg!(target_os = "windows") {
+        bail!("Windows release must be built and signed on a Windows host");
+    }
+    for name in [
+        "PICOO_BUILD_NUMBER",
+        "PICOO_WINDOWS_CERT_THUMBPRINT",
+        "PICOO_WINDOWS_SIGNER_SHA256",
+        "PICOO_WINDOWS_TIMESTAMP_URL",
+    ] {
+        if std::env::var(name).is_err() {
+            bail!("{name} is required for a signed Windows release");
+        }
+    }
+
+    let sh = Shell::new()?;
+    let msi_version = resolved_windows_package_version()?;
+    build_with_file_version(&sh, &msi_version)?;
+    cmd!(
+        sh,
+        "powershell -ExecutionPolicy Bypass -File installers/windows/stage.ps1"
+    )
+    .env("PICOO_WINDOWS_MSI_VERSION", &msi_version)
+    .env("PICOO_SKIP_MSI", "1")
+    .run()?;
+    cmd!(
+        sh,
+        "powershell -ExecutionPolicy Bypass -File scripts/sign_windows_release.ps1"
+    )
+    .env("PICOO_WINDOWS_MSI_VERSION", &msi_version)
+    .env("PICOO_REQUIRE_MSI", "1")
+    .run()?;
+    Ok(())
+}
+
 fn resolved_windows_package_version() -> Result<String> {
     let build_number = std::env::var("PICOO_BUILD_NUMBER").ok();
     windows_msi_version(env!("CARGO_PKG_VERSION"), build_number.as_deref())
