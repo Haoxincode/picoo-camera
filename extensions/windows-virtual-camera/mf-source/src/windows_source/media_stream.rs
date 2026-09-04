@@ -16,11 +16,12 @@ use windows::Win32::Media::MediaFoundation::{
     MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES,
     MF_DEVICESTREAM_FRAMESERVER_SHARED, MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID,
     MF_E_INVALIDREQUEST, MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION,
-    MF_E_MEDIA_SOURCE_WRONGSTATE, MF_E_SHUTDOWN, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_COMPRESSED,
-    MF_MT_DEFAULT_STRIDE, MF_MT_FIXED_SIZE_SAMPLES, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SAMPLE_SIZE,
-    MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES,
-    MF_MT_YUV_MATRIX, MF_STREAM_STATE, MF_STREAM_STATE_RUNNING, MF_STREAM_STATE_STOPPED,
+    MF_E_MEDIA_SOURCE_WRONGSTATE, MF_E_SHUTDOWN, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AVG_BITRATE,
+    MF_MT_COMPRESSED, MF_MT_DEFAULT_STRIDE, MF_MT_FIXED_SIZE_SAMPLES, MF_MT_FRAME_RATE,
+    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO,
+    MF_MT_SAMPLE_SIZE, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE,
+    MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX, MF_STREAM_STATE, MF_STREAM_STATE_RUNNING,
+    MF_STREAM_STATE_STOPPED,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
@@ -486,6 +487,14 @@ fn create_nv12_media_type(width: u32, height: u32) -> Result<IMFMediaType> {
     if !is_supported_output_size(width, height) {
         return Err(Error::from(E_INVALIDARG));
     }
+    let sample_size =
+        u32::try_from(nv12_len(width, height).ok_or_else(|| Error::from(E_INVALIDARG))?)
+            .map_err(|_| Error::from(E_INVALIDARG))?;
+    let average_bitrate = sample_size
+        .checked_mul(8)
+        .and_then(|bits_per_frame| bits_per_frame.checked_mul(FRAME_RATE_NUM))
+        .and_then(|bits_per_second| bits_per_second.checked_div(FRAME_RATE_DEN))
+        .ok_or_else(|| Error::from(E_INVALIDARG))?;
     unsafe {
         let media_type = MFCreateMediaType()?;
         media_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
@@ -494,11 +503,8 @@ fn create_nv12_media_type(width: u32, height: u32) -> Result<IMFMediaType> {
         media_type.SetUINT32(&MF_MT_COMPRESSED, 0)?;
         media_type.SetUINT32(&MF_MT_FIXED_SIZE_SAMPLES, 1)?;
         media_type.SetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT, 1)?;
-        media_type.SetUINT32(
-            &MF_MT_SAMPLE_SIZE,
-            u32::try_from(nv12_len(width, height).ok_or_else(|| Error::from(E_INVALIDARG))?)
-                .map_err(|_| Error::from(E_INVALIDARG))?,
-        )?;
+        media_type.SetUINT32(&MF_MT_SAMPLE_SIZE, sample_size)?;
+        media_type.SetUINT32(&MF_MT_AVG_BITRATE, average_bitrate)?;
         media_type.SetUINT64(&MF_MT_FRAME_SIZE, pack_u32_pair(width, height))?;
         media_type.SetUINT32(&MF_MT_DEFAULT_STRIDE, width)?;
         media_type.SetUINT64(
