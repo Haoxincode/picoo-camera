@@ -175,7 +175,9 @@ impl PicooDesktopApp {
                 .await;
             if this
                 .update(cx, |this, cx| {
-                    let _ = this.runtime.pump();
+                    if let Err(error) = this.runtime.pump() {
+                        tracing::warn!(%error, "Receiver pump failed");
+                    }
                     if let Some(slot) = this.runtime.receiver().latest_frame() {
                         this.preview_pipeline.submit_latest(slot);
                     }
