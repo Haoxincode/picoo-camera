@@ -24,7 +24,9 @@ use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
+#[cfg(any(target_os = "macos", windows))]
 const RECEIVER_IDENTITY_SERVICE: &str = "site.nebula-tech.picoo-camera";
+#[cfg(any(target_os = "macos", windows))]
 const RECEIVER_IDENTITY_ACCOUNT: &str = "receiver-ed25519";
 
 fn current_receiver_platform() -> ReceiverPlatform {

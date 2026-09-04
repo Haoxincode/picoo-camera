@@ -1,6 +1,4 @@
-use std::time::Duration;
-#[cfg(any(windows, target_os = "macos"))]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
 use picoo_pairing::TrustedDevice;

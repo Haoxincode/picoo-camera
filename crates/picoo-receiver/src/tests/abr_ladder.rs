@@ -20,7 +20,6 @@ fn abr_downshift_updates_stream_config_and_latest_frame_store() {
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
-    use prost::Message;
 
     fn encode_pattern(w: usize, h: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut planes = vec![128u8; w * h * 3 / 2];
@@ -283,7 +282,6 @@ fn abr_upshift_updates_stream_config_and_latest_frame_store() {
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
-    use prost::Message;
 
     fn encode_pattern(w: usize, h: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let mut planes = vec![128u8; w * h * 3 / 2];
