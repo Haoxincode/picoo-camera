@@ -56,6 +56,7 @@ mod control_gate;
 mod decode_platform;
 mod decoder;
 mod pairing;
+mod pairing_trust;
 mod qos;
 mod session_surface;
 mod stream;
