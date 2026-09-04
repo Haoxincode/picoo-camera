@@ -10,8 +10,11 @@ pub mod control {
     include!(concat!(env!("OUT_DIR"), "/picoo.camera.rs"));
 }
 
+mod control_gate;
 mod video_fec;
 mod video_packet;
+
+pub use control_gate::{receiver_payload_allowed, ReceiverControlPhase};
 
 pub use video_fec::{
     fec_group_ranges, make_fec_parity, reconstruct_fec_group, FecParityShard, FEC_DATA_SHARDS,

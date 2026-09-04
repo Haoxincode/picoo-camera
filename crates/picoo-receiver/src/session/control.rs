@@ -9,6 +9,7 @@ use picoo_protocol::control::{
     camera_command, control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
     EncoderCommand, Resolution, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
 };
+use picoo_protocol::{receiver_payload_allowed, ReceiverControlPhase};
 use picoo_session::StreamState;
 use picoo_transport::SessionId;
 
@@ -47,6 +48,20 @@ impl ReceiverSession {
         self.last_received_control_message_id = envelope.message_id;
 
         let payload = envelope.payload.expect("validated envelope payload");
+        let phase = if self.pending_pairing.is_some() {
+            ReceiverControlPhase::Pairing
+        } else if self.active_sender.is_none() {
+            ReceiverControlPhase::AwaitingClientHello
+        } else if self.lifecycle.runtime.stream().is_streaming() {
+            ReceiverControlPhase::Streaming
+        } else {
+            ReceiverControlPhase::AuthenticatedIdle
+        };
+        if !receiver_payload_allowed(phase, &payload) {
+            return Err(ReceiverError::Protocol(
+                "control payload is not allowed in the current receiver phase".into(),
+            ));
+        }
         if self.pending_pairing.is_some() {
             return match payload {
                 ControlPayload::PairingCommit(commit) => {
@@ -57,17 +72,13 @@ impl ReceiverSession {
                 }
                 ControlPayload::StartStream(_) => self.handle_start_stream(session),
                 ControlPayload::StopStream(_) => self.handle_stop_stream(session),
-                _ => Err(ReceiverError::Protocol(
-                    "control payload is not allowed while pairing".into(),
-                )),
+                _ => unreachable!("receiver phase gate covers pairing payloads"),
             };
         }
         if self.active_sender.is_none() {
             return match payload {
                 ControlPayload::ClientHello(hello) => self.handle_client_hello(session, hello),
-                _ => Err(ReceiverError::Protocol(
-                    "control payload is not valid before ClientHello".into(),
-                )),
+                _ => unreachable!("receiver phase gate requires ClientHello"),
             };
         }
         if !self.video_allowed() {
@@ -86,9 +97,7 @@ impl ReceiverSession {
                 self.handle_clock_sync_pong(pong);
                 Ok(())
             }
-            _ => Err(ReceiverError::Protocol(
-                "control payload is not allowed in the authenticated receiver phase".into(),
-            )),
+            _ => unreachable!("receiver phase gate covers authenticated payloads"),
         }
     }
 

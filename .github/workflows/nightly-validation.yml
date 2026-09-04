@@ -1,0 +1,46 @@
+name: Nightly validation
+
+on:
+  schedule:
+    # 02:00 Asia/Shanghai; workflow_dispatch supports release-candidate reruns.
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz PCP parsers and state boundaries
+        env:
+          PICOO_FUZZ_SECONDS: '120'
+        run: cargo run -p xtask -- test fuzz
+      - name: Upload crash and minimized artifacts
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
+  paired-loopback-soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run 30-minute paired network/memory soak
+        env:
+          PICOO_SOAK_SECONDS: '1800'
+        run: cargo run -p xtask -- test soak

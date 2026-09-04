@@ -9,11 +9,36 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+picoo-packet = { path = "../crates/picoo-packet" }
+picoo-pairing = { path = "../crates/picoo-pairing" }
 picoo-protocol = { path = "../crates/picoo-protocol" }
 
+[workspace]
+
 [[bin]]
-name = "video_packet_decode"
+name = "video-packet-decode"
 path = "fuzz_targets/video_packet_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control-envelope"
+path = "fuzz_targets/control_envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pairing-transcript"
+path = "fuzz_targets/pairing_transcript.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reassembly-fec"
+path = "fuzz_targets/reassembly_fec.rs"
 test = false
 doc = false
 bench = false

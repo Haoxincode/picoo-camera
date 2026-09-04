@@ -76,6 +76,10 @@ pub(crate) enum TestSuite {
     /// Windows Shared Frame Ring and Media Foundation source boundaries.
     Windows,
     Protocol,
+    /// Bounded cargo-fuzz campaign for all PCP parser/state targets.
+    Fuzz,
+    /// Long-running paired loopback memory/network soak.
+    Soak,
     /// Linux-hostable product gates (WiX scaffold, VCam format, TXT sync, soak smoke).
     Linux,
 }

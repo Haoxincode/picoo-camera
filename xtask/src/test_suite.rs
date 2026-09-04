@@ -46,6 +46,30 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             )
             .run()?;
         }
+        TestSuite::Fuzz => {
+            let seconds = std::env::var("PICOO_FUZZ_SECONDS").unwrap_or_else(|_| "120".into());
+            for target in [
+                "video-packet-decode",
+                "control-envelope",
+                "pairing-transcript",
+                "reassembly-fec",
+            ] {
+                cmd!(
+                    sh,
+                    "cargo +nightly fuzz run {target} -- -max_total_time={seconds} -rss_limit_mb=2048"
+                )
+                .run()?;
+            }
+        }
+        TestSuite::Soak => {
+            let seconds = std::env::var("PICOO_SOAK_SECONDS").unwrap_or_else(|_| "1800".into());
+            cmd!(
+                sh,
+                "cargo test -p picoo-receiver --lib tests::qos::soak_paired_loopback_memory_stable -- --ignored --exact --nocapture"
+            )
+            .env("PICOO_SOAK_SECONDS", seconds)
+            .run()?;
+        }
         TestSuite::Linux => {
             // REQ-PICOO-VCAM-004 / DISCOVERY-005 / SESSION-005..007 / PAIRING-003 — no Win11 GUI.
             cmd!(sh, "bash scripts/validate_wix_scaffold.sh").run()?;

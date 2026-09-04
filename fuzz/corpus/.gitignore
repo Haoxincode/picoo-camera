@@ -1,0 +1,8 @@
+*
+!.gitignore
+!control-envelope/
+!control-envelope/*.hex
+!pairing-transcript/
+!pairing-transcript/*.txt
+!reassembly-fec/
+!reassembly-fec/*.hex
