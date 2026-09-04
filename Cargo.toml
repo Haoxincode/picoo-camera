@@ -44,6 +44,7 @@ thiserror = "2.0"
 tracing = "0.1"
 yuv = "0.8.17"
 reed-solomon-erasure = "6.0"
+zeroize = "1.8"
 
 # GPUI stack — lock to gpui-component compatible revision (ARCH-PICOO-UI-001)
 gpui = { git = "https://github.com/zed-industries/zed" }

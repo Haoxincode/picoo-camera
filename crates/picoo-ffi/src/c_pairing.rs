@@ -136,6 +136,7 @@ pub extern "C" fn picoo_identity_load_or_create(
     if path.is_null() {
         return std::ptr::null_mut();
     }
+    #[cfg(not(target_os = "ios"))]
     let path = unsafe { CStr::from_ptr(path) }.to_string_lossy();
     let default_name = if default_name.is_null() {
         "Picoo Phone".to_string()
@@ -144,7 +145,15 @@ pub extern "C" fn picoo_identity_load_or_create(
             .to_string_lossy()
             .into_owned()
     };
-    match DeviceIdentity::load_or_create(path.as_ref(), &default_name) {
+    #[cfg(target_os = "ios")]
+    let identity = DeviceIdentity::load_or_create_system(
+        "site.nebula-tech.picoo-camera",
+        "sender-ed25519",
+        &default_name,
+    );
+    #[cfg(not(target_os = "ios"))]
+    let identity = DeviceIdentity::load_or_create(path.as_ref(), &default_name);
+    match identity {
         Ok(identity) => Box::into_raw(Box::new(identity)) as *mut std::ffi::c_void,
         Err(_) => std::ptr::null_mut(),
     }

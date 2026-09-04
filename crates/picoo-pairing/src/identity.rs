@@ -10,6 +10,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::{store::atomic_replace, StoreError};
 
@@ -55,12 +56,15 @@ pub enum IdentityError {
     Invalid(String),
     #[error("OS CSPRNG failed: {0}")]
     Random(String),
+    #[error("platform secure identity store: {0}")]
+    SystemStore(String),
 }
 
 impl DeviceIdentity {
     pub fn generate(device_name: &str) -> Result<Self, IdentityError> {
-        let mut secret = [0_u8; SECRET_KEY_LEN];
-        getrandom::fill(&mut secret).map_err(|error| IdentityError::Random(error.to_string()))?;
+        let mut secret = Zeroizing::new([0_u8; SECRET_KEY_LEN]);
+        getrandom::fill(&mut secret[..])
+            .map_err(|error| IdentityError::Random(error.to_string()))?;
         Ok(Self::from_signing_key(
             device_name,
             SigningKey::from_bytes(&secret),
@@ -68,9 +72,11 @@ impl DeviceIdentity {
     }
 
     pub fn from_secret_bytes(device_name: &str, secret: &[u8]) -> Result<Self, IdentityError> {
-        let bytes: [u8; SECRET_KEY_LEN] = secret
-            .try_into()
-            .map_err(|_| IdentityError::Invalid("Ed25519 signing-key length".into()))?;
+        let bytes = Zeroizing::new(
+            secret
+                .try_into()
+                .map_err(|_| IdentityError::Invalid("Ed25519 signing-key length".into()))?,
+        );
         Ok(Self::from_signing_key(
             device_name,
             SigningKey::from_bytes(&bytes),
@@ -119,6 +125,33 @@ impl DeviceIdentity {
             let identity = Self::generate(default_name)?;
             identity.save_to_path(path)?;
             Ok(identity)
+        }
+    }
+
+    /// Load or create identity material in the OS credential store.
+    /// Available on Apple and Windows product targets.
+    #[cfg(any(target_os = "macos", target_os = "ios", windows))]
+    pub fn load_or_create_system(
+        service: &str,
+        account: &str,
+        device_name: &str,
+    ) -> Result<Self, IdentityError> {
+        let entry = keyring::Entry::new(service, account)
+            .map_err(|error| IdentityError::SystemStore(error.to_string()))?;
+        match entry.get_secret() {
+            Ok(secret) => {
+                let secret = Zeroizing::new(secret);
+                Self::from_secret_bytes(device_name, &secret)
+            }
+            Err(keyring::Error::NoEntry) => {
+                let identity = Self::generate(device_name)?;
+                let secret = Zeroizing::new(identity.secret_bytes_for_secure_store());
+                entry
+                    .set_secret(secret.as_ref())
+                    .map_err(|error| IdentityError::SystemStore(error.to_string()))?;
+                Ok(identity)
+            }
+            Err(error) => Err(IdentityError::SystemStore(error.to_string())),
         }
     }
 

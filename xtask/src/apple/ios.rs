@@ -56,7 +56,7 @@ pub(crate) fn build_ios(sh: &Shell) -> Result<()> {
     let smoke_binary = simulator_dir.join("picoo-ffi-smoke");
     cmd!(
         sh,
-        "xcrun --sdk iphonesimulator clang -target arm64-apple-ios18.0-simulator {smoke_source} -I {include_dir} {simulator_lib} -framework Security -framework SystemConfiguration -o {smoke_binary}"
+        "xcrun --sdk iphonesimulator clang -target arm64-apple-ios18.0-simulator {smoke_source} -I {include_dir} {simulator_lib} -framework CoreFoundation -framework Security -framework SystemConfiguration -o {smoke_binary}"
     )
     .run()?;
 

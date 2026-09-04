@@ -232,7 +232,11 @@ fn export_diagnostics_with_session_includes_redacted_host() {
     let dir = tempfile::tempdir().expect("tempdir");
     let store_path = dir.path().join("trusted.json");
     let out_path = dir.path().join("diag.json");
-    fs::write(&store_path, r#"{"version":1,"devices":[]}"#).expect("empty store");
+    fs::write(
+        &store_path,
+        r#"{"format":"picoo-camera-ed25519-trust","devices":[]}"#,
+    )
+    .expect("empty store");
 
     let store = CString::new(store_path.to_str().unwrap()).unwrap();
     let platform = CString::new("android").unwrap();

@@ -201,8 +201,8 @@ object PicooNative {
 
     external fun saveTrustedStore(handle: Long): Int
 
-    /** Load or create durable sender identity (REQ-PICOO-PAIRING-001). */
-    external fun loadOrCreateIdentity(path: String, defaultName: String): Long
+    /** Materialize an Ed25519 identity from a Keystore-protected secret. */
+    external fun loadIdentityFromSecret(secret: ByteArray, defaultName: String): Long
 
     external fun destroyIdentity(handle: Long)
 

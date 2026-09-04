@@ -139,17 +139,19 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_saveTrustedStore(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_loadOrCreateIdentity(
-    mut env: JNIEnv<'_>,
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_loadIdentityFromSecret(
+    env: JNIEnv<'_>,
     _this: JObject<'_>,
-    path: JString<'_>,
+    secret: JByteArray<'_>,
     default_name: JString<'_>,
 ) -> jlong {
-    let Some(path) = java_string(&mut env, path) else {
+    let Ok(secret) = env.convert_byte_array(secret) else {
         return 0;
     };
+    let secret = zeroize::Zeroizing::new(secret);
+    let mut env = env;
     let default_name = java_string(&mut env, default_name).unwrap_or_else(|| "Picoo Phone".into());
-    let Ok(identity) = DeviceIdentity::load_or_create(path, &default_name) else {
+    let Ok(identity) = DeviceIdentity::from_secret_bytes(&default_name, &secret) else {
         return 0;
     };
     identities()

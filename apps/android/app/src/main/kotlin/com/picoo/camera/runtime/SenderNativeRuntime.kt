@@ -14,9 +14,8 @@ import java.io.Closeable
  */
 class SenderNativeRuntime(context: Context) : Closeable {
     val trustedStorePath = java.io.File(context.filesDir, "trusted_devices.json").absolutePath
-    val identityPath = java.io.File(context.filesDir, "sender_identity.json").absolutePath
 
-    val identityHandle: Long = PicooNative.loadOrCreateIdentity(identityPath, android.os.Build.MODEL)
+    val identityHandle: Long = createIdentityHandle(context)
     val senderHandle: Long = PicooNative.createSender()
 
     private var trustedStoreHandle: Long = 0L
@@ -25,25 +24,13 @@ class SenderNativeRuntime(context: Context) : Closeable {
     private var closed = false
 
     val senderDeviceId: String
-        get() = if (identityHandle == 0L) {
-            "android-sender"
-        } else {
-            PicooNative.getIdentityDeviceId(identityHandle)
-        }
+        get() = PicooNative.getIdentityDeviceId(identityHandle)
 
     val senderPublicKey: ByteArray
-        get() = if (identityHandle == 0L) {
-            byteArrayOf(1, 2, 3)
-        } else {
-            PicooNative.getIdentityPublicKey(identityHandle)
-        }
+        get() = PicooNative.getIdentityPublicKey(identityHandle)
 
     val senderDeviceName: String
-        get() = if (identityHandle == 0L) {
-            android.os.Build.MODEL
-        } else {
-            PicooNative.getIdentityDeviceName(identityHandle).ifBlank { android.os.Build.MODEL }
-        }
+        get() = PicooNative.getIdentityDeviceName(identityHandle).ifBlank { android.os.Build.MODEL }
 
     fun attachTrustedStore(): Int {
         if (senderHandle == 0L) return -1
@@ -93,5 +80,20 @@ class SenderNativeRuntime(context: Context) : Closeable {
         if (store != 0L) PicooNative.destroyTrustedStore(store)
         if (senderHandle != 0L) PicooNative.destroySender(senderHandle)
         if (identityHandle != 0L) PicooNative.destroyIdentity(identityHandle)
+    }
+
+    private companion object {
+        fun createIdentityHandle(context: Context): Long {
+            val secret = AndroidIdentityStore(context).load()
+            val handle = try {
+                PicooNative.loadIdentityFromSecret(secret, android.os.Build.MODEL)
+            } finally {
+                secret.fill(0)
+            }
+            check(handle != 0L) { "secure sender identity is unavailable" }
+            // Removed plaintext identity state is never imported as trust evidence.
+            java.io.File(context.filesDir, "sender_identity.json").delete()
+            return handle
+        }
     }
 }

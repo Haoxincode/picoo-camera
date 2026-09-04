@@ -18,6 +18,7 @@ picoo-rate-control.workspace = true
 picoo-session.workspace = true
 picoo-sender.workspace = true
 picoo-transport.workspace = true
+zeroize.workspace = true
 
 [build-dependencies]
 cbindgen = "0.27"

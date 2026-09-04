@@ -3,6 +3,8 @@
 //! Owns QUIC listen, mDNS advertisement, and session pump. UI layers
 //! observe [`ReceiverSnapshot`] and invoke commands without touching transport.
 
+#[cfg(any(target_os = "macos", windows))]
+use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -198,16 +200,6 @@ impl ReceiverRuntime {
     pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
         let mut config = ReceiverRuntimeConfig::load()?;
         config.identity.display_name = prefs.display_name.clone();
-        // Persist renamed display name into durable identity file.
-        if let Ok(mut identity) =
-            DeviceIdentity::load_or_create(default_identity_path(), &prefs.display_name)
-        {
-            if identity.device_name != prefs.display_name {
-                identity.set_device_name(&prefs.display_name);
-                let _ = identity.save_to_path(default_identity_path());
-            }
-            config.identity = receiver_identity_from_device(&identity);
-        }
         let mut runtime = Self::start(config)?;
         runtime
             .receiver
@@ -224,13 +216,6 @@ impl ReceiverRuntime {
     pub fn set_display_name(&mut self, name: String) {
         self.display_name = name.clone();
         self.receiver.set_display_name(name.clone());
-        // Persist renamed display name into durable identity (REQ-PICOO-UI-002 / DISCOVERY-001).
-        if let Ok(mut identity) = DeviceIdentity::load_or_create(default_identity_path(), &name) {
-            if identity.device_name != name {
-                identity.set_device_name(&name);
-                let _ = identity.save_to_path(default_identity_path());
-            }
-        }
         self.refresh_mdns_advertisement();
     }
 
@@ -546,7 +531,7 @@ fn sanitize_receiver_stats(
     })
 }
 
-fn default_identity_path() -> PathBuf {
+fn legacy_identity_path() -> PathBuf {
     if cfg!(target_os = "windows") {
         std::env::var("APPDATA")
             .map(|appdata| {
@@ -565,7 +550,26 @@ fn default_identity_path() -> PathBuf {
 }
 
 fn load_receiver_identity(default_name: &str) -> Result<ReceiverIdentity, ReceiverError> {
-    let identity = DeviceIdentity::load_or_create(default_identity_path(), default_name)?;
+    #[cfg(any(target_os = "macos", windows))]
+    let identity = {
+        let identity = DeviceIdentity::load_or_create_system(
+            "site.nebula-tech.picoo-camera",
+            "receiver-ed25519",
+            default_name,
+        )?;
+        let legacy_path = legacy_identity_path();
+        if legacy_path.exists() {
+            fs::remove_file(&legacy_path).map_err(|error| {
+                picoo_pairing::IdentityError::SystemStore(format!(
+                    "could not remove legacy plaintext identity {}: {error}",
+                    legacy_path.display()
+                ))
+            })?;
+        }
+        identity
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let identity = DeviceIdentity::load_or_create(legacy_identity_path(), default_name)?;
     Ok(receiver_identity_from_device(&identity))
 }
 

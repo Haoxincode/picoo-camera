@@ -12,6 +12,13 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3.6.3", default-features = false, features = ["windows-native"] }
 
 [dev-dependencies]
 tempfile = "3.14"
