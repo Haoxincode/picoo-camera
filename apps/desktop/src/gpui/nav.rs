@@ -97,7 +97,10 @@ impl PicooDesktopApp {
             );
         let sidebar = div()
             .v_flex()
-            .w(target_width)
+            // The wrapper owns the animated width. Its surface and divider
+            // must follow every transition frame instead of jumping directly
+            // to the target width with the collapsed navigation contents.
+            .w_full()
             .h_full()
             .flex_shrink_0()
             .border_r_1()

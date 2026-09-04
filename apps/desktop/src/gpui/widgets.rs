@@ -380,6 +380,126 @@ pub(super) fn network_detail_row(
         )
 }
 
+pub(super) fn live_info_chip(cx: &Context<PicooDesktopApp>) -> Div {
+    div()
+        .h_flex()
+        .flex_none()
+        .items_center()
+        .px_2p5()
+        .py_1()
+        .rounded(cx.theme().radius)
+        .bg(cx.theme().secondary)
+}
+
+pub(super) fn live_metric_text(
+    label: impl Into<SharedString>,
+    cx: &Context<PicooDesktopApp>,
+) -> impl IntoElement {
+    live_info_chip(cx)
+        .font_family(cx.theme().mono_font_family.clone())
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(label.into())
+}
+
+pub(super) fn live_network_quality(
+    label: impl Into<SharedString>,
+    color: Hsla,
+    ready: bool,
+    cx: &Context<PicooDesktopApp>,
+) -> impl IntoElement {
+    live_info_chip(cx)
+        .gap_1()
+        .text_xs()
+        .text_color(color)
+        .when(ready, |this| {
+            this.child(
+                reicon_named("check-circle-filled", color)
+                    .size(rems(0.875))
+                    .into_any_element(),
+            )
+        })
+        .when(!ready, |this| {
+            this.child(
+                div()
+                    .size_1p5()
+                    .rounded(cx.theme().radius_full())
+                    .bg(color)
+                    .into_any_element(),
+            )
+        })
+        .child(label.into())
+}
+
+const PREVIEW_CORNER_TL: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path fill="currentColor" d="M0 0h1A1 1 0 0 0 0 1Z"/></svg>"#;
+const PREVIEW_CORNER_TR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path fill="currentColor" d="M1 0H0A1 1 0 0 1 1 1Z"/></svg>"#;
+const PREVIEW_CORNER_BL: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path fill="currentColor" d="M0 1H1A1 1 0 0 1 0 0Z"/></svg>"#;
+const PREVIEW_CORNER_BR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path fill="currentColor" d="M1 1H0A1 1 0 0 0 1 0Z"/></svg>"#;
+
+fn preview_corner_mask(
+    data: &'static [u8],
+    radius: impl Into<gpui_kit::AbsoluteLength>,
+    color: Hsla,
+) -> Svg {
+    let radius = radius.into();
+    svg().data(data).w(radius).h(radius).text_color(color)
+}
+
+pub(super) fn rounded_preview_corners(cx: &Context<PicooDesktopApp>) -> impl IntoElement {
+    // macOS `surface(CVPixelBuffer)` ignores corner radii, and overflow
+    // masks are rectangular. Cover the four sharp ears with the page
+    // background so the 16:9 preview reads as radius_lg.
+    let radius = cx.theme().radius_lg;
+    let color = cx.theme().background;
+    div()
+        .absolute()
+        .inset_0()
+        .child(
+            preview_corner_mask(PREVIEW_CORNER_TL, radius, color)
+                .absolute()
+                .top_0()
+                .left_0(),
+        )
+        .child(
+            preview_corner_mask(PREVIEW_CORNER_TR, radius, color)
+                .absolute()
+                .top_0()
+                .right_0(),
+        )
+        .child(
+            preview_corner_mask(PREVIEW_CORNER_BL, radius, color)
+                .absolute()
+                .bottom_0()
+                .left_0(),
+        )
+        .child(
+            preview_corner_mask(PREVIEW_CORNER_BR, radius, color)
+                .absolute()
+                .bottom_0()
+                .right_0(),
+        )
+}
+
+pub(super) fn live_preview_badge(cx: &Context<PicooDesktopApp>) -> impl IntoElement {
+    div()
+        .absolute()
+        .top_4()
+        .left_4()
+        .h_flex()
+        .flex_none()
+        .items_center()
+        .gap_1()
+        .px_2()
+        .py_1()
+        .rounded(cx.theme().radius_full())
+        .bg(cx.theme().overlay)
+        .text_xs()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(cx.theme().primary_foreground)
+        .child(reicon_named("check-circle-filled", cx.theme().success).size(rems(0.875)))
+        .child("Live")
+}
+
 pub(super) fn status_badge(
     label: impl Into<SharedString>,
     healthy: bool,

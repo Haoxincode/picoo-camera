@@ -16,8 +16,9 @@ use crate::receiver_runtime::ReceiverSnapshot;
 use super::icons::{reicon_button_content, reicon_named};
 use super::pairing::{connection_code_hero, format_pairing_code};
 use super::widgets::{
-    connection_security_status, hardware_topology, metric_row, network_status_item,
-    onboarding_step, status_badge, NetworkStatusState,
+    connection_security_status, hardware_topology, live_metric_text, live_network_quality,
+    live_preview_badge, metric_row, network_status_item, onboarding_step, rounded_preview_corners,
+    status_badge, NetworkStatusState,
 };
 use super::{DesktopPage, PicooDesktopApp};
 
@@ -434,22 +435,26 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|stats| format!("{:.1} Mbps", stats.receive_bitrate as f64 / 1_000_000.0))
             .unwrap_or_else(|| "— Mbps".into());
-        let (quality_label, quality_color) = snapshot.receiver_stats.as_ref().map_or_else(
-            || ("网络待测".to_string(), cx.theme().muted_foreground),
-            |stats| {
-                let quality =
-                    crate::network_quality::network_quality_label(stats.packet_loss, stats.rtt_ms)
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or("待测");
-                let color = if quality == "较差" {
-                    cx.theme().warning
-                } else {
-                    cx.theme().success
-                };
-                (format!("网络{quality}"), color)
-            },
-        );
+        let (quality_label, quality_color, quality_ready) =
+            snapshot.receiver_stats.as_ref().map_or_else(
+                || ("网络待测".to_string(), cx.theme().muted_foreground, false),
+                |stats| {
+                    let quality = crate::network_quality::network_quality_label(
+                        stats.packet_loss,
+                        stats.rtt_ms,
+                    )
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("待测");
+                    let ready = quality != "较差";
+                    let color = if ready {
+                        cx.theme().success
+                    } else {
+                        cx.theme().warning
+                    };
+                    (format!("网络{quality}"), color, ready)
+                },
+            );
         let active_identity = snapshot
             .active_sender
             .as_ref()
@@ -533,9 +538,15 @@ impl PicooDesktopApp {
         let resolution = Button::new("live-resolution-trigger")
             .outline()
             .small()
-            .label(resolution_label)
             .tooltip("选择推流分辨率")
             .accessibility_label("推流分辨率")
+            .child(
+                div()
+                    .h_flex()
+                    .gap_2()
+                    .child(reicon_named("monitor", cx.theme().primary))
+                    .child(resolution_label),
+            )
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 menu.menu_with_check(
                     "480p",
@@ -562,7 +573,6 @@ impl PicooDesktopApp {
             .min_h_0()
             .flex_1()
             .overflow_hidden()
-            .gap_4()
             .on_action(cx.listener(|this, action: &LiveToolbarAction, _, cx| {
                 let (width, height) = match action {
                     LiveToolbarAction::Resolution480 => (854, 480),
@@ -585,88 +595,34 @@ impl PicooDesktopApp {
                     .items_center()
                     .justify_between()
                     .gap_4()
+                    .py_3()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
                     .child(
                         div()
                             .h_flex()
                             .min_w_0()
                             .items_center()
-                            .gap_3()
+                            .gap_2()
                             .child(
                                 div()
-                                    .h_flex()
                                     .min_w_0()
-                                    .w(rems(12.))
-                                    .items_center()
-                                    .gap_2()
-                                    .child(
-                                        div()
-                                            .min_w_0()
-                                            .truncate()
-                                            .whitespace_nowrap()
-                                            .text_sm()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(sender_name),
-                                    )
-                                    .child(
-                                        div()
-                                            .h_flex()
-                                            .flex_none()
-                                            .gap_1()
-                                            .items_center()
-                                            .text_sm()
-                                            .text_color(cx.theme().success)
-                                            .child(
-                                                div()
-                                                    .size_2()
-                                                    .rounded_full()
-                                                    .bg(cx.theme().success),
-                                            )
-                                            .child("Live"),
-                                    ),
+                                    .max_w(rems(12.))
+                                    .truncate()
+                                    .whitespace_nowrap()
+                                    .text_sm()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child(sender_name),
                             )
-                            .child(resolution)
-                            .child(
-                                div()
-                                    .h_flex()
-                                    .flex_none()
-                                    .items_center()
-                                    .rounded(cx.theme().radius)
-                                    .bg(cx.theme().secondary.opacity(0.65))
-                                    .font_family(cx.theme().mono_font_family.clone())
-                                    .text_xs()
-                                    .child(div().px_2().py_1p5().child(fps_label))
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_1p5()
-                                            .border_l_1()
-                                            .border_color(cx.theme().border)
-                                            .child(latency_label),
-                                    )
-                                    .child(
-                                        div()
-                                            .px_2()
-                                            .py_1p5()
-                                            .border_l_1()
-                                            .border_color(cx.theme().border)
-                                            .child(bitrate_label),
-                                    )
-                                    .child(
-                                        div()
-                                            .h_flex()
-                                            .px_2()
-                                            .py_1p5()
-                                            .gap_1()
-                                            .border_l_1()
-                                            .border_color(cx.theme().border)
-                                            .text_color(quality_color)
-                                            .child(
-                                                div().size_1p5().rounded_full().bg(quality_color),
-                                            )
-                                            .child(quality_label),
-                                    ),
-                            )
-                            .child(details),
+                            .child(live_metric_text(fps_label, cx))
+                            .child(live_metric_text(latency_label, cx))
+                            .child(live_metric_text(bitrate_label, cx))
+                            .child(live_network_quality(
+                                quality_label,
+                                quality_color,
+                                quality_ready,
+                                cx,
+                            )),
                     )
                     .child(
                         div()
@@ -674,6 +630,8 @@ impl PicooDesktopApp {
                             .flex_none()
                             .items_center()
                             .gap_2()
+                            .child(details)
+                            .child(resolution)
                             .child(
                                 Button::new("remote-mirror-toolbar")
                                     .outline()
@@ -768,6 +726,10 @@ impl PicooDesktopApp {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
+                    // AC-D-LIVE-01: collapsing the Sidebar makes the preview
+                    // height-constrained. Keep one spacing-token safety inset
+                    // so the rounded frame never touches the toolbar divider.
+                    .when(self.sidebar_collapsed, |this| this.p_4())
                     .items_center()
                     .justify_center()
                     .child(
@@ -783,7 +745,9 @@ impl PicooDesktopApp {
                             .rounded(cx.theme().radius_lg)
                             .bg(cx.theme().muted)
                             .overflow_hidden()
-                            .child(self.video_surface.render_preview()),
+                            .child(self.video_surface.render_preview())
+                            .child(rounded_preview_corners(cx))
+                            .child(live_preview_badge(cx)),
                     ),
             )
     }
