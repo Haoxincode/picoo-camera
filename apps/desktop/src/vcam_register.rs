@@ -227,7 +227,7 @@ fn enumerate_registered_camera_activation(
                 device,
                 &MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK,
             );
-            if camera_identity_matches(&expected_link, symbolic_link.as_deref()) {
+            if camera_identity_matches(expected_link, symbolic_link.as_deref()) {
                 let friendly = mf_attribute_string(device, &MF_DEVSOURCE_ATTRIBUTE_FRIENDLY_NAME);
                 tracing::debug!(
                     friendly_name = friendly.as_deref().unwrap_or("<missing>"),

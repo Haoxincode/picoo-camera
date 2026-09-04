@@ -122,8 +122,6 @@ pub fn verify_camera_absent(expected_link: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn identity_matching_remains_case_insensitive() {
         assert!(super::super::camera_identity_matches(

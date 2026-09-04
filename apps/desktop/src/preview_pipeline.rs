@@ -55,6 +55,16 @@ unsafe impl Send for PreparedPreview {}
 #[derive(Default)]
 struct PlatformPreviewResources;
 
+#[cfg(target_os = "macos")]
+fn new_platform_preview_resources() -> PlatformPreviewResources {
+    PlatformPreviewResources::default()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn new_platform_preview_resources() -> PlatformPreviewResources {
+    PlatformPreviewResources
+}
+
 #[derive(Default)]
 struct WorkerState {
     pending: Option<PreviewRequest>,
@@ -148,7 +158,7 @@ impl Drop for PreviewPipeline {
 }
 
 fn preview_worker(shared: Arc<(Mutex<WorkerState>, Condvar)>) {
-    let mut platform_resources = PlatformPreviewResources::default();
+    let mut platform_resources = new_platform_preview_resources();
     loop {
         let request = {
             let (state, ready) = &*shared;
@@ -336,7 +346,7 @@ mod tests {
     }
 
     fn prepared(sequence: u64) -> PreparedPreview {
-        let mut resources = PlatformPreviewResources::default();
+        let mut resources = new_platform_preview_resources();
         prepare_preview(
             request(sequence, 2, 2, PREVIEW_MIN_DETAIL_WIDTH),
             &mut resources,
