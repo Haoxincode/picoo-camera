@@ -42,7 +42,7 @@ pub(super) struct StreamState {
     descriptor: Option<IMFStreamDescriptor>,
     current_type: Option<IMFMediaType>,
     allocator: Option<IMFVideoSampleAllocator>,
-    frames: Arc<Mutex<FrameProvider>>,
+    frames: Arc<FrameProvider>,
     metrics: VcamMetrics,
     sample_clock: SampleClock,
     output_width: u32,
@@ -81,6 +81,7 @@ impl MediaStream {
             )?;
             let handler: IMFMediaTypeHandler = descriptor.GetMediaTypeHandler()?;
             handler.SetCurrentMediaType(&type_720)?;
+            let frames = Arc::new(FrameProvider::new().map_err(|_| Error::from(E_FAIL))?);
 
             descriptor.SetGUID(&MF_DEVICESTREAM_STREAM_CATEGORY, &PINNAME_VIDEO_CAPTURE)?;
             descriptor.SetUINT32(&MF_DEVICESTREAM_STREAM_ID, 0)?;
@@ -96,7 +97,7 @@ impl MediaStream {
                 descriptor: Some(descriptor),
                 current_type: Some(type_720),
                 allocator: None,
-                frames: Arc::new(Mutex::new(FrameProvider::new())),
+                frames,
                 metrics: VcamMetrics::new(),
                 sample_clock: SampleClock::new(SAMPLE_DURATION_100NS),
                 output_width: 1280,
@@ -133,7 +134,7 @@ pub(super) fn descriptor(shared: &SharedStreamState) -> Result<IMFStreamDescript
 pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
-    let (queue, allocator) = {
+    let (queue, allocator, frames) = {
         let mut state = lock(shared)?;
         state.state = MF_STREAM_STATE_STOPPED;
         state.transitioning = false;
@@ -141,8 +142,13 @@ pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
         state.source = None;
         state.descriptor = None;
         state.current_type = None;
-        (state.queue.take(), state.allocator.take())
+        (
+            state.queue.take(),
+            state.allocator.take(),
+            Arc::clone(&state.frames),
+        )
     };
+    frames.shutdown();
     if let Some(allocator) = allocator {
         unsafe {
             let _ = allocator.UninitializeSampleAllocator();
@@ -522,7 +528,9 @@ fn deliver_sample(
             state.output_height,
         )
     };
-    let acquired = lock(&frames)?.acquire_for_output(output_width, output_height);
+    let acquired = frames
+        .acquire_for_output(output_width, output_height)
+        .ok_or_else(|| Error::from(E_FAIL))?;
     let frame_origin = acquired.origin;
     let frame = acquired.frame;
     if nv12_len(frame.width, frame.height) != Some(frame.pixels.len()) {
