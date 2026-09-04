@@ -4,6 +4,7 @@
 
 mod control;
 mod decoder_worker;
+mod health;
 mod loopback;
 mod media;
 mod pairing;
@@ -25,7 +26,7 @@ use picoo_protocol::control::{
     SenderStats as SenderStatsMsg, StreamConfig,
 };
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
-use picoo_session::ReceiverStatus;
+use picoo_session::{NetworkHealthTracker, ReceiverStatus};
 use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
@@ -51,6 +52,7 @@ pub struct ReceiverSession {
     active_sender: Option<ActiveSender>,
     pending_pairing: Option<PendingPairing>,
     status: ReceiverStatus,
+    network_health: NetworkHealthTracker,
     ingress: IngressStats,
     stats_reporter: StatsReporter,
     permit_unpaired_video: bool,
@@ -113,6 +115,7 @@ impl ReceiverSession {
             active_sender: None,
             pending_pairing: None,
             status: ReceiverStatus::Disconnected,
+            network_health: NetworkHealthTracker::default(),
             ingress: IngressStats::default(),
             stats_reporter: StatsReporter::new(),
             permit_unpaired_video: false,
@@ -187,10 +190,6 @@ impl ReceiverSession {
         self.permit_unpaired_video = permit;
     }
 
-    pub fn status(&self) -> ReceiverStatus {
-        self.status
-    }
-
     /// Surface Virtual Camera Unavailable to UI (REQ-PICOO-SESSION-001 / PUC-004).
     /// Only applied while idle so an active session is not clobbered.
     pub fn mark_virtual_camera_unavailable(&mut self) {
@@ -218,23 +217,6 @@ impl ReceiverSession {
     /// Surface permission gate to UI (REQ-PICOO-SESSION-001).
     pub fn mark_permission_required(&mut self) {
         self.status = ReceiverStatus::PermissionRequired;
-    }
-
-    /// Surface Network Unstable while live (REQ-PICOO-SESSION-001 / ARCH loss > 3%).
-    pub fn mark_network_unstable(&mut self) {
-        if matches!(
-            self.status,
-            ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
-        ) {
-            self.status = ReceiverStatus::NetworkUnstable;
-        }
-    }
-
-    /// Restore Streaming when loss recovers (REQ-PICOO-SESSION-001).
-    pub fn clear_network_unstable(&mut self) {
-        if self.status == ReceiverStatus::NetworkUnstable {
-            self.status = ReceiverStatus::Streaming;
-        }
     }
 
     pub fn ingress_stats(&self) -> IngressStats {
@@ -452,6 +434,7 @@ impl ReceiverSession {
         self.stats_reporter = StatsReporter::new();
         self.jitter.clear();
         self.interarrival_jitter.reset();
+        self.reset_network_health();
         self.last_stats = None;
         self.last_sender_stats = None;
         self.last_decoded_fps = 0;
@@ -496,10 +479,7 @@ impl ReceiverSession {
     }
 
     fn maybe_send_receiver_stats(&mut self) -> Result<(), ReceiverError> {
-        if !matches!(
-            self.status,
-            ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
-        ) {
+        if self.status != ReceiverStatus::Streaming {
             return Ok(());
         }
         if !self.stats_reporter.due() {
@@ -611,12 +591,9 @@ impl ReceiverSession {
 
         self.send_control_payload(session, ControlPayload::ReceiverStats(stats))?;
 
-        // REQ-PICOO-SESSION-001: reflect Network Unstable from live loss (ARCH >3% / <1%).
-        if packet_loss > 0.03 {
-            self.mark_network_unstable();
-        } else if packet_loss < 0.01 {
-            self.clear_network_unstable();
-        }
+        // REQ-PICOO-SESSION-013: UI health uses slow episode hysteresis while
+        // Sender ABR receives this raw window immediately above.
+        self.observe_network_packet_loss(packet_loss);
 
         self.stats_reporter.last_sent = Instant::now();
         self.stats_reporter.window_bytes = 0;
@@ -672,6 +649,7 @@ impl ReceiverSession {
         self.stats_reporter = StatsReporter::new();
         self.jitter.clear();
         self.interarrival_jitter.reset();
+        self.reset_network_health();
         self.last_stats = None;
         self.last_decoded_fps = 0;
         self.current_stream_config = None;

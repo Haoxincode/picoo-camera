@@ -31,9 +31,44 @@ fn session_status_markers_cover_vcam_permission_and_network() {
     receiver.clear_virtual_camera_unavailable();
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
 
-    // Network unstable only while live.
-    receiver.mark_network_unstable();
+    // Network health cannot overwrite a non-streaming lifecycle state.
+    receiver.observe_network_packet_loss_for_test(0.05);
+    receiver.observe_network_packet_loss_for_test(0.05);
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
+}
+
+#[test]
+fn network_episode_is_hysteretic_without_overwriting_streaming_lifecycle() {
+    // REQ-PICOO-SESSION-013
+    let mut receiver = ReceiverSession::new();
+    receiver
+        .begin_streaming(picoo_transport::SessionId(1))
+        .expect("streaming");
+
+    receiver.observe_network_packet_loss_for_test(0.05);
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    receiver.observe_network_packet_loss_for_test(0.04);
+    assert_eq!(receiver.status(), ReceiverStatus::NetworkUnstable);
+    assert_eq!(
+        receiver.lifecycle_status_for_test(),
+        ReceiverStatus::Streaming,
+        "health must not replace the media lifecycle fact"
+    );
+    assert_eq!(
+        receiver
+            .network_health()
+            .episode()
+            .expect("episode")
+            .worst_packet_loss,
+        0.05
+    );
+
+    for _ in 0..4 {
+        receiver.observe_network_packet_loss_for_test(0.0);
+        assert_eq!(receiver.status(), ReceiverStatus::NetworkUnstable);
+    }
+    receiver.observe_network_packet_loss_for_test(0.0);
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 }
 
 #[test]

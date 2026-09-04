@@ -136,6 +136,7 @@ impl ReceiverSession {
         self.stats_reporter = super::StatsReporter::new();
         self.jitter.clear();
         self.interarrival_jitter.reset();
+        self.reset_network_health();
         self.last_stats = None;
         self.last_sender_stats = None;
         self.last_decoded_fps = 0;
@@ -187,12 +188,8 @@ impl ReceiverSession {
                     | ReceiverStatus::Pairing
                     | ReceiverStatus::Negotiating
                     | ReceiverStatus::Streaming
-                    | ReceiverStatus::NetworkUnstable
             )
-            && !matches!(
-                self.status,
-                ReceiverStatus::Streaming | ReceiverStatus::NetworkUnstable
-            )
+            && self.status != ReceiverStatus::Streaming
         {
             self.status = ReceiverStatus::Negotiating;
         }

@@ -1,7 +1,15 @@
 //! Session states and reconnect backoff — REQ-PICOO-SESSION-001, REQ-PICOO-TRANSPORT-004.
 
+mod network_health;
+
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use network_health::{
+    NetworkDegradation, NetworkEpisode, NetworkHealth, NetworkHealthTracker,
+    BAD_PACKET_LOSS_THRESHOLD, BAD_WINDOWS_TO_ENTER, CLEAN_PACKET_LOSS_THRESHOLD,
+    CLEAN_WINDOWS_TO_RECOVER,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ReceiverStatus {
