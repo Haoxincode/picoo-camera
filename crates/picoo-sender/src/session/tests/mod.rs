@@ -112,7 +112,7 @@ fn signed_server_hello<T: PicooTransport>(
     receiver: &picoo_pairing::DeviceIdentity,
     pairing_required: bool,
 ) -> (ServerHello, [u8; 32]) {
-    let session = sender.session.expect("connected Sender");
+    let session = sender.active_session().expect("connected Sender");
     let sender_nonce = sender.sender_nonce.expect("ClientHello nonce");
     let receiver_nonce = [0x24; 32];
     let channel_binding = sender

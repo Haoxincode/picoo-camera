@@ -131,11 +131,13 @@ impl<T: PicooTransport> SenderSession<T> {
             }
         }
         // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
-        if self.runtime_state.stream().is_streaming() {
+        if self.lifecycle.runtime.stream().is_streaming() {
             if metrics.packet_loss > 0.03 {
-                self.runtime_state.set_health(HealthState::NetworkDegraded);
+                self.lifecycle
+                    .runtime
+                    .set_health(HealthState::NetworkDegraded);
             } else if metrics.packet_loss < 0.01 {
-                self.runtime_state.set_health(HealthState::Healthy);
+                self.lifecycle.runtime.set_health(HealthState::Healthy);
             }
         }
     }
@@ -151,7 +153,7 @@ impl<T: PicooTransport> SenderSession<T> {
             self.receiver_capabilities = Some(capabilities);
             self.bitrate
                 .set_preferred_height(self.cap_to_receiver_height(self.requested_preferred_height));
-            if self.runtime_state.stream() == StreamState::Negotiating {
+            if self.lifecycle.runtime.stream() == StreamState::Negotiating {
                 self.enter_streaming();
             }
             true

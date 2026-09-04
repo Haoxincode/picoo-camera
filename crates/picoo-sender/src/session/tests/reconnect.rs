@@ -51,6 +51,28 @@ fn client_hello_queued_before_async_connect_is_sent_when_connected() {
 }
 
 #[test]
+fn user_disconnect_cancels_pending_connect_and_rejects_late_connected_event() {
+    let mut sender = SenderSession::new(DeferredConnectTransport::new());
+    sender
+        .connect(Endpoint {
+            host: "192.168.8.101".into(),
+            port: 4433,
+        })
+        .expect("queue connect");
+    sender
+        .send_client_hello()
+        .expect("retain hello intent while connecting");
+
+    sender.disconnect();
+    sender.transport_mut().complete_connect();
+    sender.pump().expect("ignore late connected event");
+
+    assert_eq!(sender.status(), SenderStatus::Disconnected);
+    assert!(!sender.is_connected());
+    assert!(sender.transport().sent_control.is_empty());
+}
+
+#[test]
 fn stale_or_replayed_control_envelope_is_rejected() {
     let mut sender = SenderSession::new(MemoryTransport::new());
     let session = sender

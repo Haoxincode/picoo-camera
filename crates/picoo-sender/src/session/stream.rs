@@ -213,7 +213,7 @@ impl<T: PicooTransport> SenderSession<T> {
         config: &StreamConfigParams,
         stream_epoch: u32,
     ) -> Result<(), SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let session = self.active_session().ok_or(SenderError::NotConnected)?;
         let mut wire_config = config.clone();
         wire_config.stream_epoch = stream_epoch;
         self.send_control_payload(

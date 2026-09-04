@@ -8,6 +8,7 @@ mod encoder_transaction;
 mod lifecycle;
 mod media;
 mod pairing;
+mod reducer;
 mod stream;
 
 use std::path::PathBuf;
@@ -27,6 +28,7 @@ use crate::{SenderPipeline, SenderStats};
 
 use encoder_transaction::EncoderApplyState;
 use pairing::SenderPairing;
+use reducer::{SenderEvent, SenderReducerState};
 
 pub const INITIAL_STREAM_EPOCH: u32 = 1;
 /// Mobile FFI exposes epochs as a positive signed 32-bit integer on Android.
@@ -80,7 +82,6 @@ pub struct NativeEncoderAccessUnit<'a> {
 pub struct SenderSession<T: PicooTransport> {
     pipeline: SenderPipeline,
     transport: T,
-    session: Option<SessionId>,
     sent_datagrams: u64,
     last_sender_stats_sent_at: Option<Instant>,
     identity: DeviceIdentity,
@@ -89,13 +90,12 @@ pub struct SenderSession<T: PicooTransport> {
     sender_nonce: Option<[u8; 32]>,
     trusted: TrustedDeviceStore,
     trusted_store_path: Option<PathBuf>,
-    runtime_state: SessionRuntimeState,
+    lifecycle: SenderReducerState,
     last_endpoint: Option<Endpoint>,
     reconnect_backoff: ReconnectBackoff,
     reconnect_after: Option<Instant>,
-    /// Last delay chosen by [`Self::schedule_reconnect`] (TRANSPORT-004 observability).
+    /// Last delay chosen by the reconnect Effect adapter (TRANSPORT-004 observability).
     last_scheduled_reconnect_delay_ms: Option<u64>,
-    auto_reconnect: bool,
     bitrate: BitrateController,
     /// User/platform preference before applying the current receiver cap.
     requested_preferred_height: u32,
@@ -140,7 +140,6 @@ impl<T: PicooTransport> SenderSession<T> {
         Self {
             pipeline: SenderPipeline::default(),
             transport,
-            session: None,
             sent_datagrams: 0,
             last_sender_stats_sent_at: None,
             identity,
@@ -149,12 +148,11 @@ impl<T: PicooTransport> SenderSession<T> {
             sender_nonce: None,
             trusted: TrustedDeviceStore::new(),
             trusted_store_path: None,
-            runtime_state: SessionRuntimeState::default(),
+            lifecycle: SenderReducerState::default(),
             last_endpoint: None,
             reconnect_backoff: ReconnectBackoff::default(),
             reconnect_after: None,
             last_scheduled_reconnect_delay_ms: None,
-            auto_reconnect: true,
             bitrate: BitrateController::for_height(1080),
             requested_preferred_height: 1080,
             last_bitrate_action: BitrateAction::Hold,
@@ -196,11 +194,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn status(&self) -> SenderStatus {
-        self.runtime_state.sender_status()
+        self.lifecycle.runtime.sender_status()
     }
 
     pub fn runtime_state(&self) -> SessionRuntimeState {
-        self.runtime_state
+        self.lifecycle.runtime
     }
 
     /// Access the underlying transport (loss injection / diagnostics in tests).
@@ -262,7 +260,7 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn is_connected(&self) -> bool {
-        self.session.is_some()
+        self.lifecycle.active_generation.is_some()
     }
 }
 

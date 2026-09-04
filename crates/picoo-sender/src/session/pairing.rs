@@ -8,10 +8,10 @@ use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, ClientHello, PairingApproval, PairingCommit,
     PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
-use picoo_session::{ConnectionState, SenderStatus, SessionRuntimeState, StreamState, TrustState};
+use picoo_session::{ConnectionState, SenderStatus, StreamState, TrustState};
 use picoo_transport::{PicooTransport, SessionId};
 
-use super::SenderSession;
+use super::{SenderEvent, SenderSession};
 use crate::SenderError;
 
 pub(super) const SERVER_HELLO_PHASE: &[u8] = b"server-hello";
@@ -115,7 +115,7 @@ impl<T: PicooTransport> SenderSession<T> {
         let Some(pairing) = self.pairing.as_ref() else {
             return false;
         };
-        self.session == Some(session)
+        self.active_session() == Some(session)
             && transcript_hash == pairing.transcript_hash
             && verify_transcript_phase(
                 &pairing.public_key,
@@ -175,7 +175,7 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn on_server_hello(&mut self, hello: ServerHello) {
-        let Some(session) = self.session else {
+        let Some(session) = self.active_session() else {
             self.reject_authentication("PAIRING_SESSION_MISSING");
             return;
         };
@@ -257,11 +257,11 @@ impl<T: PicooTransport> SenderSession<T> {
         });
 
         if hello.pairing_required {
-            self.runtime_state.set_trust(TrustState::Pairing);
-            self.runtime_state.set_stream(StreamState::Negotiating);
+            self.lifecycle.runtime.set_trust(TrustState::Pairing);
+            self.lifecycle.runtime.set_stream(StreamState::Negotiating);
         } else {
-            self.runtime_state.set_trust(TrustState::Unknown);
-            self.runtime_state.set_stream(StreamState::Negotiating);
+            self.lifecycle.runtime.set_trust(TrustState::Unknown);
+            self.lifecycle.runtime.set_stream(StreamState::Negotiating);
             if self.send_identity_confirm().is_err() {
                 self.reject_authentication("SENDER_PROOF_SEND_FAILED");
             }
@@ -270,15 +270,15 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub(super) fn reject_authentication(&mut self, code: &str) {
         self.last_session_error = Some(code.into());
-        self.auto_reconnect = false;
-        self.reconnect_after = None;
-        if let Some(session) = self.session.take() {
-            self.transport
-                .close(session, picoo_transport::CloseReason::LocalClose);
+        if let Some(session) = self.active_session() {
+            let _ = self.apply_sender_event(SenderEvent::AuthenticationRejected {
+                generation: session.0,
+            });
+        } else {
+            let _ = self.apply_sender_event(SenderEvent::UserDisconnect {
+                domain_resources_active: true,
+            });
         }
-        self.runtime_state = SessionRuntimeState::default();
-        self.pairing = None;
-        self.sender_nonce = None;
     }
 
     fn accept_pairing_approval(&mut self) {
@@ -329,7 +329,7 @@ impl<T: PicooTransport> SenderSession<T> {
             }
         }
 
-        let Some(active_session) = self.session else {
+        let Some(active_session) = self.active_session() else {
             self.last_session_error = Some("PAIRING_SESSION_MISSING".into());
             return;
         };
@@ -386,10 +386,10 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn send_client_hello(&mut self) -> Result<(), SenderError> {
         let connection_pending = matches!(
-            self.runtime_state.connection(),
+            self.lifecycle.runtime.connection(),
             ConnectionState::Connecting | ConnectionState::Reconnecting { .. }
         );
-        if self.session.is_none() && !connection_pending {
+        if self.active_session().is_none() && !connection_pending {
             return Err(SenderError::NotConnected);
         }
 
@@ -399,18 +399,18 @@ impl<T: PicooTransport> SenderSession<T> {
         // QUIC connect is asynchronous on mobile. Treat ClientHello as the desired
         // first control message and let `on_connected` emit it once a session exists.
         // This preserves the Android call order: connect() -> sendClientHello().
-        if self.session.is_none() {
+        if self.active_session().is_none() {
             return Ok(());
         }
 
         self.emit_client_hello()?;
-        self.runtime_state.set_stream(StreamState::Negotiating);
+        self.lifecycle.runtime.set_stream(StreamState::Negotiating);
         self.drain_events();
         Ok(())
     }
 
     pub(super) fn emit_client_hello(&mut self) -> Result<(), SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let session = self.active_session().ok_or(SenderError::NotConnected)?;
         let sender_nonce =
             random_challenge_nonce().map_err(|error| SenderError::Protocol(error.to_string()))?;
         self.sender_nonce = Some(sender_nonce);
@@ -444,7 +444,7 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     fn send_identity_confirm(&mut self) -> Result<(), SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let session = self.active_session().ok_or(SenderError::NotConnected)?;
         let pairing = self
             .pairing
             .as_ref()

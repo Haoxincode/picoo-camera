@@ -6,7 +6,7 @@ use super::SenderSession;
 
 impl<T: PicooTransport> SenderSession<T> {
     pub(super) fn handle_control(&mut self, session: SessionId, msg: bytes::Bytes) {
-        if self.session != Some(session) {
+        if self.active_session() != Some(session) {
             return;
         }
         let Ok(envelope) = picoo_protocol::decode_control_envelope(&msg) else {
@@ -58,15 +58,15 @@ impl<T: PicooTransport> SenderSession<T> {
         match payload {
             ControlPayload::ServerHello(_) => {
                 matches!(
-                    self.runtime_state.connection(),
+                    self.lifecycle.runtime.connection(),
                     ConnectionState::Connected { .. }
-                ) && self.runtime_state.stream() == StreamState::Negotiating
-                    && self.runtime_state.trust() == TrustState::Unknown
+                ) && self.lifecycle.runtime.stream() == StreamState::Negotiating
+                    && self.lifecycle.runtime.trust() == TrustState::Unknown
             }
             ControlPayload::PairingApproval(_) | ControlPayload::PairingComplete(_) => {
-                self.runtime_state.stream() == StreamState::Negotiating
+                self.lifecycle.runtime.stream() == StreamState::Negotiating
                     && matches!(
-                        self.runtime_state.trust(),
+                        self.lifecycle.runtime.trust(),
                         TrustState::Unknown | TrustState::Pairing
                     )
             }
@@ -74,8 +74,8 @@ impl<T: PicooTransport> SenderSession<T> {
             | ControlPayload::ReceiverStats(_)
             | ControlPayload::EncoderCommand(_)
             | ControlPayload::CameraCommand(_) => {
-                self.runtime_state.stream().is_streaming()
-                    && self.runtime_state.trust() == TrustState::Authenticated
+                self.lifecycle.runtime.stream().is_streaming()
+                    && self.lifecycle.runtime.trust() == TrustState::Authenticated
                     && self.receiver_is_authenticated()
             }
             ControlPayload::SessionError(_) => true,

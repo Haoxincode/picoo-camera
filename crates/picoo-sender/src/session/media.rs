@@ -21,11 +21,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn enter_streaming(&mut self) {
-        self.runtime_state.set_trust(TrustState::Authenticated);
-        self.runtime_state.set_stream(StreamState::Streaming {
+        self.lifecycle.runtime.set_trust(TrustState::Authenticated);
+        self.lifecycle.runtime.set_stream(StreamState::Streaming {
             generation: self.current_stream_epoch,
         });
-        self.runtime_state.set_health(HealthState::Healthy);
+        self.lifecycle.runtime.set_health(HealthState::Healthy);
         // Fresh streaming (including post-reconnect) needs an IDR (REQ-PICOO-SESSION-004).
         self.keyframe_requested = true;
         let _ = self.send_pending_stream_config();
@@ -77,10 +77,10 @@ impl<T: PicooTransport> SenderSession<T> {
         if data.is_empty() {
             return Err(SenderError::EmptyAccessUnit);
         }
-        if self.session.is_none() {
+        if self.active_session().is_none() {
             return Err(SenderError::NotConnected);
         }
-        if !self.runtime_state.stream().is_streaming() {
+        if !self.lifecycle.runtime.stream().is_streaming() {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
@@ -186,10 +186,10 @@ impl<T: PicooTransport> SenderSession<T> {
         pts_us: u64,
         stream_epoch: u32,
     ) -> Result<usize, SenderError> {
-        if self.session.is_none() {
+        if self.active_session().is_none() {
             return Err(SenderError::NotConnected);
         }
-        if !self.runtime_state.stream().is_streaming() {
+        if !self.lifecycle.runtime.stream().is_streaming() {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
@@ -211,8 +211,8 @@ impl<T: PicooTransport> SenderSession<T> {
 
     /// Send all pending VideoPackets over QUIC datagrams.
     pub fn flush_pending(&mut self) -> Result<usize, SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
-        if !self.runtime_state.stream().is_streaming() {
+        let session = self.active_session().ok_or(SenderError::NotConnected)?;
+        if !self.lifecycle.runtime.stream().is_streaming() {
             self.pipeline.clear_pending_packets();
             return Err(SenderError::MediaNotReady);
         }
@@ -250,17 +250,18 @@ impl<T: PicooTransport> SenderSession<T> {
         pts_us: u64,
         stream_epoch: u32,
     ) -> Result<usize, SenderError> {
-        let previous_state = self.runtime_state;
-        self.runtime_state
+        let previous_state = self.lifecycle.runtime;
+        self.lifecycle
+            .runtime
             .set_connection(ConnectionState::Connected {
-                generation: self.session.map_or(0, |session| session.0),
+                generation: self.active_session().map_or(0, |session| session.0),
             });
-        self.runtime_state.set_trust(TrustState::Authenticated);
-        self.runtime_state.set_stream(StreamState::Streaming {
+        self.lifecycle.runtime.set_trust(TrustState::Authenticated);
+        self.lifecycle.runtime.set_stream(StreamState::Streaming {
             generation: stream_epoch,
         });
         let result = self.ingest_and_flush(data, is_keyframe, pts_us, stream_epoch);
-        self.runtime_state = previous_state;
+        self.lifecycle.runtime = previous_state;
         result
     }
 
@@ -272,7 +273,7 @@ impl<T: PicooTransport> SenderSession<T> {
     pub fn inject_control_for_test(&mut self, msg: bytes::Bytes) -> Result<(), SenderError> {
         // Non-transport unit harnesses use a synthetic session. Pairing tests that need to
         // verify session binding call `inject_control_for_session_for_test` explicitly.
-        let session = self.session.unwrap_or(SessionId(0));
+        let session = self.active_session().unwrap_or(SessionId(0));
         self.handle_control(session, msg);
         Ok(())
     }
@@ -281,7 +282,7 @@ impl<T: PicooTransport> SenderSession<T> {
         &mut self,
         payload: picoo_protocol::control::control_envelope::Payload,
     ) -> Result<(), SenderError> {
-        let session = self.session.ok_or(SenderError::NotConnected)?;
+        let session = self.active_session().ok_or(SenderError::NotConnected)?;
         let message = picoo_protocol::encode_control_envelope(
             payload,
             self.last_received_control_message_id.saturating_add(1),
@@ -297,7 +298,7 @@ impl<T: PicooTransport> SenderSession<T> {
         session: SessionId,
         payload: picoo_protocol::control::control_envelope::Payload,
     ) {
-        let active_generation = self.session.map_or(session.0, |active| active.0);
+        let active_generation = self.active_session().map_or(session.0, |active| active.0);
         let message = picoo_protocol::encode_control_envelope(
             payload,
             self.last_received_control_message_id.saturating_add(1),
@@ -307,50 +308,59 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub fn force_status_for_test(&mut self, status: SenderStatus) {
-        self.runtime_state = SessionRuntimeState::default();
-        let generation = self.session.map_or(1, |session| session.0);
+        self.lifecycle.runtime = SessionRuntimeState::default();
+        let generation = self.active_session().map_or(1, |session| session.0);
         match status {
             SenderStatus::Disconnected => {}
             SenderStatus::Discovering => self
-                .runtime_state
+                .lifecycle
+                .runtime
                 .set_connection(ConnectionState::Listening),
             SenderStatus::Connecting => self
-                .runtime_state
+                .lifecycle
+                .runtime
                 .set_connection(ConnectionState::Connecting),
             SenderStatus::Reconnecting => self
-                .runtime_state
+                .lifecycle
+                .runtime
                 .set_connection(ConnectionState::Reconnecting { attempt: 1 }),
             SenderStatus::Pairing => {
-                self.runtime_state
+                self.lifecycle
+                    .runtime
                     .set_connection(ConnectionState::Connected { generation });
-                self.runtime_state.set_trust(TrustState::Pairing);
-                self.runtime_state.set_stream(StreamState::Negotiating);
+                self.lifecycle.runtime.set_trust(TrustState::Pairing);
+                self.lifecycle.runtime.set_stream(StreamState::Negotiating);
             }
             SenderStatus::Negotiating => {
-                self.runtime_state
+                self.lifecycle
+                    .runtime
                     .set_connection(ConnectionState::Connected { generation });
-                self.runtime_state.set_stream(StreamState::Negotiating);
+                self.lifecycle.runtime.set_stream(StreamState::Negotiating);
             }
             SenderStatus::Streaming | SenderStatus::NetworkUnstable => {
-                self.runtime_state
+                self.lifecycle
+                    .runtime
                     .set_connection(ConnectionState::Connected { generation });
-                self.runtime_state.set_trust(TrustState::Authenticated);
-                self.runtime_state.set_stream(StreamState::Streaming {
+                self.lifecycle.runtime.set_trust(TrustState::Authenticated);
+                self.lifecycle.runtime.set_stream(StreamState::Streaming {
                     generation: self.current_stream_epoch,
                 });
                 if status == SenderStatus::NetworkUnstable {
-                    self.runtime_state.set_health(HealthState::NetworkDegraded);
+                    self.lifecycle
+                        .runtime
+                        .set_health(HealthState::NetworkDegraded);
                 }
             }
             SenderStatus::PermissionRequired => self
-                .runtime_state
+                .lifecycle
+                .runtime
                 .set_output(OutputState::PermissionRequired),
         }
     }
 
     /// Close the active transport session (used by reconnect / recovery tests across crates).
     pub fn disconnect_for_test(&mut self, reason: picoo_transport::CloseReason) {
-        if let Some(session) = self.session {
+        if let Some(session) = self.active_session() {
             self.transport.close(session, reason);
         }
     }

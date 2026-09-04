@@ -60,7 +60,7 @@ fn pairing_confirm_waits_for_receiver_completion() {
     ));
     assert_eq!(session.pending_packets(), 0);
 
-    let active_session = session.session.expect("active session");
+    let active_session = session.active_session().expect("active session");
     session.inject_control_payload_for_session_for_test(
         SessionId(active_session.0 + 1),
         ControlPayload::PairingApproval(approval.clone()),
