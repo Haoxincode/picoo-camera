@@ -91,6 +91,9 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
                 data: data,
                 isKeyframe: isKeyframe,
                 presentationTimeUs: presentationTimeUs,
+                encodedAtUs: Self.presentationTimeUs(
+                    CMClockGetTime(CMClockGetHostTimeClock())
+                ),
                 width: configuration.width,
                 height: configuration.height,
                 framesPerSecond: configuration.framesPerSecond,

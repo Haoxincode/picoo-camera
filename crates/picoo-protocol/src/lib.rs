@@ -74,7 +74,7 @@ pub const MAX_DATAGRAM_SIZE: usize = 1150;
 pub const MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT: u16 = 1024;
 
 /// Fixed header size in bytes.
-pub const VIDEO_PACKET_HEADER_SIZE: usize = 25;
+pub const VIDEO_PACKET_HEADER_SIZE: usize = 33;
 /// Data fragments leave room for the FEC parity metadata prefix so parity and
 /// data always fit the same path-MTU-safe QUIC Datagram size.
 pub const MAX_FEC_FRAGMENT_PAYLOAD: usize =

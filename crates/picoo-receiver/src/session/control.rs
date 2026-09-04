@@ -80,6 +80,12 @@ impl ReceiverSession {
             ControlPayload::StopStream(_) => self.handle_stop_stream(session),
             ControlPayload::SenderStats(stats) => self.handle_sender_stats(stats),
             ControlPayload::StreamConfig(config) => self.handle_stream_config(session, config),
+            ControlPayload::ClockSyncPong(pong)
+                if self.lifecycle.runtime.stream().is_streaming() =>
+            {
+                self.handle_clock_sync_pong(pong);
+                Ok(())
+            }
             _ => Err(ReceiverError::Protocol(
                 "control payload is not allowed in the authenticated receiver phase".into(),
             )),
@@ -159,6 +165,9 @@ impl ReceiverSession {
         let config_epoch = config.stream_epoch;
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
         self.current_stream_config = Some(std::sync::Arc::new(config));
+        if previous_epoch != Some(config_epoch) {
+            self.reset_clock_sync(config_epoch);
+        }
         match self.waiting_for_stream_config_epoch {
             Some(waiting) if waiting == config_epoch => {
                 self.waiting_for_stream_config_epoch = None;

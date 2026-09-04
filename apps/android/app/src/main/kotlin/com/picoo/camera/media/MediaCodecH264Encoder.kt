@@ -211,6 +211,7 @@ internal class MediaCodecH264Encoder(
                 data,
                 keyFrame,
                 info.presentationTimeUs,
+                System.nanoTime() / 1_000L,
                 generationEpoch,
                 generation,
                 generationWidth,

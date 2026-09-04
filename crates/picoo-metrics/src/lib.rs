@@ -14,6 +14,20 @@ pub struct ReceiverStats {
     pub jitter_buffer_target_ms: f64,
     pub jitter_buffer_actual_delay_ms: f64,
     pub jitter_buffer_occupancy_ms: f64,
+    /// Native source PTS to hardware encoder callback, in the Sender clock.
+    pub capture_to_encode_ms: Option<f64>,
+    /// Encoder callback to complete Receiver AU arrival after clock mapping.
+    pub encode_to_arrival_ms: Option<f64>,
+    /// Complete AU residence before Decoder Worker submission.
+    pub jitter_residence_ms: Option<f64>,
+    /// Decoder Worker submission to decoded frame completion.
+    pub decode_ms: Option<f64>,
+    /// Decoded frame completion to this metrics snapshot.
+    pub frame_publish_age_ms: Option<f64>,
+    /// Source PTS to this Receiver snapshot. Never populated before the
+    /// generation-scoped affine clock mapping is stable.
+    pub end_to_end_latency_ms: Option<f64>,
+    pub clock_uncertainty_ms: Option<f64>,
     /// Sender-local complete-AU queue age, merged before ABR evaluation.
     pub sender_queue_age_ms: f64,
     /// Sender-local cumulative complete-AU queue drops.

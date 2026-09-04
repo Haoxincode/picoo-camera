@@ -20,6 +20,9 @@ pub struct VideoPacket {
     pub stream_epoch: u32,
     pub frame_id: u64,
     pub pts_us: u64,
+    /// Sender monotonic timestamp observed when the hardware encoder emitted
+    /// this access unit. It shares the source PTS clock domain.
+    pub encoded_at_us: u64,
     pub fragment_index: u16,
     pub fragment_count: u16,
     pub payload: Bytes,
@@ -42,6 +45,7 @@ impl VideoPacket {
             self.stream_epoch,
             self.frame_id,
             self.pts_us,
+            self.encoded_at_us,
             self.fragment_index,
             self.fragment_count,
             &self.payload,
@@ -58,6 +62,7 @@ impl VideoPacket {
         stream_epoch: u32,
         frame_id: u64,
         pts_us: u64,
+        encoded_at_us: u64,
         fragment_index: u16,
         fragment_count: u16,
         payload: &[u8],
@@ -67,6 +72,7 @@ impl VideoPacket {
             stream_epoch,
             frame_id,
             pts_us,
+            encoded_at_us,
             fragment_index,
             fragment_count,
             &[payload],
@@ -81,6 +87,7 @@ impl VideoPacket {
         stream_epoch: u32,
         frame_id: u64,
         pts_us: u64,
+        encoded_at_us: u64,
         fragment_index: u16,
         fragment_count: u16,
         payload_segments: &[&[u8]],
@@ -105,6 +112,7 @@ impl VideoPacket {
         buf.put_u32(stream_epoch);
         buf.put_u64(frame_id);
         buf.put_u64(pts_us);
+        buf.put_u64(encoded_at_us);
         buf.put_u16(fragment_index);
         buf.put_u16(fragment_count);
         for segment in payload_segments {
@@ -130,6 +138,7 @@ impl VideoPacket {
         let stream_epoch = buf.get_u32();
         let frame_id = buf.get_u64();
         let pts_us = buf.get_u64();
+        let encoded_at_us = buf.get_u64();
         let fragment_index = buf.get_u16();
         let fragment_count = buf.get_u16();
         let payload = buf;
@@ -139,6 +148,7 @@ impl VideoPacket {
             stream_epoch,
             frame_id,
             pts_us,
+            encoded_at_us,
             fragment_index,
             fragment_count,
             payload,
@@ -163,6 +173,7 @@ mod tests {
             stream_epoch: 2,
             frame_id: 42,
             pts_us: 1_000_000,
+            encoded_at_us: 1_004_000,
             fragment_index: 0,
             fragment_count: 3,
             payload: Bytes::from_static(b"h264-chunk"),
@@ -180,7 +191,7 @@ mod tests {
     #[test]
     fn owned_datagram_decode_reuses_payload_storage() {
         let encoded =
-            VideoPacket::encode_datagram(VideoPacketFlags::empty(), 1, 2, 3, 0, 1, b"payload")
+            VideoPacket::encode_datagram(VideoPacketFlags::empty(), 1, 2, 3, 4, 0, 1, b"payload")
                 .expect("encode");
         let expected_payload = encoded[VIDEO_PACKET_HEADER_SIZE..].as_ptr();
         let decoded = VideoPacket::decode_bytes(encoded).expect("decode");
@@ -194,6 +205,7 @@ mod tests {
             stream_epoch: 0,
             frame_id: 0,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: 0,
             fragment_count: 1,
             payload: Bytes::from(vec![0u8; MAX_DATAGRAM_SIZE]),
@@ -218,8 +230,8 @@ mod tests {
     }
 
     #[test]
-    fn header_size_is_twenty_five_bytes() {
-        assert_eq!(VIDEO_PACKET_HEADER_SIZE, 25);
+    fn header_size_includes_encode_completion_timestamp() {
+        assert_eq!(VIDEO_PACKET_HEADER_SIZE, 33);
     }
 
     #[test]
@@ -229,6 +241,7 @@ mod tests {
             stream_epoch: 0,
             frame_id: 0,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: 2,
             fragment_count: 2,
             payload: Bytes::from_static(b"x"),

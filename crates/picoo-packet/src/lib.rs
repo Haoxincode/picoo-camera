@@ -31,6 +31,7 @@ struct PartialFrame {
     fragment_count: u16,
     flags: picoo_protocol::VideoPacketFlags,
     pts_us: u64,
+    encoded_at_us: u64,
     first_fragment_at: Instant,
 }
 
@@ -50,6 +51,7 @@ pub struct AssembledAccessUnit {
     pub data: Bytes,
     pub frame_id: u64,
     pub pts_us: u64,
+    pub encoded_at_us: u64,
     pub keyframe: bool,
     pub discardable: bool,
     pub stream_epoch: u32,
@@ -68,6 +70,8 @@ pub enum ReassemblyError {
     EpochMismatch,
     #[error("invalid FEC parity shard")]
     InvalidFecParity,
+    #[error("fragments for one access unit carry inconsistent timeline metadata")]
+    InconsistentFrameMetadata,
 }
 
 pub struct ReassemblyMap {
@@ -331,6 +335,7 @@ impl ReassemblyMap {
 
         let packet_flags = packet.flags;
         let packet_pts = packet.pts_us;
+        let packet_encoded_at = packet.encoded_at_us;
         let packet_epoch = packet.stream_epoch;
         if packet.flags.contains(VideoPacketFlags::FEC_PARITY) {
             validate_parity_shard(
@@ -345,6 +350,7 @@ impl ReassemblyMap {
                 fragment_count: packet.fragment_count,
                 flags: packet_flags,
                 pts_us: packet_pts,
+                encoded_at_us: packet_encoded_at,
                 fragments: HashMap::new(),
                 recovered_fragments: HashSet::new(),
                 parity_shards: HashMap::new(),
@@ -356,6 +362,17 @@ impl ReassemblyMap {
                 self.record_incomplete_drop(frame);
                 self.remember_terminal(key);
                 return Ok(None);
+            }
+            let semantic_flags = VideoPacketFlags::KEYFRAME | VideoPacketFlags::DISCARDABLE;
+            if entry.pts_us != packet_pts
+                || entry.encoded_at_us != packet_encoded_at
+                || entry.flags.intersection(semantic_flags)
+                    != packet_flags.intersection(semantic_flags)
+            {
+                let frame = self.frames.remove(&key).expect("reassembly entry exists");
+                self.record_incomplete_drop(frame);
+                self.remember_terminal(key);
+                return Err(ReassemblyError::InconsistentFrameMetadata);
             }
 
             if packet.flags.contains(VideoPacketFlags::FEC_PARITY) {
@@ -406,6 +423,7 @@ impl ReassemblyMap {
 
         let flags = entry.flags;
         let pts_us = entry.pts_us;
+        let encoded_at_us = entry.encoded_at_us;
         let fragment_count = entry.fragment_count;
         let first_fragment_at = entry.first_fragment_at;
         self.remember_terminal(key);
@@ -416,6 +434,7 @@ impl ReassemblyMap {
             data: assembled.freeze(),
             frame_id: key.frame_id,
             pts_us,
+            encoded_at_us,
             keyframe: Self::is_keyframe(flags),
             discardable: flags.contains(VideoPacketFlags::DISCARDABLE),
             stream_epoch: packet_epoch,
@@ -700,6 +719,7 @@ mod tests {
             stream_epoch: epoch,
             frame_id,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: index,
             fragment_count: count,
             payload: Bytes::copy_from_slice(payload),
@@ -726,6 +746,7 @@ mod tests {
                     stream_epoch: epoch,
                     frame_id,
                     pts_us: 0,
+                    encoded_at_us: 0,
                     fragment_index: group_start,
                     fragment_count: count,
                     payload: Bytes::from(payload),
@@ -798,6 +819,7 @@ mod tests {
             stream_epoch: 1,
             frame_id: 10,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: 0,
             fragment_count: 2,
             payload: Bytes::from_static(b"bad"),
@@ -857,6 +879,7 @@ mod tests {
             stream_epoch: 1,
             frame_id: 1,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: 0,
             fragment_count: 2,
             payload: Bytes::copy_from_slice(b"k0"),
@@ -877,6 +900,7 @@ mod tests {
             stream_epoch: 1,
             frame_id: 1,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: 0,
             fragment_count: 2,
             payload: Bytes::copy_from_slice(b"k0"),
@@ -893,6 +917,7 @@ mod tests {
             stream_epoch: 1,
             frame_id: 1,
             pts_us: 0,
+            encoded_at_us: 0,
             fragment_index: 1,
             fragment_count: 2,
             payload: Bytes::copy_from_slice(b"k1"),
@@ -976,6 +1001,7 @@ mod tests {
             stream_epoch: 1,
             frame_id: 1,
             pts_us: 1,
+            encoded_at_us: 1,
             fragment_index: 0,
             fragment_count: 2,
             payload: Bytes::copy_from_slice(b"k0"),
@@ -994,6 +1020,8 @@ mod tests {
 
         let mut old_tail = fragment(1, 1, 1, 2, b"k1");
         old_tail.flags = VideoPacketFlags::KEYFRAME | VideoPacketFlags::END_OF_ACCESS_UNIT;
+        old_tail.pts_us = 1;
+        old_tail.encoded_at_us = 1;
         assert_eq!(
             map.ingest(old_tail)
                 .unwrap()
@@ -1002,6 +1030,24 @@ mod tests {
             Some(&b"k0k1"[..])
         );
         assert!(!map.take_keyframe_loss());
+    }
+
+    #[test]
+    fn inconsistent_fragment_timeline_discards_the_complete_access_unit() {
+        let mut map = ReassemblyMap::new(8, 16);
+        let mut head = fragment(1, 7, 0, 2, b"a");
+        head.pts_us = 10;
+        head.encoded_at_us = 20;
+        assert!(map.ingest(head).expect("head").is_none());
+
+        let mut tail = fragment(1, 7, 1, 2, b"b");
+        tail.pts_us = 10;
+        tail.encoded_at_us = 21;
+        assert!(matches!(
+            map.ingest(tail),
+            Err(ReassemblyError::InconsistentFrameMetadata)
+        ));
+        assert!(map.take_reference_chain_loss());
     }
 
     #[test]

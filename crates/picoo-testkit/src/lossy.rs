@@ -140,6 +140,7 @@ mod tests {
                 fragment_index: 0,
                 fragment_count: 1,
                 pts_us: i,
+                encoded_at_us: i,
                 flags: VideoPacketFlags::empty(),
                 payload: Bytes::from_static(b"x"),
             };

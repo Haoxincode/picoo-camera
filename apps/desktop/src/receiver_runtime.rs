@@ -416,11 +416,13 @@ impl ReceiverRuntime {
                     height: cfg.map(|c| c.height).unwrap_or(0),
                     fps: self.receiver.decoded_fps(),
                     bitrate_bps: stats.map(|s| s.receive_bitrate).unwrap_or(0),
-                    // `frame_age_ms` starts when decode completes; adding it to
-                    // RTT double-counts local display residency and is not an
-                    // end-to-end capture timestamp. Until clock synchronization
-                    // exists, expose the measured path RTT without inventing E2E.
-                    latency_ms: stats.map(|stats| stats.rtt_ms).unwrap_or(0.0),
+                    // The synchronized capture-to-snapshot measurement is the
+                    // only end-to-end value. Before the affine mapping is
+                    // stable, retain RTT as the explicitly link-only fallback.
+                    latency_ms: stats
+                        .and_then(|stats| stats.end_to_end_latency_ms)
+                        .or_else(|| stats.map(|stats| stats.rtt_ms))
+                        .unwrap_or(0.0),
                     packet_loss: stats.map(|stats| stats.packet_loss).unwrap_or(0.0),
                 }
             },
@@ -540,12 +542,25 @@ fn sanitize_receiver_stats(
         jitter_buffer_target_ms: stats.jitter_buffer_target_ms.max(0.0),
         jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms.max(0.0),
         jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms.max(0.0),
+        capture_to_encode_ms: sanitize_optional_duration(stats.capture_to_encode_ms),
+        encode_to_arrival_ms: sanitize_optional_duration(stats.encode_to_arrival_ms),
+        jitter_residence_ms: sanitize_optional_duration(stats.jitter_residence_ms),
+        decode_ms: sanitize_optional_duration(stats.decode_ms),
+        frame_publish_age_ms: sanitize_optional_duration(stats.frame_publish_age_ms),
+        end_to_end_latency_ms: sanitize_optional_duration(stats.end_to_end_latency_ms),
+        clock_uncertainty_ms: sanitize_optional_duration(stats.clock_uncertainty_ms),
         sender_queue_age_ms: stats.sender_queue_age_ms.max(0.0),
         sender_queue_dropped_access_units: stats.sender_queue_dropped_access_units,
         sender_quic_lost_packets: stats.sender_quic_lost_packets,
         sender_quic_sent_packets: stats.sender_quic_sent_packets,
         sender_video_buffered_bytes: stats.sender_video_buffered_bytes,
     })
+}
+
+fn sanitize_optional_duration(value: Option<f64>) -> Option<f64> {
+    value
+        .filter(|value| value.is_finite())
+        .map(|value| value.max(0.0))
 }
 
 fn legacy_identity_path() -> PathBuf {
@@ -706,6 +721,21 @@ mod tests {
         assert_eq!(sanitized.jitter_buffer_target_ms, 0.0);
         assert_eq!(sanitized.jitter_buffer_actual_delay_ms, 0.0);
         assert_eq!(sanitized.jitter_buffer_occupancy_ms, 0.0);
+    }
+
+    #[test]
+    fn receiver_stats_drop_invalid_optional_timeline_values() {
+        let sanitized = sanitize_receiver_stats(&picoo_metrics::ReceiverStats {
+            capture_to_encode_ms: Some(-1.0),
+            decode_ms: Some(f64::NAN),
+            end_to_end_latency_ms: Some(42.0),
+            ..Default::default()
+        })
+        .expect("core window remains valid");
+
+        assert_eq!(sanitized.capture_to_encode_ms, Some(0.0));
+        assert_eq!(sanitized.decode_ms, None);
+        assert_eq!(sanitized.end_to_end_latency_ms, Some(42.0));
     }
 
     #[test]

@@ -86,6 +86,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.keyframe_requested = false;
         self.next_control_message_id = 1;
         self.last_received_control_message_id = 0;
+        self.media_clock_anchor = None;
     }
 
     fn has_session_resources(&self) -> bool {

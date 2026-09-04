@@ -172,6 +172,7 @@ impl<T: PicooTransport> SenderSession<T> {
             transaction.directive.stream_epoch
         );
         self.current_stream_epoch = transaction.directive.stream_epoch;
+        self.media_clock_anchor = None;
         self.committed_encoder_height = actual_height;
         self.committed_encoder_generation = encoder_generation;
         self.pending_stream_config = Some(committed_config);

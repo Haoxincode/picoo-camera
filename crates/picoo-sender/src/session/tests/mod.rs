@@ -29,6 +29,7 @@ fn native_au(
         data,
         is_keyframe,
         pts_us,
+        encoded_at_us: pts_us,
         transaction_id: facts.0,
         encoder_generation: facts.1,
         stream_epoch: facts.2,

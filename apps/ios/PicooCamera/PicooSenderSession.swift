@@ -235,6 +235,7 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
                 UInt(bytes.count),
                 accessUnit.isKeyframe ? 1 : 0,
                 accessUnit.presentationTimeUs,
+                accessUnit.encodedAtUs,
                 accessUnit.streamEpoch,
                 transactionID,
                 accessUnit.encoderGeneration,

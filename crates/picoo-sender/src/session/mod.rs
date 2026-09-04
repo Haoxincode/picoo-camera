@@ -3,6 +3,7 @@
 //! REQ-PICOO-SESSION-001, REQ-PICOO-TRANSPORT-004, REQ-PICOO-MEDIA-007
 
 mod abr;
+mod clock;
 mod control;
 mod encoder_transaction;
 mod lifecycle;
@@ -73,6 +74,7 @@ pub struct NativeEncoderAccessUnit<'a> {
     pub data: &'a [u8],
     pub is_keyframe: bool,
     pub pts_us: u64,
+    pub encoded_at_us: u64,
     pub transaction_id: u64,
     pub encoder_generation: u64,
     pub stream_epoch: u32,
@@ -126,6 +128,16 @@ pub struct SenderSession<T: PicooTransport> {
     last_session_error: Option<String>,
     next_control_message_id: u64,
     last_received_control_message_id: u64,
+    /// Latest native media-clock sample used to answer clock sync pings in
+    /// the same monotonic domain as source PTS.
+    media_clock_anchor: Option<MediaClockAnchor>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MediaClockAnchor {
+    stream_epoch: u32,
+    encoded_at_us: u64,
+    observed_at: Instant,
 }
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -173,6 +185,7 @@ impl<T: PicooTransport> SenderSession<T> {
             last_session_error: None,
             next_control_message_id: 1,
             last_received_control_message_id: 0,
+            media_clock_anchor: None,
         }
     }
 

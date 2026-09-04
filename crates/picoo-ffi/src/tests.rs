@@ -31,6 +31,7 @@ fn sender_rejects_offline_ingest_via_ffi() {
             data.len(),
             1,
             42,
+            42,
             1,
             0,
             1,

@@ -10,6 +10,7 @@ fun interface EncodedFrameListener {
         data: ByteArray,
         isKeyFrame: Boolean,
         presentationTimeUs: Long,
+        encodedAtUs: Long,
         streamEpoch: Int,
         encoderGeneration: Long,
         encoderWidth: Int,
@@ -17,7 +18,7 @@ fun interface EncodedFrameListener {
     )
 
     companion object {
-        val NOOP = EncodedFrameListener { _, _, _, _, _, _, _ -> }
+        val NOOP = EncodedFrameListener { _, _, _, _, _, _, _, _ -> }
     }
 }
 

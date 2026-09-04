@@ -28,6 +28,8 @@ message ControlEnvelope {
     ReceiverStats receiver_stats = 40;
     SenderStats sender_stats = 41;
     Heartbeat heartbeat = 42;
+    ClockSyncPing clock_sync_ping = 43;
+    ClockSyncPong clock_sync_pong = 44;
     SessionError session_error = 50;
   }
 }
@@ -141,6 +143,13 @@ message ReceiverStats {
   // Missing fragments before successful Reed-Solomon recovery. FEC adapts
   // from this value; ABR continues to use residual packet_loss above.
   double pre_fec_packet_loss = 11;
+  optional double capture_to_encode_ms = 12;
+  optional double encode_to_arrival_ms = 13;
+  optional double jitter_residence_ms = 14;
+  optional double decode_ms = 15;
+  optional double frame_publish_age_ms = 16;
+  optional double end_to_end_latency_ms = 17;
+  optional double clock_uncertainty_ms = 18;
 }
 
 // Sender -> Receiver transport observability. This travels on the reliable
@@ -158,6 +167,23 @@ message SenderStats {
 
 message RequestKeyframe {}
 message Heartbeat {}
+
+// Receiver-initiated four-timestamp exchange over the authenticated control
+// stream. All timestamps are endpoint-local monotonic microseconds.
+message ClockSyncPing {
+  uint64 sample_id = 1;
+  uint64 receiver_send_us = 2;
+  uint32 stream_epoch = 3;
+}
+
+message ClockSyncPong {
+  uint64 sample_id = 1;
+  uint64 receiver_send_us = 2;
+  uint64 sender_receive_us = 3;
+  uint64 sender_send_us = 4;
+  uint32 stream_epoch = 5;
+}
+
 message SessionError {
   string code = 1;
   string message = 2;

@@ -71,6 +71,7 @@ nonisolated struct EncodedAccessUnit: Equatable, Sendable {
     let data: Data
     let isKeyframe: Bool
     let presentationTimeUs: UInt64
+    let encodedAtUs: UInt64
     let width: UInt32
     let height: UInt32
     let framesPerSecond: UInt32

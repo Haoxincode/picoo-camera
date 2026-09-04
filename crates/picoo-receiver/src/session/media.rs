@@ -7,8 +7,6 @@ use picoo_frame_hub::{
     PlaceholderMode, SharedFrameRingProducer, VideoFrame, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
 };
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
-#[cfg(test)]
-use picoo_media_decode::AccessUnitDecoder;
 use picoo_media_decode::DecodedFrame;
 use picoo_packet::{AssembledAccessUnit, ReassemblyError};
 use picoo_protocol::VideoPacket;
@@ -53,7 +51,9 @@ mod tests {
             stream_generation: generation,
             frame_id,
             source_pts_us: 42_000,
+            encoded_at_us: 45_000,
             received_at_us: 50_000,
+            decode_submitted_at_us: 55_000,
             kind: FrameKind::Key,
             data: Bytes::from_static(b"typed-au"),
         }
@@ -81,6 +81,7 @@ mod tests {
             stream_epoch: generation,
             frame_id,
             pts_us: frame_id * 1_000,
+            encoded_at_us: frame_id * 1_000,
             fragment_index,
             fragment_count,
             payload: Bytes::from(vec![frame_id as u8]),
@@ -125,7 +126,9 @@ mod tests {
             stream_generation: 2,
             frame_id: 9,
             source_pts_us: 42_000,
+            encoded_at_us: 45_000,
             received_at_us: 50_000,
+            decode_submitted_at_us: 55_000,
             kind: FrameKind::Key,
         };
 
@@ -142,7 +145,9 @@ mod tests {
                         stream_generation: 2,
                         frame_id,
                         source_pts_us: frame_id * 1_000,
+                        encoded_at_us: frame_id * 1_050,
                         received_at_us: frame_id * 1_100,
+                        decode_submitted_at_us: frame_id * 1_150,
                         decoded_at: Some(Instant::now()),
                     },
                     DecodedFrame {
@@ -266,7 +271,9 @@ struct FrameTimeline {
     stream_generation: u64,
     frame_id: u64,
     source_pts_us: u64,
+    encoded_at_us: u64,
     received_at_us: u64,
+    decode_submitted_at_us: u64,
     decoded_at: Option<Instant>,
 }
 
@@ -365,6 +372,7 @@ impl ReceiverSession {
             Err(ReassemblyError::TooManyFragments)
             | Err(ReassemblyError::DuplicateFragment)
             | Err(ReassemblyError::EpochMismatch)
+            | Err(ReassemblyError::InconsistentFrameMetadata)
             | Err(ReassemblyError::InvalidFecParity) => {}
         }
         if self.reassembly.take_reference_chain_loss() && !defer_until_config {
@@ -422,6 +430,7 @@ impl ReceiverSession {
                 stream_generation: u64::from(access_unit.stream_epoch),
                 frame_id: access_unit.frame_id,
                 pts_us,
+                encoded_at_us: access_unit.encoded_at_us,
                 received_at_us: completed_at_us,
                 data: access_unit.data,
                 keyframe: access_unit.keyframe,
@@ -535,41 +544,6 @@ impl ReceiverSession {
 
     pub fn placeholder_mode(&self) -> PlaceholderMode {
         self.placeholder_mode
-    }
-
-    /// Test-only decoder injection keeps synthetic payload support outside the
-    /// production platform decoder.
-    #[cfg(test)]
-    pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder>) {
-        self.decoder_worker = DecoderWorker::with_decoder(decoder);
-    }
-
-    /// Test adapter for decoder recovery fixtures without a network timeline.
-    #[cfg(test)]
-    pub(crate) fn publish_access_unit(
-        &mut self,
-        access_unit: Bytes,
-        keyframe: bool,
-    ) -> Result<(), ReceiverError> {
-        self.publish_timeline_access_unit(EncodedAccessUnit {
-            connection_generation: self
-                .transport
-                .active_session()
-                .map_or(0, |session| session.0),
-            stream_generation: self
-                .current_stream_config
-                .as_ref()
-                .map_or(0, |config| u64::from(config.stream_epoch)),
-            frame_id: 0,
-            source_pts_us: 0,
-            received_at_us: self.timing_origin.elapsed().as_micros() as u64,
-            kind: if keyframe {
-                FrameKind::Key
-            } else {
-                FrameKind::ReferenceDelta
-            },
-            data: access_unit,
-        })
     }
 
     /// Decode one typed H.264 access unit into one shared VideoFrame.
@@ -700,7 +674,9 @@ impl ReceiverSession {
                         stream_generation: timeline.stream_generation,
                         frame_id: timeline.frame_id,
                         source_pts_us: timeline.source_pts_us,
+                        encoded_at_us: timeline.encoded_at_us,
                         received_at_us: timeline.received_at_us,
+                        decode_submitted_at_us: timeline.decode_submitted_at_us,
                         decoded_at: Some(decoded_at),
                     },
                     frame,
@@ -771,7 +747,9 @@ impl ReceiverSession {
             timeline.stream_generation,
             timeline.frame_id,
             timeline.source_pts_us,
+            timeline.encoded_at_us,
             timeline.received_at_us,
+            timeline.decode_submitted_at_us,
             timeline.decoded_at.unwrap_or_else(Instant::now),
             timestamp_us,
             width,

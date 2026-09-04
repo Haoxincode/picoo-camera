@@ -36,7 +36,9 @@ pub(super) struct EncodedAccessUnit {
     pub(super) stream_generation: u64,
     pub(super) frame_id: u64,
     pub(super) source_pts_us: u64,
+    pub(super) encoded_at_us: u64,
     pub(super) received_at_us: u64,
+    pub(super) decode_submitted_at_us: u64,
     pub(super) kind: FrameKind,
     pub(super) data: Bytes,
 }
@@ -47,7 +49,9 @@ pub(super) struct AccessUnitTimeline {
     pub(super) stream_generation: u64,
     pub(super) frame_id: u64,
     pub(super) source_pts_us: u64,
+    pub(super) encoded_at_us: u64,
     pub(super) received_at_us: u64,
+    pub(super) decode_submitted_at_us: u64,
     pub(super) kind: FrameKind,
 }
 
@@ -58,7 +62,9 @@ impl EncodedAccessUnit {
             stream_generation: self.stream_generation,
             frame_id: self.frame_id,
             source_pts_us: self.source_pts_us,
+            encoded_at_us: self.encoded_at_us,
             received_at_us: self.received_at_us,
+            decode_submitted_at_us: self.decode_submitted_at_us,
             kind: self.kind,
         }
     }
@@ -398,7 +404,9 @@ mod tests {
             stream_generation: 1,
             frame_id,
             source_pts_us: frame_id,
+            encoded_at_us: frame_id,
             received_at_us: frame_id,
+            decode_submitted_at_us: frame_id,
             kind,
             data: Bytes::from_static(b"au"),
         }

@@ -2,6 +2,7 @@
 //!
 //! REQ-PICOO-SESSION-001/002, REQ-PICOO-TRANSPORT-*, REQ-PICOO-PROTOCOL-006.
 
+mod clock;
 mod control;
 mod decoder_worker;
 mod health;
@@ -12,6 +13,8 @@ mod pairing;
 mod recovery;
 mod reducer;
 mod stats;
+#[cfg(test)]
+mod test_support;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -107,6 +110,7 @@ pub struct ReceiverSession {
     control_generation: Option<u64>,
     next_control_message_id: u64,
     last_received_control_message_id: u64,
+    clock_sync: clock::ReceiverClockSync,
 }
 
 impl Default for ReceiverSession {
@@ -156,6 +160,7 @@ impl ReceiverSession {
             control_generation: None,
             next_control_message_id: 1,
             last_received_control_message_id: 0,
+            clock_sync: clock::ReceiverClockSync::default(),
         }
     }
 
@@ -346,6 +351,7 @@ impl ReceiverSession {
         self.maybe_request_recovery_keyframe()?;
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
+        self.maybe_send_clock_sync()?;
 
         Ok(())
     }
@@ -410,7 +416,9 @@ impl ReceiverSession {
                 stream_generation: frame.stream_generation,
                 frame_id: frame.frame_id,
                 source_pts_us: frame.pts_us,
+                encoded_at_us: frame.encoded_at_us,
                 received_at_us: frame.received_at_us,
+                decode_submitted_at_us: now_us,
                 kind: if frame.keyframe {
                     FrameKind::Key
                 } else if frame.discardable {
@@ -485,6 +493,7 @@ impl ReceiverSession {
             .fec_recovered_fragment_count()
             .saturating_sub(self.stats_reporter.last_fec_recovered_fragments);
 
+        let receiver_now_us = self.timing_origin.elapsed().as_micros() as u64;
         let frame_age_ms = self
             .latest_frame_store
             .latest()
@@ -496,6 +505,11 @@ impl ReceiverSession {
                 now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0
             })
             .unwrap_or(0.0);
+        let latency = self
+            .latest_frame_store
+            .latest()
+            .map(|frame| self.frame_latency_breakdown(frame, receiver_now_us))
+            .unwrap_or_default();
 
         // REQ-PICOO-PROTOCOL-006: real RTT from Quinn path stats (via transport facade).
         let link = self.transport.link_stats().unwrap_or_default();
@@ -523,6 +537,13 @@ impl ReceiverSession {
             jitter_buffer_actual_delay_ms: jitter_timing.actual_delay_ms,
             jitter_buffer_occupancy_ms: jitter_timing.occupancy_ms,
             pre_fec_packet_loss,
+            capture_to_encode_ms: latency.capture_to_encode_ms,
+            encode_to_arrival_ms: latency.encode_to_arrival_ms,
+            jitter_residence_ms: latency.jitter_residence_ms,
+            decode_ms: latency.decode_ms,
+            frame_publish_age_ms: latency.frame_publish_age_ms,
+            end_to_end_latency_ms: latency.end_to_end_latency_ms,
+            clock_uncertainty_ms: latency.clock_uncertainty_ms,
         };
 
         let sender_stats = self.last_sender_stats.as_ref();
@@ -537,6 +558,13 @@ impl ReceiverSession {
             jitter_buffer_target_ms: stats.jitter_buffer_target_ms,
             jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms,
             jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms,
+            capture_to_encode_ms: stats.capture_to_encode_ms,
+            encode_to_arrival_ms: stats.encode_to_arrival_ms,
+            jitter_residence_ms: stats.jitter_residence_ms,
+            decode_ms: stats.decode_ms,
+            frame_publish_age_ms: stats.frame_publish_age_ms,
+            end_to_end_latency_ms: stats.end_to_end_latency_ms,
+            clock_uncertainty_ms: stats.clock_uncertainty_ms,
             sender_queue_age_ms: sender_stats.map_or(0.0, |stats| stats.video_queue_age_ms),
             sender_queue_dropped_access_units: sender_stats
                 .map_or(0, |stats| stats.video_dropped_access_units),

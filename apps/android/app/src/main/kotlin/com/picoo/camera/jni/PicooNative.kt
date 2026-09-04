@@ -69,6 +69,7 @@ object PicooNative {
         data: ByteArray,
         keyframe: Boolean,
         ptsUs: Long,
+        encodedAtUs: Long,
         streamEpoch: Int,
         transactionId: Long,
         encoderGeneration: Long,

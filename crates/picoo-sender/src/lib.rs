@@ -138,7 +138,31 @@ impl SenderPipeline {
         }
         self.au_scratch.clear();
         self.au_scratch.extend_from_slice(data);
-        self.packetize_scratch(is_keyframe, pts_us, stream_epoch, fec)
+        self.packetize_scratch(is_keyframe, pts_us, pts_us, stream_epoch, fec)
+    }
+
+    /// Packetize an AU carrying the native encoder-completion timestamp in
+    /// the same monotonic domain as its source PTS.
+    pub fn ingest_timed_access_unit(
+        &mut self,
+        data: &[u8],
+        is_keyframe: bool,
+        pts_us: u64,
+        encoded_at_us: u64,
+        stream_epoch: u32,
+        fec: FecProtection,
+    ) -> Result<usize, SenderError> {
+        if data.is_empty() {
+            return Err(SenderError::EmptyAccessUnit);
+        }
+        if data.len().div_ceil(MAX_FEC_FRAGMENT_PAYLOAD)
+            > usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT)
+        {
+            return Err(SenderError::AccessUnitTooLarge);
+        }
+        self.au_scratch.clear();
+        self.au_scratch.extend_from_slice(data);
+        self.packetize_scratch(is_keyframe, pts_us, encoded_at_us, stream_epoch, fec)
     }
 
     /// Packetize one Rust-owned AU directly into final PCP wire datagrams.
@@ -150,13 +174,14 @@ impl SenderPipeline {
         stream_epoch: u32,
         fec: FecProtection,
     ) -> Result<usize, SenderError> {
-        self.packetize_access_unit(&data, is_keyframe, pts_us, stream_epoch, fec)
+        self.packetize_access_unit(&data, is_keyframe, pts_us, pts_us, stream_epoch, fec)
     }
 
     fn packetize_scratch(
         &mut self,
         is_keyframe: bool,
         pts_us: u64,
+        encoded_at_us: u64,
         stream_epoch: u32,
         fec: FecProtection,
     ) -> Result<usize, SenderError> {
@@ -165,6 +190,7 @@ impl SenderPipeline {
             data,
             is_keyframe,
             pts_us,
+            encoded_at_us,
             stream_epoch,
             fec,
             &mut self.frame_id,
@@ -179,6 +205,7 @@ impl SenderPipeline {
         data: &[u8],
         is_keyframe: bool,
         pts_us: u64,
+        encoded_at_us: u64,
         stream_epoch: u32,
         fec: FecProtection,
     ) -> Result<usize, SenderError> {
@@ -186,6 +213,7 @@ impl SenderPipeline {
             data,
             is_keyframe,
             pts_us,
+            encoded_at_us,
             stream_epoch,
             fec,
             &mut self.frame_id,
@@ -203,6 +231,7 @@ fn packetize_into_pending(
     data: &[u8],
     is_keyframe: bool,
     pts_us: u64,
+    encoded_at_us: u64,
     stream_epoch: u32,
     fec: FecProtection,
     frame_id: &mut u64,
@@ -255,6 +284,7 @@ fn packetize_into_pending(
             stream_epoch,
             current_frame_id,
             pts_us,
+            encoded_at_us,
             descriptor.index,
             fragment_count,
             chunk,
@@ -296,6 +326,7 @@ fn packetize_into_pending(
                 stream_epoch,
                 current_frame_id,
                 pts_us,
+                encoded_at_us,
                 parity.group_start,
                 fragment_count,
                 &[&prefix, &parity.bytes],

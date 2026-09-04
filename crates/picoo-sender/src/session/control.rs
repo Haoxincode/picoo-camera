@@ -50,6 +50,7 @@ impl<T: PicooTransport> SenderSession<T> {
                 self.handle_session_error(error);
             }
             ControlPayload::ServerHello(hello) => self.on_server_hello(hello),
+            ControlPayload::ClockSyncPing(ping) => self.handle_clock_sync_ping(session, ping),
             _ => {}
         }
     }
@@ -73,7 +74,8 @@ impl<T: PicooTransport> SenderSession<T> {
             ControlPayload::Capabilities(_)
             | ControlPayload::ReceiverStats(_)
             | ControlPayload::EncoderCommand(_)
-            | ControlPayload::CameraCommand(_) => {
+            | ControlPayload::CameraCommand(_)
+            | ControlPayload::ClockSyncPing(_) => {
                 self.lifecycle.runtime.stream().is_streaming()
                     && self.lifecycle.runtime.trust() == TrustState::Authenticated
                     && self.receiver_is_authenticated()

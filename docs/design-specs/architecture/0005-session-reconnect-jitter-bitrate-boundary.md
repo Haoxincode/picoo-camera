@@ -131,8 +131,9 @@ occupancy 标成网络抖动或实际播放延迟。
 在 PCP 增加独立
 packet sequence 前无法由该指标观察，因此该指标不是 transport-wide 精确丢包率。QUIC 路径的
 `lost_packets / sent_packets` 只描述本端发出的包；在 Receiver 端它主要是控制流，不能作为
-Android 视频丢包率反馈给 ABR。未建立双端时钟同步前，桌面只能把 QUIC RTT 命名为链路延迟；
-Receiver 解码完成后的本地 `frame_age` 不得与 RTT 相加并标成端到端延迟。
+Android 视频丢包率反馈给 ABR。双端 affine 时钟映射稳定前，桌面只能把 QUIC RTT 命名为链路延迟；
+映射稳定后才显示独立的 capture→encode→arrival→jitter→decode→publish 分段与端到端值。
+Receiver 解码完成后的本地 `frame_age` 始终保持本地帧龄语义，不得与 RTT 相加冒充端到端延迟。
 `pre_fec_packet_loss` 在同一分母上把成功恢复的 fragment 也计入原始缺片，只用于选择 FEC 强度；
 ABR 和 UI 健康仍读取 FEC 后的 `packet_loss`，避免把已经修复的无线损伤误报为实际媒体损失。
 

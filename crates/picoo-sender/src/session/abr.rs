@@ -105,6 +105,13 @@ impl<T: PicooTransport> SenderSession<T> {
             jitter_buffer_target_ms: stats.jitter_buffer_target_ms,
             jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms,
             jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms,
+            capture_to_encode_ms: stats.capture_to_encode_ms,
+            encode_to_arrival_ms: stats.encode_to_arrival_ms,
+            jitter_residence_ms: stats.jitter_residence_ms,
+            decode_ms: stats.decode_ms,
+            frame_publish_age_ms: stats.frame_publish_age_ms,
+            end_to_end_latency_ms: stats.end_to_end_latency_ms,
+            clock_uncertainty_ms: stats.clock_uncertainty_ms,
             sender_queue_age_ms: local_link.video_queue_age_ms,
             sender_queue_dropped_access_units: local_link
                 .video_dropped_access_units

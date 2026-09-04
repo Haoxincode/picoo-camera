@@ -187,6 +187,7 @@ struct PicooSenderSessionTests {
             data: Data([0, 0, 0, 1, keyframe ? 0x65 : 0x41]),
             isKeyframe: keyframe,
             presentationTimeUs: pts,
+            encodedAtUs: pts,
             width: 1280,
             height: 720,
             framesPerSecond: 30,

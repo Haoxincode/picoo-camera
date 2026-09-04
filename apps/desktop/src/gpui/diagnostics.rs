@@ -86,6 +86,34 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
+                        "timer",
+                        "端到端延迟",
+                        "Sender 与 Receiver 时钟映射稳定后，从采集到当前统计快照",
+                        format_milliseconds(stats.and_then(|stats| stats.end_to_end_latency_ms)),
+                        cx,
+                    ))
+                    .child(network_detail_row(
+                        "activity",
+                        "分段延迟",
+                        "采集→编码 / 编码→到达 / 抖动驻留 / 解码 / 发布后帧龄",
+                        format!(
+                            "{} / {} / {} / {} / {}",
+                            format_milliseconds(stats.and_then(|stats| stats.capture_to_encode_ms)),
+                            format_milliseconds(stats.and_then(|stats| stats.encode_to_arrival_ms)),
+                            format_milliseconds(stats.and_then(|stats| stats.jitter_residence_ms)),
+                            format_milliseconds(stats.and_then(|stats| stats.decode_ms)),
+                            format_milliseconds(stats.and_then(|stats| stats.frame_publish_age_ms)),
+                        ),
+                        cx,
+                    ))
+                    .child(network_detail_row(
+                        "monitor",
+                        "时钟映射不确定度",
+                        "基于低 RTT 样本拟合的当前误差上界；未稳定时不显示总延迟",
+                        format_milliseconds(stats.and_then(|stats| stats.clock_uncertainty_ms)),
+                        cx,
+                    ))
+                    .child(network_detail_row(
                         "activity",
                         "网络抖动",
                         "完整视频帧到达间隔相对 PTS 间隔的波动",

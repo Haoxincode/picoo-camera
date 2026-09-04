@@ -33,6 +33,7 @@ impl ReceiverSession {
         self.control_generation = None;
         self.next_control_message_id = 1;
         self.last_received_control_message_id = 0;
+        self.clear_clock_sync();
     }
 
     pub(super) fn apply_receiver_event(

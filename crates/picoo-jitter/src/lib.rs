@@ -26,6 +26,7 @@ pub struct Frame {
     pub stream_generation: u64,
     pub frame_id: u64,
     pub pts_us: u64,
+    pub encoded_at_us: u64,
     /// Completion time on the Receiver-local monotonic timeline.
     pub received_at_us: u64,
     pub data: Bytes,
@@ -354,6 +355,7 @@ mod tests {
             stream_generation: 1,
             frame_id: pts_us,
             pts_us,
+            encoded_at_us: pts_us,
             received_at_us: pts_us,
             data: Bytes::from_static(b"f"),
             keyframe,

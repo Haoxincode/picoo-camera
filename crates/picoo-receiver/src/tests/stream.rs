@@ -80,7 +80,7 @@ fn receiver_sends_stats_to_paired_sender() {
         "expected decoded frame before stats interval"
     );
 
-    std::thread::sleep(Duration::from_millis(1100));
+    super::pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(1100));
 
     for _ in 0..20 {
         receiver.pump().expect("receiver pump");
@@ -91,8 +91,11 @@ fn receiver_sends_stats_to_paired_sender() {
         std::thread::sleep(Duration::from_millis(50));
     }
 
-    let stats = sender.last_receiver_stats().expect("receiver stats");
-    assert_eq!(receiver.last_stats_revision(), 1);
+    let stats = sender
+        .last_receiver_stats()
+        .expect("receiver stats")
+        .clone();
+    assert!(receiver.last_stats_revision() >= 1);
     assert!(stats.receive_bitrate > 0);
     // One idle stats interval produces a stale frame, but ARCH-PICOO-SESSION-001
     // requires sustained age growth before sacrificing quality.
@@ -104,16 +107,40 @@ fn receiver_sends_stats_to_paired_sender() {
     assert!(stats.packet_loss < 0.5);
     assert_eq!(sender.last_bitrate_action(), BitrateAction::Hold);
 
+    // Let a later complete window observe at least three generation-bound PCP
+    // exchanges spanning 500 ms. The media window may now be idle, but the
+    // latest frame timeline remains a valid clock-mapping probe.
+    super::pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(1100));
+    let clock_stats = sender
+        .last_receiver_stats()
+        .expect("clock-synchronized receiver stats");
+    let stats_revision = receiver.last_stats_revision();
+    assert!(stats_revision >= 2);
+    // Three generation-bound PCP clock exchanges span at least 500 ms during
+    // this window, so cross-device totals become available without changing
+    // the Receiver-local `frame_age_ms` meaning.
+    assert_eq!(clock_stats.capture_to_encode_ms, Some(0.0));
+    // On loopback the mapped encoder callback may fall inside the estimator's
+    // uncertainty band around AU arrival; conservative underflow stays absent.
+    assert!(clock_stats
+        .encode_to_arrival_ms
+        .is_none_or(|value| value >= 0.0));
+    assert!(clock_stats.jitter_residence_ms.is_some());
+    assert!(clock_stats.decode_ms.is_some());
+    assert!(clock_stats.frame_publish_age_ms.is_some());
+    assert!(clock_stats.end_to_end_latency_ms.is_some());
+    assert!(clock_stats.clock_uncertainty_ms.is_some());
+
     // The revision identifies complete windows: pumps inside the same interval
     // do not advance it, and teardown clears current values without rewinding
     // the monotonic identity used by desktop history de-duplication.
     receiver.pump().expect("same-window pump");
-    assert_eq!(receiver.last_stats_revision(), 1);
+    assert_eq!(receiver.last_stats_revision(), stats_revision);
     receiver.close();
     assert!(receiver.last_stats().is_none());
     assert_eq!(receiver.decoded_fps(), 0);
     assert!(receiver.stream_config().is_none());
-    assert_eq!(receiver.last_stats_revision(), 1);
+    assert_eq!(receiver.last_stats_revision(), stats_revision);
 }
 
 #[test]

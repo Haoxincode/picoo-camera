@@ -9,6 +9,25 @@ use super::{EncoderDirectiveKind, NativeEncoderAccessUnit, SenderSession};
 use crate::{FecProtection, SenderError};
 
 impl<T: PicooTransport> SenderSession<T> {
+    fn observe_media_clock(&mut self, stream_epoch: u32, encoded_at_us: u64) {
+        self.media_clock_anchor = Some(super::MediaClockAnchor {
+            stream_epoch,
+            encoded_at_us,
+            observed_at: std::time::Instant::now(),
+        });
+    }
+
+    pub(super) fn media_clock_now_us(&self, stream_epoch: u32) -> Option<u64> {
+        let anchor = self
+            .media_clock_anchor
+            .filter(|anchor| anchor.stream_epoch == stream_epoch)?;
+        Some(
+            anchor
+                .encoded_at_us
+                .saturating_add(anchor.observed_at.elapsed().as_micros() as u64),
+        )
+    }
+
     fn fec_protection_for(&self, is_keyframe: bool) -> FecProtection {
         let packet_loss = self.pre_fec_packet_loss;
         if is_keyframe || packet_loss >= 0.03 {
@@ -69,6 +88,7 @@ impl<T: PicooTransport> SenderSession<T> {
             data,
             is_keyframe,
             pts_us,
+            encoded_at_us,
             transaction_id,
             encoder_generation,
             stream_epoch,
@@ -119,9 +139,15 @@ impl<T: PicooTransport> SenderSession<T> {
             // an exhausted frame id; in either case the transaction must stay
             // pending so a later valid IDR can complete it.
             let fec = self.fec_protection_for(true);
-            let packets =
-                self.pipeline
-                    .ingest_access_unit(data, true, pts_us, stream_epoch, fec)?;
+            self.observe_media_clock(stream_epoch, encoded_at_us);
+            let packets = self.pipeline.ingest_timed_access_unit(
+                data,
+                true,
+                pts_us,
+                encoded_at_us,
+                stream_epoch,
+                fec,
+            )?;
             let Some(transaction) = self.encoder_apply_state.take_matching_keyframe(
                 transaction_id,
                 encoder_generation,
@@ -170,9 +196,15 @@ impl<T: PicooTransport> SenderSession<T> {
             });
         }
         let fec = self.fec_protection_for(is_keyframe);
-        let packets =
-            self.pipeline
-                .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch, fec)?;
+        self.observe_media_clock(stream_epoch, encoded_at_us);
+        let packets = self.pipeline.ingest_timed_access_unit(
+            data,
+            is_keyframe,
+            pts_us,
+            encoded_at_us,
+            stream_epoch,
+            fec,
+        )?;
         if is_keyframe {
             self.keyframe_requested = false;
         }
@@ -205,6 +237,9 @@ impl<T: PicooTransport> SenderSession<T> {
             });
         }
         let fec = self.fec_protection_for(is_keyframe);
+        // Synthetic/test callers do not have a distinct native callback
+        // timestamp; treat ingestion as encode completion in the PTS domain.
+        self.observe_media_clock(stream_epoch, pts_us);
         self.pipeline
             .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch, fec)
     }
