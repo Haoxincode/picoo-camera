@@ -5,10 +5,12 @@
 mod control;
 mod decoder_worker;
 mod health;
+mod lifecycle;
 mod loopback;
 mod media;
 mod pairing;
 mod recovery;
+mod reducer;
 mod stats;
 
 use std::path::PathBuf;
@@ -32,13 +34,14 @@ use picoo_session::{
     ConnectionState, NetworkHealthTracker, OutputState, SessionRuntimeState, StreamState,
     TrustState,
 };
-use picoo_transport::{CloseReason, Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
+use picoo_transport::{Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use pairing::{ActiveSender, PendingPairing};
 use recovery::DecoderRecovery;
 use recovery::RecoveryReason;
+use reducer::{ReceiverCloseReason, ReceiverEffect, ReceiverEvent, ReceiverReducerState};
 use stats::{
     media_deadline_from_observations, observed_fragment_loss_ratio,
     playout_blocked_by_older_reassembly, InterarrivalJitter, StatsReporter,
@@ -57,7 +60,7 @@ pub struct ReceiverSession {
     trusted_store_path: Option<PathBuf>,
     active_sender: Option<ActiveSender>,
     pending_pairing: Option<PendingPairing>,
-    runtime_state: SessionRuntimeState,
+    lifecycle: ReceiverReducerState,
     network_health: NetworkHealthTracker,
     ingress: IngressStats,
     stats_reporter: StatsReporter,
@@ -124,7 +127,7 @@ impl ReceiverSession {
             trusted_store_path: None,
             active_sender: None,
             pending_pairing: None,
-            runtime_state: SessionRuntimeState::default(),
+            lifecycle: ReceiverReducerState::default(),
             network_health: NetworkHealthTracker::default(),
             ingress: IngressStats::default(),
             stats_reporter: StatsReporter::new(),
@@ -204,22 +207,24 @@ impl ReceiverSession {
     /// Surface Virtual Camera Unavailable to UI (REQ-PICOO-SESSION-001 / PUC-004).
     /// Only applied while idle so an active session is not clobbered.
     pub fn mark_virtual_camera_unavailable(&mut self) {
-        if self.runtime_state.output() != OutputState::PermissionRequired {
-            self.runtime_state
+        if self.lifecycle.runtime.output() != OutputState::PermissionRequired {
+            self.lifecycle
+                .runtime
                 .set_output(OutputState::VirtualCameraUnavailable);
         }
     }
 
     /// Clear Virtual Camera Unavailable after install/repair (REQ-PICOO-SESSION-001).
     pub fn clear_virtual_camera_unavailable(&mut self) {
-        if self.runtime_state.output() == OutputState::VirtualCameraUnavailable {
-            self.runtime_state.set_output(OutputState::Ready);
+        if self.lifecycle.runtime.output() == OutputState::VirtualCameraUnavailable {
+            self.lifecycle.runtime.set_output(OutputState::Ready);
         }
     }
 
     /// Surface permission gate to UI (REQ-PICOO-SESSION-001).
     pub fn mark_permission_required(&mut self) {
-        self.runtime_state
+        self.lifecycle
+            .runtime
             .set_output(OutputState::PermissionRequired);
     }
 
@@ -265,23 +270,12 @@ impl ReceiverSession {
     }
 
     pub fn runtime_state(&self) -> SessionRuntimeState {
-        self.runtime_state
-    }
-
-    pub(super) fn reset_runtime_to_idle(&mut self) {
-        let connection = if self.bind_addr().is_some() {
-            ConnectionState::Listening
-        } else {
-            ConnectionState::Idle
-        };
-        self.runtime_state.reset_session(connection);
+        self.lifecycle.runtime
     }
 
     pub fn listen(&mut self, endpoint: Endpoint) -> Result<std::net::SocketAddr, ReceiverError> {
         let addr = self.transport.bind(endpoint)?;
-        self.runtime_state.set_output(OutputState::Ready);
-        self.runtime_state
-            .set_connection(ConnectionState::Listening);
+        self.apply_receiver_event(ReceiverEvent::ListenerStarted)?;
         Ok(addr)
     }
 
@@ -295,39 +289,45 @@ impl ReceiverSession {
                 TransportEvent::Connected(session)
                     if self.transport.active_session() == Some(session) =>
                 {
-                    self.placeholder_after = None;
-                    self.control_generation = None;
-                    self.next_control_message_id = 1;
-                    self.last_received_control_message_id = 0;
-                    self.runtime_state
-                        .reset_session(ConnectionState::Connected {
-                            generation: session.0,
-                        });
+                    self.apply_receiver_event(ReceiverEvent::TransportConnected {
+                        generation: session.0,
+                    })?;
                 }
-                TransportEvent::Disconnected(_, _) if self.transport.active_session().is_none() => {
-                    self.on_peer_disconnected()?;
-                }
-                TransportEvent::ControlMessage(session, msg)
-                    if self.transport.active_session() == Some(session) =>
+                TransportEvent::Disconnected(session, _)
+                    if self.transport.active_session().is_none() =>
                 {
-                    if let Err(error) = self.handle_control(session, msg) {
-                        self.reject_control_session(session);
-                        return Err(error);
+                    let retain_frame = self.lifecycle.runtime.stream().is_streaming()
+                        && self.latest_frame_store.latest().is_some()
+                        && !self.last_frame_hold.is_zero();
+                    self.apply_receiver_event(ReceiverEvent::TransportDisconnected {
+                        generation: session.0,
+                        retain_frame,
+                    })?;
+                }
+                TransportEvent::ControlMessage(session, msg) => {
+                    let effects = self.apply_receiver_event(ReceiverEvent::ControlReceived {
+                        generation: session.0,
+                    })?;
+                    if effects.contains(ReceiverEffect::AcceptControl) {
+                        if let Err(error) = self.handle_control(session, msg) {
+                            self.reject_control_session(session);
+                            return Err(error);
+                        }
                     }
                 }
-                TransportEvent::VideoPackets(session, packets)
-                    if self.transport.active_session() == Some(session) =>
-                {
-                    for packet in packets {
-                        self.ingest_video_packet(packet)?;
+                TransportEvent::VideoPackets(session, packets) => {
+                    let effects = self.apply_receiver_event(ReceiverEvent::VideoReceived {
+                        generation: session.0,
+                    })?;
+                    if effects.contains(ReceiverEffect::AcceptVideo) {
+                        for packet in packets {
+                            self.ingest_video_packet(packet)?;
+                        }
+                        // The transport queue can remain continuously readable on
+                        // a 1080p stream. Give every bounded ingress batch a
+                        // playout opportunity before polling more media.
+                        self.drain_jitter()?;
                     }
-                    // The transport queue can remain continuously readable on
-                    // a 1080p stream. Draining only after poll_event() becomes
-                    // empty lets complete AUs accumulate behind an artificial
-                    // scheduling boundary and can trip the jitter capacity
-                    // guard even on a lossless LAN. Give every bounded ingress
-                    // batch a playout opportunity before polling more media.
-                    self.drain_jitter()?;
                 }
                 _ => {
                     // An event queued by an older connection generation must not
@@ -446,57 +446,8 @@ impl ReceiverSession {
         )
     }
 
-    fn on_peer_disconnected(&mut self) -> Result<(), ReceiverError> {
-        self.decoder_worker.reset();
-        self.frame_buffer_pool.clear();
-        let had_live_frame = self.runtime_state.stream().is_streaming()
-            && self.latest_frame_store.latest().is_some();
-        self.active_sender = None;
-        self.pending_pairing = None;
-        self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
-        self.stats_reporter = StatsReporter::new();
-        self.jitter.clear();
-        self.interarrival_jitter.reset();
-        self.reset_network_health();
-        self.last_stats = None;
-        self.last_sender_stats = None;
-        self.last_decoded_fps = 0;
-        self.last_media_error = None;
-        self.current_stream_config = None;
-        self.waiting_for_stream_config_epoch = None;
-        self.pending_stream_config_idr = None;
-        self.receiver_capabilities_sent = None;
-        self.decoder_recovery.reset_session();
-
-        if had_live_frame && !self.last_frame_hold.is_zero() {
-            // Briefly keep last frame for VCam/UI, then switch to placeholder.
-            self.runtime_state
-                .reset_session(ConnectionState::Reconnecting { attempt: 1 });
-            self.placeholder_after = Some(Instant::now() + self.last_frame_hold);
-        } else {
-            self.placeholder_after = None;
-            let _ = self.publish_waiting_placeholder();
-            self.reset_runtime_to_idle();
-        }
-        Ok(())
-    }
-
-    fn maybe_finalize_disconnect_hold(&mut self) -> Result<(), ReceiverError> {
-        let Some(deadline) = self.placeholder_after else {
-            return Ok(());
-        };
-        if Instant::now() < deadline {
-            return Ok(());
-        }
-        self.placeholder_after = None;
-        // After last-frame hold, show reconnect copy before returning to idle Discovering.
-        self.publish_reconnecting_placeholder()?;
-        self.reset_runtime_to_idle();
-        Ok(())
-    }
-
     fn maybe_send_receiver_stats(&mut self) -> Result<(), ReceiverError> {
-        if !self.runtime_state.stream().is_streaming() {
+        if !self.lifecycle.runtime.stream().is_streaming() {
             return Ok(());
         }
         if !self.stats_reporter.due() {
@@ -646,20 +597,22 @@ impl ReceiverSession {
 
     pub(crate) fn begin_streaming(&mut self, session: SessionId) -> Result<(), ReceiverError> {
         if !matches!(
-            self.runtime_state.connection(),
+            self.lifecycle.runtime.connection(),
             ConnectionState::Connected { .. }
         ) {
-            self.runtime_state
+            self.lifecycle
+                .runtime
                 .set_connection(ConnectionState::Connected {
                     generation: session.0,
                 });
         }
-        self.runtime_state.set_trust(TrustState::Authenticated);
+        self.lifecycle.runtime.set_trust(TrustState::Authenticated);
         let generation = self
             .current_stream_config
             .as_ref()
             .map_or(0, |config| config.stream_epoch);
-        self.runtime_state
+        self.lifecycle
+            .runtime
             .set_stream(StreamState::Streaming { generation });
         Ok(())
     }
@@ -683,40 +636,14 @@ impl ReceiverSession {
     pub fn close(&mut self) {
         // close is intentionally infallible for UI teardown, but decoder state
         // must never survive into a later session.
-        self.decoder_worker.reset();
-        self.frame_buffer_pool.clear();
-        self.transport.close_active(CloseReason::LocalClose);
-        self.placeholder_after = None;
-        self.runtime_state = SessionRuntimeState::default();
-        self.active_sender = None;
-        self.pending_pairing = None;
-        self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
-        self.stats_reporter = StatsReporter::new();
-        self.jitter.clear();
-        self.interarrival_jitter.reset();
-        self.reset_network_health();
-        self.last_stats = None;
-        self.last_decoded_fps = 0;
-        self.current_stream_config = None;
-        self.waiting_for_stream_config_epoch = None;
-        self.pending_stream_config_idr = None;
-        self.receiver_capabilities_sent = None;
-        self.last_media_error = None;
-        self.decoder_recovery.reset_session();
-        self.control_generation = None;
-        self.next_control_message_id = 1;
-        self.last_received_control_message_id = 0;
-        let _ = self.publish_waiting_placeholder();
+        let _ = self.apply_receiver_event(ReceiverEvent::UserClose);
     }
 
     fn reject_control_session(&mut self, session: SessionId) {
-        self.transport.close(
-            session,
-            CloseReason::Error("invalid PCP control message".into()),
-        );
-        self.active_sender = None;
-        self.pending_pairing = None;
-        self.reset_runtime_to_idle();
+        let _ = self.apply_receiver_event(ReceiverEvent::AbortConnection {
+            generation: session.0,
+            reason: ReceiverCloseReason::InvalidControl,
+        });
     }
 
     /// Test-only: shorten/extend last-frame hold before placeholder (REQ-PICOO-FRAME-005).
@@ -734,7 +661,31 @@ impl ReceiverSession {
     /// Test-only: simulate peer disconnect without waiting on QUIC teardown.
     #[cfg(test)]
     pub fn inject_peer_disconnect_for_test(&mut self) -> Result<(), ReceiverError> {
-        self.on_peer_disconnected()
+        let retain_frame = self.lifecycle.runtime.stream().is_streaming()
+            && self.latest_frame_store.latest().is_some()
+            && !self.last_frame_hold.is_zero();
+        let generation = self
+            .transport
+            .active_session()
+            .map_or(1, |session| session.0);
+        if self.transport.active_session().is_none() {
+            self.lifecycle.active_generation = Some(generation);
+            self.lifecycle.resources_active = true;
+        }
+        self.apply_receiver_event(ReceiverEvent::TransportDisconnected {
+            generation,
+            retain_frame,
+        })?;
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn activate_connection_for_test(
+        &mut self,
+        generation: u64,
+    ) -> Result<(), ReceiverError> {
+        self.apply_receiver_event(ReceiverEvent::TransportConnected { generation })?;
+        Ok(())
     }
 
     /// Test-only: inject a sender-originated control blob into the pairing/session handler.

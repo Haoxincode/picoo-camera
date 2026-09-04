@@ -14,9 +14,12 @@ use picoo_protocol::control::{
     PairingComplete, PairingConfirm, ServerHello, SessionError,
 };
 use picoo_session::{StreamState, TrustState};
-use picoo_transport::{CloseReason, SessionId};
+use picoo_transport::SessionId;
 
-use super::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
+use super::{
+    ReceiverCloseReason, ReceiverEvent, ReceiverSession, TrustedIdentityCandidate,
+    TrustedIdentityReplacement,
+};
 use crate::{ReceiverError, PAIRING_CHALLENGE_TTL};
 
 pub(in crate::session) struct ActiveSender {
@@ -228,13 +231,10 @@ impl ReceiverSession {
             return;
         }
         let session = pending.session;
-        self.pending_pairing = None;
-        self.active_sender = None;
-        self.transport.close(
-            session,
-            CloseReason::Error("pairing challenge expired".into()),
-        );
-        self.reset_runtime_to_idle();
+        let _ = self.apply_receiver_event(ReceiverEvent::AbortConnection {
+            generation: session.0,
+            reason: ReceiverCloseReason::PairingExpired,
+        });
     }
 
     /// User confirmed the six-digit code on desktop (PUC-001).
@@ -262,10 +262,10 @@ impl ReceiverSession {
             message: "desktop user rejected the pairing challenge".into(),
         };
         self.send_control_payload(session, ControlPayload::SessionError(error))?;
-        self.transport.close(session, CloseReason::LocalClose);
-        self.active_sender = None;
-        self.pending_pairing = None;
-        self.reset_runtime_to_idle();
+        self.apply_receiver_event(ReceiverEvent::AbortConnection {
+            generation: session.0,
+            reason: ReceiverCloseReason::PairingRejected,
+        })?;
         Ok(())
     }
 
@@ -308,10 +308,10 @@ impl ReceiverSession {
                 message: "paired device public key changed; remove and re-pair".into(),
             };
             let _ = self.send_control_payload(session, ControlPayload::SessionError(err));
-            self.transport.close(session, CloseReason::LocalClose);
-            self.active_sender = None;
-            self.pending_pairing = None;
-            self.reset_runtime_to_idle();
+            self.apply_receiver_event(ReceiverEvent::AbortConnection {
+                generation: session.0,
+                reason: ReceiverCloseReason::PublicKeyChanged,
+            })?;
             return Ok(());
         }
 
@@ -381,12 +381,12 @@ impl ReceiverSession {
             public_key: hello.public_key,
             video_allowed: false,
         });
-        self.runtime_state.set_trust(if auto_accept {
+        self.lifecycle.runtime.set_trust(if auto_accept {
             TrustState::Unknown
         } else {
             TrustState::Pairing
         });
-        self.runtime_state.set_stream(StreamState::Negotiating);
+        self.lifecycle.runtime.set_stream(StreamState::Negotiating);
         Ok(())
     }
 
@@ -402,8 +402,8 @@ impl ReceiverSession {
 
         if Instant::now() >= pending.expires_at {
             self.pending_pairing = None;
-            self.runtime_state.set_trust(TrustState::Unknown);
-            self.runtime_state.set_stream(StreamState::Idle);
+            self.lifecycle.runtime.set_trust(TrustState::Unknown);
+            self.lifecycle.runtime.set_stream(StreamState::Idle);
             return Err(ReceiverError::Protocol("pairing challenge expired".into()));
         }
 

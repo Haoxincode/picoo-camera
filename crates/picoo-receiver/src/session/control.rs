@@ -5,14 +5,12 @@
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
 use crate::ReceiverError;
-use picoo_packet::ReassemblyMap;
 use picoo_protocol::control::{
     camera_command, control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
     EncoderCommand, Resolution, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
 };
-use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
 use picoo_session::StreamState;
-use picoo_transport::{CloseReason, SessionId};
+use picoo_transport::SessionId;
 
 impl ReceiverSession {
     pub(crate) fn handle_control(
@@ -125,28 +123,9 @@ impl ReceiverSession {
             self.ingress.control_rejected_unpaired += 1;
             return Ok(());
         }
-        self.decoder_worker.reset();
-        self.frame_buffer_pool.clear();
-        // Sender-initiated stop: tear down session video without auto-reconnect wait.
-        self.active_sender = None;
-        self.pending_pairing = None;
-        self.current_stream_config = None;
-        self.waiting_for_stream_config_epoch = None;
-        self.pending_stream_config_idr = None;
-        self.receiver_capabilities_sent = None;
-        self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
-        self.stats_reporter = super::StatsReporter::new();
-        self.jitter.clear();
-        self.interarrival_jitter.reset();
-        self.reset_network_health();
-        self.last_stats = None;
-        self.last_sender_stats = None;
-        self.last_decoded_fps = 0;
-        self.decoder_recovery.reset_session();
-        self.placeholder_after = None;
-        let _ = self.publish_waiting_placeholder();
-        self.transport.close(session, CloseReason::LocalClose);
-        self.reset_runtime_to_idle();
+        self.apply_receiver_event(super::ReceiverEvent::StopStream {
+            generation: session.0,
+        })?;
         Ok(())
     }
 
@@ -192,15 +171,15 @@ impl ReceiverSession {
         }
 
         // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.
-        if self.video_allowed() && !self.runtime_state.stream().is_streaming() {
-            self.runtime_state.set_stream(StreamState::Negotiating);
+        if self.video_allowed() && !self.lifecycle.runtime.stream().is_streaming() {
+            self.lifecycle.runtime.set_stream(StreamState::Negotiating);
         }
         if self.receiver_capabilities_sent.is_none() {
             self.send_capabilities(session)?;
             self.receiver_capabilities_sent = Some(());
         }
         // After capabilities, paired receivers are ready to stream.
-        if self.video_allowed() && self.runtime_state.stream() == StreamState::Negotiating {
+        if self.video_allowed() && self.lifecycle.runtime.stream() == StreamState::Negotiating {
             self.begin_streaming(session)?;
         }
 

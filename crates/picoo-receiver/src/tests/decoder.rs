@@ -41,6 +41,9 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
     wait_for_atomic(&resets, 1);
     assert_eq!(resets.load(Ordering::SeqCst), 1);
 
+    receiver
+        .activate_connection_for_test(1)
+        .expect("activate StopStream generation");
     receiver.set_permit_unpaired_video(true);
     receiver
         .handle_stop_stream(picoo_transport::SessionId(1))
@@ -48,9 +51,19 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
     wait_for_atomic(&resets, 2);
     assert_eq!(resets.load(Ordering::SeqCst), 2);
 
+    receiver
+        .activate_connection_for_test(2)
+        .expect("activate close generation");
     receiver.close();
     wait_for_atomic(&resets, 3);
     assert_eq!(resets.load(Ordering::SeqCst), 3);
+    receiver.close();
+    std::thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        resets.load(Ordering::SeqCst),
+        3,
+        "repeated teardown must not execute decoder reset twice"
+    );
 
     fn wait_for_atomic(counter: &AtomicUsize, expected: usize) {
         let deadline = std::time::Instant::now() + Duration::from_secs(1);
