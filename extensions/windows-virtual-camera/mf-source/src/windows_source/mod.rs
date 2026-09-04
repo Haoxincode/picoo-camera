@@ -143,9 +143,10 @@ mod tests {
     use windows::core::{IUnknown, Interface, BOOL};
     use windows::Win32::Media::KernelStreaming::IKsControl;
     use windows::Win32::Media::MediaFoundation::{
-        IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2,
-        IMFSampleAllocatorControl, IMFVideoSampleAllocator, MFCreateVideoSampleAllocatorEx,
-        MFShutdown, MFStartup, MF_VERSION,
+        IMFActivate, IMFGetService, IMFMediaSource, IMFMediaSourceEx, IMFMediaStream2, IMFSample,
+        IMFSampleAllocatorControl, IMFVideoSampleAllocator, MEMediaSample, MEStreamStarted,
+        MEStreamStopped, MFCreateVideoSampleAllocatorEx, MFShutdown, MFStartup, MF_EVENT_FLAG_NONE,
+        MF_VERSION,
     };
     use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
     use windows::Win32::System::Com::{
@@ -154,6 +155,39 @@ mod tests {
 
     const MF_SAMPLEALLOCATOR_SERVICE: GUID =
         GUID::from_u128(0xbbcd045d_4d8b_49e6_9d72_6c60c22a445b);
+
+    unsafe fn expect_stream_event(stream: &IMFMediaStream2, expected: u32) {
+        let event = stream
+            .GetEvent(MF_EVENT_FLAG_NONE)
+            .expect("IMFMediaStream::GetEvent");
+        assert_eq!(event.GetType().expect("IMFMediaEvent::GetType"), expected);
+        assert_eq!(event.GetStatus().expect("IMFMediaEvent::GetStatus"), S_OK);
+    }
+
+    unsafe fn expect_sample_delivery(stream: &IMFMediaStream2) -> i64 {
+        let event = stream
+            .GetEvent(MF_EVENT_FLAG_NONE)
+            .expect("IMFMediaStream::GetEvent(MEMediaSample)");
+        assert_eq!(
+            event.GetType().expect("IMFMediaEvent::GetType"),
+            MEMediaSample.0 as u32
+        );
+        assert_eq!(event.GetStatus().expect("IMFMediaEvent::GetStatus"), S_OK);
+        let value = event.GetValue().expect("IMFMediaEvent::GetValue");
+        let unknown = IUnknown::try_from(&value).expect("MEMediaSample event value");
+        let sample: IMFSample = unknown.cast().expect("MEMediaSample IMFSample");
+        assert_eq!(
+            sample
+                .GetSampleDuration()
+                .expect("IMFSample::GetSampleDuration"),
+            crate::format::SAMPLE_DURATION_100NS
+        );
+        assert_eq!(
+            sample.GetTotalLength().expect("IMFSample::GetTotalLength"),
+            crate::format::nv12_len(1280, 720).expect("720p NV12 length") as u32
+        );
+        sample.GetSampleTime().expect("IMFSample::GetSampleTime")
+    }
 
     struct ComApartment;
 
@@ -283,17 +317,27 @@ mod tests {
             source
                 .Start(&presentation, &GUID::zeroed(), &start_position)
                 .expect("IMFMediaSource::Start");
+            expect_stream_event(&stream, MEStreamStarted.0 as u32);
             stream
                 .RequestSample(None::<&IUnknown>)
                 .expect("IMFMediaStream::RequestSample");
+            let first_sample_time = expect_sample_delivery(&stream);
             source.Stop().expect("IMFMediaSource::Stop");
+            expect_stream_event(&stream, MEStreamStopped.0 as u32);
             source
                 .Start(&presentation, &GUID::zeroed(), &start_position)
                 .expect("IMFMediaSource::Start after Stop");
+            expect_stream_event(&stream, MEStreamStarted.0 as u32);
             stream
                 .RequestSample(None::<&IUnknown>)
                 .expect("IMFMediaStream::RequestSample after restart");
+            let restarted_sample_time = expect_sample_delivery(&stream);
+            assert!(
+                restarted_sample_time >= first_sample_time,
+                "sample clock must remain monotonic across Stop/Start"
+            );
             source.Stop().expect("second IMFMediaSource::Stop");
+            expect_stream_event(&stream, MEStreamStopped.0 as u32);
             source.Shutdown().expect("IMFMediaSource::Shutdown");
         }
     }
