@@ -283,10 +283,16 @@ mod tests {
             source
                 .Start(&presentation, &GUID::zeroed(), &start_position)
                 .expect("IMFMediaSource::Start");
+            stream
+                .RequestSample(None::<&IUnknown>)
+                .expect("IMFMediaStream::RequestSample");
             source.Stop().expect("IMFMediaSource::Stop");
             source
                 .Start(&presentation, &GUID::zeroed(), &start_position)
                 .expect("IMFMediaSource::Start after Stop");
+            stream
+                .RequestSample(None::<&IUnknown>)
+                .expect("IMFMediaStream::RequestSample after restart");
             source.Stop().expect("second IMFMediaSource::Stop");
             source.Shutdown().expect("IMFMediaSource::Shutdown");
         }
