@@ -77,7 +77,12 @@ internal class MediaCodecH264Encoder(
                     return@post
                 }
                 codec.setCallback(
-                    createCodecCallback(generation, generationEpoch, encodeSize.height),
+                    createCodecCallback(
+                        generation,
+                        generationEpoch,
+                        encodeSize.width,
+                        encodeSize.height,
+                    ),
                     encoder.codecHandler,
                 )
                 val accepted = synchronized(encoder.lifecycle.codecLifecycleLock) {
@@ -150,6 +155,7 @@ internal class MediaCodecH264Encoder(
     private fun createCodecCallback(
         generation: Long,
         generationEpoch: Int,
+        generationWidth: Int,
         generationHeight: Int,
     ) = object : MediaCodec.Callback() {
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
@@ -206,6 +212,9 @@ internal class MediaCodecH264Encoder(
                 keyFrame,
                 info.presentationTimeUs,
                 generationEpoch,
+                generation,
+                generationWidth,
+                generationHeight,
             )
         }
 

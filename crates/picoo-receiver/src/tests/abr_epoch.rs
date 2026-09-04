@@ -128,15 +128,6 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
         sps: sps2,
         pps: pps2,
     });
-    assert!(sender.report_encoder_height(480, next_epoch));
-    for _ in 0..40 {
-        receiver.pump().expect("rx");
-        sender.pump().expect("tx");
-        if sender.stream_config_sent() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
     // Sender should observe RequestKeyframe from epoch bump.
     let mut keyed = false;
     for _ in 0..30 {
@@ -150,7 +141,17 @@ fn stream_epoch_bump_recovers_openh264_framehub_under_three_seconds() {
     }
     assert!(keyed, "epoch bump must request IDR");
 
-    sender.ingest_and_flush(&au2, true, 2, 2).expect("au2");
+    let transaction_id = sender.encoder_transaction_id_for_epoch(next_epoch);
+    assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 480));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            &au2,
+            true,
+            2,
+            (transaction_id, 2, next_epoch, 480),
+        ))
+        .expect("commit switched camera generation");
+    sender.flush_pending().expect("send switched camera IDR");
     let mut recovered = false;
     for _ in 0..400 {
         receiver.pump().expect("rx");
@@ -275,16 +276,17 @@ fn midstream_resolution_change_openh264_updates_framehub() {
         sps: sps_hi,
         pps: pps_hi,
     });
-    assert!(sender.report_encoder_height(720, next_epoch));
-    for _ in 0..40 {
-        receiver.pump().expect("rx");
-        sender.pump().expect("tx");
-        if sender.stream_config_sent() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    sender.ingest_and_flush(&au_hi, true, 2, 2).expect("hi");
+    let transaction_id = sender.encoder_transaction_id_for_epoch(next_epoch);
+    assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 720));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            &au_hi,
+            true,
+            2,
+            (transaction_id, 2, next_epoch, 720),
+        ))
+        .expect("commit higher resolution generation");
+    sender.flush_pending().expect("send higher resolution IDR");
     let mut ok = false;
     for _ in 0..400 {
         receiver.pump().expect("rx");

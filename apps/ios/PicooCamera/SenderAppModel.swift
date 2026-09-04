@@ -138,16 +138,12 @@ final class SenderAppModel {
                         else {
                             continue
                         }
-                        let wasApplyingEncoder = self.encoderApply.isPending
-                        let completedApply = self.encoderApply.complete(with: event, host: self)
-                        if case let .failure(_, _, message) = event,
-                           !wasApplyingEncoder
-                        {
+                        if case .failure = event {
                             self.suspendMediaSending()
-                            self.encoderApply.scheduleRecovery(after: message, host: self)
+                            self.encoderApply.handleFailure(event, host: self)
                             continue
                         }
-                        guard self.isMediaSendEnabled,
+                        guard self.isMediaSendEnabled || self.encoderApply.isPending,
                               self.matchesActiveMediaState
                         else {
                             continue
@@ -155,15 +151,16 @@ final class SenderAppModel {
                         switch event {
                         case .queueOverflow:
                             await self.camera.requestKeyframe()
-                        case .accessUnit where completedApply || !self.encoderApply.isPending,
-                             .failure:
+                        case let .accessUnit(accessUnit):
+                            guard self.encoderApply.accepts(accessUnit) else { continue }
                             do {
                                 try await mediaPipeline.consume(event)
+                                self.encoderApply.didCommit(accessUnit, host: self)
                             } catch {
                                 self.errorMessage = error.localizedDescription
                             }
-                        case .accessUnit:
-                            continue
+                        case .failure:
+                            break
                         }
                     }
                 }
@@ -310,8 +307,8 @@ final class SenderAppModel {
 
     private func tick() {
         applySessionTick()
+        encoderApply.reconcileCore(host: self)
         pollMediaControl()
-        encoderApply.expireIfNeeded(host: self)
     }
 
     var senderSession: PicooSenderSession? { session }
@@ -347,6 +344,11 @@ final class SenderAppModel {
 
     func disableMediaSending() {
         isMediaSendEnabled = false
+    }
+
+    func resumeMediaAfterEncoderRollback(message: String) {
+        isMediaSendEnabled = isSceneActive && matchesActiveMediaState
+        errorMessage = message
     }
 
     func observeSession(
@@ -481,12 +483,10 @@ final class SenderAppModel {
                 forHeight: UInt32(requestedResolution.rawValue)
             )
         }
-        let streamEpoch = selectedInitialResolution
-            ? encoderApply.beginLocal(
-                session: session,
-                targetHeight: UInt32(initialResolution.rawValue)
-            )
-            : session.snapshot.streamEpoch
+        let streamEpoch = encoderApply.beginLocal(
+            session: session,
+            targetHeight: UInt32(initialResolution.rawValue)
+        )
         guard streamEpoch > 0 else { return }
         if !selectedInitialResolution {
             do {
@@ -503,9 +503,7 @@ final class SenderAppModel {
         }
 
         guard !Task.isCancelled else {
-            if selectedInitialResolution {
-                try? session.cancelStreamReconfiguration(streamEpoch)
-            }
+            _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
             return
         }
         let granted = await camera.start(
@@ -514,9 +512,7 @@ final class SenderAppModel {
             streamEpoch: streamEpoch
         )
         guard !Task.isCancelled else {
-            if selectedInitialResolution {
-                try? session.cancelStreamReconfiguration(streamEpoch)
-            }
+            _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
             await camera.stop()
             return
         }
@@ -527,16 +523,15 @@ final class SenderAppModel {
                 streamEpoch: streamEpoch,
                 encoderGeneration: camera.encoderGeneration,
                 height: UInt32(initialResolution.rawValue),
-                bitrateBps: activeBitrateBps
+                bitrateBps: activeBitrateBps,
+                session: session
             )
         }
         do {
             if granted {
                 try session.clearCameraPermissionRequired()
             } else {
-                if streamEpoch != session.snapshot.streamEpoch {
-                    try? session.cancelStreamReconfiguration(streamEpoch)
-                }
+                _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
                 try session.markCameraPermissionRequired()
             }
         } catch {
@@ -603,7 +598,7 @@ final class SenderAppModel {
            receiverMaxHeight > 0,
            encoderDirective.targetHeight > receiverMaxHeight
         {
-            try? session.rejectEncoderDirective(encoderDirective.id)
+            encoderApply.rejectBeforeStart(encoderDirective, host: self)
             return
         }
         guard cameraCommand != nil || encoderDirective != nil else { return }
@@ -666,7 +661,7 @@ final class SenderAppModel {
         guard epoch > 0 else { return }
         let switched = await camera.switchCamera(streamEpoch: epoch)
         guard !Task.isCancelled else {
-            try? session.cancelStreamReconfiguration(epoch)
+            _ = session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0)
             return
         }
         if switched {
@@ -675,11 +670,11 @@ final class SenderAppModel {
                 streamEpoch: epoch,
                 encoderGeneration: camera.encoderGeneration,
                 height: UInt32(camera.resolution.rawValue),
-                bitrateBps: activeBitrateBps
+                bitrateBps: activeBitrateBps,
+                session: session
             )
         } else {
-            try? session.cancelStreamReconfiguration(epoch)
-            encoderApply.scheduleRecovery(after: failure, host: self)
+            encoderApply.failBeforeStart(streamEpoch: epoch, message: failure, host: self)
         }
     }
 
@@ -694,8 +689,7 @@ final class SenderAppModel {
         if let directive,
            UInt32(supportedResolution.rawValue) != directive.targetHeight
         {
-            try? session.rejectEncoderDirective(directive.id)
-            errorMessage = "接收端能力不支持电脑请求的 \(directive.targetHeight)P。"
+            encoderApply.rejectBeforeStart(directive, host: self)
             return
         }
         suspendMediaSending()
@@ -718,21 +712,13 @@ final class SenderAppModel {
             streamEpoch: streamEpoch
         )
         guard !Task.isCancelled else {
-            if let directive {
-                try? session.rejectEncoderDirective(directive.id)
-            } else {
-                try? session.cancelStreamReconfiguration(streamEpoch)
-            }
+            _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
             return
         }
         guard applied else {
-            if let directive {
-                try? session.rejectEncoderDirective(directive.id)
-            } else {
-                try? session.cancelStreamReconfiguration(streamEpoch)
-            }
-            encoderApply.scheduleRecovery(
-                after: "当前摄像头不支持 \(supportedResolution.rawValue)P。",
+            encoderApply.failBeforeStart(
+                streamEpoch: streamEpoch,
+                message: "当前摄像头不支持 \(supportedResolution.rawValue)P。",
                 host: self
             )
             return
@@ -742,7 +728,8 @@ final class SenderAppModel {
             streamEpoch: streamEpoch,
             encoderGeneration: camera.encoderGeneration,
             height: UInt32(supportedResolution.rawValue),
-            bitrateBps: targetBitrate
+            bitrateBps: targetBitrate,
+            session: session
         )
     }
 
@@ -780,19 +767,26 @@ final class SenderAppModel {
             guard let self else { return }
             let rebuilt = await self.camera.rebuildAfterReconnect(streamEpoch: streamEpoch)
             guard !Task.isCancelled else {
-                try? session.cancelStreamReconfiguration(streamEpoch)
+                _ = session.reportEncoderFailed(
+                    streamEpoch: streamEpoch,
+                    encoderGeneration: 0
+                )
                 return
             }
             if !rebuilt {
-                try? session.cancelStreamReconfiguration(streamEpoch)
-                self.encoderApply.scheduleRecovery(after: "网络恢复后无法重建视频编码器。", host: self)
+                self.encoderApply.failBeforeStart(
+                    streamEpoch: streamEpoch,
+                    message: "网络恢复后无法重建视频编码器。",
+                    host: self
+                )
             } else {
                 self.encoderApply.waitForApply(
                     directive: nil,
                     streamEpoch: streamEpoch,
                     encoderGeneration: self.camera.encoderGeneration,
                     height: UInt32(self.camera.resolution.rawValue),
-                    bitrateBps: self.activeBitrateBps
+                    bitrateBps: self.activeBitrateBps,
+                    session: session
                 )
             }
         }

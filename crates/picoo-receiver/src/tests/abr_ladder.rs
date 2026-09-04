@@ -109,7 +109,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     assert!(receiver.latest_frame().is_some_and(|f| f.width == 1920));
 
     // Sustained congestion → ABR downshift hint (same path Android MainActivity polls).
-    let mut downshifted = false;
+    let mut downshift = None;
     for _ in 0..40 {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.05,
@@ -118,13 +118,11 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         };
         sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
-            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
-            downshifted = true;
+            downshift = Some(directive);
             break;
         }
     }
-    assert!(downshifted, "ABR must request resolution downshift");
-    assert_eq!(sender.bitrate_active_height(), 720);
+    let downshift = downshift.expect("ABR must request resolution downshift");
 
     // Apply 720p StreamConfig + smaller AU (Android would call encoder.setResolution).
     // Must work while status is NetworkUnstable (congestion path) — REQ-PICOO-MEDIA-010.
@@ -133,13 +131,34 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         height: 720,
         fps: 30,
         bitrate_bps: 3_000_000,
-        stream_epoch: 2,
+        stream_epoch: downshift.stream_epoch,
         mirrored: false,
         rotation: 0,
         sps: sps_lo,
         pps: pps_lo,
     };
     sender.set_stream_config(cfg_lo.clone());
+    assert!(sender.report_encoder_started(
+        downshift.id,
+        2,
+        downshift.stream_epoch,
+        downshift.target_height,
+    ));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            &au_lo,
+            true,
+            2,
+            (
+                downshift.id,
+                2,
+                downshift.stream_epoch,
+                downshift.target_height,
+            ),
+        ))
+        .expect("commit 720p generation");
+    sender.flush_pending().expect("send 720p IDR");
+    assert_eq!(sender.bitrate_active_height(), 720);
     for _ in 0..80 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -154,7 +173,6 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         Some((1280, 720)),
         "StreamConfig must be 1280x720 after ABR apply"
     );
-    sender.ingest_and_flush(&au_lo, true, 2, 2).expect("lo");
     let mut ok = false;
     for _ in 0..400 {
         receiver.pump().ok();
@@ -171,7 +189,7 @@ fn abr_downshift_updates_stream_config_and_framehub() {
     assert!(ok, "FrameHub must show post-downshift frames");
 
     // Second ABR rung: 720 → 480 (MEDIA-010 / PUC-006 weak-network floor).
-    let mut downshifted_480 = false;
+    let mut downshift_480 = None;
     for _ in 0..40 {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.05,
@@ -180,13 +198,11 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         };
         sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
-            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
-            downshifted_480 = true;
+            downshift_480 = Some(directive);
             break;
         }
     }
-    assert!(downshifted_480, "ABR must request second downshift to 480");
-    assert_eq!(sender.bitrate_active_height(), 480);
+    let downshift_480 = downshift_480.expect("ABR must request second downshift to 480");
 
     let (au_480, sps_480, pps_480) = encode_pattern(854, 480, 3);
     sender.set_stream_config(StreamConfigParams {
@@ -194,12 +210,33 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         height: 480,
         fps: 30,
         bitrate_bps: 1_800_000,
-        stream_epoch: 3,
+        stream_epoch: downshift_480.stream_epoch,
         mirrored: false,
         rotation: 0,
         sps: sps_480,
         pps: pps_480,
     });
+    assert!(sender.report_encoder_started(
+        downshift_480.id,
+        3,
+        downshift_480.stream_epoch,
+        downshift_480.target_height,
+    ));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            &au_480,
+            true,
+            3,
+            (
+                downshift_480.id,
+                3,
+                downshift_480.stream_epoch,
+                downshift_480.target_height,
+            ),
+        ))
+        .expect("commit 480p generation");
+    sender.flush_pending().expect("send 480p IDR");
+    assert_eq!(sender.bitrate_active_height(), 480);
     for _ in 0..80 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -214,7 +251,6 @@ fn abr_downshift_updates_stream_config_and_framehub() {
         Some((854, 480)),
         "StreamConfig must be 854x480 after second ABR apply"
     );
-    sender.ingest_and_flush(&au_480, true, 3, 3).expect("480");
     let mut ok480 = false;
     for _ in 0..400 {
         receiver.pump().ok();
@@ -323,7 +359,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    let mut downshifted = false;
+    let mut downshift = None;
     for _ in 0..40 {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.05,
@@ -332,25 +368,44 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         };
         sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
-            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
-            downshifted = true;
+            downshift = Some(directive);
             break;
         }
     }
-    assert!(downshifted, "need downshift before upshift path");
-    assert_eq!(sender.bitrate_active_height(), 720);
+    let downshift = downshift.expect("need downshift before upshift path");
 
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
         fps: 30,
         bitrate_bps: 3_000_000,
-        stream_epoch: 2,
+        stream_epoch: downshift.stream_epoch,
         mirrored: false,
         rotation: 0,
         sps: sps_lo,
         pps: pps_lo,
     });
+    assert!(sender.report_encoder_started(
+        downshift.id,
+        2,
+        downshift.stream_epoch,
+        downshift.target_height,
+    ));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            &au_lo,
+            true,
+            2,
+            (
+                downshift.id,
+                2,
+                downshift.stream_epoch,
+                downshift.target_height,
+            ),
+        ))
+        .expect("commit 720p generation");
+    sender.flush_pending().expect("send 720p IDR");
+    assert_eq!(sender.bitrate_active_height(), 720);
     for _ in 0..80 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -359,7 +414,6 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    sender.ingest_and_flush(&au_lo, true, 2, 2).expect("lo");
     for _ in 0..200 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -370,7 +424,7 @@ fn abr_upshift_updates_stream_config_and_framehub() {
     }
 
     // Climb 720 ladder then request upshift (rate-control needs near-max + 8 healthy ticks).
-    let mut upshifted = false;
+    let mut upshift = None;
     for _ in 0..200 {
         let stats = ReceiverStatsMsg {
             packet_loss: 0.0,
@@ -380,28 +434,39 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         };
         sender.apply_receiver_stats_for_test(stats);
         if let Some(directive) = sender.pending_encoder_directive() {
-            assert!(sender.acknowledge_encoder_directive(directive.id, directive.target_height,));
-            upshifted = true;
+            upshift = Some(directive);
             break;
         }
     }
-    assert!(
-        upshifted,
-        "ABR must request resolution upshift after sustained health"
-    );
-    assert_eq!(sender.bitrate_active_height(), 1080);
+    let upshift = upshift.expect("ABR must request resolution upshift after sustained health");
 
     sender.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
         fps: 30,
         bitrate_bps: 6_000_000,
-        stream_epoch: 3,
+        stream_epoch: upshift.stream_epoch,
         mirrored: false,
         rotation: 0,
         sps: sps_hi,
         pps: pps_hi,
     });
+    assert!(sender.report_encoder_started(
+        upshift.id,
+        3,
+        upshift.stream_epoch,
+        upshift.target_height,
+    ));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            &au_hi,
+            true,
+            3,
+            (upshift.id, 3, upshift.stream_epoch, upshift.target_height),
+        ))
+        .expect("commit 1080p generation");
+    sender.flush_pending().expect("send 1080p IDR");
+    assert_eq!(sender.bitrate_active_height(), 1080);
     for _ in 0..80 {
         receiver.pump().ok();
         sender.pump().ok();
@@ -415,7 +480,6 @@ fn abr_upshift_updates_stream_config_and_framehub() {
         Some((1920, 1080)),
         "StreamConfig must return to 1920x1080 after ABR upshift"
     );
-    sender.ingest_and_flush(&au_hi, true, 3, 3).expect("hi");
     let mut ok = false;
     for _ in 0..400 {
         receiver.pump().ok();

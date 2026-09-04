@@ -264,24 +264,31 @@ fn stream_epoch_bump_requests_keyframe() {
     assert_eq!(cfg.stream_epoch, 2);
     assert!(sender.take_keyframe_request());
     sender.set_stream_config(cfg.clone());
-    assert!(sender.report_encoder_height(cfg.height, cfg.stream_epoch));
-    let mut got_idr = false;
+    let transaction_id = sender.encoder_transaction_id_for_epoch(cfg.stream_epoch);
+    assert!(sender.report_encoder_started(transaction_id, 2, cfg.stream_epoch, cfg.height,));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            b"\0\0\0\x01\x65",
+            true,
+            1,
+            (transaction_id, 2, cfg.stream_epoch, cfg.height),
+        ))
+        .expect("matching IDR commits epoch");
     for _ in 0..80 {
         receiver.pump().expect("rx");
         sender.pump().expect("tx");
-        if sender.take_keyframe_request() {
-            got_idr = true;
-        }
-        if got_idr
-            && receiver
-                .stream_config()
-                .is_some_and(|c| c.stream_epoch == 2)
+        if receiver
+            .stream_config()
+            .is_some_and(|c| c.stream_epoch == 2)
         {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(got_idr, "epoch bump must request IDR");
+    assert!(
+        !sender.take_keyframe_request(),
+        "matching IDR satisfies request"
+    );
     assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 
     // A candidate epoch is not accepted until native output confirms it. This
@@ -293,7 +300,11 @@ fn stream_epoch_bump_requests_keyframe() {
     assert!(sender
         .ingest_and_flush(b"future-epoch", true, 1, future_epoch)
         .is_err());
-    assert!(sender.cancel_stream_reconfiguration(future_epoch));
+    let future_transaction = sender.encoder_transaction_id_for_epoch(future_epoch);
+    assert_eq!(
+        sender.report_encoder_failed(future_transaction, 0),
+        picoo_sender::EncoderFailureOutcome::RolledBack
+    );
     assert_eq!(receiver.stats().access_units, access_units_before);
     assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 }

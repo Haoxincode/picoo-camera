@@ -2,6 +2,42 @@ use picoo_rate_control::BitrateLadder;
 
 use super::*;
 
+fn commit_directive(
+    session: &mut SenderSession<MemoryTransport>,
+    directive: EncoderDirective,
+    generation: u64,
+) {
+    session.force_status_for_test(SenderStatus::Streaming);
+    session.set_stream_config(StreamConfigParams {
+        width: if directive.target_height == 1080 {
+            1920
+        } else {
+            1280
+        },
+        height: directive.target_height,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(
+        directive.id,
+        generation,
+        directive.stream_epoch,
+        directive.target_height,
+    ));
+    session
+        .ingest_encoder_access_unit(super::native_au(
+            b"idr",
+            true,
+            1,
+            (
+                directive.id,
+                generation,
+                directive.stream_epoch,
+                directive.target_height,
+            ),
+        ))
+        .expect("matching IDR commits directive");
+}
+
 #[test]
 fn receiver_stats_adjusts_bitrate() {
     let mut session = SenderSession::new(MemoryTransport::new());
@@ -62,7 +98,7 @@ fn sustained_floor_congestion_requests_resolution_downshift() {
     assert_eq!(directive.target_height, 720);
     assert_eq!(session.bitrate_active_height(), 1080);
     assert_eq!(session.pending_encoder_directive(), Some(directive));
-    assert!(session.acknowledge_encoder_directive(directive.id, 720));
+    commit_directive(&mut session, directive, 11);
     assert_eq!(session.bitrate_active_height(), 720);
     assert!(session.pending_encoder_directive().is_none());
 }
@@ -90,7 +126,10 @@ fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
     let first = session
         .pending_encoder_directive()
         .expect("first directive");
-    assert!(session.reject_encoder_directive(first.id));
+    assert_eq!(
+        session.report_encoder_failed(first.id, 0),
+        EncoderFailureOutcome::RolledBack
+    );
     assert_eq!(session.bitrate_active_height(), 1080);
 
     for _ in 0..10 {
@@ -111,11 +150,9 @@ fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
     assert_eq!(retry.target_height, 720);
     assert_eq!(session.bitrate_active_height(), 1080);
 
-    assert_eq!(session.begin_stream_reconfiguration(720), 0);
-    assert_eq!(session.pending_encoder_directive(), Some(retry));
-    assert!(session.reject_encoder_directive(retry.id));
     let local_epoch = session.begin_stream_reconfiguration(720);
     assert!(local_epoch > retry.stream_epoch);
+    assert!(session.pending_encoder_directive().is_none());
     assert_eq!(session.begin_stream_reconfiguration(720), 0);
     assert_eq!(session.bitrate_active_height(), 1080);
 }

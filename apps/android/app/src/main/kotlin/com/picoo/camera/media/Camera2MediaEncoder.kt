@@ -77,6 +77,9 @@ class Camera2MediaEncoder(
     internal val deviceSession = Camera2DeviceSession(this)
     internal val h264Encoder = MediaCodecH264Encoder(this)
 
+    val encoderGeneration: Long
+        get() = lifecycle.codecGeneration.get()
+
     @Volatile
     var appliedStreamEpoch: Int = 0
         internal set

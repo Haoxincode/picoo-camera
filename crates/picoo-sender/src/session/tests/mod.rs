@@ -18,6 +18,23 @@ pub(super) use picoo_transport::{CloseReason, Endpoint, SessionId};
 pub(super) use crate::stream_config::StreamConfigParams;
 pub(super) use crate::SenderError;
 
+fn native_au(
+    data: &[u8],
+    is_keyframe: bool,
+    pts_us: u64,
+    facts: (u64, u64, u32, u32),
+) -> crate::NativeEncoderAccessUnit<'_> {
+    crate::NativeEncoderAccessUnit {
+        data,
+        is_keyframe,
+        pts_us,
+        transaction_id: facts.0,
+        encoder_generation: facts.1,
+        stream_epoch: facts.2,
+        height: facts.3,
+    }
+}
+
 mod abr;
 mod epoch;
 mod pairing;

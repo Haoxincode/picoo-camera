@@ -3,7 +3,7 @@ use picoo_protocol::VideoPacket;
 use picoo_session::SenderStatus;
 use picoo_transport::{PicooTransport, SessionId};
 
-use super::SenderSession;
+use super::{EncoderDirectiveKind, NativeEncoderAccessUnit, SenderSession};
 use crate::SenderError;
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -42,6 +42,125 @@ impl<T: PicooTransport> SenderSession<T> {
         } else {
             false
         }
+    }
+
+    pub fn ingest_encoder_access_unit(
+        &mut self,
+        access_unit: NativeEncoderAccessUnit<'_>,
+    ) -> Result<usize, SenderError> {
+        let NativeEncoderAccessUnit {
+            data,
+            is_keyframe,
+            pts_us,
+            transaction_id,
+            encoder_generation,
+            stream_epoch,
+            height,
+        } = access_unit;
+        if data.is_empty() {
+            return Err(SenderError::EmptyAccessUnit);
+        }
+        if self.session.is_none() {
+            return Err(SenderError::NotConnected);
+        }
+        if !matches!(
+            self.status,
+            SenderStatus::Streaming | SenderStatus::NetworkUnstable
+        ) {
+            self.pipeline.clear_pending_packets();
+            return Err(SenderError::MediaNotReady);
+        }
+
+        if self.encoder_apply_state.is_applying() {
+            if !self.encoder_apply_state.matches_native_facts(
+                transaction_id,
+                encoder_generation,
+                stream_epoch,
+                height,
+            ) {
+                return Err(SenderError::EncoderRefreshPending);
+            }
+            if is_keyframe
+                && (!self.encoder_apply_state.stream_config_staged()
+                    || !self
+                        .pending_stream_config
+                        .as_ref()
+                        .is_some_and(|config| config.height == height))
+            {
+                return Err(SenderError::StreamConfigPending { stream_epoch });
+            }
+            if is_keyframe {
+                let mut committed_config = self
+                    .pending_stream_config
+                    .clone()
+                    .ok_or(SenderError::StreamConfigPending { stream_epoch })?;
+                committed_config.stream_epoch = stream_epoch;
+                self.send_stream_config_for_epoch(&committed_config, stream_epoch)?;
+            }
+            if !is_keyframe {
+                return Err(SenderError::EncoderRefreshPending);
+            }
+            // Queue the complete commit IDR before changing the committed
+            // generation. Packetization can still reject an oversized AU or
+            // an exhausted frame id; in either case the transaction must stay
+            // pending so a later valid IDR can complete it.
+            let packets = self
+                .pipeline
+                .ingest_access_unit(data, true, pts_us, stream_epoch)?;
+            let Some(transaction) = self.encoder_apply_state.take_matching_keyframe(
+                transaction_id,
+                encoder_generation,
+                stream_epoch,
+                height,
+                true,
+            ) else {
+                unreachable!("matching native facts were validated before packetization");
+            };
+            let mut committed_config = self
+                .pending_stream_config
+                .clone()
+                .expect("matching IDR already validated its StreamConfig");
+            committed_config.stream_epoch = stream_epoch;
+            if transaction.directive.kind == EncoderDirectiveKind::Recovery {
+                self.commit_encoder_recovery(
+                    transaction,
+                    height,
+                    encoder_generation,
+                    committed_config,
+                );
+            } else {
+                self.bitrate.sync_encode_height(height);
+                self.commit_stream_epoch(transaction, height, encoder_generation, committed_config);
+            }
+            self.keyframe_requested = false;
+            return Ok(packets);
+        } else if transaction_id != 0
+            || encoder_generation == 0
+            || encoder_generation != self.committed_encoder_generation
+            || stream_epoch != self.current_stream_epoch
+            || height != self.committed_encoder_height
+        {
+            return Err(SenderError::StaleEncoderFact);
+        }
+
+        if stream_epoch != self.current_stream_epoch {
+            return Err(SenderError::StaleStreamEpoch {
+                got: stream_epoch,
+                current: self.current_stream_epoch,
+            });
+        }
+        if self.media_blocked_for_stream_config {
+            return Err(SenderError::StreamConfigPending {
+                stream_epoch: self.current_stream_epoch,
+            });
+        }
+        let packets = self
+            .pipeline
+            .ingest_access_unit(data, is_keyframe, pts_us, stream_epoch)?;
+        if is_keyframe {
+            self.keyframe_requested = false;
+        }
+        Ok(packets)
     }
 
     pub fn ingest_access_unit(

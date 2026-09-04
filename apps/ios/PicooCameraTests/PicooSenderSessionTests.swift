@@ -123,10 +123,16 @@ struct PicooSenderSessionTests {
         let pending = session.beginStreamReconfiguration(targetHeight: 720)
         #expect(pending == PicooSenderSession.initialStreamEpoch + 1)
         #expect(session.beginStreamReconfiguration(targetHeight: 720) == 0)
-        try session.cancelStreamReconfiguration(pending)
+        #expect(session.reportEncoderFailed(
+            streamEpoch: pending,
+            encoderGeneration: 0
+        ) == .rolledBack)
         let next = session.beginStreamReconfiguration(targetHeight: 720)
         #expect(next == pending + 1)
-        try session.cancelStreamReconfiguration(next)
+        #expect(session.reportEncoderFailed(
+            streamEpoch: next,
+            encoderGeneration: 0
+        ) == .rolledBack)
     }
 
     @Test("encoder configuration normalizes rotation and clamps bitrate")

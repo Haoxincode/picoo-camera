@@ -6,7 +6,7 @@ use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jobjectArray, js
 use jni::JNIEnv;
 use picoo_packet::extract_sps_pps;
 use picoo_rate_control::BitrateLadder;
-use picoo_sender::{SenderError, SenderSession, StreamConfigParams};
+use picoo_sender::{EncoderFailureOutcome, SenderError, SenderSession, StreamConfigParams};
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 
 use super::{identities, java_string, new_java_string, senders, with_sender};
@@ -66,6 +66,9 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_ingestAccessUnit(
     keyframe: jboolean,
     pts_us: jlong,
     stream_epoch: jint,
+    transaction_id: jlong,
+    encoder_generation: jlong,
+    encoder_height: jint,
 ) -> jint {
     let Ok(data) = env.convert_byte_array(data) else {
         return -1;
@@ -78,12 +81,15 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_ingestAccessUnit(
             return -1;
         };
         session
-            .ingest_access_unit(
-                &data,
-                keyframe == JNI_TRUE,
-                pts_us as u64,
-                stream_epoch as u32,
-            )
+            .ingest_encoder_access_unit(picoo_sender::NativeEncoderAccessUnit {
+                data: &data,
+                is_keyframe: keyframe == JNI_TRUE,
+                pts_us: pts_us as u64,
+                transaction_id: transaction_id as u64,
+                encoder_generation: encoder_generation as u64,
+                stream_epoch: stream_epoch as u32,
+                height: encoder_height as u32,
+            })
             .map(|count| count as jint)
             .unwrap_or(-2)
     })
@@ -250,20 +256,75 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_beginStreamReconfig
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_cancelStreamReconfiguration(
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_encoderTransactionId(
     _env: JNIEnv<'_>,
     _this: JObject<'_>,
     handle: jlong,
     stream_epoch: jint,
+) -> jlong {
+    if stream_epoch <= 0 {
+        return 0;
+    }
+    with_sender(handle, |inner| {
+        inner
+            .session
+            .lock()
+            .map(|session| session.encoder_transaction_id_for_epoch(stream_epoch as u32) as jlong)
+            .unwrap_or(0)
+    })
+    .unwrap_or(0)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_reportEncoderStarted(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    transaction_id: jlong,
+    encoder_generation: jlong,
+    stream_epoch: jint,
+    height: jint,
 ) -> jint {
+    if transaction_id < 0 || encoder_generation <= 0 || stream_epoch <= 0 || height <= 0 {
+        return -1;
+    }
+    with_sender(handle, |inner| {
+        inner
+            .session
+            .lock()
+            .map(|mut session| {
+                i32::from(session.report_encoder_started(
+                    transaction_id as u64,
+                    encoder_generation as u64,
+                    stream_epoch as u32,
+                    height as u32,
+                ))
+            })
+            .unwrap_or(-1)
+    })
+    .unwrap_or(-1)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_reportEncoderFailed(
+    _env: JNIEnv<'_>,
+    _this: JObject<'_>,
+    handle: jlong,
+    transaction_id: jlong,
+    encoder_generation: jlong,
+) -> jint {
+    if transaction_id < 0 || encoder_generation < 0 {
+        return -1;
+    }
     with_sender(handle, |inner| {
         let Ok(mut session) = inner.session.lock() else {
             return -1;
         };
-        if session.cancel_stream_reconfiguration(stream_epoch as u32) {
-            0
-        } else {
-            -2
+        match session.report_encoder_failed(transaction_id as u64, encoder_generation as u64) {
+            EncoderFailureOutcome::Ignored => 0,
+            EncoderFailureOutcome::RolledBack => 1,
+            EncoderFailureOutcome::RecoveryRequested => 2,
+            EncoderFailureOutcome::Disconnected => 3,
         }
     })
     .unwrap_or(-1)
@@ -326,39 +387,6 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getEncoderDirective
         return ptr::null_mut();
     }
     result.into_raw()
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_ackEncoderDirective(
-    _env: JNIEnv<'_>,
-    _this: JObject<'_>,
-    handle: jlong,
-    directive_id: jlong,
-    actual_height: jint,
-) -> jint {
-    with_sender(handle, |inner| {
-        let Ok(mut session) = inner.session.lock() else {
-            return -1;
-        };
-        i32::from(session.acknowledge_encoder_directive(directive_id as u64, actual_height as u32))
-    })
-    .unwrap_or(-1)
-}
-
-#[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_nackEncoderDirective(
-    _env: JNIEnv<'_>,
-    _this: JObject<'_>,
-    handle: jlong,
-    directive_id: jlong,
-) -> jint {
-    with_sender(handle, |inner| {
-        let Ok(mut session) = inner.session.lock() else {
-            return -1;
-        };
-        i32::from(session.reject_encoder_directive(directive_id as u64))
-    })
-    .unwrap_or(-1)
 }
 
 #[no_mangle]
@@ -570,27 +598,6 @@ sender_set_u32!(
     Java_com_picoo_camera_jni_PicooNative_setPreferredHeight,
     set_preferred_height
 );
-#[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_reportEncoderHeight(
-    _env: JNIEnv<'_>,
-    _this: JObject<'_>,
-    handle: jlong,
-    height: jint,
-    stream_epoch: jint,
-) -> jint {
-    with_sender(handle, |inner| {
-        let Ok(mut session) = inner.session.lock() else {
-            return -1;
-        };
-        if session.report_encoder_height(height as u32, stream_epoch as u32) {
-            0
-        } else {
-            -2
-        }
-    })
-    .unwrap_or(-1)
-}
-
 #[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_bitrateInitialForHeight(
     _env: JNIEnv<'_>,

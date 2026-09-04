@@ -99,19 +99,19 @@ Rust Core 是码率阶梯、ABR 分辨率意图和 `stream_epoch` 的唯一事�
 只负责把 Rust 的目标配置应用到 Camera2/MediaCodec 或 AVFoundation/VideoToolbox，
 不得在原生层复制码率阶梯或自行分配 epoch。
 
-ABR 分辨率变化采用显式的 `directive -> apply -> ack/nack` 契约：
+ABR 与本地重配置采用显式的 `directive -> native facts -> commit/recovery` 契约：
 
-1. Rust 产生带单调且不回绕的 `directive_id`、目标高度、目标码率和候选 `stream_epoch` 的编码指令；候选 epoch 此时只被分配，尚未成为 committed epoch；
-2. 原生层保持该指令 pending、暂停发送媒体并重建编码器；每次原生编码器重建还要递增仅在进程内使用的 generation，并同时按 `stream_epoch + generation` 丢弃迟到回调。generation 不进入协议、不替代 Rust 分配的 epoch，专门隔离失败重建与同一 committed epoch 上的回滚重建；
-3. 原生层只有在实际收到候选 epoch、目标高度的首个 IDR 后才能 `ack`；本地相机/分辨率调整以同样条件 `report`；
-4. Rust 仅在匹配的 `ack/report` 后原子提交 epoch、推进活动码率阶梯；旧 epoch 的 `StreamConfig` 不得被改写成新 epoch，新 epoch 的匹配 `StreamConfig` 在可靠控制流排队前必须继续阻止 AU 入队；
-5. 失败、超时、断连或取消通过 `nack/cancel` 丢弃 pending；原生层随后必须重建最后 committed 配置，并等待其首个匹配 IDR 后恢复发送；恢复仍失败则停止编码并明确断开连接；
-6. 读取指令不得隐式改变 Rust 的活动编码状态，也不得覆盖另一个 pending 调整。
+1. Rust 产生带单调且不回绕的 `transaction_id`、目标高度、目标码率和候选 `stream_epoch` 的编码指令；候选 epoch 此时只被分配，尚未成为 committed epoch，3 秒 deadline 也只由 Rust 持有；
+2. 原生层暂停发送媒体并重建编码器；每次重建递增仅在进程内使用的 generation，并把 `EncoderStarted`、`EncodedAccessUnit` 或 `EncoderFailed` 作为事实报告给 Rust。generation 不进入 PCP、不替代 Rust 分配的 epoch；
+3. Rust 仅接受 transaction、generation、epoch、目标高度全部匹配且已经 stage 对应 `StreamConfig` 的首个 IDR；该 IDR 触发原子 commit，并且同一个 AU 必须继续进入 packetization，不能在提交边界被丢失；
+4. 旧 epoch 的 `StreamConfig` 不得被改写成新 epoch，新 epoch 的匹配 `StreamConfig` 在可靠控制流排队前必须继续阻止 AU 入队；
+5. 启动前失败由 Rust 回滚 committed snapshot；启动后失败或超时由 Rust 发出 Recovery directive，原生层只执行恢复；Recovery 再失败则 Rust 明确断开连接；
+6. 读取指令不得隐式改变 Rust 的活动编码状态；本地用户操作可以显式取代 pending ABR，但旧 transaction 的迟到事实永远不能提交。
 
 无 pending 时，平台对当前 epoch 的高度回报只允许首次同步匹配的 `StreamConfig` 或
 幂等回报已经 committed 的高度；分辨率变化不能绕过 `begin -> apply -> report`。接收端
 能力上限同时约束 Rust 的 preferred height 和 ABR 目标，平台仍须对已排队但超出能力的
-旧指令显式 `nack`。Rust 分别保存用户请求高度与当前接收端下的有效高度；接收端能力
+旧指令报告为未启动失败。Rust 分别保存用户请求高度与当前接收端下的有效高度；接收端能力
 扩大或会话结束后必须从用户请求恢复，不得把临时 720p 上限永久写回偏好。
 
 V1 编码高度只接受精确的 `480/720/1080`。提交后的媒体闸门只允许由高度与 committed

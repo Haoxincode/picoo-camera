@@ -94,6 +94,11 @@ Android 视频方向的真实拥塞。
 
 `stream_epoch` 在摄像头切换、分辨率变化、编码器重建、连接恢复或编码参数重大变化时递增。Receiver 按 `stream_epoch + frame_id` 重组帧，**不得**将不同 epoch 的片段组成同一帧。
 
+可靠 Control Stream 与 Datagram 之间没有到达顺序保证。新 epoch 的 Datagram 先于
+`StreamConfig` 时，Receiver 可以完成重组，但最多只保留该 future epoch 的一个完整 IDR；
+普通帧、不完整 AU 和更旧 epoch 不得跨过配置门禁。匹配 `StreamConfig` 到达后才把该 IDR
+送入 playout/decoder；更高 future epoch 取代较低门禁，teardown 必须清空保留帧。
+
 ### 关键帧策略
 
 以下情况 Sender 必须请求或发出 IDR：

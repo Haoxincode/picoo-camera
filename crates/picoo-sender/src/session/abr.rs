@@ -4,7 +4,6 @@ use picoo_rate_control::{BitrateAction, BitrateLadder};
 use picoo_session::SenderStatus;
 use picoo_transport::PicooTransport;
 
-use super::encoder_transaction::{EncoderTransactionEvent, EncoderTransactionTransition};
 use super::{EncoderDirective, EncoderDirectiveKind, SenderSession};
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -32,56 +31,6 @@ impl<T: PicooTransport> SenderSession<T> {
         self.bitrate.thermal_hold()
     }
 
-    /// Advance ABR state only after the platform confirms the encoder reconfiguration.
-    pub fn acknowledge_encoder_directive(&mut self, id: u64, actual_height: u32) -> bool {
-        let Some(directive) = self.encoder_apply_state.directive() else {
-            return false;
-        };
-        if directive.id != id
-            || directive.kind == EncoderDirectiveKind::Local
-            || directive.stream_epoch == self.current_stream_epoch
-            || actual_height != directive.target_height
-        {
-            return false;
-        }
-        let transition =
-            self.encoder_apply_state
-                .reduce(EncoderTransactionEvent::CommitDirective {
-                    id,
-                    height: actual_height,
-                });
-        let EncoderTransactionTransition::Commit(transaction) = transition else {
-            return false;
-        };
-        self.bitrate.sync_encode_height(actual_height);
-        self.commit_stream_epoch(transaction, directive.target_height);
-        true
-    }
-
-    /// Keep the active ladder unchanged and allow a later ReceiverStats tick to retry.
-    pub fn reject_encoder_directive(&mut self, id: u64) -> bool {
-        let Some(directive) = self.encoder_apply_state.directive() else {
-            return false;
-        };
-        if directive.id != id || directive.kind == EncoderDirectiveKind::Local {
-            return false;
-        }
-        let action = match directive.kind {
-            EncoderDirectiveKind::Local => unreachable!(),
-            EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
-            EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
-        };
-        self.bitrate.reject_resolution_change(action);
-        let transition = self
-            .encoder_apply_state
-            .reduce(EncoderTransactionEvent::RejectDirective { id });
-        let EncoderTransactionTransition::Rollback(transaction) = transition else {
-            return false;
-        };
-        self.rollback_encoder_transaction(transaction);
-        true
-    }
-
     pub(super) fn queue_encoder_directive(
         &mut self,
         kind: EncoderDirectiveKind,
@@ -93,7 +42,7 @@ impl<T: PicooTransport> SenderSession<T> {
         let target_height = self.cap_to_receiver_height(target_height);
         if target_height == self.bitrate.active_height() {
             let action = match kind {
-                EncoderDirectiveKind::Local => return,
+                EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery => return,
                 EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
                 EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
             };

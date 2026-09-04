@@ -44,6 +44,7 @@ pub enum EncoderDirectiveKind {
     AbrDownshift = 1,
     AbrUpshift = 2,
     Local = 3,
+    Recovery = 4,
 }
 
 /// Rust-owned desired encoder transition. Reading it never acknowledges it.
@@ -54,6 +55,26 @@ pub struct EncoderDirective {
     pub target_height: u32,
     pub target_bitrate_bps: u32,
     pub stream_epoch: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EncoderFailureOutcome {
+    Ignored,
+    RolledBack,
+    RecoveryRequested,
+    Disconnected,
+}
+
+/// One immutable encoded-output fact reported by a native platform encoder.
+#[derive(Debug, Clone, Copy)]
+pub struct NativeEncoderAccessUnit<'a> {
+    pub data: &'a [u8],
+    pub is_keyframe: bool,
+    pub pts_us: u64,
+    pub transaction_id: u64,
+    pub encoder_generation: u64,
+    pub stream_epoch: u32,
+    pub height: u32,
 }
 
 pub struct SenderSession<T: PicooTransport> {
@@ -93,6 +114,8 @@ pub struct SenderSession<T: PicooTransport> {
     last_allocated_stream_epoch: u32,
     /// Zero until the platform reports its first actual encoder output.
     committed_encoder_height: u32,
+    /// Native generation bound by EncoderStarted; zero until the first encoder starts.
+    committed_encoder_generation: u64,
     /// A committed epoch must not emit media until its matching StreamConfig
     /// has been queued on the reliable control stream.
     media_blocked_for_stream_config: bool,
@@ -145,6 +168,7 @@ impl<T: PicooTransport> SenderSession<T> {
             current_stream_epoch: INITIAL_STREAM_EPOCH,
             last_allocated_stream_epoch: INITIAL_STREAM_EPOCH,
             committed_encoder_height: 0,
+            committed_encoder_generation: 0,
             media_blocked_for_stream_config: false,
             pending_camera_command: None,
             last_session_error: None,

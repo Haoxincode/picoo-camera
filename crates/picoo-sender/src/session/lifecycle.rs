@@ -173,6 +173,7 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn pump(&mut self) -> Result<(), SenderError> {
         self.drain_events();
+        self.expire_encoder_transaction(Instant::now());
         if self.status == SenderStatus::Reconnecting {
             self.try_reconnect()?;
             self.drain_events();

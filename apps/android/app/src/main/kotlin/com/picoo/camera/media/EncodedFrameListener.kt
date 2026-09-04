@@ -11,10 +11,13 @@ fun interface EncodedFrameListener {
         isKeyFrame: Boolean,
         presentationTimeUs: Long,
         streamEpoch: Int,
+        encoderGeneration: Long,
+        encoderWidth: Int,
+        encoderHeight: Int,
     )
 
     companion object {
-        val NOOP = EncodedFrameListener { _, _, _, _ -> }
+        val NOOP = EncodedFrameListener { _, _, _, _, _, _, _ -> }
     }
 }
 

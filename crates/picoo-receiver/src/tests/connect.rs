@@ -287,7 +287,6 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
     );
 
     let epoch = sender.begin_stream_reconfiguration(720);
-    assert!(sender.report_encoder_height(720, epoch));
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
@@ -299,6 +298,16 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         sps: vec![0x67],
         pps: vec![0x68],
     });
+    let transaction_id = sender.encoder_transaction_id_for_epoch(epoch);
+    assert!(sender.report_encoder_started(transaction_id, 2, epoch, 720));
+    sender
+        .ingest_encoder_access_unit(super::native_au(
+            b"\0\0\0\x01\x65",
+            true,
+            1,
+            (transaction_id, 2, epoch, 720),
+        ))
+        .expect("matching native IDR commits capped resolution");
     for _ in 0..80 {
         sender.pump().ok();
         receiver.pump().ok();

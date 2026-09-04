@@ -5,6 +5,23 @@ use picoo_transport::{PicooTransport, QuicSenderTransport, TransportError};
 
 use crate::ReceiverSession;
 
+fn native_au(
+    data: &[u8],
+    is_keyframe: bool,
+    pts_us: u64,
+    facts: (u64, u64, u32, u32),
+) -> picoo_sender::NativeEncoderAccessUnit<'_> {
+    picoo_sender::NativeEncoderAccessUnit {
+        data,
+        is_keyframe,
+        pts_us,
+        transaction_id: facts.0,
+        encoder_generation: facts.1,
+        stream_epoch: facts.2,
+        height: facts.3,
+    }
+}
+
 fn trust_receiver<T: PicooTransport>(
     sender: &mut picoo_sender::SenderSession<T>,
     receiver: &mut ReceiverSession,

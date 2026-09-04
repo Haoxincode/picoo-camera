@@ -1,7 +1,7 @@
 use crate::c_media::copy_parameter_sets;
 use crate::c_sender::PicooEncoderDirective;
 use crate::handles::{copy_str_to_buf, RecoverMutex, SenderInner};
-use picoo_sender::StreamConfigParams;
+use picoo_sender::{EncoderFailureOutcome, StreamConfigParams};
 use std::ffi::CStr;
 
 /// Send ClientHello after QUIC connect (PUC-001 / PUC-008).
@@ -130,43 +130,6 @@ pub extern "C" fn picoo_sender_peek_encoder_directive(
     1
 }
 
-/// Confirm that the native encoder applied the matching directive.
-#[no_mangle]
-pub extern "C" fn picoo_sender_ack_encoder_directive(
-    handle: *mut std::ffi::c_void,
-    directive_id: u64,
-    actual_height: u32,
-) -> i32 {
-    if handle.is_null() {
-        return -1;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    i32::from(
-        inner
-            .session
-            .lock_or_recover()
-            .acknowledge_encoder_directive(directive_id, actual_height),
-    )
-}
-
-/// Reject a directive without changing the active Rust ABR ladder.
-#[no_mangle]
-pub extern "C" fn picoo_sender_nack_encoder_directive(
-    handle: *mut std::ffi::c_void,
-    directive_id: u64,
-) -> i32 {
-    if handle.is_null() {
-        return -1;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    i32::from(
-        inner
-            .session
-            .lock_or_recover()
-            .reject_encoder_directive(directive_id),
-    )
-}
-
 /// Consume a desktop-originated CameraCommand (PUC-005 / REQ-PICOO-UI-009).
 ///
 /// Returns the command enum value (`1` SWITCH_FRONT … `5` SWITCH_CAMERA), or `0` when
@@ -241,45 +204,63 @@ pub extern "C" fn picoo_sender_begin_stream_reconfiguration(
         .begin_stream_reconfiguration(target_height)
 }
 
+/// Resolve the active Rust transaction for a native encoder epoch.
 #[no_mangle]
-pub extern "C" fn picoo_sender_cancel_stream_reconfiguration(
+pub extern "C" fn picoo_sender_encoder_transaction_id(
     handle: *mut std::ffi::c_void,
     stream_epoch: u32,
+) -> u64 {
+    if handle.is_null() || stream_epoch == 0 {
+        return 0;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    inner
+        .session
+        .lock_or_recover()
+        .encoder_transaction_id_for_epoch(stream_epoch)
+}
+
+/// Report that a native encoder generation began producing output.
+#[no_mangle]
+pub extern "C" fn picoo_sender_report_encoder_started(
+    handle: *mut std::ffi::c_void,
+    transaction_id: u64,
+    encoder_generation: u64,
+    stream_epoch: u32,
+    height: u32,
+) -> i32 {
+    if handle.is_null() || encoder_generation == 0 || stream_epoch == 0 || height == 0 {
+        return -1;
+    }
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    i32::from(inner.session.lock_or_recover().report_encoder_started(
+        transaction_id,
+        encoder_generation,
+        stream_epoch,
+        height,
+    ))
+}
+
+/// Report a native encoder failure; Rust chooses rollback, recovery, or disconnect.
+#[no_mangle]
+pub extern "C" fn picoo_sender_report_encoder_failed(
+    handle: *mut std::ffi::c_void,
+    transaction_id: u64,
+    encoder_generation: u64,
 ) -> i32 {
     if handle.is_null() {
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    if inner
+    match inner
         .session
         .lock_or_recover()
-        .cancel_stream_reconfiguration(stream_epoch)
+        .report_encoder_failed(transaction_id, encoder_generation)
     {
-        0
-    } else {
-        -2
-    }
-}
-
-/// Report a successfully applied native encoder height outside an ABR directive.
-#[no_mangle]
-pub extern "C" fn picoo_sender_report_encoder_height(
-    handle: *mut std::ffi::c_void,
-    height: u32,
-    stream_epoch: u32,
-) -> i32 {
-    if handle.is_null() || height == 0 {
-        return -1;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    if inner
-        .session
-        .lock_or_recover()
-        .report_encoder_height(height, stream_epoch)
-    {
-        0
-    } else {
-        -2
+        EncoderFailureOutcome::Ignored => 0,
+        EncoderFailureOutcome::RolledBack => 1,
+        EncoderFailureOutcome::RecoveryRequested => 2,
+        EncoderFailureOutcome::Disconnected => 3,
     }
 }
 

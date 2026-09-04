@@ -43,6 +43,13 @@ nonisolated struct SenderEncoderDirective: Equatable, Sendable {
     let streamEpoch: UInt32
 }
 
+nonisolated enum SenderEncoderFailureOutcome: Int32, Sendable {
+    case ignored = 0
+    case rolledBack = 1
+    case recoveryRequested = 2
+    case disconnected = 3
+}
+
 nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
     let status: PicooSenderStatus
     let currentBitrateBps: UInt32
@@ -207,6 +214,19 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
     }
 
     func send(_ accessUnit: EncodedAccessUnit) throws {
+        let transactionID = encoderTransactionID(for: accessUnit.streamEpoch)
+        guard picoo_sender_report_encoder_started(
+            sender,
+            transactionID,
+            accessUnit.encoderGeneration,
+            accessUnit.streamEpoch,
+            accessUnit.height
+        ) == 1 else {
+            throw PicooSenderSessionError.operationFailed(
+                name: "sender_report_encoder_started",
+                code: 0
+            )
+        }
         var packetCount: UInt32 = 0
         let ingestCode = accessUnit.data.withUnsafeBytes { bytes in
             picoo_sender_ingest_access_unit(
@@ -216,6 +236,9 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
                 accessUnit.isKeyframe ? 1 : 0,
                 accessUnit.presentationTimeUs,
                 accessUnit.streamEpoch,
+                transactionID,
+                accessUnit.encoderGeneration,
+                accessUnit.height,
                 &packetCount
             )
         }
@@ -249,24 +272,6 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             targetBitrateBps: directive.target_bitrate_bps,
             streamEpoch: directive.stream_epoch
         )
-    }
-
-    func acknowledgeEncoderDirective(_ id: UInt64, actualHeight: UInt32) throws {
-        guard picoo_sender_ack_encoder_directive(sender, id, actualHeight) == 1 else {
-            throw PicooSenderSessionError.operationFailed(
-                name: "sender_ack_encoder_directive",
-                code: 0
-            )
-        }
-    }
-
-    func rejectEncoderDirective(_ id: UInt64) throws {
-        guard picoo_sender_nack_encoder_directive(sender, id) == 1 else {
-            throw PicooSenderSessionError.operationFailed(
-                name: "sender_nack_encoder_directive",
-                code: 0
-            )
-        }
     }
 
     func takeCameraCommand() throws -> SenderCameraCommand? {
@@ -311,17 +316,30 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         picoo_sender_begin_stream_reconfiguration(sender, targetHeight)
     }
 
-    func cancelStreamReconfiguration(_ streamEpoch: UInt32) throws {
-        try check(
-            picoo_sender_cancel_stream_reconfiguration(sender, streamEpoch),
-            operation: "sender_cancel_stream_reconfiguration"
-        )
+    func encoderTransactionID(for streamEpoch: UInt32) -> UInt64 {
+        picoo_sender_encoder_transaction_id(sender, streamEpoch)
     }
 
-    func reportEncoderHeight(_ height: UInt32, streamEpoch: UInt32) throws {
-        try check(
-            picoo_sender_report_encoder_height(sender, height, streamEpoch),
-            operation: "sender_report_encoder_height"
+    func reportEncoderFailed(
+        transactionID: UInt64,
+        encoderGeneration: UInt64
+    ) -> SenderEncoderFailureOutcome {
+        SenderEncoderFailureOutcome(
+            rawValue: picoo_sender_report_encoder_failed(
+                sender,
+                transactionID,
+                encoderGeneration
+            )
+        ) ?? .ignored
+    }
+
+    func reportEncoderFailed(
+        streamEpoch: UInt32,
+        encoderGeneration: UInt64
+    ) -> SenderEncoderFailureOutcome {
+        reportEncoderFailed(
+            transactionID: encoderTransactionID(for: streamEpoch),
+            encoderGeneration: encoderGeneration
         )
     }
 

@@ -25,7 +25,18 @@ fn sender_rejects_offline_ingest_via_ffi() {
     let data = b"test-nalu";
     let mut out = 0u32;
     assert_eq!(
-        picoo_sender_ingest_access_unit(handle, data.as_ptr(), data.len(), 1, 42, 1, &mut out),
+        picoo_sender_ingest_access_unit(
+            handle,
+            data.as_ptr(),
+            data.len(),
+            1,
+            42,
+            1,
+            0,
+            1,
+            720,
+            &mut out,
+        ),
         -2
     );
     assert_eq!(out, 0);
@@ -194,7 +205,7 @@ fn sender_snapshot_is_coherent_before_capabilities() {
 }
 
 #[test]
-fn encoder_height_report_commits_only_the_matching_pending_epoch() {
+fn encoder_started_fact_requires_the_matching_transaction() {
     let handle = create_test_sender();
     assert!(!handle.is_null());
     let pending = picoo_sender_begin_stream_reconfiguration(handle, 720);
@@ -204,17 +215,24 @@ fn encoder_height_report_commits_only_the_matching_pending_epoch() {
         picoo_sender_peek_encoder_directive(handle, &mut directive),
         0
     );
+    let transaction = picoo_sender_encoder_transaction_id(handle, pending);
+    assert!(transaction > 0);
     assert_eq!(
-        picoo_sender_report_encoder_height(handle, 720, pending + 1),
-        -2
+        picoo_sender_report_encoder_started(handle, transaction, 7, pending + 1, 720),
+        0
+    );
+    assert_eq!(
+        picoo_sender_report_encoder_started(handle, transaction, 7, pending, 720),
+        1
     );
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
     assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
-    assert_eq!(picoo_sender_report_encoder_height(handle, 720, pending), 0);
-    assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
-    assert_eq!(snapshot.stream_epoch, pending);
-    assert_eq!(snapshot.active_height, 720);
+    assert_eq!(
+        picoo_sender_report_encoder_failed(handle, transaction, 0),
+        1
+    );
+    assert_eq!(picoo_sender_encoder_transaction_id(handle, pending), 0);
     picoo_sender_destroy(handle);
 }
 

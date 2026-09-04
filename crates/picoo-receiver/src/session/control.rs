@@ -132,6 +132,7 @@ impl ReceiverSession {
         self.pending_pairing = None;
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
+        self.pending_stream_config_idr = None;
         self.receiver_capabilities_sent = None;
         self.reassembly = ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT);
         self.stats_reporter = super::StatsReporter::new();
@@ -177,9 +178,22 @@ impl ReceiverSession {
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
+        if previous_epoch.is_some_and(|epoch| config.stream_epoch < epoch) {
+            return Ok(());
+        }
+        let config_epoch = config.stream_epoch;
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
         self.current_stream_config = Some(std::sync::Arc::new(config));
-        self.waiting_for_stream_config_epoch = None;
+        match self.waiting_for_stream_config_epoch {
+            Some(waiting) if waiting == config_epoch => {
+                self.waiting_for_stream_config_epoch = None;
+            }
+            Some(waiting) if waiting < config_epoch => {
+                self.waiting_for_stream_config_epoch = None;
+                self.pending_stream_config_idr = None;
+            }
+            Some(_) | None => {}
+        }
 
         // Capability / StreamConfig exchange sits in Negotiating before live frames dominate UI.
         if self.video_allowed()
@@ -214,6 +228,7 @@ impl ReceiverSession {
             };
             self.enter_decoder_recovery(reason, epoch_bumped)?;
         }
+        self.release_pending_stream_config_idr(config_epoch)?;
         Ok(())
     }
 

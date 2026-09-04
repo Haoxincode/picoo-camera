@@ -1,12 +1,11 @@
 import Foundation
 
 struct PendingEncoderApply {
-    let directive: SenderEncoderDirective?
+    let transactionID: UInt64
     let streamEpoch: UInt32
     let encoderGeneration: UInt64
     let targetHeight: UInt32
     let targetBitrateBps: UInt32
-    let deadline: ContinuousClock.Instant
     let recoveryMessage: String?
 }
 
@@ -17,14 +16,17 @@ struct CommittedEncoderState {
     let bitrateBps: UInt32
 }
 
-// REQ-PICOO-MEDIA-007: native-encoder apply/ACK lives here, not in SwiftUI state.
+// REQ-PICOO-MEDIA-007/016: execute Rust effects and report native facts.
+// Rust alone commits, rolls back, times out, requests recovery, or disconnects.
 @MainActor
 final class SenderEncoderApplyCoordinator {
+    private static let recoveryDirectiveKind: UInt32 = 4
+
     private var pending: PendingEncoderApply?
     private var committed: CommittedEncoderState?
     private var recoveryTask: Task<Void, Never>?
 
-    var isPending: Bool { pending != nil }
+    var isPending: Bool { pending != nil || recoveryTask != nil }
 
     deinit {
         recoveryTask?.cancel()
@@ -35,15 +37,17 @@ final class SenderEncoderApplyCoordinator {
         streamEpoch: UInt32,
         encoderGeneration: UInt64,
         height: UInt32,
-        bitrateBps: UInt32
+        bitrateBps: UInt32,
+        session: PicooSenderSession
     ) {
+        let transactionID = directive?.id
+            ?? session.encoderTransactionID(for: streamEpoch)
         pending = PendingEncoderApply(
-            directive: directive,
+            transactionID: transactionID,
             streamEpoch: streamEpoch,
             encoderGeneration: encoderGeneration,
             targetHeight: height,
             targetBitrateBps: bitrateBps,
-            deadline: ContinuousClock.now.advanced(by: .seconds(3)),
             recoveryMessage: nil
         )
     }
@@ -51,100 +55,107 @@ final class SenderEncoderApplyCoordinator {
     func beginLocal(session: PicooSenderSession, targetHeight: UInt32) -> UInt32 {
         recoveryTask?.cancel()
         recoveryTask = nil
-        cancelPending(session: session)
-        if let queuedDirective = try? session.encoderDirective() {
-            try? session.rejectEncoderDirective(queuedDirective.id)
-        }
         return session.beginStreamReconfiguration(targetHeight: targetHeight)
     }
 
-    func complete(with event: VideoEncoderEvent, host: SenderAppModel) -> Bool {
-        guard let pending, let session = host.senderSession else { return false }
-        guard event.streamEpoch == pending.streamEpoch,
-              event.encoderGeneration == pending.encoderGeneration
-        else {
-            return false
-        }
-        switch event {
-        case let .accessUnit(accessUnit):
-            guard accessUnit.isKeyframe,
-                  accessUnit.streamEpoch == pending.streamEpoch,
-                  accessUnit.height == pending.targetHeight
-            else {
-                return false
-            }
-            do {
-                if let directive = pending.directive {
-                    try session.acknowledgeEncoderDirective(
-                        directive.id,
-                        actualHeight: accessUnit.height
-                    )
-                } else {
-                    try session.reportEncoderHeight(
-                        accessUnit.height,
-                        streamEpoch: accessUnit.streamEpoch
-                    )
-                }
-                host.commitAppliedEncoder(
-                    bitrateBps: pending.targetBitrateBps,
-                    recoveryMessage: pending.recoveryMessage
-                )
-                committed = CommittedEncoderState(
-                    resolution: VideoResolution.supported(
-                        forRequestedHeight: accessUnit.height
-                    ),
-                    position: host.camera.position,
-                    streamEpoch: accessUnit.streamEpoch,
-                    bitrateBps: pending.targetBitrateBps
-                )
-                self.pending = nil
-                return true
-            } catch {
-                failPending(host: host, message: "无法同步视频分辨率。")
-                return false
-            }
-        case let .failure(_, _, message):
-            failPending(host: host, message: message)
-            return false
-        case .queueOverflow:
-            return false
-        }
+    func accepts(_ accessUnit: EncodedAccessUnit) -> Bool {
+        guard let pending else { return true }
+        return accessUnit.isKeyframe
+            && accessUnit.streamEpoch == pending.streamEpoch
+            && accessUnit.encoderGeneration == pending.encoderGeneration
+            && accessUnit.height == pending.targetHeight
     }
 
-    func expireIfNeeded(host: SenderAppModel) {
+    func didCommit(_ accessUnit: EncodedAccessUnit, host: SenderAppModel) {
         guard let pending,
-              ContinuousClock.now >= pending.deadline
+              accessUnit.streamEpoch == pending.streamEpoch,
+              accessUnit.encoderGeneration == pending.encoderGeneration,
+              accessUnit.height == pending.targetHeight
         else {
             return
         }
-        failPending(host: host, message: "编码器未在 3 秒内输出目标关键帧。")
+        host.commitAppliedEncoder(
+            bitrateBps: pending.targetBitrateBps,
+            recoveryMessage: pending.recoveryMessage
+        )
+        committed = CommittedEncoderState(
+            resolution: VideoResolution.supported(forRequestedHeight: accessUnit.height),
+            position: host.camera.position,
+            streamEpoch: accessUnit.streamEpoch,
+            bitrateBps: pending.targetBitrateBps
+        )
+        self.pending = nil
     }
 
-    func failPending(host: SenderAppModel, message: String) {
-        guard let pending, let session = host.senderSession else { return }
-        if let directive = pending.directive {
-            try? session.rejectEncoderDirective(directive.id)
-        } else {
-            try? session.cancelStreamReconfiguration(pending.streamEpoch)
-        }
-        self.pending = nil
-        host.disableMediaSending()
-        if pending.recoveryMessage != nil {
-            host.disconnectImmediately()
-            host.noteError("\(message)；恢复上一视频配置失败，已断开连接。")
+    func handleFailure(_ event: VideoEncoderEvent, host: SenderAppModel) {
+        guard case let .failure(streamEpoch, encoderGeneration, message) = event,
+              let session = host.senderSession
+        else {
             return
         }
-        scheduleRecovery(after: message, host: host)
+        let outcome = session.reportEncoderFailed(
+            streamEpoch: streamEpoch,
+            encoderGeneration: encoderGeneration
+        )
+        handle(outcome: outcome, message: message, host: host)
+    }
+
+    func failBeforeStart(
+        streamEpoch: UInt32,
+        message: String,
+        host: SenderAppModel
+    ) {
+        guard let session = host.senderSession else { return }
+        let outcome = session.reportEncoderFailed(
+            streamEpoch: streamEpoch,
+            encoderGeneration: 0
+        )
+        handle(outcome: outcome, message: message, host: host)
+    }
+
+    func rejectBeforeStart(_ directive: SenderEncoderDirective, host: SenderAppModel) {
+        guard let session = host.senderSession else { return }
+        let outcome = session.reportEncoderFailed(
+            transactionID: directive.id,
+            encoderGeneration: 0
+        )
+        handle(
+            outcome: outcome,
+            message: "接收端能力不支持请求的 \(directive.targetHeight)P。",
+            host: host
+        )
+    }
+
+    func reconcileCore(host: SenderAppModel) {
+        guard recoveryTask == nil, let session = host.senderSession else { return }
+        if let pending,
+           session.encoderTransactionID(for: pending.streamEpoch) == pending.transactionID
+        {
+            return
+        }
+        if let directive = try? session.encoderDirective(),
+           directive.kind == Self.recoveryDirectiveKind
+        {
+            scheduleRecovery(
+                directive: directive,
+                after: pending?.recoveryMessage ?? "编码器调整超时",
+                host: host
+            )
+            return
+        }
+        if session.snapshot.status == .disconnected {
+            pending = nil
+        }
     }
 
     func cancelPending(session: PicooSenderSession?) {
-        guard let pending, let session else { return }
-        if let directive = pending.directive {
-            try? session.rejectEncoderDirective(directive.id)
-        } else {
-            try? session.cancelStreamReconfiguration(pending.streamEpoch)
+        if let pending, let session {
+            _ = session.reportEncoderFailed(
+                transactionID: pending.transactionID,
+                encoderGeneration: 0
+            )
         }
-        self.pending = nil
+        pending = nil
     }
 
     func clearPending() {
@@ -156,9 +167,48 @@ final class SenderEncoderApplyCoordinator {
         recoveryTask = nil
     }
 
-    func scheduleRecovery(after message: String, host: SenderAppModel) {
+    private func handle(
+        outcome: SenderEncoderFailureOutcome,
+        message: String,
+        host: SenderAppModel
+    ) {
+        switch outcome {
+        case .ignored:
+            return
+        case .rolledBack:
+            pending = nil
+            host.resumeMediaAfterEncoderRollback(message: message)
+        case .recoveryRequested:
+            guard let directive = try? host.senderSession?.encoderDirective(),
+                  directive.kind == Self.recoveryDirectiveKind
+            else {
+                pending = nil
+                host.noteError("\(message)；无法取得恢复配置。")
+                return
+            }
+            scheduleRecovery(directive: directive, after: message, host: host)
+        case .disconnected:
+            pending = nil
+            host.disconnectImmediately()
+            host.noteError("\(message)；恢复上一视频配置失败，已断开连接。")
+        }
+    }
+
+    private func scheduleRecovery(
+        directive: SenderEncoderDirective,
+        after message: String,
+        host: SenderAppModel
+    ) {
         recoveryTask?.cancel()
-        guard let committed else {
+        pending = nil
+        guard let committed,
+              committed.streamEpoch == directive.streamEpoch,
+              UInt32(committed.resolution.rawValue) == directive.targetHeight
+        else {
+            _ = host.senderSession?.reportEncoderFailed(
+                transactionID: directive.id,
+                encoderGeneration: 0
+            )
             host.disconnectImmediately()
             host.noteError("\(message)；尚无可恢复的视频配置，已断开连接。")
             return
@@ -168,23 +218,25 @@ final class SenderEncoderApplyCoordinator {
             let restored = await host.camera.restoreCommittedConfiguration(
                 resolution: committed.resolution,
                 position: committed.position,
-                bitrateBps: committed.bitrateBps,
-                streamEpoch: committed.streamEpoch
+                bitrateBps: directive.targetBitrateBps,
+                streamEpoch: directive.streamEpoch
             )
             guard !Task.isCancelled else { return }
             self.recoveryTask = nil
             guard restored else {
-                host.disconnectImmediately()
-                host.noteError("\(message)；恢复上一视频配置失败，已断开连接。")
+                let outcome = host.senderSession?.reportEncoderFailed(
+                    transactionID: directive.id,
+                    encoderGeneration: 0
+                ) ?? .ignored
+                self.handle(outcome: outcome, message: message, host: host)
                 return
             }
             self.pending = PendingEncoderApply(
-                directive: nil,
-                streamEpoch: committed.streamEpoch,
+                transactionID: directive.id,
+                streamEpoch: directive.streamEpoch,
                 encoderGeneration: host.camera.encoderGeneration,
-                targetHeight: UInt32(committed.resolution.rawValue),
-                targetBitrateBps: committed.bitrateBps,
-                deadline: ContinuousClock.now.advanced(by: .seconds(3)),
+                targetHeight: directive.targetHeight,
+                targetBitrateBps: directive.targetBitrateBps,
                 recoveryMessage: message
             )
             await host.camera.requestKeyframe()

@@ -1,13 +1,18 @@
 //! Rust-owned encoder apply transaction state — REQ-PICOO-MEDIA-003/010/016.
 
+use std::time::{Duration, Instant};
+
 use crate::stream_config::StreamConfigParams;
 
 use super::{EncoderDirective, EncoderDirectiveKind};
+
+pub(super) const ENCODER_APPLY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub(super) struct EncoderRollback {
     pub(super) stream_config: Option<StreamConfigParams>,
     pub(super) stream_config_sent: bool,
+    pub(super) encoder_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -15,6 +20,8 @@ pub(super) struct EncoderTransaction {
     pub(super) directive: EncoderDirective,
     pub(super) rollback: EncoderRollback,
     pub(super) stream_config_staged: bool,
+    pub(super) expected_generation: Option<u64>,
+    pub(super) deadline: Instant,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -27,10 +34,6 @@ pub(super) enum EncoderApplyState {
 #[derive(Debug, Clone)]
 pub(super) enum EncoderTransactionEvent {
     StreamConfigStaged,
-    CommitLocal { stream_epoch: u32, height: u32 },
-    CommitDirective { id: u64, height: u32 },
-    CancelLocal { stream_epoch: u32 },
-    RejectDirective { id: u64 },
     Abort,
 }
 
@@ -38,8 +41,15 @@ pub(super) enum EncoderTransactionEvent {
 pub(super) enum EncoderTransactionTransition {
     Unchanged,
     Staged,
-    Commit(EncoderTransaction),
     Rollback(EncoderTransaction),
+}
+
+#[derive(Debug, Clone)]
+pub(super) enum EncoderFailureTransition {
+    Ignored,
+    Rollback(EncoderTransaction),
+    Recover(EncoderTransaction),
+    Disconnect(EncoderTransaction),
 }
 
 impl EncoderApplyState {
@@ -51,6 +61,8 @@ impl EncoderApplyState {
             directive,
             rollback,
             stream_config_staged: false,
+            expected_generation: None,
+            deadline: Instant::now() + ENCODER_APPLY_TIMEOUT,
         });
         true
     }
@@ -66,6 +78,137 @@ impl EncoderApplyState {
         }
     }
 
+    pub(super) fn kind(&self) -> Option<EncoderDirectiveKind> {
+        self.directive().map(|directive| directive.kind)
+    }
+
+    pub(super) fn stream_config_staged(&self) -> bool {
+        matches!(self, Self::Applying(transaction) if transaction.stream_config_staged)
+    }
+
+    pub(super) fn matches_native_facts(
+        &self,
+        transaction_id: u64,
+        encoder_generation: u64,
+        stream_epoch: u32,
+        height: u32,
+    ) -> bool {
+        matches!(
+            self,
+            Self::Applying(transaction)
+                if transaction.directive.id == transaction_id
+                    && transaction.directive.stream_epoch == stream_epoch
+                    && transaction.directive.target_height == height
+                    && transaction.expected_generation == Some(encoder_generation)
+        )
+    }
+
+    pub(super) fn transaction_id_for_epoch(&self, stream_epoch: u32) -> u64 {
+        self.directive()
+            .filter(|directive| directive.stream_epoch == stream_epoch)
+            .map_or(0, |directive| directive.id)
+    }
+
+    pub(super) fn report_started(
+        &mut self,
+        transaction_id: u64,
+        encoder_generation: u64,
+        stream_epoch: u32,
+        height: u32,
+    ) -> bool {
+        if transaction_id == 0 || encoder_generation == 0 || height == 0 {
+            return false;
+        }
+        let Self::Applying(transaction) = self else {
+            return false;
+        };
+        if transaction.directive.id != transaction_id
+            || transaction.directive.stream_epoch != stream_epoch
+            || transaction.directive.target_height != height
+        {
+            return false;
+        }
+        match transaction.expected_generation {
+            Some(expected) => expected == encoder_generation,
+            None => {
+                transaction.expected_generation = Some(encoder_generation);
+                true
+            }
+        }
+    }
+
+    pub(super) fn take_matching_keyframe(
+        &mut self,
+        transaction_id: u64,
+        encoder_generation: u64,
+        stream_epoch: u32,
+        height: u32,
+        is_keyframe: bool,
+    ) -> Option<EncoderTransaction> {
+        if !is_keyframe {
+            return None;
+        }
+        let previous = std::mem::take(self);
+        let Self::Applying(transaction) = previous else {
+            return None;
+        };
+        let matches = transaction.directive.id == transaction_id
+            && transaction.directive.stream_epoch == stream_epoch
+            && transaction.directive.target_height == height
+            && transaction.expected_generation == Some(encoder_generation);
+        if !matches {
+            *self = Self::Applying(transaction);
+            return None;
+        }
+        Some(transaction)
+    }
+
+    pub(super) fn report_failed(
+        &mut self,
+        transaction_id: u64,
+        encoder_generation: u64,
+    ) -> EncoderFailureTransition {
+        let previous = std::mem::take(self);
+        let Self::Applying(transaction) = previous else {
+            return EncoderFailureTransition::Ignored;
+        };
+        let generation_matches = encoder_generation == 0
+            || match transaction.expected_generation {
+                Some(expected) => expected == encoder_generation,
+                None => true,
+            };
+        if transaction.directive.id != transaction_id || !generation_matches {
+            *self = Self::Applying(transaction);
+            return EncoderFailureTransition::Ignored;
+        }
+        if transaction.directive.kind == EncoderDirectiveKind::Recovery {
+            return EncoderFailureTransition::Disconnect(transaction);
+        }
+        if encoder_generation == 0 {
+            EncoderFailureTransition::Rollback(transaction)
+        } else {
+            EncoderFailureTransition::Recover(transaction)
+        }
+    }
+
+    pub(super) fn expire(&mut self, now: Instant) -> EncoderFailureTransition {
+        let Self::Applying(transaction) = self else {
+            return EncoderFailureTransition::Ignored;
+        };
+        if now < transaction.deadline {
+            return EncoderFailureTransition::Ignored;
+        }
+        let previous = std::mem::take(self);
+        let Self::Applying(transaction) = previous else {
+            unreachable!();
+        };
+        if transaction.directive.kind == EncoderDirectiveKind::Recovery {
+            EncoderFailureTransition::Disconnect(transaction)
+        } else {
+            EncoderFailureTransition::Recover(transaction)
+        }
+    }
+
     pub(super) fn reduce(
         &mut self,
         event: EncoderTransactionEvent,
@@ -78,52 +221,12 @@ impl EncoderApplyState {
                 transaction.stream_config_staged = true;
                 EncoderTransactionTransition::Staged
             }
-            event => {
+            EncoderTransactionEvent::Abort => {
                 let previous = std::mem::take(self);
                 let Self::Applying(transaction) = previous else {
                     return EncoderTransactionTransition::Unchanged;
                 };
-                let matches = match event {
-                    EncoderTransactionEvent::CommitLocal {
-                        stream_epoch,
-                        height,
-                    } => {
-                        transaction.directive.kind == EncoderDirectiveKind::Local
-                            && transaction.directive.stream_epoch == stream_epoch
-                            && transaction.directive.target_height == height
-                    }
-                    EncoderTransactionEvent::CommitDirective { id, height } => {
-                        transaction.directive.kind != EncoderDirectiveKind::Local
-                            && transaction.directive.id == id
-                            && transaction.directive.target_height == height
-                    }
-                    EncoderTransactionEvent::CancelLocal { stream_epoch } => {
-                        transaction.directive.kind == EncoderDirectiveKind::Local
-                            && transaction.directive.stream_epoch == stream_epoch
-                    }
-                    EncoderTransactionEvent::RejectDirective { id } => {
-                        transaction.directive.kind != EncoderDirectiveKind::Local
-                            && transaction.directive.id == id
-                    }
-                    EncoderTransactionEvent::Abort => true,
-                    EncoderTransactionEvent::StreamConfigStaged => unreachable!(),
-                };
-                if !matches {
-                    *self = Self::Applying(transaction);
-                    return EncoderTransactionTransition::Unchanged;
-                }
-                match event {
-                    EncoderTransactionEvent::CommitLocal { .. }
-                    | EncoderTransactionEvent::CommitDirective { .. } => {
-                        EncoderTransactionTransition::Commit(transaction)
-                    }
-                    EncoderTransactionEvent::CancelLocal { .. }
-                    | EncoderTransactionEvent::RejectDirective { .. }
-                    | EncoderTransactionEvent::Abort => {
-                        EncoderTransactionTransition::Rollback(transaction)
-                    }
-                    EncoderTransactionEvent::StreamConfigStaged => unreachable!(),
-                }
+                EncoderTransactionTransition::Rollback(transaction)
             }
         }
     }
@@ -147,49 +250,8 @@ mod tests {
         EncoderRollback {
             stream_config: Some(StreamConfigParams::default()),
             stream_config_sent: true,
+            encoder_generation: 6,
         }
-    }
-
-    #[test]
-    fn local_and_abr_commit_are_distinct_events() {
-        let mut local = EncoderApplyState::default();
-        assert!(local.begin(directive(EncoderDirectiveKind::Local), rollback()));
-        assert!(matches!(
-            local.reduce(EncoderTransactionEvent::CommitDirective { id: 7, height: 720 }),
-            EncoderTransactionTransition::Unchanged
-        ));
-        assert!(matches!(
-            local.reduce(EncoderTransactionEvent::CommitLocal {
-                stream_epoch: 4,
-                height: 720,
-            }),
-            EncoderTransactionTransition::Commit(_)
-        ));
-
-        let mut abr = EncoderApplyState::default();
-        assert!(abr.begin(directive(EncoderDirectiveKind::AbrDownshift), rollback()));
-        assert!(matches!(
-            abr.reduce(EncoderTransactionEvent::CommitLocal {
-                stream_epoch: 4,
-                height: 720,
-            }),
-            EncoderTransactionTransition::Unchanged
-        ));
-        assert!(matches!(
-            abr.reduce(EncoderTransactionEvent::CommitDirective { id: 7, height: 720 }),
-            EncoderTransactionTransition::Commit(_)
-        ));
-    }
-
-    #[test]
-    fn mismatched_event_cannot_consume_active_transaction() {
-        let mut state = EncoderApplyState::default();
-        assert!(state.begin(directive(EncoderDirectiveKind::AbrUpshift), rollback()));
-        assert!(matches!(
-            state.reduce(EncoderTransactionEvent::RejectDirective { id: 8 }),
-            EncoderTransactionTransition::Unchanged
-        ));
-        assert_eq!(state.directive().map(|value| value.id), Some(7));
     }
 
     #[test]
@@ -207,5 +269,34 @@ mod tests {
         };
         assert!(transaction.stream_config_staged);
         assert!(transaction.rollback.stream_config_sent);
+    }
+
+    #[test]
+    fn matching_idr_requires_started_generation_and_all_transaction_fields() {
+        let mut state = EncoderApplyState::default();
+        assert!(state.begin(directive(EncoderDirectiveKind::Local), rollback()));
+        assert!(!state.report_started(7, 0, 4, 720));
+        assert!(state.report_started(7, 19, 4, 720));
+        assert!(state.take_matching_keyframe(7, 20, 4, 720, true).is_none());
+        assert!(state.take_matching_keyframe(7, 19, 4, 720, false).is_none());
+        assert!(state.take_matching_keyframe(7, 19, 4, 720, true).is_some());
+    }
+
+    #[test]
+    fn failure_before_start_rolls_back_but_started_failure_requests_recovery() {
+        let mut before_start = EncoderApplyState::default();
+        assert!(before_start.begin(directive(EncoderDirectiveKind::Local), rollback()));
+        assert!(matches!(
+            before_start.report_failed(7, 0),
+            EncoderFailureTransition::Rollback(_)
+        ));
+
+        let mut started = EncoderApplyState::default();
+        assert!(started.begin(directive(EncoderDirectiveKind::Local), rollback()));
+        assert!(started.report_started(7, 21, 4, 720));
+        assert!(matches!(
+            started.report_failed(7, 21),
+            EncoderFailureTransition::Recover(_)
+        ));
     }
 }

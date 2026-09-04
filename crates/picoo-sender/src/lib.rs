@@ -16,8 +16,8 @@ use thiserror::Error;
 
 pub use picoo_rate_control::BitrateAction;
 pub use session::{
-    EncoderDirective, EncoderDirectiveKind, SenderSession, SessionStats, INITIAL_STREAM_EPOCH,
-    MAX_STREAM_EPOCH,
+    EncoderDirective, EncoderDirectiveKind, EncoderFailureOutcome, NativeEncoderAccessUnit,
+    SenderSession, SessionStats, INITIAL_STREAM_EPOCH, MAX_STREAM_EPOCH,
 };
 pub use stream_config::StreamConfigParams;
 
@@ -49,6 +49,10 @@ pub enum SenderError {
     StreamConfigPending { stream_epoch: u32 },
     #[error("stream config height mismatch: expected {expected}, got {got}")]
     StreamConfigHeightMismatch { expected: u32, got: u32 },
+    #[error("encoded access unit does not match the active encoder transaction/generation")]
+    StaleEncoderFact,
+    #[error("encoder transaction is waiting for its first matching IDR")]
+    EncoderRefreshPending,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

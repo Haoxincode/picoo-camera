@@ -70,6 +70,9 @@ object PicooNative {
         keyframe: Boolean,
         ptsUs: Long,
         streamEpoch: Int,
+        transactionId: Long,
+        encoderGeneration: Long,
+        encoderHeight: Int,
     ): Int
 
     /** [accessUnits, packets, bytes, sentDatagrams, pendingPackets] */
@@ -141,20 +144,30 @@ object PicooNative {
     /** Pending Rust-owned ABR directive: [id, kind, height, bitrate, epoch]. */
     external fun getEncoderDirective(handle: Long): LongArray?
 
-    external fun ackEncoderDirective(handle: Long, directiveId: Long, actualHeight: Int): Int
-
-    external fun nackEncoderDirective(handle: Long, directiveId: Long): Int
-
     /** User preferred height for ABR decisions (480, 720, or 1080). */
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
     /** Allocate a fresh Rust-owned epoch before camera/encoder discontinuity. */
     external fun beginStreamReconfiguration(handle: Long, targetHeight: Int): Int
 
-    external fun cancelStreamReconfiguration(handle: Long, streamEpoch: Int): Int
+    /** Resolve the active Rust encoder transaction for [streamEpoch], or zero when committed. */
+    external fun encoderTransactionId(handle: Long, streamEpoch: Int): Long
 
-    /** Host successfully applied an encode height outside an ABR directive. */
-    external fun reportEncoderHeight(handle: Long, height: Int, streamEpoch: Int): Int
+    /** Report the native generation that began producing encoder output. */
+    external fun reportEncoderStarted(
+        handle: Long,
+        transactionId: Long,
+        encoderGeneration: Long,
+        streamEpoch: Int,
+        height: Int,
+    ): Int
+
+    /** 0 ignored, 1 rolled back, 2 recovery requested, 3 disconnected. */
+    external fun reportEncoderFailed(
+        handle: Long,
+        transactionId: Long,
+        encoderGeneration: Long,
+    ): Int
 
     external fun bitrateInitialForHeight(height: Int): Int
 

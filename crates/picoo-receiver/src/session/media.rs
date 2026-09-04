@@ -10,7 +10,7 @@ use picoo_jitter::{Frame as JitterFrame, PushOutcome};
 #[cfg(test)]
 use picoo_media_decode::AccessUnitDecoder;
 use picoo_media_decode::DecodedFrame;
-use picoo_packet::ReassemblyError;
+use picoo_packet::{AssembledAccessUnit, ReassemblyError};
 use picoo_protocol::VideoPacket;
 use std::sync::Arc;
 use std::time::Instant;
@@ -31,6 +31,7 @@ mod tests {
     use super::*;
     use picoo_media_decode::StubDecoder;
     use picoo_protocol::control::StreamConfig;
+    use picoo_protocol::VideoPacketFlags;
 
     fn receiver_for_generation(generation: u32) -> ReceiverSession {
         let mut receiver = ReceiverSession::new();
@@ -55,6 +56,34 @@ mod tests {
             received_at_us: 50_000,
             kind: FrameKind::Key,
             data: Bytes::from_static(b"typed-au"),
+        }
+    }
+
+    fn packet(
+        generation: u32,
+        frame_id: u64,
+        keyframe: bool,
+        fragment_index: u16,
+        fragment_count: u16,
+    ) -> VideoPacket {
+        let mut flags = VideoPacketFlags::empty();
+        if keyframe {
+            flags |= VideoPacketFlags::KEYFRAME;
+        }
+        if fragment_index == 0 {
+            flags |= VideoPacketFlags::START_OF_ACCESS_UNIT;
+        }
+        if fragment_index + 1 == fragment_count {
+            flags |= VideoPacketFlags::END_OF_ACCESS_UNIT;
+        }
+        VideoPacket {
+            flags,
+            stream_epoch: generation,
+            frame_id,
+            pts_us: frame_id * 1_000,
+            fragment_index,
+            fragment_count,
+            payload: Bytes::from(vec![frame_id as u8]),
         }
     }
 
@@ -134,6 +163,102 @@ mod tests {
         assert_eq!(stats.retained_buffers, 1);
         assert_eq!(receiver.latest_frame().map(|frame| frame.frame_id), Some(3));
     }
+
+    #[test]
+    fn future_idr_waits_for_matching_stream_config() {
+        let mut receiver = receiver_for_generation(1);
+        receiver.set_permit_unpaired_video(true);
+
+        receiver
+            .ingest_video_packet(packet(2, 7, true, 0, 1))
+            .expect("future IDR");
+
+        assert_eq!(receiver.waiting_for_stream_config_epoch, Some(2));
+        assert_eq!(
+            receiver
+                .pending_stream_config_idr
+                .as_ref()
+                .map(|access_unit| (access_unit.stream_epoch, access_unit.frame_id)),
+            Some((2, 7))
+        );
+        assert!(receiver.jitter.is_empty());
+
+        receiver
+            .release_pending_stream_config_idr(2)
+            .expect("release matching IDR");
+        assert!(receiver.pending_stream_config_idr.is_none());
+        assert_eq!(receiver.jitter.len(), 1);
+    }
+
+    #[test]
+    fn future_delta_and_incomplete_idr_never_cross_stream_config_gate() {
+        let mut receiver = receiver_for_generation(1);
+        receiver.set_permit_unpaired_video(true);
+
+        receiver
+            .ingest_video_packet(packet(2, 7, false, 0, 1))
+            .expect("future delta");
+        assert!(receiver.pending_stream_config_idr.is_none());
+
+        receiver
+            .ingest_video_packet(packet(3, 8, true, 0, 2))
+            .expect("partial future IDR");
+        assert_eq!(receiver.waiting_for_stream_config_epoch, Some(3));
+        assert!(receiver.pending_stream_config_idr.is_none());
+        assert!(receiver.jitter.is_empty());
+    }
+
+    #[test]
+    fn newest_future_epoch_supersedes_older_gate_without_crossing_generations() {
+        let mut receiver = receiver_for_generation(1);
+        receiver.set_permit_unpaired_video(true);
+
+        receiver
+            .ingest_video_packet(packet(2, 7, true, 0, 1))
+            .expect("epoch two IDR");
+        receiver
+            .ingest_video_packet(packet(3, 8, true, 0, 1))
+            .expect("epoch three IDR");
+        receiver
+            .ingest_video_packet(packet(2, 9, true, 0, 1))
+            .expect("late older IDR");
+
+        assert_eq!(receiver.waiting_for_stream_config_epoch, Some(3));
+        assert_eq!(
+            receiver
+                .pending_stream_config_idr
+                .as_ref()
+                .map(|access_unit| (access_unit.stream_epoch, access_unit.frame_id)),
+            Some((3, 8))
+        );
+
+        receiver
+            .release_pending_stream_config_idr(2)
+            .expect("nonmatching config is harmless");
+        assert_eq!(
+            receiver
+                .pending_stream_config_idr
+                .as_ref()
+                .map(|access_unit| access_unit.stream_epoch),
+            Some(3)
+        );
+        assert!(receiver.jitter.is_empty());
+    }
+
+    #[test]
+    fn teardown_discards_stream_config_gate() {
+        let mut receiver = receiver_for_generation(1);
+        receiver.set_permit_unpaired_video(true);
+        receiver
+            .ingest_video_packet(packet(2, 7, true, 0, 1))
+            .expect("future IDR");
+
+        receiver.close();
+
+        assert!(receiver.waiting_for_stream_config_epoch.is_none());
+        assert!(receiver.pending_stream_config_idr.is_none());
+        assert!(receiver.jitter.is_empty());
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -161,28 +286,36 @@ impl ReceiverSession {
             .current_stream_config
             .as_ref()
             .map(|config| config.stream_epoch);
-        let configured_epoch = match configured_epoch {
-            Some(epoch) => epoch,
-            // Explicit test/diagnostic bypass may carry arbitrary bytes and
-            // intentionally has no protocol negotiation.
-            None if self.permit_unpaired_video => packet_epoch,
+        let (configured_epoch, mut defer_until_config) = match configured_epoch {
+            Some(epoch) => (epoch, false),
+            None if self.permit_unpaired_video => (packet_epoch, false),
             None => {
-                // Control and Datagram channels can reorder. Never decode
-                // product media before StreamConfig establishes codec/epoch.
-                self.waiting_for_stream_config_epoch = Some(packet_epoch);
-                return Ok(());
+                match self.waiting_for_stream_config_epoch {
+                    Some(waiting) if packet_epoch < waiting => return Ok(()),
+                    Some(waiting) if packet_epoch == waiting => {}
+                    Some(_) | None => {
+                        self.pending_stream_config_idr = None;
+                        self.waiting_for_stream_config_epoch = Some(packet_epoch);
+                    }
+                }
+                (packet_epoch, true)
             }
         };
-        if configured_epoch != packet_epoch {
-            // Stale datagrams from an old epoch are expected after
-            // reconfiguration. A future epoch waits for reliable StreamConfig;
-            // that transition owns the single rate-limited fresh-IDR request.
-            if packet_epoch > configured_epoch
-                && self.waiting_for_stream_config_epoch != Some(packet_epoch)
+        if packet_epoch < configured_epoch {
+            return Ok(());
+        }
+        if packet_epoch > configured_epoch {
+            if self
+                .waiting_for_stream_config_epoch
+                .is_some_and(|waiting| packet_epoch < waiting)
             {
+                return Ok(());
+            }
+            if self.waiting_for_stream_config_epoch != Some(packet_epoch) {
+                self.pending_stream_config_idr = None;
                 self.waiting_for_stream_config_epoch = Some(packet_epoch);
             }
-            return Ok(());
+            defer_until_config = true;
         }
 
         self.stats_reporter.record_packet(packet.payload.len());
@@ -216,59 +349,14 @@ impl ReceiverSession {
             );
         match reassembly_result {
             Ok(Some(access_unit)) => {
-                let pts_us = access_unit.pts_us;
-                let completed_at = Instant::now();
-                if access_unit.keyframe {
-                    tracing::warn!(
-                        bytes = access_unit.data.len(),
-                        fragments = access_unit.fragment_count,
-                        assembly_ms = completed_at
-                            .saturating_duration_since(access_unit.first_fragment_at)
-                            .as_secs_f64()
-                            * 1_000.0,
-                        "complete keyframe reached receiver reassembly"
-                    );
-                }
-                self.interarrival_jitter.observe(completed_at, pts_us);
-                let first_fragment_at_us = access_unit
-                    .first_fragment_at
-                    .saturating_duration_since(self.timing_origin)
-                    .as_micros() as u64;
-                let completed_at_us = completed_at
-                    .saturating_duration_since(self.timing_origin)
-                    .as_micros() as u64;
-                let outcome = self.jitter.push_at(
-                    JitterFrame {
-                        stream_generation: u64::from(access_unit.stream_epoch),
-                        frame_id: access_unit.frame_id,
-                        pts_us,
-                        received_at_us: completed_at_us,
-                        data: access_unit.data,
-                        keyframe: access_unit.keyframe,
-                        discardable: access_unit.discardable,
-                    },
-                    first_fragment_at_us,
-                    completed_at_us,
-                );
-                match outcome {
-                    PushOutcome::AcceptedAfterReferenceDrop => {
-                        self.ingress.recovery_jitter_capacity =
-                            self.ingress.recovery_jitter_capacity.saturating_add(1);
-                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?
+                if defer_until_config {
+                    if access_unit.keyframe
+                        && self.waiting_for_stream_config_epoch == Some(access_unit.stream_epoch)
+                    {
+                        self.pending_stream_config_idr = Some(access_unit);
                     }
-                    PushOutcome::DroppedLate {
-                        requires_refresh: true,
-                    } => {
-                        self.ingress.recovery_arrived_after_playout = self
-                            .ingress
-                            .recovery_arrived_after_playout
-                            .saturating_add(1);
-                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?
-                    }
-                    PushOutcome::Accepted
-                    | PushOutcome::DroppedLate {
-                        requires_refresh: false,
-                    } => {}
+                } else {
+                    self.queue_assembled_access_unit(access_unit)?;
                 }
             }
             Ok(None) => {}
@@ -279,8 +367,88 @@ impl ReceiverSession {
             | Err(ReassemblyError::EpochMismatch)
             | Err(ReassemblyError::InvalidFecParity) => {}
         }
-        if self.reassembly.take_reference_chain_loss() {
+        if self.reassembly.take_reference_chain_loss() && !defer_until_config {
             self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn release_pending_stream_config_idr(
+        &mut self,
+        stream_epoch: u32,
+    ) -> Result<(), ReceiverError> {
+        if !self
+            .pending_stream_config_idr
+            .as_ref()
+            .is_some_and(|access_unit| access_unit.stream_epoch == stream_epoch)
+        {
+            return Ok(());
+        }
+        let access_unit = self
+            .pending_stream_config_idr
+            .take()
+            .expect("matching pending StreamConfig IDR exists");
+        self.queue_assembled_access_unit(access_unit)?;
+        Ok(())
+    }
+
+    fn queue_assembled_access_unit(
+        &mut self,
+        access_unit: AssembledAccessUnit,
+    ) -> Result<(), ReceiverError> {
+        let pts_us = access_unit.pts_us;
+        let completed_at = Instant::now();
+        if access_unit.keyframe {
+            tracing::warn!(
+                bytes = access_unit.data.len(),
+                fragments = access_unit.fragment_count,
+                assembly_ms = completed_at
+                    .saturating_duration_since(access_unit.first_fragment_at)
+                    .as_secs_f64()
+                    * 1_000.0,
+                "complete keyframe reached receiver reassembly"
+            );
+        }
+        self.interarrival_jitter.observe(completed_at, pts_us);
+        let first_fragment_at_us = access_unit
+            .first_fragment_at
+            .saturating_duration_since(self.timing_origin)
+            .as_micros() as u64;
+        let completed_at_us = completed_at
+            .saturating_duration_since(self.timing_origin)
+            .as_micros() as u64;
+        let outcome = self.jitter.push_at(
+            JitterFrame {
+                stream_generation: u64::from(access_unit.stream_epoch),
+                frame_id: access_unit.frame_id,
+                pts_us,
+                received_at_us: completed_at_us,
+                data: access_unit.data,
+                keyframe: access_unit.keyframe,
+                discardable: access_unit.discardable,
+            },
+            first_fragment_at_us,
+            completed_at_us,
+        );
+        match outcome {
+            PushOutcome::AcceptedAfterReferenceDrop => {
+                self.ingress.recovery_jitter_capacity =
+                    self.ingress.recovery_jitter_capacity.saturating_add(1);
+                self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?
+            }
+            PushOutcome::DroppedLate {
+                requires_refresh: true,
+            } => {
+                self.ingress.recovery_arrived_after_playout = self
+                    .ingress
+                    .recovery_arrived_after_playout
+                    .saturating_add(1);
+                self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?
+            }
+            PushOutcome::Accepted
+            | PushOutcome::DroppedLate {
+                requires_refresh: false,
+            } => {}
         }
         Ok(())
     }
@@ -415,9 +583,6 @@ impl ReceiverSession {
             .as_ref()
             .is_some_and(|config| u64::from(config.stream_epoch) != access_unit.stream_generation)
         {
-            // A future Decoder Worker can complete after a generation switch.
-            // Keep this gate at the session boundary even though today's
-            // synchronous adapter normally clears the jitter queue first.
             self.ingress.recovery_dropped_access_units =
                 self.ingress.recovery_dropped_access_units.saturating_add(1);
             return Ok(());
@@ -459,11 +624,11 @@ impl ReceiverSession {
                 } => {
                     self.decoder_completions = self.decoder_completions.saturating_add(1);
                     self.jitter.observe_decode_time_us(decode_time_us);
-                    if !self
+                    let decoder_generation_current = self
                         .decoder_worker
-                        .is_current_generation(decoder_generation)
-                        || !self.decoder_timeline_is_current(timeline)
-                    {
+                        .is_current_generation(decoder_generation);
+                    let timeline_current = self.decoder_timeline_is_current(timeline);
+                    if !decoder_generation_current || !timeline_current {
                         continue;
                     }
                     if !self.decoder_recovery.accepts(timeline.kind.is_keyframe()) {

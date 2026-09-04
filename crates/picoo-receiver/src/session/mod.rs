@@ -21,7 +21,7 @@ use picoo_frame_hub::{
     FrameBufferPool, LatestFrameStore, PlaceholderMode, SharedFrameRingProducer,
 };
 use picoo_jitter::JitterBuffer;
-use picoo_packet::ReassemblyMap;
+use picoo_packet::{AssembledAccessUnit, ReassemblyMap};
 use picoo_pairing::TrustedDeviceStore;
 use picoo_protocol::control::{
     control_envelope::Payload as ControlPayload, ReceiverStats as ReceiverStatsMsg,
@@ -67,6 +67,9 @@ pub struct ReceiverSession {
     current_stream_config: Option<Arc<StreamConfig>>,
     /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
     waiting_for_stream_config_epoch: Option<u32>,
+    /// At most one complete future-generation IDR is retained until its
+    /// reliable StreamConfig arrives; incomplete AUs never cross this gate.
+    pending_stream_config_idr: Option<AssembledAccessUnit>,
     receiver_capabilities_sent: Option<()>,
     decoder_worker: DecoderWorker,
     /// Monotonic Worker completion revision used by deterministic tests and diagnostics.
@@ -128,6 +131,7 @@ impl ReceiverSession {
             shared_ring: None,
             current_stream_config: None,
             waiting_for_stream_config_epoch: None,
+            pending_stream_config_idr: None,
             receiver_capabilities_sent: None,
             decoder_worker: DecoderWorker::new(),
             decoder_completions: 0,
@@ -446,6 +450,7 @@ impl ReceiverSession {
         self.last_media_error = None;
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
+        self.pending_stream_config_idr = None;
         self.receiver_capabilities_sent = None;
         self.decoder_recovery.reset_session();
 
@@ -660,6 +665,7 @@ impl ReceiverSession {
         self.last_decoded_fps = 0;
         self.current_stream_config = None;
         self.waiting_for_stream_config_epoch = None;
+        self.pending_stream_config_idr = None;
         self.receiver_capabilities_sent = None;
         self.last_media_error = None;
         self.decoder_recovery.reset_session();

@@ -1,6 +1,8 @@
 use crate::handles::{RecoverMutex, SenderInner};
 use picoo_pairing::DeviceIdentity;
-use picoo_sender::{EncoderDirective, SenderError, SenderSession, SessionStats};
+use picoo_sender::{
+    EncoderDirective, NativeEncoderAccessUnit, SenderError, SenderSession, SessionStats,
+};
 use picoo_session::SenderStatus;
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 use std::ffi::CStr;
@@ -124,6 +126,9 @@ pub extern "C" fn picoo_sender_ingest_access_unit(
     is_keyframe: u8,
     pts_us: u64,
     stream_epoch: u32,
+    transaction_id: u64,
+    encoder_generation: u64,
+    encoder_height: u32,
     out_packets: *mut u32,
 ) -> i32 {
     if handle.is_null() || data.is_null() || len == 0 {
@@ -134,7 +139,15 @@ pub extern "C" fn picoo_sender_ingest_access_unit(
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
     let mut session = inner.session.lock_or_recover();
 
-    match session.ingest_access_unit(slice, is_keyframe != 0, pts_us, stream_epoch) {
+    match session.ingest_encoder_access_unit(NativeEncoderAccessUnit {
+        data: slice,
+        is_keyframe: is_keyframe != 0,
+        pts_us,
+        transaction_id,
+        encoder_generation,
+        stream_epoch,
+        height: encoder_height,
+    }) {
         Ok(count) => {
             if !out_packets.is_null() {
                 unsafe {

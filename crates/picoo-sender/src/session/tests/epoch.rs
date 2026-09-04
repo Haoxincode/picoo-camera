@@ -10,28 +10,34 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
         })
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
+    session.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    });
     let committed_epoch = session.current_stream_epoch();
+    assert!(session.report_encoder_started(0, 10, committed_epoch, 1080));
     let pending_epoch = session.begin_stream_reconfiguration(720);
+    let transaction_id = session.encoder_transaction_id_for_epoch(pending_epoch);
     assert_ne!(pending_epoch, committed_epoch);
-    session
-        .ingest_access_unit(b"still-current", true, 1, committed_epoch)
-        .expect("committed epoch remains valid while apply is pending");
     assert!(matches!(
-        session.ingest_access_unit(b"not-committed", true, 2, pending_epoch),
-        Err(SenderError::StaleStreamEpoch { got, current })
-            if got == pending_epoch && current == committed_epoch
+        session.ingest_encoder_access_unit(super::native_au(
+            b"old-generation",
+            true,
+            1,
+            (0, 10, committed_epoch, 1080)
+        )),
+        Err(SenderError::EncoderRefreshPending)
     ));
-    assert!(session.report_encoder_height(720, pending_epoch));
-    assert_eq!(session.current_stream_epoch(), pending_epoch);
+    assert!(session.report_encoder_started(transaction_id, 11, pending_epoch, 720));
     assert!(matches!(
-        session.ingest_access_unit(b"now-stale", true, 3, committed_epoch),
-        Err(SenderError::StaleStreamEpoch { got, current })
-            if got == committed_epoch && current == pending_epoch
-    ));
-    assert!(matches!(
-        session.ingest_access_unit(b"before-config", true, 4, pending_epoch),
-        Err(SenderError::StreamConfigPending { stream_epoch })
-            if stream_epoch == pending_epoch
+        session.ingest_encoder_access_unit(super::native_au(
+            b"delta",
+            false,
+            2,
+            (transaction_id, 11, pending_epoch, 720)
+        )),
+        Err(SenderError::EncoderRefreshPending)
     ));
     session.set_stream_config(StreamConfigParams {
         width: 1280,
@@ -39,11 +45,23 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
         ..Default::default()
     });
     session
-        .send_pending_stream_config()
-        .expect("queue matching config before media");
-    session
-        .ingest_access_unit(b"current", true, 5, pending_epoch)
-        .expect("committed pending epoch accepted");
+        .ingest_encoder_access_unit(super::native_au(
+            b"current-idr",
+            true,
+            3,
+            (transaction_id, 11, pending_epoch, 720),
+        ))
+        .expect("matching IDR commits and enters packetization");
+    assert_eq!(session.current_stream_epoch(), pending_epoch);
+    assert!(matches!(
+        session.ingest_encoder_access_unit(super::native_au(
+            b"now-stale",
+            true,
+            4,
+            (0, 10, committed_epoch, 1080)
+        )),
+        Err(SenderError::StaleEncoderFact)
+    ));
 }
 
 #[test]
@@ -55,6 +73,7 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
             port: 4433,
         })
         .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
     session.stream_config_sent = true;
     let committed = session.current_stream_epoch();
     let pending = session.begin_stream_reconfiguration(720);
@@ -67,19 +86,31 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
         Some(committed)
     );
 
-    assert!(session.report_encoder_height(720, pending));
-    assert!(!session.stream_config_sent());
-    assert!(session.pending_stream_config().is_none());
-    assert!(session.media_blocked_for_stream_config);
-
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
         ..Default::default()
     });
+    let transaction_id = session.encoder_transaction_id_for_epoch(pending);
+    assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
+    assert!(matches!(
+        session.ingest_encoder_access_unit(super::native_au(
+            b"delta",
+            false,
+            1,
+            (transaction_id, 11, pending, 720)
+        )),
+        Err(SenderError::EncoderRefreshPending)
+    ));
+    assert_eq!(session.current_stream_epoch(), committed);
     session
-        .send_pending_stream_config()
-        .expect("new config is sent");
+        .ingest_encoder_access_unit(super::native_au(
+            b"idr",
+            true,
+            2,
+            (transaction_id, 11, pending, 720),
+        ))
+        .expect("matching IDR commits");
     assert_eq!(
         session
             .pending_stream_config()
@@ -90,7 +121,7 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
 }
 
 #[test]
-fn current_epoch_report_is_idempotent_not_a_resolution_transition() {
+fn committed_encoder_started_fact_is_idempotent() {
     let mut session = SenderSession::new(MemoryTransport::new());
     let epoch = session.current_stream_epoch();
     session.set_stream_config(StreamConfigParams {
@@ -98,9 +129,10 @@ fn current_epoch_report_is_idempotent_not_a_resolution_transition() {
         height: 1080,
         ..Default::default()
     });
-    assert!(session.report_encoder_height(1080, epoch));
-    assert!(session.report_encoder_height(1080, epoch));
-    assert!(!session.report_encoder_height(720, epoch));
+    assert!(session.report_encoder_started(0, 10, epoch, 1080));
+    assert!(session.report_encoder_started(0, 10, epoch, 1080));
+    assert!(!session.report_encoder_started(0, 10, epoch, 720));
+    assert!(!session.report_encoder_started(0, 11, epoch, 1080));
     assert_eq!(session.bitrate_active_height(), 1080);
 }
 
@@ -166,6 +198,13 @@ fn receiver_capability_caps_preferred_height_in_rust() {
 #[test]
 fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
     let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
     let pending = session.begin_stream_reconfiguration(720);
     session.set_stream_config(StreamConfigParams {
         width: 1280,
@@ -173,11 +212,20 @@ fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
         sps: vec![1, 2, 3],
         ..Default::default()
     });
-    assert!(session.report_encoder_height(720, pending));
+    let transaction_id = session.encoder_transaction_id_for_epoch(pending);
+    assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
+    session
+        .ingest_encoder_access_unit(super::native_au(
+            b"idr",
+            true,
+            1,
+            (transaction_id, 11, pending, 720),
+        ))
+        .expect("matching IDR");
     let config = session.pending_stream_config().expect("staged config");
     assert_eq!(config.stream_epoch, pending);
     assert_eq!(config.sps, vec![1, 2, 3]);
-    assert!(session.media_blocked_for_stream_config);
+    assert!(!session.media_blocked_for_stream_config);
 }
 
 #[test]
@@ -191,23 +239,27 @@ fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
     let pending = session.begin_stream_reconfiguration(720);
-    assert!(session.report_encoder_height(720, pending));
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
         ..Default::default()
     });
+    let transaction_id = session.encoder_transaction_id_for_epoch(pending);
+    assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
     assert!(matches!(
-        session.send_pending_stream_config(),
-        Err(SenderError::StreamConfigHeightMismatch {
-            expected: 720,
-            got: 1080
-        })
-    ));
-    assert!(matches!(
-        session.ingest_access_unit(b"blocked", true, 1, pending),
+        session.ingest_encoder_access_unit(super::native_au(
+            b"blocked",
+            true,
+            1,
+            (transaction_id, 11, pending, 720)
+        )),
         Err(SenderError::StreamConfigPending { .. })
     ));
+    assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
+    assert_eq!(
+        session.encoder_transaction_id_for_epoch(pending),
+        transaction_id
+    );
 }
 
 #[test]
@@ -219,12 +271,13 @@ fn noncanonical_encoder_height_cannot_commit_ladder_epoch() {
         height: 800,
         ..Default::default()
     });
-    assert!(!session.report_encoder_height(800, pending));
+    let transaction_id = session.encoder_transaction_id_for_epoch(pending);
+    assert!(!session.report_encoder_started(transaction_id, 11, pending, 800));
     assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
 }
 
 #[test]
-fn cancelled_reconfiguration_restores_committed_stream_config() {
+fn failed_before_start_restores_committed_stream_config() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session.stream_config_sent = true;
     let committed = session.pending_stream_config().cloned();
@@ -235,7 +288,11 @@ fn cancelled_reconfiguration_restores_committed_stream_config() {
         ..Default::default()
     });
     assert_eq!(session.pending_stream_config().map(|c| c.height), Some(480));
-    assert!(session.cancel_stream_reconfiguration(pending));
+    let transaction_id = session.encoder_transaction_id_for_epoch(pending);
+    assert_eq!(
+        session.report_encoder_failed(transaction_id, 0),
+        EncoderFailureOutcome::RolledBack
+    );
     assert_eq!(session.pending_stream_config().cloned(), committed);
     assert!(session.stream_config_sent());
 }
@@ -254,4 +311,251 @@ fn disconnect_aborts_pending_local_and_directive_generations() {
     assert!(session.pending_encoder_directive().is_some());
     session.disconnect();
     assert!(session.pending_encoder_directive().is_none());
+}
+
+#[test]
+fn matching_first_idr_commits_generation_and_enters_packetization() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
+    session.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(0, 10, INITIAL_STREAM_EPOCH, 1080));
+
+    let candidate_epoch = session.begin_stream_reconfiguration(720);
+    let transaction_id = session.encoder_transaction_id_for_epoch(candidate_epoch);
+    assert_ne!(transaction_id, 0);
+    session.set_stream_config(StreamConfigParams {
+        width: 1280,
+        height: 720,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(transaction_id, 11, candidate_epoch, 720));
+    assert!(matches!(
+        session.ingest_encoder_access_unit(super::native_au(
+            b"delta",
+            false,
+            1,
+            (transaction_id, 11, candidate_epoch, 720)
+        )),
+        Err(SenderError::EncoderRefreshPending)
+    ));
+    assert!(matches!(
+        session.ingest_encoder_access_unit(super::native_au(
+            b"stale-idr",
+            true,
+            2,
+            (transaction_id, 12, candidate_epoch, 720)
+        )),
+        Err(SenderError::EncoderRefreshPending)
+    ));
+    let packets = session
+        .ingest_encoder_access_unit(super::native_au(
+            b"first-matching-idr",
+            true,
+            3,
+            (transaction_id, 11, candidate_epoch, 720),
+        ))
+        .expect("the commit IDR must also enter packetization");
+    assert!(packets > 0);
+    assert_eq!(session.current_stream_epoch(), candidate_epoch);
+    assert_eq!(session.bitrate_active_height(), 720);
+    assert!(!session.take_keyframe_request());
+}
+
+#[test]
+fn rejected_commit_idr_does_not_commit_encoder_transaction() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
+    session.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(0, 10, INITIAL_STREAM_EPOCH, 1080));
+
+    let candidate_epoch = session.begin_stream_reconfiguration(720);
+    let transaction_id = session.encoder_transaction_id_for_epoch(candidate_epoch);
+    session.set_stream_config(StreamConfigParams {
+        width: 1280,
+        height: 720,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(transaction_id, 11, candidate_epoch, 720));
+
+    let oversized = vec![
+        0;
+        picoo_protocol::MAX_FEC_FRAGMENT_PAYLOAD
+            * usize::from(picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT)
+            + 1
+    ];
+    assert!(matches!(
+        session.ingest_encoder_access_unit(super::native_au(
+            &oversized,
+            true,
+            3,
+            (transaction_id, 11, candidate_epoch, 720),
+        )),
+        Err(SenderError::AccessUnitTooLarge)
+    ));
+    assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
+    assert_eq!(
+        session.encoder_transaction_id_for_epoch(candidate_epoch),
+        transaction_id
+    );
+    assert_eq!(session.pending_packets(), 0);
+
+    session
+        .ingest_encoder_access_unit(super::native_au(
+            b"valid-commit-idr",
+            true,
+            4,
+            (transaction_id, 11, candidate_epoch, 720),
+        ))
+        .expect("a later valid IDR commits the still-pending transaction");
+    assert_eq!(session.current_stream_epoch(), candidate_epoch);
+}
+
+#[test]
+fn encoder_failure_policy_is_owned_by_rust() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(0, 20, INITIAL_STREAM_EPOCH, 1080));
+
+    let untouched_epoch = session.begin_stream_reconfiguration(720);
+    let untouched_id = session.encoder_transaction_id_for_epoch(untouched_epoch);
+    assert_eq!(
+        session.report_encoder_failed(untouched_id, 0),
+        EncoderFailureOutcome::RolledBack
+    );
+    assert!(session.pending_encoder_directive().is_none());
+    assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
+
+    let failed_epoch = session.begin_stream_reconfiguration(720);
+    let failed_id = session.encoder_transaction_id_for_epoch(failed_epoch);
+    assert!(session.report_encoder_started(failed_id, 21, failed_epoch, 720));
+    assert_eq!(
+        session.report_encoder_failed(failed_id, 21),
+        EncoderFailureOutcome::RecoveryRequested
+    );
+    let recovery = session
+        .pending_encoder_directive()
+        .expect("recovery effect");
+    assert_eq!(recovery.kind, EncoderDirectiveKind::Recovery);
+    assert_eq!(recovery.stream_epoch, INITIAL_STREAM_EPOCH);
+    assert_eq!(recovery.target_height, 1080);
+
+    session.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(
+        recovery.id,
+        22,
+        recovery.stream_epoch,
+        recovery.target_height,
+    ));
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
+    session
+        .ingest_encoder_access_unit(super::native_au(
+            b"recovery-idr",
+            true,
+            4,
+            (
+                recovery.id,
+                22,
+                recovery.stream_epoch,
+                recovery.target_height,
+            ),
+        ))
+        .expect("matching recovery IDR");
+    assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
+    assert!(session.pending_encoder_directive().is_none());
+}
+
+#[test]
+fn committed_encoder_runtime_failure_requests_rust_owned_recovery() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session.set_stream_config(StreamConfigParams {
+        width: 1280,
+        height: 720,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(0, 20, INITIAL_STREAM_EPOCH, 720));
+
+    assert_eq!(
+        session.report_encoder_failed(0, 20),
+        EncoderFailureOutcome::RecoveryRequested
+    );
+    let recovery = session
+        .pending_encoder_directive()
+        .expect("committed failure creates recovery effect");
+    assert_eq!(recovery.kind, EncoderDirectiveKind::Recovery);
+    assert_eq!(recovery.stream_epoch, INITIAL_STREAM_EPOCH);
+    assert_eq!(recovery.target_height, 720);
+
+    assert_eq!(
+        session.report_encoder_failed(0, 20),
+        EncoderFailureOutcome::Ignored,
+        "stale committed-generation errors cannot replace an active recovery"
+    );
+}
+
+#[test]
+fn recovery_failure_disconnects_instead_of_recursing() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    });
+    assert!(session.report_encoder_started(0, 30, INITIAL_STREAM_EPOCH, 1080));
+    let failed_epoch = session.begin_stream_reconfiguration(720);
+    let failed_id = session.encoder_transaction_id_for_epoch(failed_epoch);
+    assert!(session.report_encoder_started(failed_id, 31, failed_epoch, 720));
+    assert_eq!(
+        session.report_encoder_failed(failed_id, 31),
+        EncoderFailureOutcome::RecoveryRequested
+    );
+    let recovery = session.pending_encoder_directive().expect("recovery");
+    assert_eq!(
+        session.report_encoder_failed(recovery.id, 0),
+        EncoderFailureOutcome::Disconnected
+    );
+    assert_eq!(session.status(), SenderStatus::Disconnected);
+    assert_eq!(
+        session.last_session_error(),
+        Some("ENCODER_RECOVERY_FAILED")
+    );
 }
