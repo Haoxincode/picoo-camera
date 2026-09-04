@@ -135,6 +135,12 @@ OBS 和浏览器实测确认。
 - 端到端延迟只有在 sender monotonic timestamp、ping/pong 与按 generation 重置的 affine clock
   mapping 建立后才可发布；RTT 不得冒充 glass-to-glass latency。
 
+NV12 方向变换优先保持一个跨平台 Rust 边界：`libyuv` 支持相关操作，但会为全部桌面目标引入
+C/C++ 构建与 ABI 维护；`fast_image_resize` 不直接表达 NV12 双平面 rotate+mirror 融合语义。当前
+`transform_nv12` 因而只维护坐标映射这一 Picoo 特有最小实现：无变换转移原 `Bytes`，有变换只
+分配一个紧凑缓冲并直接写入最终方向。若未来 resize 与方向处理需要统一 SIMD pipeline，再依据
+profile 重新评审 `libyuv`，不得仅因为已有自研代码而拒绝迁移。
+
 ## 验证边界
 
 建立使用虚拟时钟的 `picoo-sim`：Scripted Camera/Encoder → Sender Core → Simulated Transport →

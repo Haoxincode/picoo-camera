@@ -1,42 +1,29 @@
-//! Horizontal mirror helper — REQ-PICOO-MEDIA-004 (remote output).
-//! Clockwise rotation helper — REQ-PICOO-MEDIA-009 (upright pixels for VCam).
+//! Fused NV12 orientation transform — REQ-PICOO-MEDIA-004/009/017.
+
+use bytes::Bytes;
+use thiserror::Error;
 
 use crate::placeholder::nv12_byte_size;
 
-/// Horizontally mirror an NV12 frame in place (Y plane + interleaved UV).
-///
-/// `stride` is the row byte length for both Y and UV planes (typically ≥ `width`).
-pub fn nv12_mirror_horizontal(width: u32, height: u32, stride: u32, nv12: &mut [u8]) {
-    if width < 2 || height == 0 || stride < width {
-        return;
-    }
-    let w = width as usize;
-    let h = height as usize;
-    let s = stride as usize;
-    let y_plane = s.saturating_mul(h);
-    let uv_needed = s.saturating_mul(h / 2);
-    if nv12.len() < y_plane + uv_needed {
-        return;
-    }
+/// An upright NV12 frame produced by [`transform_nv12`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransformedNv12 {
+    pub width: u32,
+    pub height: u32,
+    pub stride: u32,
+    pub pixels: Bytes,
+}
 
-    for row in 0..h {
-        let base = row * s;
-        for x in 0..(w / 2) {
-            nv12.swap(base + x, base + (w - 1 - x));
-        }
-    }
-
-    let uv_rows = h / 2;
-    let pairs = w / 2;
-    for row in 0..uv_rows {
-        let base = y_plane + row * s;
-        for p in 0..(pairs / 2) {
-            let left = base + p * 2;
-            let right = base + (pairs - 1 - p) * 2;
-            nv12.swap(left, right);
-            nv12.swap(left + 1, right + 1);
-        }
-    }
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+pub enum Nv12TransformError {
+    #[error("NV12 dimensions must be non-zero and even, got {width}x{height}")]
+    InvalidDimensions { width: u32, height: u32 },
+    #[error("NV12 stride {stride} is smaller than width {width}")]
+    InvalidStride { width: u32, stride: u32 },
+    #[error("NV12 buffer has {actual} bytes but requires at least {required}")]
+    BufferTooSmall { required: usize, actual: usize },
+    #[error("NV12 dimensions overflow the addressable buffer size")]
+    SizeOverflow,
 }
 
 /// Normalize degrees to `{0, 90, 180, 270}`.
@@ -50,81 +37,130 @@ pub fn normalize_rotation_degrees(degrees: u32) -> u32 {
     }
 }
 
-/// Clockwise-rotate NV12 pixels so LatestFrameStore / VCam receive upright frames
-/// (REQ-PICOO-MEDIA-009). Returns `(out_w, out_h, out_stride, pixels)`.
+/// Rotate clockwise and then optionally mirror in upright output space.
 ///
-/// `rotation_degrees` is snapped to 0/90/180/270. For 0°, returns `None` so the
-/// caller can keep the original buffer without copying.
-pub fn nv12_rotate_clockwise(
+/// The no-op path transfers `pixels` without allocation. Every transformed
+/// output is compact and allocated exactly once; rotation and mirror are
+/// folded into one source-coordinate mapping rather than separate full-frame
+/// passes.
+pub fn transform_nv12(
     width: u32,
     height: u32,
     stride: u32,
     rotation_degrees: u32,
-    nv12: &[u8],
-) -> Option<(u32, u32, u32, Vec<u8>)> {
-    let rot = normalize_rotation_degrees(rotation_degrees);
-    if rot == 0 {
-        return None;
-    }
-    if width < 2
-        || height < 2
-        || !width.is_multiple_of(2)
-        || !height.is_multiple_of(2)
-        || stride < width
-    {
-        return None;
-    }
-    let expected = (stride as usize) * (height as usize) * 3 / 2;
-    if nv12.len() < expected {
-        return None;
+    mirrored: bool,
+    pixels: Bytes,
+) -> Result<TransformedNv12, Nv12TransformError> {
+    let required = validate_layout(width, height, stride, pixels.len())?;
+    let pixels = pixels.slice(..required);
+    let rotation = normalize_rotation_degrees(rotation_degrees);
+    if rotation == 0 && !mirrored {
+        return Ok(TransformedNv12 {
+            width,
+            height,
+            stride,
+            pixels,
+        });
     }
 
-    let (out_w, out_h) = if rot == 180 {
-        (width, height)
-    } else {
+    let (out_width, out_height) = if rotation == 90 || rotation == 270 {
         (height, width)
+    } else {
+        (width, height)
     };
-    let out_stride = out_w;
-    let mut out = vec![0u8; nv12_byte_size(out_w, out_h)];
-    let w = width as usize;
-    let h = height as usize;
-    let s = stride as usize;
-    let ow = out_w as usize;
-    let oh = out_h as usize;
-    let os = out_stride as usize;
-    let src_y_plane = s * h;
-    let dst_y_plane = os * oh;
+    let out_stride = out_width;
+    let mut output = vec![0_u8; nv12_byte_size(out_width, out_height)];
+    let width = width as usize;
+    let height = height as usize;
+    let stride = stride as usize;
+    let out_width = out_width as usize;
+    let out_height = out_height as usize;
+    let out_stride = out_stride as usize;
+    let source_y_bytes = stride * height;
+    let output_y_bytes = out_stride * out_height;
 
-    for y in 0..oh {
-        for x in 0..ow {
-            let (sx, sy) = match rot {
-                // out is (height × width); 90° CW: column y becomes row.
-                90 => (y, h - 1 - x),
-                180 => (w - 1 - x, h - 1 - y),
-                270 => (w - 1 - y, x),
-                _ => unreachable!(),
+    for output_y in 0..out_height {
+        for output_x in 0..out_width {
+            let rotated_x = if mirrored {
+                out_width - 1 - output_x
+            } else {
+                output_x
             };
-            out[y * os + x] = nv12[sy * s + sx];
+            let (source_x, source_y) =
+                map_output_to_source(rotation, rotated_x, output_y, width, height);
+            output[output_y * out_stride + output_x] = pixels[source_y * stride + source_x];
         }
     }
 
-    // Chroma: sample UV at the 2×2 cell covering the rotated luma coordinate.
-    for y in (0..oh).step_by(2) {
-        for x in (0..ow).step_by(2) {
-            let (sx, sy) = match rot {
-                90 => (y, h - 1 - x),
-                180 => (w - 1 - x, h - 1 - y),
-                270 => (w - 1 - y, x),
-                _ => unreachable!(),
+    let source_chroma_width = width / 2;
+    let source_chroma_height = height / 2;
+    let output_chroma_width = out_width / 2;
+    let output_chroma_height = out_height / 2;
+    for output_y in 0..output_chroma_height {
+        for output_x in 0..output_chroma_width {
+            // Mirror whole interleaved UV pairs, never individual U/V bytes.
+            let rotated_x = if mirrored {
+                output_chroma_width - 1 - output_x
+            } else {
+                output_x
             };
-            let src_uv = src_y_plane + (sy / 2) * s + (sx / 2) * 2;
-            let dst_uv = dst_y_plane + (y / 2) * os + (x / 2) * 2;
-            out[dst_uv] = nv12[src_uv];
-            out[dst_uv + 1] = nv12[src_uv + 1];
+            let (source_x, source_y) = map_output_to_source(
+                rotation,
+                rotated_x,
+                output_y,
+                source_chroma_width,
+                source_chroma_height,
+            );
+            let source = source_y * stride + source_x * 2 + source_y_bytes;
+            let destination = output_y * out_stride + output_x * 2 + output_y_bytes;
+            output[destination..destination + 2].copy_from_slice(&pixels[source..source + 2]);
         }
     }
 
-    Some((out_w, out_h, out_stride, out))
+    Ok(TransformedNv12 {
+        width: out_width as u32,
+        height: out_height as u32,
+        stride: out_stride as u32,
+        pixels: Bytes::from(output),
+    })
+}
+
+fn validate_layout(
+    width: u32,
+    height: u32,
+    stride: u32,
+    actual: usize,
+) -> Result<usize, Nv12TransformError> {
+    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(Nv12TransformError::InvalidDimensions { width, height });
+    }
+    if stride < width {
+        return Err(Nv12TransformError::InvalidStride { width, stride });
+    }
+    let required = (stride as usize)
+        .checked_mul(height as usize)
+        .and_then(|y_bytes| y_bytes.checked_add(y_bytes / 2))
+        .ok_or(Nv12TransformError::SizeOverflow)?;
+    if actual < required {
+        return Err(Nv12TransformError::BufferTooSmall { required, actual });
+    }
+    Ok(required)
+}
+
+fn map_output_to_source(
+    rotation: u32,
+    output_x: usize,
+    output_y: usize,
+    source_width: usize,
+    source_height: usize,
+) -> (usize, usize) {
+    match rotation {
+        0 => (output_x, output_y),
+        90 => (output_y, source_height - 1 - output_x),
+        180 => (source_width - 1 - output_x, source_height - 1 - output_y),
+        270 => (source_width - 1 - output_y, output_x),
+        _ => unreachable!("rotation is normalized before mapping"),
+    }
 }
 
 #[cfg(test)]
@@ -132,58 +168,85 @@ mod tests {
     use super::*;
     use crate::placeholder::nv12_black;
 
-    #[test]
-    fn mirror_swaps_left_and_right_y_samples() {
-        // REQ-PICOO-MEDIA-004
-        let width = 4u32;
-        let height = 2u32;
-        let stride = 4u32;
-        let mut nv12 = vec![0u8; nv12_byte_size(width, height)];
-        // Y row0: 1 2 3 4 → after mirror 4 3 2 1
-        nv12[0] = 1;
-        nv12[1] = 2;
-        nv12[2] = 3;
-        nv12[3] = 4;
-        nv12_mirror_horizontal(width, height, stride, &mut nv12);
-        assert_eq!(&nv12[0..4], &[4, 3, 2, 1]);
+    fn fixture() -> Bytes {
+        // Y: 1 2 3 4 / 5 6 7 8; UV: (10,11) (20,21)
+        Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21])
     }
 
     #[test]
-    fn rotate_90_swaps_dims_and_moves_y_corner() {
-        // REQ-PICOO-MEDIA-009
-        let width = 4u32;
-        let height = 2u32;
-        let stride = 4u32;
-        let mut nv12 = vec![128u8; nv12_byte_size(width, height)];
-        // Y:
-        // 1 2 3 4
-        // 5 6 7 8
-        for (i, v) in [1u8, 2, 3, 4, 5, 6, 7, 8].into_iter().enumerate() {
-            nv12[i] = v;
-        }
-        let (ow, oh, os, out) =
-            nv12_rotate_clockwise(width, height, stride, 90, &nv12).expect("rotate");
-        assert_eq!((ow, oh, os), (2, 4, 2));
-        // 90° CW of
-        // 1 2 3 4
-        // 5 6 7 8
-        // →
-        // 5 1
-        // 6 2
-        // 7 3
-        // 8 4
-        assert_eq!(out[0], 5);
-        assert_eq!(out[1], 1);
-        assert_eq!(out[2], 6);
-        assert_eq!(out[3], 2);
-        assert_eq!(out[6], 8);
-        assert_eq!(out[7], 4);
+    fn no_op_reuses_the_input_allocation() {
+        let input = Bytes::from(nv12_black(4, 2));
+        let input_pointer = input.as_ptr();
+        let output = transform_nv12(4, 2, 4, 0, false, input).expect("valid NV12");
+        assert_eq!(output.pixels.as_ptr(), input_pointer);
+        assert_eq!((output.width, output.height, output.stride), (4, 2, 4));
     }
 
     #[test]
-    fn rotate_0_returns_none() {
-        let nv12 = nv12_black(4, 2);
-        assert!(nv12_rotate_clockwise(4, 2, 4, 0, &nv12).is_none());
+    fn mirror_swaps_luma_and_uv_pairs() {
+        let output = transform_nv12(4, 2, 4, 0, true, fixture()).expect("mirror");
+        assert_eq!(&output.pixels[..8], &[4, 3, 2, 1, 8, 7, 6, 5]);
+        assert_eq!(&output.pixels[8..], &[20, 21, 10, 11]);
+    }
+
+    #[test]
+    fn fused_rotate_then_mirror_writes_final_orientation() {
+        let output = transform_nv12(4, 2, 4, 90, true, fixture()).expect("transform");
+        assert_eq!((output.width, output.height, output.stride), (2, 4, 2));
+        assert_eq!(&output.pixels[..8], &[1, 5, 2, 6, 3, 7, 4, 8]);
+        assert_eq!(&output.pixels[8..], &[10, 11, 20, 21]);
+    }
+
+    #[test]
+    fn fused_transform_mirrors_chroma_pairs_without_swapping_uv() {
+        let mut input = vec![0_u8; nv12_byte_size(4, 4)];
+        input[16..].copy_from_slice(&[10, 11, 20, 21, 30, 31, 40, 41]);
+        let output = transform_nv12(4, 4, 4, 90, true, Bytes::from(input)).expect("transform");
+        assert_eq!(&output.pixels[16..], &[10, 11, 30, 31, 20, 21, 40, 41]);
+    }
+
+    #[test]
+    fn rotation_90_swaps_dimensions_and_moves_corners() {
+        let output = transform_nv12(4, 2, 4, 90, false, fixture()).expect("rotate");
+        assert_eq!((output.width, output.height, output.stride), (2, 4, 2));
+        assert_eq!(&output.pixels[..8], &[5, 1, 6, 2, 7, 3, 8, 4]);
+        assert_eq!(&output.pixels[8..], &[10, 11, 20, 21]);
+    }
+
+    #[test]
+    fn transformed_output_removes_source_padding() {
+        let input = Bytes::from_static(&[
+            1, 2, 3, 4, 99, 99, 5, 6, 7, 8, 99, 99, 10, 11, 20, 21, 99, 99,
+        ]);
+        let output = transform_nv12(4, 2, 6, 180, false, input).expect("rotate padded");
+        assert_eq!((output.width, output.height, output.stride), (4, 2, 4));
+        assert_eq!(output.pixels.len(), 12);
+        assert_eq!(&output.pixels[..8], &[8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(&output.pixels[8..], &[20, 21, 10, 11]);
+    }
+
+    #[test]
+    fn invalid_layout_is_rejected_even_on_no_op_path() {
+        assert_eq!(
+            transform_nv12(4, 2, 3, 0, false, fixture()),
+            Err(Nv12TransformError::InvalidStride {
+                width: 4,
+                stride: 3
+            })
+        );
+        assert!(matches!(
+            transform_nv12(4, 2, 4, 0, false, Bytes::from_static(&[0; 4])),
+            Err(Nv12TransformError::BufferTooSmall { .. })
+        ));
+    }
+
+    #[test]
+    fn no_op_slices_extra_tail_without_copying() {
+        let input = Bytes::from_static(&[0_u8; 16]);
+        let input_pointer = input.as_ptr();
+        let output = transform_nv12(4, 2, 4, 0, false, input).expect("valid NV12 prefix");
+        assert_eq!(output.pixels.as_ptr(), input_pointer);
+        assert_eq!(output.pixels.len(), 12);
     }
 
     #[test]

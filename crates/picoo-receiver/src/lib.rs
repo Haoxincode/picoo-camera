@@ -40,6 +40,8 @@ pub enum ReceiverError {
     Identity(#[from] IdentityError),
     #[error("decode: {0}")]
     Decode(#[from] DecodeError),
+    #[error("NV12 transform: {0}")]
+    Nv12Transform(#[from] picoo_frame_hub::Nv12TransformError),
     #[error("not listening")]
     NotListening,
     #[error("trusted identity replacement decision is stale")]

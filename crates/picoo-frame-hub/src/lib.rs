@@ -6,7 +6,7 @@ mod placeholder;
 mod shared_ring;
 
 pub use latest_frame_store::{LatestFrameStore, VideoFrame};
-pub use nv12::{normalize_rotation_degrees, nv12_mirror_horizontal, nv12_rotate_clockwise};
+pub use nv12::{normalize_rotation_degrees, transform_nv12, Nv12TransformError, TransformedNv12};
 pub use placeholder::{
     color_bars_placeholder, nv12_black, nv12_byte_size, reconnecting_placeholder,
     waiting_placeholder, waiting_placeholder_for_size, PlaceholderMode, PLACEHOLDER_HEIGHT,

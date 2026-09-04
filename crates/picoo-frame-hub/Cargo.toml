@@ -34,3 +34,7 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 proptest = "=1.6.0"
+
+[[bench]]
+name = "nv12_transform"
+harness = false

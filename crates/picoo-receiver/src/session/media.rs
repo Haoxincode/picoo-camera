@@ -546,26 +546,19 @@ impl ReceiverSession {
             timestamp_us,
             nv12,
         } = frame;
-        // REQ-PICOO-MEDIA-009: rotate before LatestFrameStore / Shared Ring / VCam.
-        // REQ-PICOO-MEDIA-004: then apply remote StreamConfig.mirrored in upright space.
-        let rotated_buf =
-            picoo_frame_hub::nv12_rotate_clockwise(width, height, stride, rotation, &nv12);
-        let (width, height, stride, pixels) = match rotated_buf {
-            Some((ow, oh, os, buf)) => (ow, oh, os, Bytes::from(buf)),
-            None => (width, height, stride, nv12),
-        };
-
         let mirrored = self
             .current_stream_config
             .as_ref()
             .is_some_and(|c| c.mirrored);
-        let pixels = if mirrored {
-            let mut buf = pixels.to_vec();
-            picoo_frame_hub::nv12_mirror_horizontal(width, height, stride, &mut buf);
-            Bytes::from(buf)
-        } else {
-            pixels
-        };
+        // REQ-PICOO-MEDIA-004/009/017: rotate then mirror in one output pass.
+        let transformed =
+            picoo_frame_hub::transform_nv12(width, height, stride, rotation, mirrored, nv12)?;
+        let (width, height, stride, pixels) = (
+            transformed.width,
+            transformed.height,
+            transformed.stride,
+            transformed.pixels,
+        );
 
         // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
         let published_rotation = 0u32;
