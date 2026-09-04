@@ -136,6 +136,19 @@ impl DeviceIdentity {
         }
     }
 
+    /// Replace a file-backed identity after an explicit user recovery action.
+    ///
+    /// This never attempts to derive trust from the unreadable identity. The
+    /// caller must invalidate every pairing that referenced the previous key.
+    pub fn replace_at_path(
+        path: impl AsRef<Path>,
+        device_name: &str,
+    ) -> Result<Self, IdentityError> {
+        let identity = Self::generate(device_name)?;
+        identity.save_to_path(path)?;
+        Ok(identity)
+    }
+
     /// Load or create identity material in the OS credential store.
     /// Available on Apple and Windows product targets.
     #[cfg(any(target_os = "macos", target_os = "ios", windows))]
@@ -161,6 +174,26 @@ impl DeviceIdentity {
             }
             Err(error) => Err(IdentityError::SystemStore(error.to_string())),
         }
+    }
+
+    /// Replace an OS-protected identity after explicit user confirmation.
+    ///
+    /// `set_secret` overwrites a corrupt credential in place. No old key bytes
+    /// are accepted as migration evidence (REQ-PICOO-PAIRING-010).
+    #[cfg(any(target_os = "macos", target_os = "ios", windows))]
+    pub fn replace_system(
+        service: &str,
+        account: &str,
+        device_name: &str,
+    ) -> Result<Self, IdentityError> {
+        let entry = keyring::Entry::new(service, account)
+            .map_err(|error| IdentityError::SystemStore(error.to_string()))?;
+        let identity = Self::generate(device_name)?;
+        let secret = Zeroizing::new(identity.secret_bytes_for_secure_store());
+        entry
+            .set_secret(secret.as_ref())
+            .map_err(|error| IdentityError::SystemStore(error.to_string()))?;
+        Ok(identity)
     }
 
     pub fn load_from_path(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
@@ -284,6 +317,21 @@ mod tests {
         assert_eq!(first.device_id, second.device_id);
         assert_eq!(first.public_key(), second.public_key());
         assert_eq!(second.device_name, "Phone");
+    }
+
+    #[test]
+    fn explicit_repair_replaces_corrupt_file_with_a_new_valid_identity() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("identity.json");
+        let original = DeviceIdentity::load_or_create(&path, "Phone").expect("create");
+        fs::write(&path, b"corrupt identity").expect("corrupt fixture");
+
+        let repaired = DeviceIdentity::replace_at_path(&path, "Phone").expect("repair");
+        let reloaded = DeviceIdentity::load_from_path(&path).expect("reload repaired identity");
+
+        assert_ne!(repaired.device_id(), original.device_id());
+        assert_eq!(reloaded.device_id(), repaired.device_id());
+        assert_eq!(reloaded.public_key(), repaired.public_key());
     }
 
     #[test]

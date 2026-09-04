@@ -50,11 +50,23 @@ pub(in crate::session) const PAIRING_COMMIT_PHASE: &[u8] = b"sender-commit";
 pub(in crate::session) const PAIRING_COMPLETE_PHASE: &[u8] = b"receiver-complete";
 
 impl ReceiverSession {
-    pub fn with_trusted_store(mut self, path: impl AsRef<Path>) -> Result<Self, ReceiverError> {
+    pub fn with_trusted_store(self, path: impl AsRef<Path>) -> Result<Self, ReceiverError> {
         let path = path.as_ref().to_path_buf();
-        self.trusted = TrustedDeviceStore::load_from_path(&path)?;
-        self.trusted_store_path = Some(path);
-        Ok(self)
+        let store = TrustedDeviceStore::load_from_path(&path)?;
+        Ok(self.with_loaded_trusted_store(store, path))
+    }
+
+    /// Attach a trust snapshot that was validated before media/transport
+    /// runtime construction. Desktop startup uses this to fail closed before
+    /// creating those resources when the store is corrupt.
+    pub fn with_loaded_trusted_store(
+        mut self,
+        store: TrustedDeviceStore,
+        path: impl AsRef<Path>,
+    ) -> Self {
+        self.trusted = store;
+        self.trusted_store_path = Some(path.as_ref().to_path_buf());
+        self
     }
 
     pub fn trusted_store_path(&self) -> Option<&Path> {

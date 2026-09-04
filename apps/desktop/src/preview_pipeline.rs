@@ -318,6 +318,8 @@ mod tests {
             sequence,
             sequence * 1_000,
             sequence * 1_000,
+            sequence * 1_000,
+            sequence * 1_000,
             Instant::now(),
             sequence * 1_000,
             width,

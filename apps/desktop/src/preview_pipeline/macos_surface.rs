@@ -362,6 +362,8 @@ mod tests {
             1,
             0,
             0,
+            0,
+            0,
             Instant::now(),
             0,
             width,

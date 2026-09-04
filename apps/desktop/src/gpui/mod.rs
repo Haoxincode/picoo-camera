@@ -7,6 +7,7 @@ mod connect;
 mod device;
 mod diagnostics;
 mod icons;
+mod identity_recovery;
 mod lifecycle;
 mod nav;
 mod pages;

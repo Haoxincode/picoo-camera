@@ -12,7 +12,7 @@ use picoo_discovery::{
     local_advertise_host, MdnsAdvertiser, PairingState, ReceiverAdvertisement, ReceiverPlatform,
     DEFAULT_QUIC_PORT,
 };
-use picoo_pairing::{public_key_fingerprint_prefix, DeviceIdentity};
+use picoo_pairing::{public_key_fingerprint_prefix, DeviceIdentity, TrustedDeviceStore};
 use picoo_protocol::control::{CameraCommand, StreamConfig};
 use picoo_receiver::{
     IngressStats, ReceiverError, ReceiverIdentity, ReceiverSession, TrustedIdentityReplacement,
@@ -23,6 +23,9 @@ use picoo_transport::Endpoint;
 use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
+
+const RECEIVER_IDENTITY_SERVICE: &str = "site.nebula-tech.picoo-camera";
+const RECEIVER_IDENTITY_ACCOUNT: &str = "receiver-ed25519";
 
 fn current_receiver_platform() -> ReceiverPlatform {
     if cfg!(target_os = "macos") {
@@ -55,15 +58,20 @@ pub struct TrustedDeviceSummary {
 pub struct ReceiverRuntimeConfig {
     pub identity: ReceiverIdentity,
     pub trusted_store_path: PathBuf,
+    trusted_store: TrustedDeviceStore,
     pub shared_ring_name: String,
     pub bind_host: String,
 }
 
 impl ReceiverRuntimeConfig {
     pub fn load() -> Result<Self, ReceiverError> {
+        let identity = load_receiver_identity("Picoo Camera")?;
+        let trusted_store_path = default_trusted_store_path();
+        let trusted_store = TrustedDeviceStore::load_from_path(&trusted_store_path)?;
         Ok(Self {
-            identity: load_receiver_identity("Picoo Camera")?,
-            trusted_store_path: default_trusted_store_path(),
+            identity,
+            trusted_store_path,
+            trusted_store,
             shared_ring_name: DEFAULT_SHARED_RING_NAME.into(),
             bind_host: "0.0.0.0".into(),
         })
@@ -132,7 +140,7 @@ impl ReceiverRuntime {
     pub fn start(config: ReceiverRuntimeConfig) -> Result<Self, ReceiverError> {
         let mut receiver = ReceiverSession::new()
             .with_identity(config.identity.clone())
-            .with_trusted_store(&config.trusted_store_path)?;
+            .with_loaded_trusted_store(config.trusted_store, &config.trusted_store_path);
 
         let shared_ring_error = match receiver.attach_shared_ring(&config.shared_ring_name) {
             Ok(()) => None,
@@ -585,24 +593,64 @@ fn load_receiver_identity(default_name: &str) -> Result<ReceiverIdentity, Receiv
     #[cfg(any(target_os = "macos", windows))]
     let identity = {
         let identity = DeviceIdentity::load_or_create_system(
-            "site.nebula-tech.picoo-camera",
-            "receiver-ed25519",
+            RECEIVER_IDENTITY_SERVICE,
+            RECEIVER_IDENTITY_ACCOUNT,
             default_name,
         )?;
-        let legacy_path = legacy_identity_path();
-        if legacy_path.exists() {
-            fs::remove_file(&legacy_path).map_err(|error| {
-                picoo_pairing::IdentityError::SystemStore(format!(
-                    "could not remove legacy plaintext identity {}: {error}",
-                    legacy_path.display()
-                ))
-            })?;
-        }
+        remove_legacy_identity_file()?;
         identity
     };
     #[cfg(not(any(target_os = "macos", windows)))]
     let identity = DeviceIdentity::load_or_create(legacy_identity_path(), default_name)?;
     Ok(receiver_identity_from_device(&identity))
+}
+
+/// Replace an unreadable Receiver identity and invalidate every trust record
+/// that referred to the previous public key (REQ-PICOO-PAIRING-010).
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn repair_receiver_identity_and_reset_trust(display_name: &str) -> Result<(), ReceiverError> {
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        // Do not rotate a healthy secure identity if legacy plaintext cleanup
+        // is still blocked by filesystem permissions.
+        remove_legacy_identity_file()?;
+        DeviceIdentity::replace_system(
+            RECEIVER_IDENTITY_SERVICE,
+            RECEIVER_IDENTITY_ACCOUNT,
+            display_name,
+        )?;
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        DeviceIdentity::replace_at_path(legacy_identity_path(), display_name)?;
+    }
+    reset_receiver_trust()
+}
+
+/// Atomically replace even a corrupt trust-store file with an empty valid
+/// store. The long-lived Receiver identity is intentionally preserved.
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+pub fn reset_receiver_trust() -> Result<(), ReceiverError> {
+    reset_receiver_trust_at(&default_trusted_store_path())
+}
+
+fn reset_receiver_trust_at(path: &Path) -> Result<(), ReceiverError> {
+    TrustedDeviceStore::new().save_to_path(path)?;
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn remove_legacy_identity_file() -> Result<(), ReceiverError> {
+    let legacy_path = legacy_identity_path();
+    if legacy_path.exists() {
+        fs::remove_file(&legacy_path).map_err(|error| {
+            picoo_pairing::IdentityError::SystemStore(format!(
+                "could not remove legacy plaintext identity {}: {error}",
+                legacy_path.display()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 fn receiver_identity_from_device(identity: &DeviceIdentity) -> ReceiverIdentity {
@@ -668,111 +716,5 @@ pub fn format_last_connected_relative_ms(last_connected_ms: u64, now_ms: u64) ->
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        distinguishable_fingerprint_prefix, format_last_connected_ms,
-        format_last_connected_relative_ms, sanitize_receiver_stats, TrustedDeviceSummary,
-    };
-
-    #[test]
-    fn format_last_connected_utc_date_or_dash() {
-        assert_eq!(format_last_connected_ms(0), "—");
-        assert_eq!(format_last_connected_ms(1_577_836_800_000), "2020-01-01");
-    }
-
-    #[test]
-    fn format_last_connected_relative_age_is_compact_and_clock_skew_safe() {
-        const DAY_MS: u64 = 86_400_000;
-        let now = 2_000_000_000_000;
-        assert_eq!(format_last_connected_relative_ms(0, now), "时间未知");
-        assert_eq!(format_last_connected_relative_ms(now, now), "今天");
-        assert_eq!(format_last_connected_relative_ms(now - DAY_MS, now), "昨天");
-        assert_eq!(
-            format_last_connected_relative_ms(now - 12 * DAY_MS, now),
-            "12 天前"
-        );
-        assert_eq!(format_last_connected_relative_ms(now + DAY_MS, now), "今天");
-    }
-
-    #[test]
-    fn receiver_stats_reject_non_finite_windows() {
-        assert!(sanitize_receiver_stats(&picoo_metrics::ReceiverStats {
-            rtt_ms: f64::NAN,
-            ..Default::default()
-        })
-        .is_none());
-    }
-
-    #[test]
-    fn receiver_stats_clamp_finite_presentation_values() {
-        let sanitized = sanitize_receiver_stats(&picoo_metrics::ReceiverStats {
-            packet_loss: 2.0,
-            jitter_ms: -3.0,
-            jitter_buffer_target_ms: -1.0,
-            jitter_buffer_actual_delay_ms: -2.0,
-            jitter_buffer_occupancy_ms: -3.0,
-            ..Default::default()
-        })
-        .expect("finite window remains present");
-        assert_eq!(sanitized.rtt_ms, 0.0);
-        assert_eq!(sanitized.packet_loss, 1.0);
-        assert_eq!(sanitized.jitter_ms, 0.0);
-        assert_eq!(sanitized.frame_age_ms, 0.0);
-        assert_eq!(sanitized.jitter_buffer_target_ms, 0.0);
-        assert_eq!(sanitized.jitter_buffer_actual_delay_ms, 0.0);
-        assert_eq!(sanitized.jitter_buffer_occupancy_ms, 0.0);
-    }
-
-    #[test]
-    fn receiver_stats_drop_invalid_optional_timeline_values() {
-        let sanitized = sanitize_receiver_stats(&picoo_metrics::ReceiverStats {
-            capture_to_encode_ms: Some(-1.0),
-            decode_ms: Some(f64::NAN),
-            end_to_end_latency_ms: Some(42.0),
-            ..Default::default()
-        })
-        .expect("core window remains valid");
-
-        assert_eq!(sanitized.capture_to_encode_ms, Some(0.0));
-        assert_eq!(sanitized.decode_ms, None);
-        assert_eq!(sanitized.end_to_end_latency_ms, Some(42.0));
-    }
-
-    #[test]
-    fn fingerprint_prefix_is_eight_hex_and_expands_on_collision() {
-        let devices = vec![
-            TrustedDeviceSummary {
-                device_id: "a".into(),
-                device_name: "Pixel".into(),
-                certificate_fingerprint: "12345678aaaabbbb".into(),
-                identity_prefix: String::new(),
-                last_connected_at_ms: 0,
-                platform: "Android",
-            },
-            TrustedDeviceSummary {
-                device_id: "b".into(),
-                device_name: "Pixel".into(),
-                certificate_fingerprint: "12345678ccccdddd".into(),
-                identity_prefix: String::new(),
-                last_connected_at_ms: 0,
-                platform: "Android",
-            },
-        ];
-        assert_eq!(
-            distinguishable_fingerprint_prefix(&devices[0], &devices),
-            "12345678aaaa"
-        );
-        let unique = TrustedDeviceSummary {
-            device_id: "c".into(),
-            device_name: "iPhone".into(),
-            certificate_fingerprint: "abcdef0123456789".into(),
-            identity_prefix: String::new(),
-            last_connected_at_ms: 0,
-            platform: "iOS",
-        };
-        assert_eq!(
-            distinguishable_fingerprint_prefix(&unique, &devices),
-            "abcdef01"
-        );
-    }
-}
+#[path = "receiver_runtime_tests.rs"]
+mod tests;

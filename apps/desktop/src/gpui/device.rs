@@ -241,10 +241,30 @@ impl PicooDesktopApp {
                     )
                     .child(
                         div()
-                            .text_xs()
-                            .font_family(cx.theme().mono_font_family.clone())
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!("{} 台已信任", snapshot.trusted_device_count)),
+                            .h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                Button::new("reset-all-pairings")
+                                    .small()
+                                    .danger()
+                                    .label("重置全部配对…")
+                                    .disabled(snapshot.trusted_device_count == 0)
+                                    .on_click(cx.listener(|_, _, window, cx| {
+                                        PicooDesktopApp::open_reset_trusted_dialog(
+                                            cx.entity().downgrade(),
+                                            window,
+                                            cx,
+                                        );
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(format!("{} 台已信任", snapshot.trusted_device_count)),
+                            ),
                     ),
             )
     }
@@ -323,6 +343,67 @@ impl PicooDesktopApp {
                     });
                     match outcome {
                         Ok(Ok(())) => true,
+                        Ok(Err(message)) => {
+                            window.push_notification((NotificationType::Error, message), cx);
+                            false
+                        }
+                        Err(_) => false,
+                    }
+                })
+        });
+    }
+
+    pub(super) fn open_reset_trusted_dialog(
+        app: WeakEntity<Self>,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let app = app.clone();
+            alert
+                .title("重置全部配对？")
+                .description(
+                    "所有手机都会失去信任，当前连接会断开。再次连接时，必须在两端重新核对配对短码。",
+                )
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("重置配对")
+                        .ok_variant(ButtonVariant::Danger)
+                        .cancel_text("取消")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, window, cx| {
+                    let outcome = app.update(cx, |this, cx| {
+                        match this.runtime.clear_trusted_devices() {
+                            Ok(removed) => {
+                                this.runtime.disconnect();
+                                this.page = DesktopPage::Waiting;
+                                this.diagnostics_error = None;
+                                this.diagnostics_message = Some(format!(
+                                    "已重置 {removed} 台设备的配对"
+                                ));
+                                cx.notify();
+                                Ok(removed)
+                            }
+                            Err(error) => {
+                                let message = format!("重置配对失败：{error}");
+                                this.diagnostics_error = Some(message.clone());
+                                cx.notify();
+                                Err(message)
+                            }
+                        }
+                    });
+                    match outcome {
+                        Ok(Ok(removed)) => {
+                            window.push_notification(
+                                (
+                                    NotificationType::Success,
+                                    format!("已重置 {removed} 台设备的配对"),
+                                ),
+                                cx,
+                            );
+                            true
+                        }
                         Ok(Err(message)) => {
                             window.push_notification((NotificationType::Error, message), cx);
                             false
