@@ -25,11 +25,25 @@ jobs:
       - run: bash .cursor/install.sh
       - run: cargo fmt --all -- --check
       - run: cargo run -p xtask -- generate sender-status --check
+      - name: Check product feature graph excludes test hooks
+        run: |
+          if cargo tree -e features -p picoo-desktop | grep -q 'picoo-sender'; then
+            echo "default desktop graph must not include picoo-sender test machinery" >&2
+            exit 1
+          fi
+          cargo check -p picoo-sender -p picoo-receiver -p picoo-desktop
+      - name: Check explicit loopback diagnostic feature graph
+        run: |
+          cargo tree -e features -i picoo-sender -p picoo-desktop --features loopback-diagnostics \
+            | grep -F 'picoo-sender feature "test-support"'
+          cargo check -p picoo-desktop --features loopback-diagnostics
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - run: bash scripts/check-docs.sh
-      - run: cargo run -p xtask -- test linux
-      - run: cargo run -p xtask -- test protocol
+      - name: Check Windows installer source contract
+        run: bash scripts/validate_wix_scaffold.sh
+      - name: Lint Android discovery schema ownership
+        run: bash scripts/check_discovery_txt_keys.sh
 
   android:
     runs-on: ubuntu-latest

@@ -98,7 +98,6 @@ pub struct SenderPipeline {
     frame_id: u64,
     stats: SenderStats,
     pending: VecDeque<VideoDatagramBatch>,
-    au_scratch: Vec<u8>,
     descriptor_scratch: Vec<FragmentDescriptor>,
 }
 
@@ -128,17 +127,7 @@ impl SenderPipeline {
         stream_epoch: u32,
         fec: FecProtection,
     ) -> Result<usize, SenderError> {
-        if data.is_empty() {
-            return Err(SenderError::EmptyAccessUnit);
-        }
-        if data.len().div_ceil(MAX_FEC_FRAGMENT_PAYLOAD)
-            > usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT)
-        {
-            return Err(SenderError::AccessUnitTooLarge);
-        }
-        self.au_scratch.clear();
-        self.au_scratch.extend_from_slice(data);
-        self.packetize_scratch(is_keyframe, pts_us, pts_us, stream_epoch, fec)
+        self.ingest_timed_access_unit(data, is_keyframe, pts_us, pts_us, stream_epoch, fec)
     }
 
     /// Packetize an AU carrying the native encoder-completion timestamp in
@@ -152,17 +141,7 @@ impl SenderPipeline {
         stream_epoch: u32,
         fec: FecProtection,
     ) -> Result<usize, SenderError> {
-        if data.is_empty() {
-            return Err(SenderError::EmptyAccessUnit);
-        }
-        if data.len().div_ceil(MAX_FEC_FRAGMENT_PAYLOAD)
-            > usize::from(MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT)
-        {
-            return Err(SenderError::AccessUnitTooLarge);
-        }
-        self.au_scratch.clear();
-        self.au_scratch.extend_from_slice(data);
-        self.packetize_scratch(is_keyframe, pts_us, encoded_at_us, stream_epoch, fec)
+        self.packetize_access_unit(data, is_keyframe, pts_us, encoded_at_us, stream_epoch, fec)
     }
 
     /// Packetize one Rust-owned AU directly into final PCP wire datagrams.
@@ -175,29 +154,6 @@ impl SenderPipeline {
         fec: FecProtection,
     ) -> Result<usize, SenderError> {
         self.packetize_access_unit(&data, is_keyframe, pts_us, pts_us, stream_epoch, fec)
-    }
-
-    fn packetize_scratch(
-        &mut self,
-        is_keyframe: bool,
-        pts_us: u64,
-        encoded_at_us: u64,
-        stream_epoch: u32,
-        fec: FecProtection,
-    ) -> Result<usize, SenderError> {
-        let data = self.au_scratch.as_slice();
-        packetize_into_pending(
-            data,
-            is_keyframe,
-            pts_us,
-            encoded_at_us,
-            stream_epoch,
-            fec,
-            &mut self.frame_id,
-            &mut self.stats,
-            &mut self.pending,
-            &mut self.descriptor_scratch,
-        )
     }
 
     fn packetize_access_unit(
@@ -424,6 +380,15 @@ mod tests {
             .collect()
     }
 
+    fn pending_datagrams(sender: &SenderPipeline) -> Vec<Bytes> {
+        sender
+            .pending
+            .iter()
+            .flat_map(VideoDatagramBatch::datagrams)
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn single_fragment_access_unit() {
         let mut sender = SenderPipeline::default();
@@ -600,5 +565,20 @@ mod tests {
             packets[1].payload.as_ref(),
             &payload[MAX_FEC_FRAGMENT_PAYLOAD..]
         );
+    }
+
+    #[test]
+    fn borrowed_and_owned_access_units_emit_identical_datagrams() {
+        let payload = vec![7_u8; MAX_FEC_FRAGMENT_PAYLOAD * 7 + 4];
+        let mut borrowed = SenderPipeline::default();
+        borrowed
+            .ingest_access_unit(&payload, true, 42_000, 3, FecProtection::Strong)
+            .expect("borrowed AU");
+        let mut owned = SenderPipeline::default();
+        owned
+            .ingest_owned_access_unit(Bytes::from(payload), true, 42_000, 3, FecProtection::Strong)
+            .expect("owned AU");
+
+        assert_eq!(pending_datagrams(&borrowed), pending_datagrams(&owned));
     }
 }

@@ -34,6 +34,7 @@ mod tests {
     fn receiver_for_generation(generation: u32) -> ReceiverSession {
         let mut receiver = ReceiverSession::new();
         receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(StubDecoder::new()));
+        receiver.control_generation = Some(1);
         receiver.current_stream_config = Some(Arc::new(StreamConfig {
             codec: "h264".into(),
             width: 1280,
@@ -47,7 +48,7 @@ mod tests {
 
     fn access_unit(generation: u64, frame_id: u64) -> EncodedAccessUnit {
         EncodedAccessUnit {
-            connection_generation: 0,
+            connection_generation: 1,
             stream_generation: generation,
             frame_id,
             source_pts_us: 42_000,
@@ -124,6 +125,23 @@ mod tests {
         let timeline = AccessUnitTimeline {
             connection_generation: 7,
             stream_generation: 2,
+            frame_id: 9,
+            source_pts_us: 42_000,
+            encoded_at_us: 45_000,
+            received_at_us: 50_000,
+            decode_submitted_at_us: 55_000,
+            kind: FrameKind::Key,
+        };
+
+        assert!(!receiver.decoder_timeline_is_current(timeline));
+    }
+
+    #[test]
+    fn zero_generation_fixture_cannot_bypass_current_timeline() {
+        let receiver = receiver_for_generation(2);
+        let timeline = AccessUnitTimeline {
+            connection_generation: 0,
+            stream_generation: 0,
             frame_id: 9,
             source_pts_us: 42_000,
             encoded_at_us: 45_000,
@@ -524,20 +542,6 @@ impl ReceiverSession {
         )
     }
 
-    /// Prefer branded waiting frame (`true`) or solid black (`false`) — PRD §16.
-    /// Prefer [`set_placeholder_mode`] for Logo / Black / Bars.
-    pub fn set_use_default_placeholder(&mut self, enabled: bool) {
-        self.placeholder_mode = if enabled {
-            PlaceholderMode::Logo
-        } else {
-            PlaceholderMode::Black
-        };
-    }
-
-    pub fn use_default_placeholder(&self) -> bool {
-        matches!(self.placeholder_mode, PlaceholderMode::Logo)
-    }
-
     pub fn set_placeholder_mode(&mut self, mode: PlaceholderMode) {
         self.placeholder_mode = mode;
     }
@@ -620,10 +624,6 @@ impl ReceiverSession {
     }
 
     fn decoder_timeline_is_current(&self, timeline: AccessUnitTimeline) -> bool {
-        #[cfg(test)]
-        if timeline.connection_generation == 0 && timeline.stream_generation == 0 {
-            return true;
-        }
         let connection_matches = timeline.connection_generation == 0
             || self.control_generation.map_or_else(
                 || {

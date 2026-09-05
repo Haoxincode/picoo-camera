@@ -129,7 +129,8 @@ impl ReceiverSession {
             let _ = self.send_control_payload(session, ControlPayload::SessionError(err));
             return Ok(());
         }
-        self.begin_streaming(session)
+        self.begin_streaming(session);
+        Ok(())
     }
 
     pub(crate) fn handle_stop_stream(&mut self, session: SessionId) -> Result<(), ReceiverError> {
@@ -198,7 +199,7 @@ impl ReceiverSession {
         }
         // After capabilities, paired receivers are ready to stream.
         if self.video_allowed() && self.lifecycle.runtime.stream() == StreamState::Negotiating {
-            self.begin_streaming(session)?;
+            self.begin_streaming(session);
         }
 
         // PUC-005 / REQ-PICOO-MEDIA-003 / SESSION-004: request IDR on first

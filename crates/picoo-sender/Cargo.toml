@@ -5,6 +5,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+default = []
+# State mutation and control injection used only by cross-crate tests and
+# explicitly enabled diagnostic harnesses. Product builds must leave this off.
+test-support = []
+
 [dependencies]
 bytes.workspace = true
 picoo-metrics.workspace = true

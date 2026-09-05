@@ -130,7 +130,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         if std::time::Instant::now() >= next_sample {
             let elapsed = start.elapsed().as_secs();
             let rss = linux_vm_rss_kb().unwrap_or(0);
-            let au = receiver.stats().access_units;
+            let au = receiver.ingress_stats().access_units;
             eprintln!("soak sample elapsed={elapsed}s au={au} rss_kb={rss}");
             samples.push((elapsed, au, rss));
             next_sample += Duration::from_secs(sample_every.max(1));
@@ -139,9 +139,9 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     }
 
     assert!(
-        receiver.stats().access_units > 10,
+        receiver.ingress_stats().access_units > 10,
         "expected many AUs during soak, got {}",
-        receiver.stats().access_units
+        receiver.ingress_stats().access_units
     );
     if samples.len() >= 3 {
         let first = samples[0].2;
@@ -238,7 +238,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     let mut frames_seen = 0u64;
-    let mut last_au = receiver.stats().access_units;
+    let mut last_au = receiver.ingress_stats().access_units;
     let mut stalled_since = Instant::now();
     for frame_id in 1..=400u64 {
         // Prefer keyframes so a drop does not permanently break the stub decode chain.
@@ -253,7 +253,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         if receiver.latest_frame().is_some() {
             frames_seen += 1;
         }
-        let au = receiver.stats().access_units;
+        let au = receiver.ingress_stats().access_units;
         if au != last_au {
             stalled_since = Instant::now();
             last_au = au;
@@ -264,7 +264,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         assert!(
             stalled_since.elapsed() < Duration::from_millis(350),
             "session stalled under {loss_ratio} loss after frame_id={frame_id} au={au} stats={:?} awaiting_refresh={}",
-            receiver.stats(),
+            receiver.ingress_stats(),
             receiver.awaiting_decoder_refresh_for_test(),
         );
         std::thread::sleep(Duration::from_millis(2));
@@ -276,9 +276,9 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
         "expected many LatestFrameStore updates under loss, got {frames_seen}"
     );
     assert!(
-        receiver.stats().access_units > 30,
+        receiver.ingress_stats().access_units > 30,
         "expected reassembled AUs under loss, got {}",
-        receiver.stats().access_units
+        receiver.ingress_stats().access_units
     );
     assert!(
         (0.02..0.12).contains(&observed),
@@ -522,7 +522,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
 
     let mut frames_seen = 0u64;
     let mut backpressure_events = 0u64;
-    let mut last_au = receiver.stats().access_units;
+    let mut last_au = receiver.ingress_stats().access_units;
     let mut stalled = 0u32;
     for frame_id in 1..=120u64 {
         let is_key = frame_id % 5 == 1;
@@ -537,7 +537,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         if receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0) {
             frames_seen += 1;
         }
-        let au_n = receiver.stats().access_units;
+        let au_n = receiver.ingress_stats().access_units;
         if au_n == last_au {
             stalled += 1;
         } else {

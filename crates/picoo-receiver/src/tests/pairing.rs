@@ -78,7 +78,7 @@ fn claimed_device_id_must_match_public_key() {
     // Video must not reach LatestFrameStore after key-mismatch reject.
     let _ = sender.ingest_and_flush(b"should-drop", true, 1, 1);
     let _ = receiver.pump();
-    assert_eq!(receiver.stats().access_units, 0);
+    assert_eq!(receiver.ingress_stats().access_units, 0);
 }
 
 #[test]
@@ -248,12 +248,12 @@ fn paired_sender_enters_streaming_after_client_hello() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().ok();
-        if receiver.stats().access_units > 0 {
+        if receiver.ingress_stats().access_units > 0 {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(receiver.stats().access_units, 1);
+    assert_eq!(receiver.ingress_stats().access_units, 1);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn auto_accept_paired_off_requires_confirm_for_trusted_sender() {
         .expect_err("sender must block media until pairing commits");
     assert!(matches!(err, picoo_sender::SenderError::MediaNotReady));
     receiver.pump().expect("rx");
-    assert_eq!(receiver.stats().access_units, 0);
+    assert_eq!(receiver.ingress_stats().access_units, 0);
 }
 
 #[test]
@@ -520,12 +520,12 @@ fn first_time_pairing_flow_enables_video() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().ok();
-        if receiver.stats().access_units > 0 {
+        if receiver.ingress_stats().access_units > 0 {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(receiver.stats().access_units, 1);
+    assert_eq!(receiver.ingress_stats().access_units, 1);
 }
 
 #[test]

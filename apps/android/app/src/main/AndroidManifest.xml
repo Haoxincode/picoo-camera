@@ -23,7 +23,6 @@
         android:minSdkVersion="33" />
 
     <application
-        android:name=".PicooCameraApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

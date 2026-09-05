@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Ensure Android delegates TXT validation to Rust instead of recreating the
-# ALLOWED_TXT_KEYS schema (REQ-PICOO-DISCOVERY-005).
+# Lightweight architecture lint: Android must not recreate the Rust-owned TXT
+# key schema. JNI behavior remains covered by Rust/JVM tests, not this grep.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RUST="$ROOT/crates/picoo-discovery/src/types.rs"
@@ -23,5 +23,5 @@ if ! grep -Fq 'PicooNative.parseDiscoveryTxt' "$KT"; then
   echo "Android DiscoveryTxt must delegate validation to Rust: $KT"
   exit 1
 fi
-echo "ok discovery TXT schema is Rust-owned; Android delegates parsing:"
+echo "ok architecture lint: discovery TXT schema remains Rust-owned:"
 echo "$rust_keys" | sed 's/^/  /'

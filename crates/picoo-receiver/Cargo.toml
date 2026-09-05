@@ -10,6 +10,9 @@ default = []
 # The Windows desktop binary must enable Media Foundation through this
 # dependency edge; a separate picoo-media-decode build cannot affect it.
 windows-mf = ["picoo-media-decode/windows-mf"]
+# Loopback helpers use StubDecoder and may enable the explicit unpaired-peer
+# security harness. They are excluded from normal Receiver/Desktop builds.
+loopback-diagnostics = ["dep:picoo-sender", "picoo-sender/test-support"]
 
 [dependencies]
 bytes.workspace = true
@@ -21,7 +24,7 @@ picoo-packet.workspace = true
 picoo-pairing.workspace = true
 picoo-protocol.workspace = true
 picoo-session.workspace = true
-picoo-sender.workspace = true
+picoo-sender = { workspace = true, optional = true }
 picoo-transport.workspace = true
 prost.workspace = true
 thiserror.workspace = true
@@ -33,7 +36,7 @@ objc2 = "0.6.4"
 [dev-dependencies]
 picoo-discovery.workspace = true
 picoo-protocol.workspace = true
-picoo-sender.workspace = true
+picoo-sender = { workspace = true, features = ["test-support"] }
 picoo-testkit.workspace = true
 tempfile = "3.14"
 

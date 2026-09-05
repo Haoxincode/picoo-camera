@@ -106,9 +106,6 @@ pub struct DesktopPreferences {
     pub pending_macos_camera_extension: Option<PendingMacosCameraExtension>,
     #[serde(default)]
     pub placeholder_mode: PlaceholderModePref,
-    /// Legacy bool; migrated into [`placeholder_mode`] on load when present.
-    #[serde(default, skip_serializing)]
-    pub use_default_placeholder: Option<bool>,
     pub log_level: LogLevel,
 }
 
@@ -122,21 +119,7 @@ impl Default for DesktopPreferences {
             minimize_to_tray: true,
             pending_macos_camera_extension: None,
             placeholder_mode: PlaceholderModePref::Logo,
-            use_default_placeholder: None,
             log_level: LogLevel::Info,
-        }
-    }
-}
-
-impl DesktopPreferences {
-    /// Apply legacy `use_default_placeholder` if `placeholder_mode` was defaulted from old prefs.
-    pub fn migrate_placeholder(&mut self) {
-        if let Some(use_logo) = self.use_default_placeholder.take() {
-            self.placeholder_mode = if use_logo {
-                PlaceholderModePref::Logo
-            } else {
-                PlaceholderModePref::Black
-            };
         }
     }
 }
@@ -165,12 +148,10 @@ pub fn prefs_path() -> PathBuf {
 
 pub fn load_prefs() -> DesktopPreferences {
     let path = prefs_path();
-    let mut prefs = match fs::read_to_string(&path) {
+    match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         Err(_) => DesktopPreferences::default(),
-    };
-    prefs.migrate_placeholder();
-    prefs
+    }
 }
 
 pub fn save_prefs(prefs: &DesktopPreferences) -> Result<(), String> {
@@ -223,14 +204,5 @@ mod tests {
         assert!(parsed.auto_accept_paired);
         assert_eq!(parsed.placeholder_mode, PlaceholderModePref::Logo);
         assert_eq!(parsed.pending_macos_camera_extension, None);
-    }
-
-    #[test]
-    fn migrates_legacy_use_default_placeholder_false() {
-        let raw = r#"{"first_launch_completed":true,"display_name":"X","auto_accept_paired":true,"launch_at_startup":false,"minimize_to_tray":true,"use_default_placeholder":false,"log_level":"Info"}"#;
-        let mut prefs: DesktopPreferences = serde_json::from_str(raw).unwrap();
-        prefs.migrate_placeholder();
-        assert_eq!(prefs.placeholder_mode, PlaceholderModePref::Black);
-        assert_eq!(prefs.pending_macos_camera_extension, None);
     }
 }

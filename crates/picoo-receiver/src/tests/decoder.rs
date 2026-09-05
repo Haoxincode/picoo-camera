@@ -119,8 +119,8 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
         .publish_access_unit(bytes::Bytes::from_static(b"broken-au"), false)
         .expect("a media failure must not terminate the receiver pump");
     receiver.drain_decoder_until_idle_for_test();
-    assert_eq!(receiver.stats().access_units, 1);
-    assert_eq!(receiver.stats().decoded_frames, 0);
+    assert_eq!(receiver.ingress_stats().access_units, 1);
+    assert_eq!(receiver.ingress_stats().decoded_frames, 0);
     assert_eq!(
         receiver.last_media_error(),
         Some("platform decoder: fixture failure")
@@ -130,8 +130,8 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     receiver
         .publish_access_unit(bytes::Bytes::from_static(b"blocked-delta"), false)
         .expect("delta is dropped while awaiting IDR");
-    assert_eq!(receiver.stats().decode_invocations, 1);
-    assert_eq!(receiver.stats().recovery_dropped_access_units, 1);
+    assert_eq!(receiver.ingress_stats().decode_invocations, 1);
+    assert_eq!(receiver.ingress_stats().recovery_dropped_access_units, 1);
 
     receiver.set_decoder_for_test(Box::new(DropsRefresh));
     receiver
@@ -148,7 +148,7 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
         .publish_access_unit(bytes::Bytes::from_static(b"recovered-au"), true)
         .expect("decoder recovery");
     receiver.drain_decoder_until_idle_for_test();
-    assert_eq!(receiver.stats().decoded_frames, 1);
+    assert_eq!(receiver.ingress_stats().decoded_frames, 1);
     assert_eq!(receiver.last_media_error(), None);
     assert!(!receiver.awaiting_decoder_refresh_for_test());
 }
@@ -294,13 +294,13 @@ fn single_decode_per_access_unit_into_latest_frame_store() {
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.stats().decode_invocations > 0 && receiver.latest_frame().is_some() {
+        if receiver.ingress_stats().decode_invocations > 0 && receiver.latest_frame().is_some() {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    let stats = receiver.stats();
+    let stats = receiver.ingress_stats();
     assert_eq!(stats.access_units, 1);
     assert_eq!(stats.decode_invocations, 1);
     let frame = receiver.latest_frame().expect("typed video frame");

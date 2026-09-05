@@ -2,6 +2,8 @@
 
 use bytes::Bytes;
 use picoo_media_decode::AccessUnitDecoder;
+use picoo_protocol::control::StreamConfig;
+use std::sync::Arc;
 
 use super::decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use super::ReceiverSession;
@@ -19,16 +21,26 @@ impl ReceiverSession {
         access_unit: Bytes,
         keyframe: bool,
     ) -> Result<(), ReceiverError> {
+        let connection_generation = self.control_generation.unwrap_or(1);
+        self.control_generation = Some(connection_generation);
+        let stream_generation = self
+            .current_stream_config
+            .as_ref()
+            .map_or(1, |config| u64::from(config.stream_epoch));
+        if self.current_stream_config.is_none() {
+            self.current_stream_config = Some(Arc::new(StreamConfig {
+                codec: "h264".into(),
+                width: 1280,
+                height: 720,
+                fps: 30,
+                stream_epoch: stream_generation as u32,
+                ..Default::default()
+            }));
+        }
         let now_us = self.timing_origin.elapsed().as_micros() as u64;
         self.publish_timeline_access_unit(EncodedAccessUnit {
-            connection_generation: self
-                .transport
-                .active_session()
-                .map_or(0, |session| session.0),
-            stream_generation: self
-                .current_stream_config
-                .as_ref()
-                .map_or(0, |config| u64::from(config.stream_epoch)),
+            connection_generation,
+            stream_generation,
             frame_id: 0,
             source_pts_us: 0,
             encoded_at_us: 0,

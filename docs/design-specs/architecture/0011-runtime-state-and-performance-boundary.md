@@ -138,8 +138,9 @@ OBS 和浏览器实测确认。
   直接消费 Picoo 的 `420v` BT.709 limited；平台 adapter 因而使用既有 `fast_image_resize` 分别缩放
   NV12 双平面，再执行一次直接 YCbCr 矩阵/范围变换并复制到有界 IOSurface pool。该路径不分配 BGRA
   中间帧；若 GPUI 上游以后支持颜色附件或可配置 shader，应删除这层矩阵适配并直接提交 `420v`。
-- Sender 码流侧以 Rust-owned AU buffer、fragment offset/length descriptor、预编码 Datagram 和
-  buffer reuse 减少小对象；其优先级低于解码后 NV12 的全帧复制。
+- Sender 码流侧在同步分包期间直接借用原生 AU，以可复用的 fragment offset/length descriptor、
+  预编码 Datagram 和 buffer reuse 减少复制与小对象；最终 Datagram 必须在调用返回前完成自持有。
+  其优先级低于解码后 NV12 的全帧复制。
 - FEC 必须按观测损伤自适应：健康链路可为 0 parity，轻微损伤 1 parity，burst loss 2 parity；
   IDR/重要参考帧允许比 discardable delta 更强保护。
 - Android/iOS Session 正常运行由事件/wakeup 驱动；250/500 ms polling 只保留 timeout/stats 兜底。
@@ -169,8 +170,9 @@ profile 重新评审 `libyuv`，不得仅因为已有自研代码而拒绝迁移
 FEC 继续采用已有 `reed-solomon-erasure 6.0.0`：该 crate 为 MIT 许可、纯 Rust、覆盖当前全部目标，
 其系统码语义允许 Receiver 保持两槽恢复矩阵，同时让 Sender 只发送当前策略需要的 parity。Picoo
 只自行维护 AU 分组、重要性策略和 Datagram 调度这些产品特有边界，不重复实现有限域编码。发送热
-路径把原生借用 AU 复制到可复用的 Rust backing buffer，复用 fragment descriptor 容量，并直接
-生成最终 wire Datagram；Transport 只接收完整 AU batch，不再次创建 `VideoPacket` 或编码 payload。
+路径在同步调用期间直接读取原生借用 AU，复用 fragment descriptor 容量，并直接生成自持有的最终
+wire Datagram；Transport 只接收完整 AU batch，不再次创建 `VideoPacket` 或编码 payload。借用 AU
+不会跨越 packetization 调用边界，因此不得为异步生命周期假设额外复制整帧。
 
 ## 验证边界
 

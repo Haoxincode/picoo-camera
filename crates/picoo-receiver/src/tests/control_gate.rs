@@ -39,14 +39,14 @@ fn unpaired_sender_video_is_dropped() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().expect("sender pump");
-        if receiver.stats().packets_dropped_unpaired > 0 {
+        if receiver.ingress_stats().packets_dropped_unpaired > 0 {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    assert_eq!(receiver.stats().access_units, 0);
-    assert!(receiver.stats().packets_dropped_unpaired > 0);
+    assert_eq!(receiver.ingress_stats().access_units, 0);
+    assert!(receiver.ingress_stats().packets_dropped_unpaired > 0);
     assert_eq!(receiver.status(), ReceiverStatus::Connecting);
 }
 
@@ -91,7 +91,7 @@ fn unpaired_start_stream_is_rejected() {
     assert!(receiver.pairing_short_code().is_some());
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
 
-    let rejected_before = receiver.stats().control_rejected_unpaired;
+    let rejected_before = receiver.ingress_stats().control_rejected_unpaired;
     sender.send_start_stream().expect("start stream");
 
     for _ in 0..100 {
@@ -104,7 +104,7 @@ fn unpaired_start_stream_is_rejected() {
     }
 
     assert_eq!(sender.last_session_error(), Some("UNPAIRED"));
-    assert!(receiver.stats().control_rejected_unpaired > rejected_before);
+    assert!(receiver.ingress_stats().control_rejected_unpaired > rejected_before);
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
 
     let unauthorized_config = picoo_protocol::control::StreamConfig {
@@ -188,7 +188,7 @@ fn paired_start_stop_stream_and_camera_command_roundtrip() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
-    assert_eq!(receiver.stats().control_rejected_unpaired, 0);
+    assert_eq!(receiver.ingress_stats().control_rejected_unpaired, 0);
 
     let cmd = CameraCommand {
         command: camera_command::Command::SwitchFront as i32,
@@ -324,7 +324,7 @@ fn unpaired_stop_stream_is_ignored_without_teardown() {
         .pairing_short_code()
         .expect("short code")
         .to_string();
-    let rejected_before = receiver.stats().control_rejected_unpaired;
+    let rejected_before = receiver.ingress_stats().control_rejected_unpaired;
 
     sender.send_stop_stream().expect("stop");
     for _ in 0..80 {
@@ -335,7 +335,7 @@ fn unpaired_stop_stream_is_ignored_without_teardown() {
 
     assert_eq!(receiver.status(), ReceiverStatus::Pairing);
     assert_eq!(receiver.pairing_short_code(), Some(code.as_str()));
-    assert!(receiver.stats().control_rejected_unpaired > rejected_before);
+    assert!(receiver.ingress_stats().control_rejected_unpaired > rejected_before);
 }
 
 #[test]
@@ -386,7 +386,7 @@ fn camera_command_rejected_while_unpaired() {
         err.to_string().contains("paired") || err.to_string().contains("CameraCommand"),
         "unexpected err: {err}"
     );
-    assert!(receiver.stats().control_rejected_unpaired >= 1);
+    assert!(receiver.ingress_stats().control_rejected_unpaired >= 1);
 }
 
 #[test]
@@ -455,8 +455,8 @@ fn unpaired_video_keeps_shared_ring_on_placeholder() {
         }
     }
 
-    assert_eq!(receiver.stats().access_units, 0);
-    assert!(receiver.stats().packets_dropped_unpaired > 0);
+    assert_eq!(receiver.ingress_stats().access_units, 0);
+    assert!(receiver.ingress_stats().packets_dropped_unpaired > 0);
     let after = consumer.latest_frame().expect("still placeholder");
     assert_eq!(after.timestamp_us, 0, "ring must stay on placeholder ts=0");
     assert_eq!(after.width, before.width);

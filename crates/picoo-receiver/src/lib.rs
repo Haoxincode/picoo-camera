@@ -12,10 +12,9 @@ use picoo_pairing::{DeviceIdentity, IdentityError, PairingError, StoreError};
 use picoo_transport::TransportError;
 use thiserror::Error;
 
-pub use session::{
-    run_loopback_access_unit, run_paired_loopback_access_unit, ReceiverSession,
-    TrustedIdentityCandidate, TrustedIdentityReplacement,
-};
+#[cfg(any(test, feature = "loopback-diagnostics"))]
+pub use session::{run_loopback_access_unit, run_paired_loopback_access_unit};
+pub use session::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
 
 pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera-v1";
 
@@ -26,6 +25,7 @@ pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);
 pub enum ReceiverError {
     #[error("transport: {0}")]
     Transport(#[from] TransportError),
+    #[cfg(any(test, feature = "loopback-diagnostics"))]
     #[error("sender: {0}")]
     Sender(#[from] picoo_sender::SenderError),
     #[error("pairing: {0}")]

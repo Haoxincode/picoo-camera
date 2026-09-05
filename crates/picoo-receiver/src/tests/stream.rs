@@ -320,7 +320,7 @@ fn stream_epoch_bump_requests_keyframe() {
 
     // A candidate epoch is not accepted until native output confirms it. This
     // prevents QUIC datagrams from racing ahead of the reliable StreamConfig.
-    let access_units_before = receiver.stats().access_units;
+    let access_units_before = receiver.ingress_stats().access_units;
     let future_epoch = sender.begin_stream_reconfiguration(720);
     assert_eq!(future_epoch, 3);
     assert!(sender.take_keyframe_request());
@@ -332,7 +332,7 @@ fn stream_epoch_bump_requests_keyframe() {
         sender.report_encoder_failed(future_transaction, 0),
         picoo_sender::EncoderFailureOutcome::RolledBack
     );
-    assert_eq!(receiver.stats().access_units, access_units_before);
+    assert_eq!(receiver.ingress_stats().access_units, access_units_before);
     assert_eq!(receiver.stream_config().map(|c| c.stream_epoch), Some(2));
 }
 

@@ -90,13 +90,9 @@ fn stale_or_replayed_control_envelope_is_rejected() {
         1,
         session.0,
     );
-    sender
-        .inject_control_for_test(valid.clone())
-        .expect("inject valid envelope");
+    sender.inject_control_for_test(valid.clone());
     assert_eq!(sender.last_session_error(), Some("UNPAIRED"));
-    sender
-        .inject_control_for_test(valid)
-        .expect("inject replay");
+    sender.inject_control_for_test(valid);
     assert_eq!(sender.last_session_error(), Some("STALE_CONTROL_ENVELOPE"));
 
     // Authentication rejection is fail-closed and ends the active session, so
@@ -116,9 +112,7 @@ fn stale_or_replayed_control_envelope_is_rejected() {
         1,
         wrong_generation_session.0 + 1,
     );
-    wrong_generation_sender
-        .inject_control_for_test(wrong_generation)
-        .expect("inject wrong generation");
+    wrong_generation_sender.inject_control_for_test(wrong_generation);
     assert_eq!(
         wrong_generation_sender.last_session_error(),
         Some("STALE_CONTROL_ENVELOPE")

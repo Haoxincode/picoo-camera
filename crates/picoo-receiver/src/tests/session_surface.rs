@@ -47,9 +47,7 @@ fn session_status_markers_cover_vcam_permission_and_network() {
 fn network_episode_is_hysteretic_without_overwriting_streaming_lifecycle() {
     // REQ-PICOO-SESSION-013
     let mut receiver = ReceiverSession::new();
-    receiver
-        .begin_streaming(picoo_transport::SessionId(1))
-        .expect("streaming");
+    receiver.begin_streaming(picoo_transport::SessionId(1));
 
     receiver.observe_network_packet_loss_for_test(0.05);
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
@@ -75,25 +73,6 @@ fn network_episode_is_hysteretic_without_overwriting_streaming_lifecycle() {
     }
     receiver.observe_network_packet_loss_for_test(0.0);
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
-}
-
-#[test]
-fn default_placeholder_toggle_switches_waiting_frame() {
-    // PRD §16: "默认占位画面" — branded waiting vs solid black.
-    let mut receiver = ReceiverSession::new();
-    receiver
-        .publish_waiting_placeholder()
-        .expect("branded placeholder");
-    let branded = receiver.latest_frame().expect("frame").pixel_data.clone();
-    assert!(branded.iter().any(|&b| b != 0 && b != 128));
-
-    receiver.set_use_default_placeholder(false);
-    receiver
-        .publish_waiting_placeholder()
-        .expect("black placeholder");
-    let black = receiver.latest_frame().expect("frame").pixel_data.clone();
-    let y_plane = &black[..1280 * 720];
-    assert!(y_plane.iter().all(|&b| b == 0));
 }
 
 #[test]
@@ -129,6 +108,11 @@ fn placeholder_mode_bars_and_logo_publish_distinct_frames() {
     assert_ne!(logo.as_ref(), black.as_ref(), "Logo ≠ Black");
     assert_ne!(bars.as_ref(), black.as_ref(), "Bars ≠ Black");
     assert_ne!(bars.as_ref(), logo.as_ref(), "Bars ≠ Logo");
+    let black_y_plane = &black[..1280 * 720];
+    assert!(
+        black_y_plane.iter().all(|&value| value == 0),
+        "Black mode must publish a black Y plane"
+    );
 }
 
 #[test]
@@ -277,17 +261,17 @@ fn default_jitter_holds_au_until_target_delay() {
         .expect("ingest");
     receiver.pump().expect("rx");
     // Immediately after first pump the AU should still be in the jitter buffer.
-    assert_eq!(receiver.stats().access_units, 0);
+    assert_eq!(receiver.ingress_stats().access_units, 0);
 
     let started = std::time::Instant::now();
     while started.elapsed() < Duration::from_millis(200) {
         receiver.pump().expect("rx");
-        if receiver.stats().access_units > 0 {
+        if receiver.ingress_stats().access_units > 0 {
             break;
         }
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(receiver.stats().access_units, 1);
+    assert_eq!(receiver.ingress_stats().access_units, 1);
     assert!(
         started.elapsed() >= Duration::from_millis(20),
         "expected adaptive startup hold near 33ms, released too early: {:?}",

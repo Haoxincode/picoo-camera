@@ -112,7 +112,7 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(receiver.latest_frame().is_some());
-    let before_au = receiver.stats().access_units;
+    let before_au = receiver.ingress_stats().access_units;
 
     // Camera switch: epoch bump + new IDR.
     let t0 = Instant::now();
@@ -157,7 +157,7 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
     for _ in 0..400 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.stats().access_units > before_au
+        if receiver.ingress_stats().access_units > before_au
             && receiver.latest_frame().is_some_and(|f| {
                 f.width == 854
                     && f.pixel_data.len() == nv12_byte_size(854, 480)

@@ -109,7 +109,7 @@ impl MdnsBrowser {
 
     /// Apply a resolved TXT record set (same path as mDNS `ServiceResolved` / Android NSD).
     ///
-    /// Used by Sender list updates and by CI-safe DISCOVERY-006 timing (no multicast).
+    /// Used by Sender list updates and deterministic cache behavior tests (no multicast).
     pub fn apply_resolved_txt(
         &mut self,
         fullname: impl Into<String>,
@@ -135,6 +135,7 @@ impl MdnsBrowser {
 mod tests {
     use super::*;
     use crate::types::{ReceiverAdvertisement, ReceiverPlatform};
+    use mdns_sd::ServiceInfo;
 
     #[test]
     fn browser_starts_without_error() {
@@ -148,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn resolved_service_populates_list() {
+    fn resolved_service_event_updates_and_removes_cache() {
         let mut browser = MdnsBrowser::new().expect("browser");
         let ad = ReceiverAdvertisement::new(
             "recv-test",
@@ -157,16 +158,38 @@ mod tests {
             4433,
             "abcd1234",
         );
-        browser.receivers.insert(
-            "Office PC._picoocam._udp.local.".into(),
-            DiscoveredReceiver {
-                fullname: "Office PC._picoocam._udp.local.".into(),
-                advertisement: ad,
-                host: "192.168.1.20".into(),
-            },
-        );
+        let txt = ad.to_txt_properties();
+        let properties: Vec<(&str, &str)> = txt
+            .iter()
+            .map(|(key, value)| (*key, value.as_str()))
+            .collect();
+        let info = ServiceInfo::new(
+            SERVICE_TYPE,
+            "Office PC",
+            "recv-test.local.",
+            "192.168.1.20",
+            4433,
+            &properties[..],
+        )
+        .expect("service info");
+        let fullname = info.get_fullname().to_string();
+
+        browser
+            .handle_event(ServiceEvent::ServiceResolved(info))
+            .expect("resolved event");
+
         assert_eq!(browser.list().count(), 1);
-        assert!(browser.find("recv-test").is_some());
+        let discovered = browser.find("recv-test").expect("receiver mapping");
+        assert_eq!(discovered.fullname, fullname);
+        assert_eq!(discovered.advertisement.display_name, "Office PC");
+        assert_eq!(discovered.advertisement.quic_port, 4433);
+        assert_eq!(discovered.host, "192.168.1.20");
+
+        browser
+            .handle_event(ServiceEvent::ServiceRemoved(SERVICE_TYPE.into(), fullname))
+            .expect("removed event");
+        assert_eq!(browser.list().count(), 0);
+        assert!(browser.find("recv-test").is_none());
     }
 
     /// Requires working mDNS on the host — run manually on LAN (`cargo test -- --ignored`).
@@ -218,55 +241,39 @@ mod tests {
         advertiser.unregister().expect("unregister");
     }
 
-    /// CI-safe stand-in for DISCOVERY-006: TXT resolve→cache→find P50 ≪ 2s.
-    /// Exercises the same `apply_resolved_txt` path NSD/mDNS use after resolve.
-    /// Real multicast browse remains `--ignored` above (cloud VMs lack reliable mDNS).
     #[test]
-    fn synthetic_advertise_to_list_p50_under_two_seconds() {
-        use std::time::Instant;
+    fn resolved_txt_updates_cache() {
+        let mut browser = MdnsBrowser::new().expect("browser");
+        let mut ad = ReceiverAdvertisement::new(
+            "recv-test",
+            "Office PC",
+            ReceiverPlatform::Windows,
+            4433,
+            "abcd1234",
+        );
+        let props = ad
+            .to_txt_properties()
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect::<Vec<_>>();
+        let fullname = "Office PC._picoocam._udp.local.";
+        browser
+            .apply_resolved_txt(fullname, "192.168.1.20", &props)
+            .expect("initial TXT");
 
-        const TRIALS: usize = 21;
-        let mut samples_ms = Vec::with_capacity(TRIALS);
-        for i in 0..TRIALS {
-            let mut browser = MdnsBrowser::new().expect("browser");
-            let ad = ReceiverAdvertisement::new(
-                format!("recv-{i}"),
-                format!("PC {i}"),
-                ReceiverPlatform::Windows,
-                4433,
-                "abcd1234",
-            );
-            let props: Vec<(String, String)> = ad
-                .to_txt_properties()
-                .into_iter()
-                .map(|(k, v)| (k.to_string(), v))
-                .collect();
-            let display = ad.display_name.clone();
-            let receiver_id = ad.receiver_id.clone();
-            let t0 = Instant::now();
-            browser
-                .apply_resolved_txt(
-                    format!("{display}._picoocam._udp.local."),
-                    format!("192.168.1.{}", 20 + (i % 200)),
-                    &props,
-                )
-                .expect("txt");
-            assert!(browser.find(&receiver_id).is_some());
-            samples_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
-        }
-        samples_ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let p50 = samples_ms[TRIALS / 2];
-        eprintln!(
-            "synthetic discovery TXT→list P50_ms={p50:.4} max_ms={:.4}",
-            samples_ms[TRIALS - 1]
-        );
-        assert!(
-            p50 < 2_000.0,
-            "synthetic discovery P50 {p50}ms exceeds 2s budget"
-        );
-        assert!(
-            p50 < 50.0,
-            "TXT resolve→list update unexpectedly slow: P50={p50}ms"
-        );
+        ad.display_name = "Studio PC".into();
+        let updated_props = ad
+            .to_txt_properties()
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect::<Vec<_>>();
+        browser
+            .apply_resolved_txt(fullname, "192.168.1.21", &updated_props)
+            .expect("updated TXT");
+
+        assert_eq!(browser.list().count(), 1);
+        let discovered = browser.find("recv-test").expect("updated receiver");
+        assert_eq!(discovered.advertisement.display_name, "Studio PC");
+        assert_eq!(discovered.host, "192.168.1.21");
     }
 }

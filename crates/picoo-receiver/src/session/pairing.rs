@@ -571,6 +571,7 @@ impl ReceiverSession {
             sender.video_allowed = true;
         }
         self.pending_pairing = None;
-        self.begin_streaming(session)
+        self.begin_streaming(session);
+        Ok(())
     }
 }

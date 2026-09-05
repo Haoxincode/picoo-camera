@@ -258,6 +258,7 @@ impl DecoderWorker {
         }
     }
 
+    #[cfg(any(test, feature = "loopback-diagnostics"))]
     pub(super) fn with_decoder(decoder: Box<dyn AccessUnitDecoder>) -> Self {
         Self::with_decoder_factory(move || decoder)
     }

@@ -7,6 +7,7 @@ mod control;
 mod decoder_worker;
 mod health;
 mod lifecycle;
+#[cfg(any(test, feature = "loopback-diagnostics"))]
 mod loopback;
 mod media;
 mod pairing;
@@ -50,6 +51,7 @@ use stats::{
     playout_blocked_by_older_reassembly, InterarrivalJitter, StatsReporter,
 };
 
+#[cfg(any(test, feature = "loopback-diagnostics"))]
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 pub use picoo_pairing::{TrustedIdentityCandidate, TrustedIdentityReplacement};
 
@@ -205,6 +207,7 @@ impl ReceiverSession {
         self.current_stream_config.as_deref()
     }
 
+    #[cfg(any(test, feature = "loopback-diagnostics"))]
     pub fn set_permit_unpaired_video(&mut self, permit: bool) {
         self.permit_unpaired_video = permit;
     }
@@ -239,11 +242,6 @@ impl ReceiverSession {
 
     pub fn last_media_error(&self) -> Option<&str> {
         self.last_media_error.as_deref()
-    }
-
-    /// Backward-compatible alias for ingress counters.
-    pub fn stats(&self) -> IngressStats {
-        self.ingress
     }
 
     /// Last ReceiverStats sent upstream (REQ-PICOO-PROTOCOL-006 / PUC-005 live metrics).
@@ -623,7 +621,7 @@ impl ReceiverSession {
             .is_some_and(|sender| sender.video_allowed)
     }
 
-    pub(crate) fn begin_streaming(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+    pub(crate) fn begin_streaming(&mut self, session: SessionId) {
         if !matches!(
             self.lifecycle.runtime.connection(),
             ConnectionState::Connected { .. }
@@ -642,7 +640,6 @@ impl ReceiverSession {
         self.lifecycle
             .runtime
             .set_stream(StreamState::Streaming { generation });
-        Ok(())
     }
 
     pub(crate) fn send_control_payload(
@@ -695,6 +692,7 @@ impl ReceiverSession {
 
     /// Override adaptive playout for deterministic tests/loopback.
     /// `0` releases complete access units immediately.
+    #[cfg(any(test, feature = "loopback-diagnostics"))]
     pub fn set_jitter_target_ms(&mut self, target_ms: u64) {
         self.jitter.set_fixed_target_ms(Some(target_ms));
     }

@@ -38,7 +38,7 @@ GitHub Actions
 
 | Job | Runner | 职责 | xtask 命令 |
 | --- | --- | --- | --- |
-| `rust-and-docs` | `ubuntu-latest` | workspace 测试、clippy、文档链接校验 | `cargo test --workspace`、`scripts/check-docs.sh` |
+| `rust-and-docs` | `ubuntu-latest` | 默认产品与显式诊断 feature 图编译并核对 `test-support` 隔离、workspace 测试、clippy、文档及静态契约检查；同一批 Cargo 测试只执行一次 | `cargo tree -e features` + `cargo check -p picoo-sender -p picoo-receiver -p picoo-desktop`、`cargo check -p picoo-desktop --features loopback-diagnostics`、`cargo test --workspace`、`scripts/check-docs.sh` |
 | `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz、30 分钟 paired loopback soak、Shared Ring/FFI Miri 与原子协议 Loom model | `cargo xtask test fuzz/soak/miri/loom` |
 | `android` | `ubuntu-latest` | 独立 application ID 的 Android Sender Debug APK；编译 Android Keystore 平台身份 instrumentation contract | `cargo xtask build android`；`assembleDebugAndroidTest` |
 | `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包；Windows Credential Manager 身份持久化/fail-closed 合约 | `cargo xtask test windows`、`cargo xtask build windows`、`cargo xtask package windows` |

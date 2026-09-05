@@ -48,8 +48,18 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.iter().any(|arg| arg == "--loopback-demo") {
-        run_loopback_demo();
-        return;
+        #[cfg(feature = "loopback-diagnostics")]
+        {
+            run_loopback_demo();
+            return;
+        }
+        #[cfg(not(feature = "loopback-diagnostics"))]
+        {
+            eprintln!(
+                "Rebuild with --features loopback-diagnostics to run the loopback diagnostic."
+            );
+            std::process::exit(1);
+        }
     }
 
     if args.iter().any(|arg| arg == "--list-paired") {
@@ -143,7 +153,8 @@ fn main() {
         "Picoo Camera Desktop (stub) — status: {:?}",
         state.receiver_status
     );
-    println!("Run with --loopback-demo to exercise QUIC → LatestFrameStore on Linux CI.");
+    #[cfg(feature = "loopback-diagnostics")]
+    println!("Run with --loopback-demo to exercise QUIC → LatestFrameStore.");
     println!("Run with --serve to listen and advertise mDNS.");
     println!("Run with --gpui for the GPUI desktop shell (requires gpui-ui feature).");
     println!(
@@ -315,6 +326,7 @@ fn run_export_diagnostics(out_path: Option<&str>) {
     }
 }
 
+#[cfg(feature = "loopback-diagnostics")]
 fn run_loopback_demo() {
     match picoo_receiver::run_paired_loopback_access_unit(b"desktop-loopback-au") {
         Ok(frame) => {

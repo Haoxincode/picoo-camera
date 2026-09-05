@@ -13,6 +13,7 @@ path = "src/main.rs"
 default = []
 gpui-ui = ["dep:bytes", "dep:fast_image_resize", "dep:gpui-kit", "dep:image", "dep:smallvec", "dep:yuv"]
 windows-vcam = ["dep:windows", "picoo-receiver/windows-mf"]
+loopback-diagnostics = ["picoo-receiver/loopback-diagnostics"]
 
 [dependencies]
 picoo-discovery.workspace = true

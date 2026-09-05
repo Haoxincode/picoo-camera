@@ -125,8 +125,8 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
                     frame.pixel_data.iter().any(|b| *b != 16 && *b != 128),
                     "expected non-placeholder NV12 from OpenH264"
                 );
-                assert_eq!(receiver.stats().decode_invocations, 1);
-                assert_eq!(receiver.stats().access_units, 1);
+                assert_eq!(receiver.ingress_stats().decode_invocations, 1);
+                assert_eq!(receiver.ingress_stats().access_units, 1);
                 return;
             }
         }
@@ -136,7 +136,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         "OpenH264 AU did not reach LatestFrameStore at {}x{}; stats={:?}",
         width,
         height,
-        receiver.stats()
+        receiver.ingress_stats()
     );
 }
 
@@ -247,7 +247,7 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     }
     panic!(
         "AVCC AU did not reach LatestFrameStore; stats={:?}; media_error={:?}",
-        receiver.stats(),
+        receiver.ingress_stats(),
         receiver.last_media_error()
     );
 }
@@ -395,7 +395,7 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
                 config.width,
                 config.height
             )),
-            receiver.stats(),
+            receiver.ingress_stats(),
             sender.stats(),
             sender.transport().link_stats(),
             receiver.last_media_error(),
@@ -656,6 +656,6 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         receiver
             .latest_frame()
             .map(|f| (f.width, f.height, f.rotation)),
-        receiver.stats()
+        receiver.ingress_stats()
     );
 }

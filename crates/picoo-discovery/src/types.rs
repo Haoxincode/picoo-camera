@@ -96,12 +96,6 @@ impl ReceiverAdvertisement {
         self
     }
 
-    /// TXT pairing_state for A→W V1: stay `open` so new Senders can still pair.
-    /// Re-advertise is still required when trust/name changes so TXT stays fresh.
-    pub fn pairing_state_for_v1_receiver(_trusted_count: usize) -> PairingState {
-        PairingState::Open
-    }
-
     pub fn to_txt_properties(&self) -> Vec<(&'static str, String)> {
         vec![
             ("receiver_id", self.receiver_id.clone()),
@@ -219,10 +213,6 @@ mod tests {
                 .find(|(k, _)| *k == "pairing_state")
                 .map(|(_, v)| v.as_str()),
             Some("paired_only")
-        );
-        assert_eq!(
-            ReceiverAdvertisement::pairing_state_for_v1_receiver(3),
-            PairingState::Open
         );
     }
 

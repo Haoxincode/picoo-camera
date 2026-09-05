@@ -1,9 +1,10 @@
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
-use picoo_session::{
-    ConnectionState, HealthState, OutputState, SenderStatus, SessionRuntimeState, StreamState,
-    TrustState,
-};
-use picoo_transport::{PicooTransport, SessionId};
+#[cfg(any(test, feature = "test-support"))]
+use picoo_session::{ConnectionState, OutputState, SenderStatus, SessionRuntimeState};
+use picoo_session::{HealthState, StreamState, TrustState};
+use picoo_transport::PicooTransport;
+#[cfg(any(test, feature = "test-support"))]
+use picoo_transport::SessionId;
 
 use super::{EncoderDirectiveKind, NativeEncoderAccessUnit, SenderSession};
 use crate::{FecProtection, SenderError};
@@ -184,12 +185,6 @@ impl<T: PicooTransport> SenderSession<T> {
             return Err(SenderError::StaleEncoderFact);
         }
 
-        if stream_epoch != self.current_stream_epoch {
-            return Err(SenderError::StaleStreamEpoch {
-                got: stream_epoch,
-                current: self.current_stream_epoch,
-            });
-        }
         if self.media_blocked_for_stream_config {
             return Err(SenderError::StreamConfigPending {
                 stream_epoch: self.current_stream_epoch,
@@ -278,6 +273,7 @@ impl<T: PicooTransport> SenderSession<T> {
     /// Test-only malicious/legacy-peer hook: put media on the transport without changing
     /// the session's semantic status. Receiver security tests use this to prove that their
     /// independent pairing gate still rejects packets even if a peer ignores the sender gate.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn ingest_and_flush_unchecked_for_test(
         &mut self,
         data: &[u8],
@@ -305,14 +301,15 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     /// Inject a decoded control message (tests / ABR loopback harnesses).
-    pub fn inject_control_for_test(&mut self, msg: bytes::Bytes) -> Result<(), SenderError> {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn inject_control_for_test(&mut self, msg: bytes::Bytes) {
         // Non-transport unit harnesses use a synthetic session. Pairing tests that need to
         // verify session binding call `inject_control_for_session_for_test` explicitly.
         let session = self.active_session().unwrap_or(SessionId(0));
         self.handle_control(session, msg);
-        Ok(())
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn inject_control_payload_for_test(
         &mut self,
         payload: picoo_protocol::control::control_envelope::Payload,
@@ -342,6 +339,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.handle_control(session, message);
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn force_status_for_test(&mut self, status: SenderStatus) {
         self.lifecycle.runtime = SessionRuntimeState::default();
         let generation = self.active_session().map_or(1, |session| session.0);
@@ -394,6 +392,7 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     /// Close the active transport session (used by reconnect / recovery tests across crates).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn disconnect_for_test(&mut self, reason: picoo_transport::CloseReason) {
         if let Some(session) = self.active_session() {
             self.transport.close(session, reason);

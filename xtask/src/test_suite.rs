@@ -188,7 +188,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
-                "cargo test -p picoo-discovery --lib synthetic_advertise_to_list_p50_under_two_seconds"
+                "cargo test -p picoo-discovery --lib resolved_service_event_updates_and_removes_cache"
             )
             .run()?;
             cmd!(

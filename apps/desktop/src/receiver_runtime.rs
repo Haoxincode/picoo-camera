@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use picoo_discovery::{
-    local_advertise_host, MdnsAdvertiser, PairingState, ReceiverAdvertisement, ReceiverPlatform,
+    local_advertise_host, MdnsAdvertiser, ReceiverAdvertisement, ReceiverPlatform,
     DEFAULT_QUIC_PORT,
 };
 use picoo_pairing::{public_key_fingerprint_prefix, DeviceIdentity, TrustedDeviceStore};
@@ -188,10 +188,7 @@ impl ReceiverRuntime {
             current_receiver_platform(),
             bind.port(),
             fingerprint_prefix,
-        )
-        .with_pairing_state(ReceiverAdvertisement::pairing_state_for_v1_receiver(
-            trusted_count,
-        ));
+        );
 
         if let Some(advertiser) = mdns.as_mut() {
             if let Err(err) = advertiser.register(&advertise_host, &advertisement) {
@@ -253,17 +250,13 @@ impl ReceiverRuntime {
         };
         let identity = self.receiver.identity();
         let fingerprint_prefix = public_key_fingerprint_prefix(identity.public_key());
-        let trusted_count = self.receiver.trusted_devices().list().count();
-        let pairing_state: PairingState =
-            ReceiverAdvertisement::pairing_state_for_v1_receiver(trusted_count);
         let advertisement = ReceiverAdvertisement::new(
             identity.receiver_id().to_owned(),
             self.display_name.clone(),
             current_receiver_platform(),
             bind.port(),
             fingerprint_prefix,
-        )
-        .with_pairing_state(pairing_state);
+        );
         if let Err(err) = advertiser.register(&self.advertise_host, &advertisement) {
             tracing::warn!("mDNS re-advertise failed: {err}");
         } else {

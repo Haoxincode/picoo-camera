@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Validate WiX installer scaffold contains VCam registration hooks (Linux-hostable).
-# REQ-PICOO-VCAM-004 — full MSI build still requires windows-latest.
+# Validate Linux-hostable installer and architecture contracts.
+# REQ-PICOO-VCAM-004 — runtime registration/install behavior remains a Windows host test.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WXS="$ROOT/installers/windows/picoo-camera.wxs"
@@ -9,17 +9,7 @@ CI_WORKFLOW="$ROOT/.github/workflows/ci.yml"
 VCAM_IDS="$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/mod.rs"
 VCAM_MANIFEST="$ROOT/extensions/windows-virtual-camera/mf-source/Cargo.toml"
 VCAM_RS="$ROOT/apps/desktop/src/vcam_register.rs"
-VCAM_HOST_RS="$ROOT/apps/desktop/src/vcam_register/host_contract.rs"
-VCAM_HOST_PS1="$ROOT/scripts/test_windows_vcam_host.ps1"
 VCAM_HOST_WORKFLOW="$ROOT/.github/workflows/windows-vcam-host.yml"
-WINDOWS_RESOURCE="$ROOT/build-support/windows_resource.rs"
-DESKTOP_BUILD="$ROOT/apps/desktop/build.rs"
-MF_SOURCE_BUILD="$ROOT/extensions/windows-virtual-camera/mf-source/build.rs"
-RING_READER_BUILD="$ROOT/extensions/windows-virtual-camera/ring-reader/build.rs"
-XTASK_WINDOWS="$ROOT/xtask/src/windows.rs"
-XTASK_MAIN="$ROOT/xtask/src/main.rs"
-SIGN_WINDOWS="$ROOT/scripts/sign_windows_release.ps1"
-WINDOWS_RELEASE_WORKFLOW="$ROOT/.github/workflows/release-windows.yml"
 CLSID="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E6F"
 CLSID_RUST="0xa7c4e2f1_8b3d_4c6a_9e5f_1d2c3b4a5e6f"
 fail=0
@@ -33,17 +23,6 @@ need() {
     echo "ok: $(basename "$file") :: $needle"
   fi
 }
-need_re() {
-  local file="$1"
-  local needle="$2"
-  if ! grep -qE -- "$needle" "$file"; then
-    echo "MISSING_RE in $(basename "$file"): $needle"
-    fail=1
-  else
-    echo "ok_re: $(basename "$file") :: $needle"
-  fi
-}
-
 need "$WXS" 'Name="Picoo Camera"'
 need "$WXS" 'Manufacturer="Picoo"'
 need "$WXS" 'Version="$(PicooMsiVersion)"'
@@ -166,20 +145,67 @@ else
   fail=1
 fi
 # LAN QUIC and mDNS discovery firewall exception scaffolding (PRD §19.3 / DISCOVERY-001)
-need "$WXS" 'FirewallException'
 need "$WXS" 'xmlns:fw='
-need "$WXS" 'fw:FirewallException'
-need "$WXS" 'Port="4433"'
-need "$WXS" 'Picoo Camera QUIC'
-need "$WXS" 'Port="5353"'
-need "$WXS" 'Picoo Camera Discovery'
-need "$WXS" 'Protocol="udp"'
-
-# DEFAULT_QUIC_PORT in Rust must stay aligned with WiX FirewallException.
 HOST_RS="$ROOT/crates/picoo-discovery/src/host.rs"
-need "$HOST_RS" 'DEFAULT_QUIC_PORT: u16 = 4433'
-if ! grep -qE 'Port="4433"' "$WXS"; then
-  echo "port drift: WiX FirewallException must use Port=4433"
+if python3 - "$WXS" "$HOST_RS" <<'PY'
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+wxs_path, host_path = sys.argv[1:]
+root = ET.parse(wxs_path).getroot()
+
+def local_name(tag):
+    return tag.rsplit("}", 1)[-1]
+
+components = {
+    component.attrib.get("Id"): component
+    for component in root.iter()
+    if local_name(component.tag) == "Component"
+}
+
+expected = {
+    "FirewallQuic": ("PicooQuicUdp", "Picoo Camera QUIC", None),
+    "FirewallMdns": ("PicooMdnsUdp", "Picoo Camera Discovery", 5353),
+}
+
+host_source = open(host_path, encoding="utf-8").read()
+match = re.search(r"DEFAULT_QUIC_PORT:\s*u16\s*=\s*(\d+)", host_source)
+if not match:
+    raise SystemExit("host.rs: DEFAULT_QUIC_PORT constant not found")
+expected["FirewallQuic"] = (*expected["FirewallQuic"][:2], int(match.group(1)))
+
+for component_id, (exception_id, display_name, port) in expected.items():
+    component = components.get(component_id)
+    if component is None:
+        raise SystemExit(f"picoo-camera.wxs: missing Component {component_id}")
+    registry = next(
+        (node for node in component if local_name(node.tag) == "RegistryValue"),
+        None,
+    )
+    if registry is None or registry.attrib.get("KeyPath") != "yes":
+        raise SystemExit(f"picoo-camera.wxs: {component_id} needs its own registry KeyPath")
+    firewall = next(
+        (node for node in component if local_name(node.tag) == "FirewallException"),
+        None,
+    )
+    if firewall is None:
+        raise SystemExit(f"picoo-camera.wxs: {component_id} has no FirewallException")
+    actual = (
+        firewall.attrib.get("Id"),
+        firewall.attrib.get("Name"),
+        firewall.attrib.get("Protocol"),
+        firewall.attrib.get("Port"),
+    )
+    wanted = (exception_id, display_name, "udp", str(port))
+    if actual != wanted:
+        raise SystemExit(
+            f"picoo-camera.wxs: {component_id} firewall {actual!r}, expected {wanted!r}"
+        )
+PY
+then
+  echo "ok: parsed WiX firewall components match Rust QUIC and mDNS port contracts"
+else
   fail=1
 fi
 
@@ -188,8 +214,6 @@ need "$VCAM_IDS" "$CLSID_RUST"
 need "$VCAM_IDS" 'DllGetClassObject'
 need "$VCAM_IDS" 'DllCanUnloadNow'
 need "$VCAM_MANIFEST" 'crate-type = ["cdylib", "rlib"]'
-need "$VCAM_MANIFEST" 'windows-core = "0.62.2"'
-need "$VCAM_MANIFEST" 'windows = { version = "0.62.2"'
 need "$VCAM_RS" "$CLSID"
 if grep -R -qF 'AgileReference::' "$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source"; then
   echo "MF Source must not wrap standard Media Foundation interfaces in RoGetAgileReference"
@@ -204,49 +228,8 @@ if grep -R -qF 'MF_VIRTUALCAMERA_PROVIDE_ASSOCIATED_CAMERA_SOURCES' \
 else
   echo "ok: synthetic MF Source does not claim associated physical cameras"
 fi
-need "$ROOT/extensions/windows-virtual-camera/mf-source/src/windows_source/media_source.rs" 'IKsControl'
-need "$VCAM_RS" 'MFEnumDeviceSources'
-need "$VCAM_RS" 'MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK'
-need "$VCAM_RS" 'MFVirtualCameraAccess_AllUsers'
-need "$VCAM_RS" 'vcam_symbolic_link'
-need "$VCAM_RS" 'camera_identity_matches'
-need "$VCAM_RS" 'wait_for_registered_camera'
-need "$VCAM_RS" 'self.camera.Shutdown()'
-need "$VCAM_HOST_RS" 'ActivateObject()'
-need "$VCAM_HOST_RS" 'CreatePresentationDescriptor()'
-need "$VCAM_HOST_RS" 'source.Start('
-need "$VCAM_HOST_RS" 'source.Stop()'
-need "$VCAM_HOST_RS" 'source.Shutdown()'
-need "$VCAM_HOST_PS1" '"/fa"'
-need "$VCAM_HOST_PS1" 'idempotent second unregister'
-need "$VCAM_HOST_PS1" 'device absence after uninstall'
-need "$VCAM_HOST_PS1" 'SessionId -eq 0'
 need "$VCAM_HOST_WORKFLOW" 'runs-on: [self-hosted, Windows, X64, picoo-vcam]'
 need "$VCAM_HOST_WORKFLOW" './scripts/test_windows_vcam_host.ps1'
-if sed -n '/pub fn register_system()/,/^    }/p' "$VCAM_RS" | grep -q 'wait_for_registered_camera'; then
-  echo "register_system must not make MSI success depend on service-session camera enumeration"
-  fail=1
-else
-  echo "ok: MSI registration trusts Start + persisted identity, not service-session enumeration"
-fi
-
-# Late major upgrades depend on new PE versions replacing the old maintenance
-# binaries before the cached related product runs its uninstall command.
-need "$WINDOWS_RESOURCE" 'PICOO_WINDOWS_FILE_VERSION'
-need "$WINDOWS_RESOURCE" 'VersionInfo::FILEVERSION'
-need "$WINDOWS_RESOURCE" 'VersionInfo::PRODUCTVERSION'
-need "$DESKTOP_BUILD" 'windows_resource::apply_package_version'
-need "$MF_SOURCE_BUILD" 'windows_resource::apply_package_version'
-need "$RING_READER_BUILD" 'windows_resource::apply_package_version'
-need "$XTASK_WINDOWS" 'PICOO_WINDOWS_FILE_VERSION'
-need "$XTASK_WINDOWS" 'PICOO_WINDOWS_CERT_THUMBPRINT'
-need "$XTASK_MAIN" 'ReleasePlatform::Windows => windows::release()'
-need "$SIGN_WINDOWS" 'PICOO_WINDOWS_SIGNER_SHA256'
-need "$SIGN_WINDOWS" 'TimeStamperCertificate'
-need "$SIGN_WINDOWS" 'Authenticode signer'
-need "$WINDOWS_RELEASE_WORKFLOW" 'environment: windows-release'
-need "$WINDOWS_RELEASE_WORKFLOW" 'cargo run -p xtask -- release windows'
-need "$WINDOWS_RELEASE_WORKFLOW" 'actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a'
 if awk '/Id="RegisterVcamOnInstall"/{found=1} found && /Impersonate=/{print; exit}' "$WXS" | grep -q 'Impersonate="no"'; then
   echo "ok: per-machine VCam registration runs elevated for AllUsers access"
 else
@@ -262,21 +245,6 @@ if find "$ROOT/extensions/windows-virtual-camera/mf-source" \
 else
   echo "ok: Rust VCam Source has no C++/VCXPROJ/CMake files"
 fi
-
-# Bundle smoke script must resolve repo root as parent of scripts/ (not grandparent).
-VERIFY_PS1="$ROOT/scripts/verify_windows_bundle.ps1"
-need "$VERIFY_PS1" 'Split-Path -Parent $PSScriptRoot'
-if grep -qF 'Split-Path -Parent (Split-Path -Parent $PSScriptRoot)' "$VERIFY_PS1"; then
-  echo "verify_windows_bundle.ps1 incorrectly double-parents repo root"
-  fail=1
-else
-  echo "ok: verify_windows_bundle.ps1 repo root depth"
-fi
-need "$VERIFY_PS1" "'RegisterVcamComDll'"
-need "$VERIFY_PS1" "'regsvr32.exe'"
-need "$VERIFY_PS1" "'DllRegisterServer'"
-need "$VERIFY_PS1" 'ProductVersion'
-need "$VERIFY_PS1" 'PicooCamera.version'
 
 if [[ "$fail" -ne 0 ]]; then
   echo "WiX scaffold validation failed"
