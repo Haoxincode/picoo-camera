@@ -57,9 +57,17 @@ pub struct DiagnosticSessionSnapshot {
     /// Frames committed after decode.
     #[serde(default)]
     pub decoded_frames: u64,
+    #[serde(default)]
+    pub orientation_transform_frames: u64,
+    #[serde(default)]
+    pub orientation_transform_total_us: u64,
+    #[serde(default)]
+    pub orientation_transform_max_us: u64,
     /// Delta AUs intentionally discarded while waiting for a fresh IDR.
     #[serde(default)]
     pub recovery_dropped_access_units: u64,
+    #[serde(default)]
+    pub decoder_capacity_dropped_access_units: u64,
     /// Decoder state resets caused by epoch changes or recovery.
     #[serde(default)]
     pub decoder_resets: u64,
@@ -229,7 +237,11 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
             receive_queue_expired_access_units: 0,
             decode_invocations: 0,
             decoded_frames: 0,
+            orientation_transform_frames: 0,
+            orientation_transform_total_us: 0,
+            orientation_transform_max_us: 0,
             recovery_dropped_access_units: 0,
+            decoder_capacity_dropped_access_units: 0,
             decoder_resets: 0,
             recovery_reference_lost: 0,
             recovery_reference_late: 0,
@@ -339,7 +351,11 @@ mod tests {
                 receive_queue_expired_access_units: 0,
                 decode_invocations: 1,
                 decoded_frames: 1,
+                orientation_transform_frames: 0,
+                orientation_transform_total_us: 0,
+                orientation_transform_max_us: 0,
                 recovery_dropped_access_units: 0,
+                decoder_capacity_dropped_access_units: 0,
                 decoder_resets: 0,
                 recovery_reference_lost: 0,
                 recovery_reference_late: 0,

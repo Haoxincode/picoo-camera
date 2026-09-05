@@ -3,7 +3,7 @@
 //! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009/017/023.
 
 use bytes::Bytes;
-use picoo_frame_hub::{PlaceholderMode, VideoFrame, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
+use picoo_frame_hub::{PlaceholderMode, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
 use picoo_media_decode::DecodedFrame;
 use picoo_packet::AssembledAccessUnit;
@@ -11,14 +11,14 @@ use picoo_packet::AssembledAccessUnit;
 use picoo_protocol::VideoPacket;
 #[cfg(test)]
 use picoo_transport::ReceivedVideoPacketBatch;
+#[cfg(test)]
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::decoder_worker::{
-    AccessUnitTimeline, DecodeSubmitOutcome, DecoderEvent, EncodedAccessUnit,
-};
 #[cfg(test)]
-use super::decoder_worker::{DecoderWorker, FrameKind};
+use super::decoder_worker::{AccessUnitTimeline, DecoderWorker, FrameKind};
+use super::decoder_worker::{DecodeSubmitOutcome, EncodedAccessUnit};
+use super::media_publish::FrameTimeline;
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
 use crate::{ReceiverError, DEFAULT_SHARED_RING_NAME};
@@ -46,6 +46,10 @@ mod tests {
     }
 
     fn access_unit(generation: u64, frame_id: u64) -> EncodedAccessUnit {
+        access_unit_with_kind(generation, frame_id, FrameKind::Key)
+    }
+
+    fn access_unit_with_kind(generation: u64, frame_id: u64, kind: FrameKind) -> EncodedAccessUnit {
         EncodedAccessUnit {
             connection_generation: 1,
             stream_generation: generation,
@@ -54,7 +58,7 @@ mod tests {
             encoded_at_us: 45_000,
             received_at_us: 50_000,
             decode_submitted_at_us: 55_000,
-            kind: FrameKind::Key,
+            kind,
             data: Bytes::from_static(b"typed-au"),
         }
     }
@@ -115,6 +119,94 @@ mod tests {
         assert_eq!(frame.frame_id, 9);
         assert_eq!(frame.source_pts_us, 42_000);
         assert_eq!(frame.received_at_us, 50_000);
+    }
+
+    #[test]
+    fn ready_reference_waits_in_jitter_until_decoder_capacity_is_available() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        struct BlockingDecoder {
+            started: Arc<AtomicBool>,
+            release: Arc<AtomicBool>,
+        }
+
+        impl picoo_media_decode::AccessUnitDecoder for BlockingDecoder {
+            fn decode_access_unit(
+                &mut self,
+                _access_unit: &[u8],
+                _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError>
+            {
+                self.started.store(true, Ordering::Release);
+                while !self.release.load(Ordering::Acquire) {
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+                Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
+                    false,
+                ))
+            }
+
+            fn reset(&mut self) -> Result<(), picoo_media_decode::DecodeError> {
+                Ok(())
+            }
+        }
+
+        let started = Arc::new(AtomicBool::new(false));
+        let release = Arc::new(AtomicBool::new(false));
+        let mut receiver = receiver_for_generation(2);
+        receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(BlockingDecoder {
+            started: Arc::clone(&started),
+            release: Arc::clone(&release),
+        }));
+        receiver.jitter.set_fixed_target_ms(Some(0));
+        receiver
+            .publish_timeline_access_unit(access_unit(2, 1))
+            .expect("start decoder");
+        let start_deadline = Instant::now() + std::time::Duration::from_secs(1);
+        while !started.load(Ordering::Acquire) && Instant::now() < start_deadline {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(started.load(Ordering::Acquire), "decoder never started");
+        receiver
+            .publish_timeline_access_unit(access_unit_with_kind(2, 2, FrameKind::ReferenceDelta))
+            .expect("first pending reference");
+        receiver
+            .publish_timeline_access_unit(access_unit_with_kind(2, 3, FrameKind::ReferenceDelta))
+            .expect("second pending reference");
+        assert_eq!(
+            receiver.jitter.push_at(
+                JitterFrame {
+                    stream_generation: 2,
+                    frame_id: 4,
+                    pts_us: 4_000,
+                    encoded_at_us: 4_000,
+                    received_at_us: 4_000,
+                    data: Bytes::from_static(b"waiting-reference"),
+                    keyframe: false,
+                    discardable: false,
+                },
+                0,
+                0,
+            ),
+            PushOutcome::Accepted
+        );
+
+        receiver.drain_jitter().expect("capacity-aware drain");
+        assert_eq!(receiver.jitter.len(), 1, "ready AU left jitter too early");
+        assert!(!receiver.decoder_recovery.awaiting_refresh());
+
+        release.store(true, Ordering::Release);
+        let drain_deadline = Instant::now() + std::time::Duration::from_secs(1);
+        while !receiver.jitter.is_empty() && Instant::now() < drain_deadline {
+            receiver.drain_decoder_events().expect("decoder events");
+            receiver.drain_jitter().expect("capacity released");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(
+            receiver.jitter.is_empty(),
+            "waiting AU never reached decoder"
+        );
+        assert!(!receiver.decoder_recovery.awaiting_refresh());
     }
 
     #[test]
@@ -184,6 +276,7 @@ mod tests {
         assert_eq!(stats.reuses, 1);
         assert_eq!(stats.retained_buffers, 1);
         assert_eq!(receiver.latest_frame().map(|frame| frame.frame_id), Some(3));
+        assert_eq!(receiver.ingress.orientation_transform_frames, 3);
     }
 
     #[test]
@@ -306,17 +399,6 @@ mod tests {
         assert!(receiver.pending_stream_config_idr.is_none());
         assert!(receiver.jitter.is_empty());
     }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-struct FrameTimeline {
-    stream_generation: u64,
-    frame_id: u64,
-    source_pts_us: u64,
-    encoded_at_us: u64,
-    received_at_us: u64,
-    decode_submitted_at_us: u64,
-    decoded_at: Option<Instant>,
 }
 
 impl ReceiverSession {
@@ -524,191 +606,5 @@ impl ReceiverSession {
             }
         }
         Ok(())
-    }
-
-    pub(super) fn drain_decoder_events(&mut self) -> Result<(), ReceiverError> {
-        while let Some(event) = self.decoder_worker.poll_event() {
-            match event {
-                DecoderEvent::Started => {
-                    self.ingress.decode_invocations =
-                        self.ingress.decode_invocations.saturating_add(1);
-                }
-                DecoderEvent::Completed {
-                    timeline,
-                    decoder_generation,
-                    decoded_at,
-                    decode_time_us,
-                    result,
-                } => {
-                    self.decoder_completions = self.decoder_completions.saturating_add(1);
-                    self.jitter.observe_decode_time_us(decode_time_us);
-                    let decoder_generation_current = self
-                        .decoder_worker
-                        .is_current_generation(decoder_generation);
-                    let timeline_current = self.decoder_timeline_is_current(timeline);
-                    if !decoder_generation_current || !timeline_current {
-                        continue;
-                    }
-                    if !self.decoder_recovery.accepts(timeline.kind.is_keyframe()) {
-                        continue;
-                    }
-                    self.handle_decoder_result(timeline, decoded_at, result)?;
-                }
-                DecoderEvent::ResetFailed(error) => {
-                    tracing::warn!(%error, "decoder reset failed; worker rebuilt platform decoder");
-                    self.last_media_error = Some(format!("decoder reset failed: {error}"));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn decoder_timeline_is_current(&self, timeline: AccessUnitTimeline) -> bool {
-        let connection_matches = timeline.connection_generation == 0
-            || self.control_generation.map_or_else(
-                || {
-                    self.permit_unpaired_video
-                        && self
-                            .transport
-                            .active_session()
-                            .is_some_and(|session| session.0 == timeline.connection_generation)
-                },
-                |generation| generation == timeline.connection_generation,
-            );
-        let stream_matches = self.current_stream_config.as_ref().map_or_else(
-            || self.permit_unpaired_video && self.transport.active_session().is_some(),
-            |config| u64::from(config.stream_epoch) == timeline.stream_generation,
-        );
-        connection_matches && stream_matches
-    }
-
-    fn handle_decoder_result(
-        &mut self,
-        timeline: AccessUnitTimeline,
-        decoded_at: Instant,
-        result: Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError>,
-    ) -> Result<(), ReceiverError> {
-        let outcome = match result {
-            Ok(decoded) => decoded,
-            Err(error) => {
-                self.stats_reporter.record_decoder_drop();
-                self.last_media_error = Some(error.to_string());
-                tracing::warn!("H.264 access unit decode failed: {error}");
-                self.enter_decoder_recovery(RecoveryReason::DecoderError, true)?;
-                return Ok(());
-            }
-        };
-        if timeline.kind.is_keyframe() && outcome.refresh_accepted {
-            self.mark_decoder_refresh_accepted();
-        }
-        match outcome.frame {
-            Some(mut frame) => {
-                // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
-                let rotation = self
-                    .current_stream_config
-                    .as_ref()
-                    .map(|c| c.rotation)
-                    .unwrap_or(frame.description().rotation);
-                frame.set_rotation(rotation);
-                self.publish_decoded_frame(
-                    FrameTimeline {
-                        stream_generation: timeline.stream_generation,
-                        frame_id: timeline.frame_id,
-                        source_pts_us: timeline.source_pts_us,
-                        encoded_at_us: timeline.encoded_at_us,
-                        received_at_us: timeline.received_at_us,
-                        decode_submitted_at_us: timeline.decode_submitted_at_us,
-                        decoded_at: Some(decoded_at),
-                    },
-                    frame,
-                )?;
-                self.ingress.decoded_frames += 1;
-                self.stats_reporter.record_decoded_frame();
-                self.last_media_error = None;
-            }
-            None => {
-                self.stats_reporter.record_decoder_drop();
-            }
-        }
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub(crate) fn drain_decoder_until_idle_for_test(&mut self) {
-        let expected_completion = self.decoder_completions.saturating_add(1);
-        let deadline = Instant::now() + std::time::Duration::from_secs(1);
-        while Instant::now() < deadline {
-            self.drain_decoder_events().expect("decoder events");
-            if self.decoder_completions >= expected_completion {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        panic!("decoder worker did not complete within test deadline");
-    }
-
-    fn publish_decoded_frame(
-        &mut self,
-        timeline: FrameTimeline,
-        frame: DecodedFrame,
-    ) -> Result<(), ReceiverError> {
-        let description = frame.description();
-        let timestamp_us = frame.timestamp_us();
-        let nv12 = frame.into_cpu_nv12();
-        let (width, height, stride, rotation) = (
-            description.width,
-            description.height,
-            description.stride,
-            description.rotation,
-        );
-        let mirrored = self
-            .current_stream_config
-            .as_ref()
-            .is_some_and(|c| c.mirrored);
-        // REQ-PICOO-MEDIA-004/009/017: rotate then mirror in one output pass.
-        let transformed = picoo_frame_hub::transform_nv12_with_pool(
-            width,
-            height,
-            stride,
-            rotation,
-            mirrored,
-            nv12,
-            &self.frame_buffer_pool,
-        )?;
-        let (width, height, stride, pixels) = (
-            transformed.width,
-            transformed.height,
-            transformed.stride,
-            transformed.pixels,
-        );
-
-        // Pixels are upright after rotation; clear metadata so VCam does not double-rotate.
-        let published_rotation = 0u32;
-
-        let published = self.latest_frame_store.publish(VideoFrame::new(
-            timeline.stream_generation,
-            timeline.frame_id,
-            timeline.source_pts_us,
-            timeline.encoded_at_us,
-            timeline.received_at_us,
-            timeline.decode_submitted_at_us,
-            timeline.decoded_at.unwrap_or_else(Instant::now),
-            timestamp_us,
-            width,
-            height,
-            stride,
-            published_rotation,
-            pixels,
-        ));
-        if let Some(ring) = self.shared_ring.as_ref() {
-            if ring.submit(published) == picoo_frame_hub::SharedRingSubmitOutcome::Stopped {
-                self.last_shared_ring_error = Some("Shared Frame Ring writer stopped".into());
-            }
-        }
-        Ok(())
-    }
-
-    pub fn latest_frame(&self) -> Option<&Arc<VideoFrame>> {
-        self.latest_frame_store.latest()
     }
 }

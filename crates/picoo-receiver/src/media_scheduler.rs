@@ -11,12 +11,22 @@ pub enum MediaWaitReason {
     OlderAccessUnit,
     PlayoutTarget,
     HardExpiration,
+    DecoderCapacity,
     MediaEvent,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DecoderAdmission {
+    #[default]
+    Ready,
+    WaitForCapacity,
+    DropDiscardable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaScheduleDecision {
     DecodeReadyFrame,
+    DiscardReadyFrame,
     DiscardExpired,
     WaitUntil {
         delay: Duration,
@@ -30,7 +40,9 @@ impl MediaScheduleDecision {
     /// Timer contribution for the Receiver owner loop.
     pub fn wake_delay(self) -> Option<Duration> {
         match self {
-            Self::DecodeReadyFrame | Self::DiscardExpired => Some(Duration::ZERO),
+            Self::DecodeReadyFrame | Self::DiscardReadyFrame | Self::DiscardExpired => {
+                Some(Duration::ZERO)
+            }
             Self::WaitUntil { delay, .. } => Some(delay),
             Self::WaitForEvent(_) | Self::Idle => None,
         }
@@ -43,6 +55,7 @@ pub struct MediaScheduleInput {
     pub oldest_unresolved_frame_id: Option<u64>,
     pub release_delay: Option<Duration>,
     pub expiration_delay: Option<Duration>,
+    pub decoder_admission: DecoderAdmission,
 }
 
 /// Coordinate complete-AU playout with older incomplete reassembly.
@@ -80,7 +93,17 @@ pub fn schedule_media(input: MediaScheduleInput) -> MediaScheduleDecision {
                 reason: MediaWaitReason::HardExpiration,
             }
         }
-        (Some(delay), _) if delay.is_zero() => MediaScheduleDecision::DecodeReadyFrame,
+        (Some(delay), expiration) if delay.is_zero() => match input.decoder_admission {
+            DecoderAdmission::Ready => MediaScheduleDecision::DecodeReadyFrame,
+            DecoderAdmission::DropDiscardable => MediaScheduleDecision::DiscardReadyFrame,
+            DecoderAdmission::WaitForCapacity => expiration.map_or(
+                MediaScheduleDecision::WaitForEvent(MediaWaitReason::DecoderCapacity),
+                |delay| MediaScheduleDecision::WaitUntil {
+                    delay,
+                    reason: MediaWaitReason::DecoderCapacity,
+                },
+            ),
+        },
         (Some(delay), _) => MediaScheduleDecision::WaitUntil {
             delay,
             reason: MediaWaitReason::PlayoutTarget,
@@ -105,6 +128,7 @@ mod tests {
                 oldest_unresolved_frame_id: Some(100),
                 release_delay: Some(Duration::ZERO),
                 expiration_delay: Some(Duration::from_millis(170)),
+                decoder_admission: DecoderAdmission::Ready,
             }),
             MediaScheduleDecision::WaitUntil {
                 delay: Duration::from_millis(170),
@@ -121,6 +145,7 @@ mod tests {
                 oldest_unresolved_frame_id: Some(100),
                 release_delay: Some(Duration::ZERO),
                 expiration_delay: None,
+                decoder_admission: DecoderAdmission::Ready,
             }),
             MediaScheduleDecision::WaitForEvent(MediaWaitReason::OlderAccessUnit)
         );
@@ -134,6 +159,7 @@ mod tests {
                 oldest_unresolved_frame_id: None,
                 release_delay: Some(Duration::ZERO),
                 expiration_delay: Some(Duration::ZERO),
+                decoder_admission: DecoderAdmission::Ready,
             }),
             MediaScheduleDecision::DiscardExpired
         );
@@ -147,6 +173,7 @@ mod tests {
                 oldest_unresolved_frame_id: Some(9),
                 release_delay: Some(Duration::ZERO),
                 expiration_delay: Some(Duration::from_millis(200)),
+                decoder_admission: DecoderAdmission::Ready,
             }),
             MediaScheduleDecision::DecodeReadyFrame
         );
@@ -160,11 +187,43 @@ mod tests {
                 oldest_unresolved_frame_id: None,
                 release_delay: None,
                 expiration_delay: Some(Duration::from_millis(125)),
+                decoder_admission: DecoderAdmission::Ready,
             }),
             MediaScheduleDecision::WaitUntil {
                 delay: Duration::from_millis(125),
                 reason: MediaWaitReason::HardExpiration,
             }
+        );
+    }
+
+    #[test]
+    fn ready_reference_waits_for_decoder_capacity_until_its_hard_deadline() {
+        assert_eq!(
+            schedule_media(MediaScheduleInput {
+                front_frame_id: Some(9),
+                oldest_unresolved_frame_id: None,
+                release_delay: Some(Duration::ZERO),
+                expiration_delay: Some(Duration::from_millis(80)),
+                decoder_admission: DecoderAdmission::WaitForCapacity,
+            }),
+            MediaScheduleDecision::WaitUntil {
+                delay: Duration::from_millis(80),
+                reason: MediaWaitReason::DecoderCapacity,
+            }
+        );
+    }
+
+    #[test]
+    fn saturated_discardable_frame_is_removed_without_reference_recovery() {
+        assert_eq!(
+            schedule_media(MediaScheduleInput {
+                front_frame_id: Some(9),
+                oldest_unresolved_frame_id: None,
+                release_delay: Some(Duration::ZERO),
+                expiration_delay: Some(Duration::from_millis(80)),
+                decoder_admission: DecoderAdmission::DropDiscardable,
+            }),
+            MediaScheduleDecision::DiscardReadyFrame
         );
     }
 }

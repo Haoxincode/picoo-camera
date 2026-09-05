@@ -10,8 +10,9 @@ mod clock;
 mod encoder;
 mod harness;
 mod network;
+mod sim_decoder;
 
 pub use clock::VirtualClock;
 pub use encoder::{CameraFrame, EncoderCommit, EncoderFailure, SimError};
-pub use harness::{PipelineCounters, SimHarness, SimSnapshot};
+pub use harness::{PipelineCounters, SimHarness, SimSnapshot, SimTimingMode};
 pub use network::{DatagramSelector, NetworkScript, SimDelivery, SimulatedNetwork};

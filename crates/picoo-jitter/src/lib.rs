@@ -230,6 +230,14 @@ impl JitterBuffer {
         self.frames.front().map(|buffered| buffered.frame.frame_id)
     }
 
+    /// Key/reference facts needed for Decoder admission without removing the
+    /// candidate or advancing playout accounting.
+    pub fn front_frame_flags(&self) -> Option<(bool, bool)> {
+        self.frames
+            .front()
+            .map(|buffered| (buffered.frame.keyframe, buffered.frame.discardable))
+    }
+
     /// Receiver-local delay until the oldest complete AU should enter decode.
     pub fn next_release_delay_us(&self, now_us: u64) -> Option<u64> {
         self.frames.front().map(|buffered| {

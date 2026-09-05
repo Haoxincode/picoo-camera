@@ -11,6 +11,8 @@ use bytes::Bytes;
 use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError, DecodeOutcome};
 use picoo_protocol::control::StreamConfig;
 
+use crate::media_scheduler::DecoderAdmission;
+
 const MAX_PENDING_DECODE_JOBS: usize = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +160,44 @@ impl WorkQueue {
         DecodeSubmitOutcome::Queued
     }
 
+    fn admission(&self, kind: FrameKind) -> DecoderAdmission {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.stopped || kind == FrameKind::Key {
+            return DecoderAdmission::Ready;
+        }
+        let pending = state
+            .items
+            .iter()
+            .filter(|item| matches!(item, WorkItem::Decode(_)))
+            .count();
+        if pending < MAX_PENDING_DECODE_JOBS {
+            return DecoderAdmission::Ready;
+        }
+        if kind == FrameKind::ReferenceDelta
+            && state.items.iter().any(|item| {
+                matches!(
+                    item,
+                    WorkItem::Decode(DecodeJob {
+                        access_unit: EncodedAccessUnit {
+                            kind: FrameKind::DiscardableDelta,
+                            ..
+                        },
+                        ..
+                    })
+                )
+            })
+        {
+            DecoderAdmission::Ready
+        } else if kind == FrameKind::DiscardableDelta {
+            DecoderAdmission::DropDiscardable
+        } else {
+            DecoderAdmission::WaitForCapacity
+        }
+    }
+
     fn reset(&self) {
         let mut state = self
             .state
@@ -277,6 +317,13 @@ impl DecoderWorker {
             stream_config,
             decoder_generation: 0,
         })
+    }
+
+    /// Only the Receiver owner submits jobs. The Decoder worker can remove
+    /// pending jobs between this check and submit, so capacity can only improve;
+    /// no second producer can consume the observed admission.
+    pub(super) fn admission(&self, kind: FrameKind) -> DecoderAdmission {
+        self.queue.admission(kind)
     }
 
     pub(super) fn reset(&self) {
@@ -463,10 +510,24 @@ mod tests {
             DecodeSubmitOutcome::Queued
         );
         assert_eq!(
+            worker.admission(FrameKind::ReferenceDelta),
+            DecoderAdmission::Ready,
+            "queued discardable AU remains replaceable"
+        );
+        assert_eq!(
             worker.submit(unit(4, FrameKind::ReferenceDelta), None),
             DecodeSubmitOutcome::Queued,
             "reference AU replaces the queued discardable AU"
         );
+        assert_eq!(
+            worker.admission(FrameKind::ReferenceDelta),
+            DecoderAdmission::WaitForCapacity
+        );
+        assert_eq!(
+            worker.admission(FrameKind::DiscardableDelta),
+            DecoderAdmission::DropDiscardable
+        );
+        assert_eq!(worker.admission(FrameKind::Key), DecoderAdmission::Ready);
         assert_eq!(
             worker.submit(unit(5, FrameKind::DiscardableDelta), None),
             DecodeSubmitOutcome::Dropped {

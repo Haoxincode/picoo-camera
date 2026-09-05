@@ -11,6 +11,7 @@ mod lifecycle;
 mod loopback;
 mod media;
 mod media_ingress;
+mod media_publish;
 mod pairing;
 mod recovery;
 mod reducer;
@@ -40,7 +41,9 @@ use picoo_session::{
 };
 use picoo_transport::{Endpoint, QuicReceiverTransport, SessionId};
 
-use crate::media_scheduler::{schedule_media, MediaScheduleDecision, MediaScheduleInput};
+use crate::media_scheduler::{
+    schedule_media, DecoderAdmission, MediaScheduleDecision, MediaScheduleInput,
+};
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use pairing::{ActiveSender, PendingPairing};
@@ -400,6 +403,15 @@ impl ReceiverSession {
                         data: frame.data,
                     })?;
                 }
+                MediaScheduleDecision::DiscardReadyFrame => {
+                    if self.jitter.pop_ready(now_us).is_none() {
+                        break;
+                    }
+                    self.ingress.decoder_capacity_dropped_access_units = self
+                        .ingress
+                        .decoder_capacity_dropped_access_units
+                        .saturating_add(1);
+                }
                 MediaScheduleDecision::WaitUntil { .. }
                 | MediaScheduleDecision::WaitForEvent(_)
                 | MediaScheduleDecision::Idle => break,
@@ -409,6 +421,18 @@ impl ReceiverSession {
     }
 
     fn media_schedule_decision(&self, now_us: u64, max_queue_age_us: u64) -> MediaScheduleDecision {
+        let decoder_admission = self.jitter.front_frame_flags().map_or(
+            DecoderAdmission::Ready,
+            |(keyframe, discardable)| {
+                self.decoder_worker.admission(if keyframe {
+                    FrameKind::Key
+                } else if discardable {
+                    FrameKind::DiscardableDelta
+                } else {
+                    FrameKind::ReferenceDelta
+                })
+            },
+        );
         schedule_media(MediaScheduleInput {
             front_frame_id: self.jitter.front_frame_id(),
             oldest_unresolved_frame_id: self.reassembly.oldest_unresolved_frame_id(),
@@ -420,6 +444,7 @@ impl ReceiverSession {
                 .jitter
                 .next_expiration_delay_us(now_us, max_queue_age_us)
                 .map(Duration::from_micros),
+            decoder_admission,
         })
     }
 

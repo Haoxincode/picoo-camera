@@ -111,8 +111,16 @@ pub struct IngressStats {
     pub decode_invocations: u64,
     /// Frames successfully decoded and committed to LatestFrameStore.
     pub decoded_frames: u64,
+    /// Frames that required Receiver-owner NV12 rotation and/or mirroring.
+    pub orientation_transform_frames: u64,
+    /// Saturating aggregate CPU time spent in the fused orientation transform.
+    pub orientation_transform_total_us: u64,
+    /// Largest observed fused orientation transform duration.
+    pub orientation_transform_max_us: u64,
     /// Delta AUs discarded while the decoder waits for a fresh IDR.
     pub recovery_dropped_access_units: u64,
+    /// Discardable AUs removed because the bounded Decoder queue was full.
+    pub decoder_capacity_dropped_access_units: u64,
     /// Decoder prediction-state resets after epoch changes or decode failures.
     pub decoder_resets: u64,
     /// Recovery entries caused by an incomplete/expired reference AU.

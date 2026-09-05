@@ -1,6 +1,5 @@
 //! Production scheduler simulation — REQ-PICOO-STACK-009/011.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,16 +9,25 @@ use picoo_jitter::{Frame as JitterFrame, JitterBuffer, PushOutcome};
 use picoo_packet::{AssembledAccessUnit, ReassemblyMap};
 use picoo_protocol::control::{control_envelope::Payload as ControlPayload, StreamConfig};
 use picoo_protocol::{decode_control_envelope, encode_control_envelope};
-use picoo_receiver::media_scheduler::{schedule_media, MediaScheduleDecision, MediaScheduleInput};
+use picoo_receiver::media_scheduler::{
+    schedule_media, DecoderAdmission, MediaScheduleDecision, MediaScheduleInput,
+};
 use picoo_sender::{FecProtection, SenderPipeline};
 
 use crate::encoder::{
     CameraFrame, EncoderCommit, EncoderConfig, EncoderFailure, ScriptedEncoder, SimError,
 };
+use crate::sim_decoder::{SimDecodeJob, SimulatedDecoder};
 use crate::{NetworkScript, SimDelivery, SimulatedNetwork, VirtualClock};
 
 const REASSEMBLY_CAPACITY: usize = 8;
 const REASSEMBLY_MAX_FRAGMENTS: u16 = 1_024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SimTimingMode {
+    Fast,
+    ProductionEquivalent { decoder_latency: Duration },
+}
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PipelineCounters {
@@ -34,6 +42,7 @@ pub struct PipelineCounters {
     pub pre_refresh_delta_drops: u64,
     pub decoded: u64,
     pub duplicate_decode_attempts: u64,
+    pub decoder_discardable_drops: u64,
     pub privileged_controls: u64,
 }
 
@@ -49,7 +58,8 @@ pub struct SimSnapshot {
     pub reference_chain_intact: bool,
     pub network_in_flight: usize,
     pub jitter_depth: usize,
-    pub completed_access_unit_depth: usize,
+    pub decoder_pending_depth: usize,
+    pub decoder_active: bool,
     pub latest_sequence: u64,
     pub counters: PipelineCounters,
 }
@@ -63,18 +73,24 @@ struct ReceiverCore {
     waiting_for_idr: bool,
     reference_chain_intact: bool,
     pending_future_idr: Option<AssembledAccessUnit>,
-    completed_access_units: BTreeMap<u64, AssembledAccessUnit>,
     reassembly: ReassemblyMap,
     jitter: JitterBuffer,
+    decoder: SimulatedDecoder,
     last_decoded: Option<(u64, u32, u64)>,
     latest: LatestFrameStore,
     counters: PipelineCounters,
 }
 
 impl ReceiverCore {
-    fn new() -> Self {
+    fn new(timing: SimTimingMode) -> Self {
         let mut jitter = JitterBuffer::new();
-        jitter.set_fixed_target_ms(Some(0));
+        let decoder_latency = match timing {
+            SimTimingMode::Fast => {
+                jitter.set_fixed_target_ms(Some(0));
+                Duration::ZERO
+            }
+            SimTimingMode::ProductionEquivalent { decoder_latency } => decoder_latency,
+        };
         Self {
             active_generation: None,
             authenticated: false,
@@ -84,9 +100,9 @@ impl ReceiverCore {
             waiting_for_idr: false,
             reference_chain_intact: true,
             pending_future_idr: None,
-            completed_access_units: BTreeMap::new(),
             reassembly: ReassemblyMap::new(REASSEMBLY_CAPACITY, REASSEMBLY_MAX_FRAGMENTS),
             jitter,
+            decoder: SimulatedDecoder::new(decoder_latency),
             last_decoded: None,
             latest: LatestFrameStore::new(),
             counters: PipelineCounters::default(),
@@ -104,7 +120,7 @@ impl ReceiverCore {
         self.pending_future_idr = None;
         self.reassembly = ReassemblyMap::new(REASSEMBLY_CAPACITY, REASSEMBLY_MAX_FRAGMENTS);
         self.jitter.clear();
-        self.completed_access_units.clear();
+        self.decoder.reset();
         self.last_decoded = None;
     }
 
@@ -136,7 +152,7 @@ impl ReceiverCore {
                     self.reassembly =
                         ReassemblyMap::new(REASSEMBLY_CAPACITY, REASSEMBLY_MAX_FRAGMENTS);
                     self.jitter.clear();
-                    self.completed_access_units.clear();
+                    self.decoder.reset();
                     self.last_decoded = None;
                 } else {
                     self.counters.stale_generation_drops =
@@ -193,6 +209,8 @@ impl ReceiverCore {
                 if previous_epoch != Some(epoch) {
                     self.waiting_for_idr = true;
                     self.reference_chain_intact = false;
+                    self.jitter.discard_queued();
+                    self.decoder.reset();
                 }
                 if self
                     .pending_future_idr
@@ -215,7 +233,7 @@ impl ReceiverCore {
                 self.pending_future_idr = None;
                 self.reassembly.clear_pending();
                 self.jitter.clear();
-                self.completed_access_units.clear();
+                self.decoder.reset();
             }
             _ => {
                 self.counters.illegal_control_drops =
@@ -241,39 +259,12 @@ impl ReceiverCore {
             return;
         }
         match self.reassembly.ingest_at(packet, now.instant()) {
-            Ok(Some(frame)) => {
-                if self.completed_access_units.len() >= 16 {
-                    if let Some(oldest) = self.completed_access_units.keys().next().copied() {
-                        self.completed_access_units.remove(&oldest);
-                        self.reference_chain_intact = false;
-                        self.waiting_for_idr = true;
-                    }
-                }
-                self.completed_access_units.insert(frame.frame_id, frame);
-                self.drain_completed_access_units(now);
-            }
+            Ok(Some(frame)) => self.route_access_unit(now, frame),
             Ok(None) => {}
             Err(_) => {
                 self.counters.incomplete_access_unit_drops =
                     self.counters.incomplete_access_unit_drops.saturating_add(1);
             }
-        }
-    }
-
-    fn drain_completed_access_units(&mut self, now: &VirtualClock) {
-        while let Some(frame_id) = self.completed_access_units.keys().next().copied() {
-            if self
-                .reassembly
-                .oldest_unresolved_frame_id()
-                .is_some_and(|unresolved| unresolved < frame_id)
-            {
-                break;
-            }
-            let frame = self
-                .completed_access_units
-                .remove(&frame_id)
-                .expect("selected completed access unit exists");
-            self.route_access_unit(now, frame);
         }
     }
 
@@ -338,12 +329,29 @@ impl ReceiverCore {
                 requires_refresh: false,
             } => {}
         }
-        self.drain_jitter(now);
+        self.drive_media(now);
     }
 
-    fn drain_jitter(&mut self, now: &VirtualClock) {
+    fn drive_media(&mut self, now: &VirtualClock) {
+        loop {
+            let completed = self.drain_decoder(now);
+            let advanced = self.drain_jitter(now);
+            if !completed && !advanced {
+                break;
+            }
+        }
+    }
+
+    fn drain_jitter(&mut self, now: &VirtualClock) -> bool {
+        let mut advanced = false;
         loop {
             let max_queue_age_us = 300_000;
+            let decoder_admission = self
+                .jitter
+                .front_frame_flags()
+                .map_or(DecoderAdmission::Ready, |(keyframe, discardable)| {
+                    self.decoder.admission(keyframe, discardable)
+                });
             let decision = schedule_media(MediaScheduleInput {
                 front_frame_id: self.jitter.front_frame_id(),
                 oldest_unresolved_frame_id: self.reassembly.oldest_unresolved_frame_id(),
@@ -355,13 +363,24 @@ impl ReceiverCore {
                     .jitter
                     .next_expiration_delay_us(now.now_us(), max_queue_age_us)
                     .map(Duration::from_micros),
+                decoder_admission,
             });
             match decision {
                 MediaScheduleDecision::DiscardExpired => {
                     if self.jitter.drop_expired(now.now_us(), max_queue_age_us) {
                         self.reference_chain_intact = false;
                         self.waiting_for_idr = true;
+                        self.jitter.discard_queued();
+                        self.decoder.reset();
                     }
+                    advanced = true;
+                    continue;
+                }
+                MediaScheduleDecision::DiscardReadyFrame => {
+                    let _ = self.jitter.pop_ready(now.now_us());
+                    self.counters.decoder_discardable_drops =
+                        self.counters.decoder_discardable_drops.saturating_add(1);
+                    advanced = true;
                     continue;
                 }
                 MediaScheduleDecision::DecodeReadyFrame => {}
@@ -389,28 +408,55 @@ impl ReceiverCore {
                 continue;
             }
             self.last_decoded = Some(key);
-            let width = config.width.max(2) & !1;
-            let height = config.height.max(2) & !1;
-            let pixel_len = nv12_byte_size(width, height);
-            let marker = frame.data.first().copied().unwrap_or(0);
-            let decoded = VideoFrame::new(
-                frame.stream_generation,
-                frame.frame_id,
-                frame.pts_us,
-                frame.encoded_at_us,
-                frame.received_at_us,
+            self.decoder.submit(
+                SimDecodeJob {
+                    connection_generation: key.0,
+                    frame,
+                    width: config.width.max(2) & !1,
+                    height: config.height.max(2) & !1,
+                    rotation: config.rotation,
+                },
                 now.now_us(),
+            );
+            advanced = true;
+        }
+        advanced
+    }
+
+    fn drain_decoder(&mut self, now: &VirtualClock) -> bool {
+        let mut completed_any = false;
+        while let Some((job, decode_submitted_at_us, decode_time_us)) =
+            self.decoder.take_completed(now.now_us())
+        {
+            completed_any = true;
+            self.jitter.observe_decode_time_us(decode_time_us);
+            if self.active_generation != Some(job.connection_generation)
+                || self.stream_config.as_ref().is_none_or(|config| {
+                    u64::from(config.stream_epoch) != job.frame.stream_generation
+                })
+            {
+                continue;
+            }
+            let pixel_len = nv12_byte_size(job.width, job.height);
+            let marker = job.frame.data.first().copied().unwrap_or(0);
+            self.latest.publish(VideoFrame::new(
+                job.frame.stream_generation,
+                job.frame.frame_id,
+                job.frame.pts_us,
+                job.frame.encoded_at_us,
+                job.frame.received_at_us,
+                decode_submitted_at_us,
                 now.instant(),
                 now.now_us(),
-                width,
-                height,
-                width,
-                config.rotation,
+                job.width,
+                job.height,
+                job.width,
+                job.rotation,
                 Bytes::from(vec![marker; pixel_len]),
-            );
-            self.latest.publish(decoded);
+            ));
             self.counters.decoded = self.counters.decoded.saturating_add(1);
         }
+        completed_any
     }
 
     fn expire_reassembly(&mut self, now: &VirtualClock, max_age: Duration) {
@@ -424,14 +470,17 @@ impl ReceiverCore {
         if self.reassembly.take_reference_chain_loss() {
             self.reference_chain_intact = false;
             self.waiting_for_idr = true;
+            self.jitter.discard_queued();
+            self.decoder.reset();
         }
-        self.drain_completed_access_units(now);
+        self.drive_media(now);
     }
 }
 
 /// End-to-end deterministic contract harness.
 pub struct SimHarness {
     clock: VirtualClock,
+    timing: SimTimingMode,
     camera_active: bool,
     encoder: ScriptedEncoder,
     sender: SenderPipeline,
@@ -444,13 +493,25 @@ pub struct SimHarness {
 
 impl SimHarness {
     pub fn new(script: NetworkScript) -> Self {
+        Self::with_timing(script, SimTimingMode::Fast)
+    }
+
+    pub fn new_production_equivalent(script: NetworkScript, decoder_latency: Duration) -> Self {
+        Self::with_timing(
+            script,
+            SimTimingMode::ProductionEquivalent { decoder_latency },
+        )
+    }
+
+    fn with_timing(script: NetworkScript, timing: SimTimingMode) -> Self {
         Self {
             clock: VirtualClock::new(),
+            timing,
             camera_active: true,
             encoder: ScriptedEncoder::new(),
             sender: SenderPipeline::default(),
             network: SimulatedNetwork::new(script),
-            receiver: ReceiverCore::new(),
+            receiver: ReceiverCore::new(timing),
             next_control_message_id: 1,
             preview_last_sequence: 0,
             vcam_last_sequence: 0,
@@ -471,7 +532,7 @@ impl SimHarness {
     }
 
     pub fn restart_receiver(&mut self, generation: u64) {
-        self.receiver = ReceiverCore::new();
+        self.receiver = ReceiverCore::new(self.timing);
         self.receiver.connect(generation);
         self.next_control_message_id = 1;
         self.preview_last_sequence = 0;
@@ -651,7 +712,7 @@ impl SimHarness {
         for delivery in deliveries {
             self.receiver.receive(&self.clock, delivery);
         }
-        self.receiver.drain_jitter(&self.clock);
+        self.receiver.drive_media(&self.clock);
     }
 
     pub fn expire_reassembly(&mut self, max_age: Duration) {
@@ -692,7 +753,8 @@ impl SimHarness {
             reference_chain_intact: self.receiver.reference_chain_intact,
             network_in_flight: self.network.in_flight(),
             jitter_depth: self.receiver.jitter.len(),
-            completed_access_unit_depth: self.receiver.completed_access_units.len(),
+            decoder_pending_depth: self.receiver.decoder.pending_depth(),
+            decoder_active: self.receiver.decoder.is_active(),
             latest_sequence: self.receiver.latest.latest_sequence(),
             counters: self.receiver.counters,
         }
