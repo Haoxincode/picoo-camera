@@ -1,3 +1,4 @@
+use gpui_kit::base::ElementExt;
 use gpui_kit::component::button::*;
 use gpui_kit::component::menu::DropdownMenu;
 use gpui_kit::component::notification::NotificationType;
@@ -564,6 +565,7 @@ impl PicooDesktopApp {
                 )
             });
 
+        let preview_viewport = self.preview_viewport.clone();
         div()
             .v_flex()
             .w_full()
@@ -736,6 +738,13 @@ impl PicooDesktopApp {
                             .aspect_ratio(16. / 9.)
                             .flex_none()
                             .relative()
+                            .on_prepaint(move |bounds, window, _| {
+                                let scale = window.scale_factor();
+                                preview_viewport.record_painted(
+                                    bounds.size.width.as_f32() * scale,
+                                    bounds.size.height.as_f32() * scale,
+                                );
+                            })
                             .rounded(cx.theme().radius_lg)
                             .bg(cx.theme().muted)
                             .overflow_hidden()

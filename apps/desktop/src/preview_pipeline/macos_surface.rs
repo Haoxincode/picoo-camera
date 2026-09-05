@@ -32,9 +32,22 @@ use picoo_frame_hub::VideoFrame;
 
 const SURFACE_BUFFER_LIMIT: i32 = 3;
 
-#[derive(Default)]
 pub(super) struct PlatformPreviewResources {
     pool: Option<SurfacePool>,
+    resizer: Resizer,
+    source_nv12: Vec<u8>,
+    prepared_nv12: Vec<u8>,
+}
+
+impl Default for PlatformPreviewResources {
+    fn default() -> Self {
+        Self {
+            pool: None,
+            resizer: Resizer::new(),
+            source_nv12: Vec::new(),
+            prepared_nv12: Vec::new(),
+        }
+    }
 }
 
 struct SurfacePool {
@@ -44,51 +57,49 @@ struct SurfacePool {
     allocation_attributes: CFDictionary<CFString, CFType>,
 }
 
-struct PreparedNv12 {
-    width: u32,
-    height: u32,
-    pixels: Vec<u8>,
-}
-
 impl PlatformPreviewResources {
     pub(super) fn prepare_surface(
         &mut self,
         frame: &VideoFrame,
         target_width: u32,
     ) -> Option<CVPixelBuffer> {
-        let prepared = prepare_nv12(frame, target_width)?;
+        validate_frame(frame)?;
+        let (width, height) = output_dimensions(frame, target_width)?;
+        self.prepare_nv12(frame, width, height)?;
         if self
             .pool
             .as_ref()
-            .is_none_or(|pool| pool.width != prepared.width || pool.height != prepared.height)
+            .is_none_or(|pool| pool.width != width || pool.height != height)
         {
-            self.pool = SurfacePool::new(prepared.width, prepared.height);
+            self.pool = SurfacePool::new(width, height);
         }
-        self.pool.as_ref()?.copy_nv12(&prepared)
+        self.pool
+            .as_ref()?
+            .copy_nv12(width, height, &self.prepared_nv12)
     }
-}
 
-fn prepare_nv12(frame: &VideoFrame, target_width: u32) -> Option<PreparedNv12> {
-    validate_frame(frame)?;
-    let (output_width, output_height) = output_dimensions(frame, target_width)?;
-    let source = tight_nv12(frame)?;
-    let mut pixels = if output_width == frame.width && output_height == frame.height {
-        source
-    } else {
-        resize_nv12(
-            &source,
-            frame.width,
-            frame.height,
-            output_width,
-            output_height,
-        )?
-    };
-    convert_bt709_limited_to_bt601_full(&mut pixels, output_width, output_height)?;
-    Some(PreparedNv12 {
-        width: output_width,
-        height: output_height,
-        pixels,
-    })
+    fn prepare_nv12(
+        &mut self,
+        frame: &VideoFrame,
+        output_width: u32,
+        output_height: u32,
+    ) -> Option<()> {
+        copy_tight_nv12(frame, &mut self.source_nv12)?;
+        if output_width == frame.width && output_height == frame.height {
+            std::mem::swap(&mut self.source_nv12, &mut self.prepared_nv12);
+        } else {
+            resize_nv12_into(
+                &mut self.resizer,
+                &self.source_nv12,
+                &mut self.prepared_nv12,
+                frame.width,
+                frame.height,
+                output_width,
+                output_height,
+            )?;
+        }
+        convert_bt709_limited_to_bt601_full(&mut self.prepared_nv12, output_width, output_height)
+    }
 }
 
 fn validate_frame(frame: &VideoFrame) -> Option<()> {
@@ -122,34 +133,46 @@ fn output_dimensions(frame: &VideoFrame, target_width: u32) -> Option<(u32, u32)
     (height >= 2).then_some((width, height))
 }
 
-fn tight_nv12(frame: &VideoFrame) -> Option<Vec<u8>> {
+fn copy_tight_nv12(frame: &VideoFrame, output: &mut Vec<u8>) -> Option<()> {
     let width = frame.width as usize;
     let height = frame.height as usize;
     let stride = frame.stride as usize;
     let source_y_len = stride.checked_mul(height)?;
     let output_len = width.checked_mul(height)?.checked_mul(3)?.checked_div(2)?;
+    output.resize(output_len, 0);
     if stride == width {
-        return Some(frame.pixel_data[..output_len].to_vec());
+        output.copy_from_slice(&frame.pixel_data[..output_len]);
+        return Some(());
     }
 
-    let mut output = Vec::with_capacity(output_len);
-    for row in frame.pixel_data[..source_y_len].chunks_exact(stride) {
-        output.extend_from_slice(&row[..width]);
+    for (row_index, row) in frame.pixel_data[..source_y_len]
+        .chunks_exact(stride)
+        .enumerate()
+    {
+        let target = row_index * width;
+        output[target..target + width].copy_from_slice(&row[..width]);
     }
     let uv_source_len = stride.checked_mul(height / 2)?;
-    for row in frame.pixel_data[source_y_len..source_y_len + uv_source_len].chunks_exact(stride) {
-        output.extend_from_slice(&row[..width]);
+    let output_y_len = width * height;
+    for (row_index, row) in frame.pixel_data[source_y_len..source_y_len + uv_source_len]
+        .chunks_exact(stride)
+        .enumerate()
+    {
+        let target = output_y_len + row_index * width;
+        output[target..target + width].copy_from_slice(&row[..width]);
     }
-    Some(output)
+    Some(())
 }
 
-fn resize_nv12(
+fn resize_nv12_into(
+    resizer: &mut Resizer,
     source: &[u8],
+    output: &mut Vec<u8>,
     source_width: u32,
     source_height: u32,
     output_width: u32,
     output_height: u32,
-) -> Option<Vec<u8>> {
+) -> Option<()> {
     let source_y_len = (source_width as usize).checked_mul(source_height as usize)?;
     let source_y = ImageRef::new(
         source_width,
@@ -158,9 +181,13 @@ fn resize_nv12(
         PixelType::U8,
     )
     .ok()?;
-    let mut output_y = Image::new(output_width, output_height, PixelType::U8);
+    let output_y_len = (output_width as usize).checked_mul(output_height as usize)?;
+    let output_len = output_y_len.checked_mul(3)?.checked_div(2)?;
+    output.resize(output_len, 0);
+    let (output_y, output_uv) = output.split_at_mut(output_y_len);
+    let mut output_y =
+        Image::from_slice_u8(output_width, output_height, output_y, PixelType::U8).ok()?;
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
-    let mut resizer = Resizer::new();
     resizer
         .resize(&source_y, &mut output_y, Some(&options))
         .ok()?;
@@ -172,14 +199,18 @@ fn resize_nv12(
         PixelType::U8x2,
     )
     .ok()?;
-    let mut output_uv = Image::new(output_width / 2, output_height / 2, PixelType::U8x2);
+    let mut output_uv = Image::from_slice_u8(
+        output_width / 2,
+        output_height / 2,
+        output_uv,
+        PixelType::U8x2,
+    )
+    .ok()?;
     resizer
         .resize(&source_uv, &mut output_uv, Some(&options))
         .ok()?;
 
-    let mut output = output_y.into_vec();
-    output.extend_from_slice(&output_uv.into_vec());
-    Some(output)
+    Some(())
 }
 
 fn convert_bt709_limited_to_bt601_full(pixels: &mut [u8], width: u32, height: u32) -> Option<()> {
@@ -275,7 +306,7 @@ impl SurfacePool {
         })
     }
 
-    fn copy_nv12(&self, preview: &PreparedNv12) -> Option<CVPixelBuffer> {
+    fn copy_nv12(&self, width: u32, height: u32, pixels: &[u8]) -> Option<CVPixelBuffer> {
         let pixel_buffer = self
             .pool
             .create_pixel_buffer_with_aux_attributes(Some(&self.allocation_attributes))
@@ -285,8 +316,8 @@ impl SurfacePool {
         }
 
         let result = (|| unsafe {
-            let width = preview.width as usize;
-            let height = preview.height as usize;
+            let width = width as usize;
+            let height = height as usize;
             let source_y_len = width.checked_mul(height)?;
             let y_stride = pixel_buffer.get_bytes_per_row_of_plane(0);
             let uv_stride = pixel_buffer.get_bytes_per_row_of_plane(1);
@@ -299,15 +330,9 @@ impl SurfacePool {
             }
             let y_plane = std::slice::from_raw_parts_mut(y_base, y_len);
             let uv_plane = std::slice::from_raw_parts_mut(uv_base, uv_len);
+            copy_rows(&pixels[..source_y_len], width, y_plane, y_stride, height)?;
             copy_rows(
-                &preview.pixels[..source_y_len],
-                width,
-                y_plane,
-                y_stride,
-                height,
-            )?;
-            copy_rows(
-                &preview.pixels[source_y_len..],
+                &pixels[source_y_len..],
                 width,
                 uv_plane,
                 uv_stride,
@@ -399,9 +424,13 @@ mod tests {
     #[test]
     fn resize_keeps_even_nv12_dimensions_and_plane_size() {
         let source = frame(1920, 1080, vec![16; 1920 * 1080 * 3 / 2]);
-        let prepared = prepare_nv12(&source, 1441).expect("prepare");
-        assert_eq!((prepared.width, prepared.height), (1440, 810));
-        assert_eq!(prepared.pixels.len(), 1440 * 810 * 3 / 2);
+        let mut resources = PlatformPreviewResources::default();
+        let (width, height) = output_dimensions(&source, 1441).expect("dimensions");
+        resources
+            .prepare_nv12(&source, width, height)
+            .expect("prepare");
+        assert_eq!((width, height), (1440, 810));
+        assert_eq!(resources.prepared_nv12.len(), 1440 * 810 * 3 / 2);
     }
 
     #[test]

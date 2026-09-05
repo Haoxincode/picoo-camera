@@ -8,8 +8,11 @@ use picoo_frame_hub::{
 };
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
 use picoo_media_decode::DecodedFrame;
-use picoo_packet::{AssembledAccessUnit, ReassemblyError};
+use picoo_packet::AssembledAccessUnit;
+#[cfg(test)]
 use picoo_protocol::VideoPacket;
+#[cfg(test)]
+use picoo_transport::ReceivedVideoPacketBatch;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -193,7 +196,7 @@ mod tests {
         receiver.set_permit_unpaired_video(true);
 
         receiver
-            .ingest_video_packet(packet(2, 7, true, 0, 1))
+            .ingest_video_packet(packet(2, 7, true, 0, 1), Instant::now())
             .expect("future IDR");
 
         assert_eq!(receiver.waiting_for_stream_config_epoch, Some(2));
@@ -219,12 +222,12 @@ mod tests {
         receiver.set_permit_unpaired_video(true);
 
         receiver
-            .ingest_video_packet(packet(2, 7, false, 0, 1))
+            .ingest_video_packet(packet(2, 7, false, 0, 1), Instant::now())
             .expect("future delta");
         assert!(receiver.pending_stream_config_idr.is_none());
 
         receiver
-            .ingest_video_packet(packet(3, 8, true, 0, 2))
+            .ingest_video_packet(packet(3, 8, true, 0, 2), Instant::now())
             .expect("partial future IDR");
         assert_eq!(receiver.waiting_for_stream_config_epoch, Some(3));
         assert!(receiver.pending_stream_config_idr.is_none());
@@ -237,13 +240,13 @@ mod tests {
         receiver.set_permit_unpaired_video(true);
 
         receiver
-            .ingest_video_packet(packet(2, 7, true, 0, 1))
+            .ingest_video_packet(packet(2, 7, true, 0, 1), Instant::now())
             .expect("epoch two IDR");
         receiver
-            .ingest_video_packet(packet(3, 8, true, 0, 1))
+            .ingest_video_packet(packet(3, 8, true, 0, 1), Instant::now())
             .expect("epoch three IDR");
         receiver
-            .ingest_video_packet(packet(2, 9, true, 0, 1))
+            .ingest_video_packet(packet(2, 9, true, 0, 1), Instant::now())
             .expect("late older IDR");
 
         assert_eq!(receiver.waiting_for_stream_config_epoch, Some(3));
@@ -269,11 +272,36 @@ mod tests {
     }
 
     #[test]
+    fn stale_transport_batch_discards_whole_access_unit_and_blocks_late_tail() {
+        let mut receiver = receiver_for_generation(1);
+        receiver.set_permit_unpaired_video(true);
+        let batch = ReceivedVideoPacketBatch::new(
+            Instant::now(),
+            vec![packet(1, 7, true, 0, 2), packet(1, 7, true, 1, 2)],
+        );
+
+        receiver
+            .discard_stale_video_batch(batch)
+            .expect("stale access unit is an expected media drop");
+
+        assert_eq!(receiver.ingress.receive_queue_expired_access_units, 1);
+        assert_eq!(receiver.ingress.reassembly_partial_access_unit_drops, 0);
+        assert_eq!(receiver.ingress.reassembly_whole_access_unit_gap_drops, 0);
+        assert!(receiver.awaiting_decoder_refresh_for_test());
+
+        receiver
+            .ingest_video_packet(packet(1, 7, true, 1, 2), Instant::now())
+            .expect("late tail is ignored by the terminal boundary");
+        assert_eq!(receiver.ingress.access_units, 0);
+        assert_eq!(receiver.ingress.decode_invocations, 0);
+    }
+
+    #[test]
     fn teardown_discards_stream_config_gate() {
         let mut receiver = receiver_for_generation(1);
         receiver.set_permit_unpaired_video(true);
         receiver
-            .ingest_video_packet(packet(2, 7, true, 0, 1))
+            .ingest_video_packet(packet(2, 7, true, 0, 1), Instant::now())
             .expect("future IDR");
 
         receiver.close();
@@ -296,109 +324,6 @@ struct FrameTimeline {
 }
 
 impl ReceiverSession {
-    pub(super) fn ingest_video_packet(&mut self, packet: VideoPacket) -> Result<(), ReceiverError> {
-        // Enforce the wall-clock deadline before a queued late tail gets a
-        // chance to complete an already-expired AU.
-        self.expire_reassembly_deadline()?;
-        self.ingress.packets_received += 1;
-        if !self.video_allowed() {
-            self.ingress.packets_dropped_unpaired += 1;
-            return Ok(());
-        }
-
-        let packet_epoch = packet.stream_epoch;
-        let configured_epoch = self
-            .current_stream_config
-            .as_ref()
-            .map(|config| config.stream_epoch);
-        let (configured_epoch, mut defer_until_config) = match configured_epoch {
-            Some(epoch) => (epoch, false),
-            None if self.permit_unpaired_video => (packet_epoch, false),
-            None => {
-                match self.waiting_for_stream_config_epoch {
-                    Some(waiting) if packet_epoch < waiting => return Ok(()),
-                    Some(waiting) if packet_epoch == waiting => {}
-                    Some(_) | None => {
-                        self.pending_stream_config_idr = None;
-                        self.waiting_for_stream_config_epoch = Some(packet_epoch);
-                    }
-                }
-                (packet_epoch, true)
-            }
-        };
-        if packet_epoch < configured_epoch {
-            return Ok(());
-        }
-        if packet_epoch > configured_epoch {
-            if self
-                .waiting_for_stream_config_epoch
-                .is_some_and(|waiting| packet_epoch < waiting)
-            {
-                return Ok(());
-            }
-            if self.waiting_for_stream_config_epoch != Some(packet_epoch) {
-                self.pending_stream_config_idr = None;
-                self.waiting_for_stream_config_epoch = Some(packet_epoch);
-            }
-            defer_until_config = true;
-        }
-
-        self.stats_reporter.record_packet(packet.payload.len());
-        let recovered_before = self.reassembly.fec_recovered_fragment_count();
-        let partial_drops_before = self.reassembly.partial_access_unit_drop_count();
-        let gap_drops_before = self.reassembly.whole_access_unit_gap_drop_count();
-        let reassembly_result = self.reassembly.ingest(packet);
-        let recovered_now = self
-            .reassembly
-            .fec_recovered_fragment_count()
-            .saturating_sub(recovered_before);
-        self.ingress.fec_recovered_fragments = self
-            .ingress
-            .fec_recovered_fragments
-            .saturating_add(recovered_now);
-        self.ingress.reassembly_partial_access_unit_drops = self
-            .ingress
-            .reassembly_partial_access_unit_drops
-            .saturating_add(
-                self.reassembly
-                    .partial_access_unit_drop_count()
-                    .saturating_sub(partial_drops_before),
-            );
-        self.ingress.reassembly_whole_access_unit_gap_drops = self
-            .ingress
-            .reassembly_whole_access_unit_gap_drops
-            .saturating_add(
-                self.reassembly
-                    .whole_access_unit_gap_drop_count()
-                    .saturating_sub(gap_drops_before),
-            );
-        match reassembly_result {
-            Ok(Some(access_unit)) => {
-                if defer_until_config {
-                    if access_unit.keyframe
-                        && self.waiting_for_stream_config_epoch == Some(access_unit.stream_epoch)
-                    {
-                        self.pending_stream_config_idr = Some(access_unit);
-                    }
-                } else {
-                    self.queue_assembled_access_unit(access_unit)?;
-                }
-            }
-            Ok(None) => {}
-            // Reassembly owns drop/keyframe-loss accounting. Keep protocol
-            // rejects out of the decoder and continue the session.
-            Err(ReassemblyError::TooManyFragments)
-            | Err(ReassemblyError::DuplicateFragment)
-            | Err(ReassemblyError::EpochMismatch)
-            | Err(ReassemblyError::InconsistentFrameMetadata)
-            | Err(ReassemblyError::InvalidFecParity) => {}
-        }
-        if self.reassembly.take_reference_chain_loss() && !defer_until_config {
-            self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)?;
-        }
-        Ok(())
-    }
-
     pub(super) fn release_pending_stream_config_idr(
         &mut self,
         stream_epoch: u32,
@@ -418,7 +343,7 @@ impl ReceiverSession {
         Ok(())
     }
 
-    fn queue_assembled_access_unit(
+    pub(super) fn queue_assembled_access_unit(
         &mut self,
         access_unit: AssembledAccessUnit,
     ) -> Result<(), ReceiverError> {

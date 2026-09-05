@@ -112,6 +112,7 @@ impl<T: PicooTransport> SenderSession<T> {
             frame_publish_age_ms: stats.frame_publish_age_ms,
             end_to_end_latency_ms: stats.end_to_end_latency_ms,
             clock_uncertainty_ms: stats.clock_uncertainty_ms,
+            receive_queue_age_ms: stats.receive_queue_age_ms,
             sender_queue_age_ms: local_link.video_queue_age_ms,
             sender_queue_dropped_access_units: local_link
                 .video_dropped_access_units

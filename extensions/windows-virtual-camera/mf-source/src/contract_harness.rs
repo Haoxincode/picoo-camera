@@ -21,6 +21,7 @@ fn ring_name() -> String {
 }
 
 fn wait_for_pixels(provider: &FrameProvider, value: u8) {
+    provider.set_output_active(854, 480, true);
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let acquired = provider
@@ -104,6 +105,7 @@ fn producer_pause_crash_restart_and_host_rebuild_preserve_contract() {
 #[test]
 fn concurrent_requests_and_repeated_shutdown_are_safe() {
     let provider = Arc::new(FrameProvider::with_ring_name(ring_name()).expect("provider"));
+    provider.set_output_active(1920, 1080, true);
     let start = Arc::new(Barrier::new(5));
     let readers = (0..4)
         .map(|_| {

@@ -230,6 +230,14 @@ impl JitterBuffer {
         self.frames.front().map(|buffered| buffered.frame.frame_id)
     }
 
+    /// Receiver-local delay until the oldest complete AU should enter decode.
+    pub fn next_release_delay_us(&self, now_us: u64) -> Option<u64> {
+        self.frames.front().map(|buffered| {
+            self.decode_release_at_us(buffered.frame.pts_us)
+                .saturating_sub(now_us)
+        })
+    }
+
     /// Discard media while preserving the current network/decode estimate.
     pub fn discard_queued(&mut self) {
         self.frames.clear();

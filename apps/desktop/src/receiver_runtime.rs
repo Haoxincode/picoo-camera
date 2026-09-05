@@ -24,6 +24,11 @@ use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
+#[cfg(feature = "gpui-ui")]
+mod worker;
+#[cfg(feature = "gpui-ui")]
+pub use worker::ReceiverRuntimeHandle;
+
 #[cfg(any(target_os = "macos", windows))]
 const RECEIVER_IDENTITY_SERVICE: &str = "site.nebula-tech.picoo-camera";
 #[cfg(any(target_os = "macos", windows))]
@@ -90,6 +95,7 @@ pub struct ReceiverSnapshot {
     /// Whether the mDNS advertiser was created successfully for this runtime.
     pub discovery_available: bool,
     pub pairing_short_code: Option<String>,
+    pub pairing_ttl_seconds: u64,
     /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
     pub link_jitter_ms: f64,
     /// Adaptive total playout target; distinct from queue occupancy.
@@ -393,6 +399,11 @@ impl ReceiverRuntime {
                 .as_ref()
                 .is_some_and(MdnsAdvertiser::is_registered),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
+            pairing_ttl_seconds: self
+                .receiver
+                .pairing_ttl_remaining()
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0),
             link_jitter_ms: receiver_stats
                 .as_ref()
                 .map(|stats| stats.jitter_ms)
@@ -535,6 +546,7 @@ fn sanitize_receiver_stats(
         && stats.jitter_buffer_target_ms.is_finite()
         && stats.jitter_buffer_actual_delay_ms.is_finite()
         && stats.jitter_buffer_occupancy_ms.is_finite()
+        && stats.receive_queue_age_ms.is_finite()
         && stats.sender_queue_age_ms.is_finite();
     finite.then(|| picoo_metrics::ReceiverStats {
         rtt_ms: stats.rtt_ms.max(0.0),
@@ -554,6 +566,7 @@ fn sanitize_receiver_stats(
         frame_publish_age_ms: sanitize_optional_duration(stats.frame_publish_age_ms),
         end_to_end_latency_ms: sanitize_optional_duration(stats.end_to_end_latency_ms),
         clock_uncertainty_ms: sanitize_optional_duration(stats.clock_uncertainty_ms),
+        receive_queue_age_ms: stats.receive_queue_age_ms.max(0.0),
         sender_queue_age_ms: stats.sender_queue_age_ms.max(0.0),
         sender_queue_dropped_access_units: stats.sender_queue_dropped_access_units,
         sender_quic_lost_packets: stats.sender_quic_lost_packets,

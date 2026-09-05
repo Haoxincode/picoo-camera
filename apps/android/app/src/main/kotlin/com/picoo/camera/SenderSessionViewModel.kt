@@ -1,6 +1,8 @@
 package com.picoo.camera
 
 import android.app.Application
+import android.os.Handler
+import android.os.HandlerThread
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +11,8 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
+import com.picoo.camera.media.EncodedAccessUnitBuffer
+import com.picoo.camera.media.EncodedAccessUnitHandoff
 import com.picoo.camera.media.EncoderReconfigurationCoordinator
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
@@ -53,6 +57,9 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     val runtime = SenderNativeRuntime(application)
     val encoderReconfiguration = EncoderReconfigurationCoordinator()
     private val encoderRef = AtomicReference<Camera2MediaEncoder?>(null)
+    private val senderMediaThread = HandlerThread("picoo-sender-media").apply { start() }
+    private val senderMediaHandler = Handler(senderMediaThread.looper)
+    private val encodedAccessUnits = EncodedAccessUnitBuffer()
     val encoder = Camera2MediaEncoder(
         context = application,
         initialBitrateBps = PicooNative.bitrateInitialForHeight(StreamResolution.P720.height),
@@ -67,48 +74,19 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 encoderWidth,
                 encoderHeight,
             ->
-            val transactionId = PicooNative.encoderTransactionId(
-                runtime.senderHandle,
-                streamEpoch,
-            )
-            val started = PicooNative.reportEncoderStarted(
-                runtime.senderHandle,
-                transactionId,
-                encoderGeneration,
-                streamEpoch,
-                encoderHeight,
-            )
-            if (started == 1 && isKeyFrame && streamConfigDirty.getAndSet(false)) {
-                // A stale codec callback must not consume or overwrite the
-                // StreamConfig intended for the active generation.
-                stageStreamConfig(encoderWidth, encoderHeight)
-            }
-            val fragments = if (started == 1) {
-                PicooNative.ingestAccessUnit(
-                    handle = runtime.senderHandle,
+            enqueueEncodedAccessUnit(
+                EncodedAccessUnitHandoff(
                     data = data,
-                    keyframe = isKeyFrame,
-                    ptsUs = ptsUs,
+                    isKeyFrame = isKeyFrame,
+                    presentationTimeUs = ptsUs,
                     encodedAtUs = encodedAtUs,
                     streamEpoch = streamEpoch,
-                    transactionId = transactionId,
                     encoderGeneration = encoderGeneration,
+                    encoderWidth = encoderWidth,
                     encoderHeight = encoderHeight,
-                )
-            } else {
-                -2
-            }
-            if (fragments > 0) {
-                PicooNative.flushPending(runtime.senderHandle)
-                PicooNative.pump(runtime.senderHandle)
-            }
-            // Recovery control arrives on the reliable stream while video
-            // keeps encoding. Consume the IDR request at frame cadence even
-            // when this AU could not enter the bounded sender queue, so
-            // recovery is not delayed until the 500ms maintenance fallback.
-            if (PicooNative.takeKeyframeRequest(runtime.senderHandle) == 1) {
-                encoderRef.get()?.requestKeyFrame()
-            }
+                    enqueuedAtNanos = System.nanoTime(),
+                ),
+            )
         },
         parameterSetsListener = ParameterSetsListener { sps, pps ->
             parameterSetsRef.set(sps to pps)
@@ -144,6 +122,59 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                     tick()
                 }
             }
+        }
+    }
+
+    private fun enqueueEncodedAccessUnit(accessUnit: EncodedAccessUnitHandoff) {
+        val offer = encodedAccessUnits.offer(accessUnit, System.nanoTime())
+        if (offer.scheduleWorker) {
+            senderMediaHandler.post(::drainEncodedAccessUnits)
+        }
+    }
+
+    private fun drainEncodedAccessUnits() {
+        while (true) {
+            val work = encodedAccessUnits.take(System.nanoTime()) ?: return
+            if (work.recoveryRequired) {
+                encoderRef.get()?.requestKeyFrame()
+            }
+            val accessUnit = work.accessUnit ?: continue
+            submitEncodedAccessUnit(accessUnit)
+        }
+    }
+
+    private fun submitEncodedAccessUnit(accessUnit: EncodedAccessUnitHandoff) {
+        val configureStream = accessUnit.isKeyFrame && streamConfigDirty.getAndSet(false)
+        val parameterSets = if (configureStream) parameterSetsRef.get() else null
+        val result = PicooNative.submitEncoderAccessUnit(
+            handle = runtime.senderHandle,
+            data = accessUnit.data,
+            keyframe = accessUnit.isKeyFrame,
+            ptsUs = accessUnit.presentationTimeUs,
+            encodedAtUs = accessUnit.encodedAtUs,
+            streamEpoch = accessUnit.streamEpoch,
+            encoderGeneration = accessUnit.encoderGeneration,
+            encoderWidth = accessUnit.encoderWidth,
+            encoderHeight = accessUnit.encoderHeight,
+            configureStream = configureStream,
+            mirrored = remoteMirroredRef.get(),
+            sps = parameterSets?.first,
+            pps = parameterSets?.second,
+        )
+        if (configureStream && (result and SUBMIT_STREAM_CONFIGURED) == 0) {
+            // A stale generation must not consume the active generation's config.
+            streamConfigDirty.set(true)
+        }
+        if ((result and SUBMIT_ENCODER_ACCEPTED) != 0) {
+            encoder.recordAcceptedFrame(
+                accessUnit.data.size,
+                accessUnit.isKeyFrame,
+                accessUnit.streamEpoch,
+                accessUnit.encoderHeight,
+            )
+        }
+        if ((result and SUBMIT_KEYFRAME_REQUESTED) != 0) {
+            encoderRef.get()?.requestKeyFrame()
         }
     }
 
@@ -631,6 +662,9 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
 
     override fun onCleared() {
         encoder.close()
+        encodedAccessUnits.close()
+        senderMediaThread.quitSafely()
+        runCatching { senderMediaThread.join(1_000) }
         runtime.close()
     }
 
@@ -642,5 +676,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         const val MAINTENANCE_TIMEOUT_MS = 500
         const val CONNECT_TIMEOUT_MS = 10_000L
         const val THERMAL_INTERVAL_MS = 5_000L
+        const val SUBMIT_ENCODER_ACCEPTED = 1
+        const val SUBMIT_STREAM_CONFIGURED = 1 shl 1
+        const val SUBMIT_KEYFRAME_REQUESTED = 1 shl 2
     }
 }

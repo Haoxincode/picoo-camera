@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use bytes::Bytes;
 use picoo_pairing::{PairingError, StoreError};
 use picoo_protocol::{
-    fec_group_ranges, make_fec_parity, VideoPacket, VideoPacketError, VideoPacketFlags,
+    encode_fec_parity_into, fec_group_ranges, VideoPacket, VideoPacketError, VideoPacketFlags,
     MAX_FEC_FRAGMENT_PAYLOAD, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT,
 };
 use picoo_transport::{TransportError, VideoDatagramBatch, VideoDatagramBatchError};
@@ -99,6 +99,8 @@ pub struct SenderPipeline {
     stats: SenderStats,
     pending: VecDeque<VideoDatagramBatch>,
     descriptor_scratch: Vec<FragmentDescriptor>,
+    fec_data_scratch: Vec<Vec<u8>>,
+    fec_parity_scratch: Vec<Vec<u8>>,
 }
 
 impl SenderPipeline {
@@ -176,6 +178,8 @@ impl SenderPipeline {
             &mut self.stats,
             &mut self.pending,
             &mut self.descriptor_scratch,
+            &mut self.fec_data_scratch,
+            &mut self.fec_parity_scratch,
         )
     }
 }
@@ -194,6 +198,8 @@ fn packetize_into_pending(
     stats: &mut SenderStats,
     pending: &mut VecDeque<VideoDatagramBatch>,
     descriptors: &mut Vec<FragmentDescriptor>,
+    fec_data_scratch: &mut Vec<Vec<u8>>,
+    fec_parity_scratch: &mut Vec<Vec<u8>>,
 ) -> Result<usize, SenderError> {
     if data.is_empty() {
         return Err(SenderError::EmptyAccessUnit);
@@ -262,30 +268,34 @@ fn packetize_into_pending(
             parity_datagrams_by_group.push(Vec::new());
             continue;
         }
-        let group_data = group
-            .clone()
-            .map(|index| {
-                let descriptor = descriptors[usize::from(index)];
-                &data[descriptor.start..descriptor.end]
-            })
-            .collect::<Vec<_>>();
-        let Some(parity_shards) = make_fec_parity(group.start, &group_data) else {
+        let mut group_data = [&[][..]; picoo_protocol::FEC_DATA_SHARDS];
+        let group_len = usize::from(group.end - group.start);
+        for (slot, index) in group.clone().enumerate() {
+            let descriptor = descriptors[usize::from(index)];
+            group_data[slot] = &data[descriptor.start..descriptor.end];
+        }
+        let Some(last_data_len) = encode_fec_parity_into(
+            &group_data[..group_len],
+            parity_count,
+            fec_data_scratch,
+            fec_parity_scratch,
+        ) else {
             parity_datagrams_by_group.push(Vec::new());
             continue;
         };
         let mut group_datagrams = Vec::with_capacity(parity_count);
-        for parity in parity_shards.into_iter().take(parity_count) {
-            let last_data_len = parity.last_data_len.to_be_bytes();
-            let prefix = [parity.parity_index, last_data_len[0], last_data_len[1]];
+        for (parity_index, parity_bytes) in fec_parity_scratch.iter().enumerate() {
+            let last_data_len = last_data_len.to_be_bytes();
+            let prefix = [parity_index as u8, last_data_len[0], last_data_len[1]];
             let datagram = VideoPacket::encode_datagram_segments(
                 base_flags | VideoPacketFlags::FEC_PARITY,
                 stream_epoch,
                 current_frame_id,
                 pts_us,
                 encoded_at_us,
-                parity.group_start,
+                group.start,
                 fragment_count,
-                &[&prefix, &parity.bytes],
+                &[&prefix, parity_bytes],
             )?;
             group_datagrams.push(datagram);
             created += 1;

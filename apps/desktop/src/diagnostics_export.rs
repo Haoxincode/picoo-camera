@@ -60,6 +60,7 @@ fn build_diagnostics_json(
             fec_recovered_fragments: ingress.fec_recovered_fragments,
             reassembly_partial_access_unit_drops: ingress.reassembly_partial_access_unit_drops,
             reassembly_whole_access_unit_gap_drops: ingress.reassembly_whole_access_unit_gap_drops,
+            receive_queue_expired_access_units: ingress.receive_queue_expired_access_units,
             decode_invocations: ingress.decode_invocations,
             decoded_frames: ingress.decoded_frames,
             recovery_dropped_access_units: ingress.recovery_dropped_access_units,

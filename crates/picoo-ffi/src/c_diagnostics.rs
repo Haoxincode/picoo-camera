@@ -118,6 +118,7 @@ pub extern "C" fn picoo_export_diagnostics_to_path_with_session(
         fec_recovered_fragments: 0,
         reassembly_partial_access_unit_drops: 0,
         reassembly_whole_access_unit_gap_drops: 0,
+        receive_queue_expired_access_units: 0,
         decode_invocations: 0,
         decoded_frames: 0,
         recovery_dropped_access_units: 0,

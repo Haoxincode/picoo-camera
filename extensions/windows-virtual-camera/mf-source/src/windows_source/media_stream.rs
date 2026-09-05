@@ -167,7 +167,7 @@ pub(super) fn set_stream_state(
 ) -> Result<()> {
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
-    let (previous, queue, allocator, current_type) = {
+    let (previous, queue, allocator, current_type, frames, output_width, output_height) = {
         let mut state = lock(shared)?;
         if state.queue.is_none() {
             return Err(Error::from(MF_E_SHUTDOWN));
@@ -189,7 +189,15 @@ pub(super) fn set_stream_state(
         let allocator = state.allocator.clone();
         let current_type = state.current_type.clone();
         state.transitioning = true;
-        (state.state, queue, allocator, current_type)
+        (
+            state.state,
+            queue,
+            allocator,
+            current_type,
+            Arc::clone(&state.frames),
+            state.output_width,
+            state.output_height,
+        )
     };
 
     let result = (|| {
@@ -218,6 +226,7 @@ pub(super) fn set_stream_state(
                 }
                 return Err(error);
             }
+            frames.set_output_active(output_width, output_height, true);
             let event_result = unsafe {
                 queue.QueueEventParamVar(
                     MEStreamStarted.0 as u32,
@@ -233,6 +242,7 @@ pub(super) fn set_stream_state(
                     state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
                 }
                 drop(state);
+                frames.set_output_active(output_width, output_height, false);
                 if let Some(allocator) = allocator {
                     unsafe {
                         let _ = allocator.UninitializeSampleAllocator();
@@ -264,6 +274,7 @@ pub(super) fn set_stream_state(
                 }
                 return Err(error);
             }
+            frames.set_output_active(output_width, output_height, false);
             let event_result = unsafe {
                 queue.QueueEventParamVar(
                     MEStreamStopped.0 as u32,
@@ -285,6 +296,8 @@ pub(super) fn set_stream_state(
                         state.state = previous;
                         state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
                     }
+                    drop(state);
+                    frames.set_output_active(output_width, output_height, true);
                 }
                 return Err(error);
             }

@@ -28,6 +28,8 @@ pub struct ReceiverStats {
     /// generation-scoped affine clock mapping is stable.
     pub end_to_end_latency_ms: Option<f64>,
     pub clock_uncertainty_ms: Option<f64>,
+    /// Maximum Receiver-local transport/event queue wait in this window.
+    pub receive_queue_age_ms: f64,
     /// Sender-local complete-AU queue age, merged before ABR evaluation.
     pub sender_queue_age_ms: f64,
     /// Sender-local cumulative complete-AU queue drops.

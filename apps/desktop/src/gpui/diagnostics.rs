@@ -185,6 +185,20 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
+                        "timer",
+                        "接收入口队列龄",
+                        "Quinn 收到首个 Datagram 后，到 Receiver 开始处理该批次的本机等待峰值",
+                        format_milliseconds(stats.map(|stats| stats.receive_queue_age_ms)),
+                        cx,
+                    ))
+                    .child(network_detail_row(
+                        "refresh",
+                        "入口过期整帧",
+                        "进入重组前已超过媒体截止时间、按完整 Access Unit 淘汰的累计值",
+                        format!("{} 帧", snapshot.ingress.receive_queue_expired_access_units),
+                        cx,
+                    ))
+                    .child(network_detail_row(
                         "refresh",
                         "最近重组丢弃",
                         "最近统计窗口内被重组层确认丢弃的 Access Unit",

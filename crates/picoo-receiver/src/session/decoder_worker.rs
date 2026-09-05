@@ -237,19 +237,20 @@ pub(super) struct DecoderWorker {
 }
 
 impl DecoderWorker {
-    pub(super) fn new() -> Self {
-        Self::with_decoder_factory(create_platform_decoder)
+    pub(super) fn with_event_wake(event_wake: picoo_transport::TransportEventWake) -> Self {
+        Self::with_decoder_factory(create_platform_decoder, event_wake)
     }
 
     fn with_decoder_factory(
         factory: impl FnOnce() -> Box<dyn AccessUnitDecoder> + Send + 'static,
+        event_wake: picoo_transport::TransportEventWake,
     ) -> Self {
         let queue = Arc::new(WorkQueue::new());
         let worker_queue = Arc::clone(&queue);
         let (event_sender, events) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("picoo-decoder".into())
-            .spawn(move || run_worker(factory(), worker_queue, event_sender))
+            .spawn(move || run_worker(factory(), worker_queue, event_sender, event_wake))
             .expect("start decoder worker");
         Self {
             queue,
@@ -260,7 +261,10 @@ impl DecoderWorker {
 
     #[cfg(any(test, feature = "loopback-diagnostics"))]
     pub(super) fn with_decoder(decoder: Box<dyn AccessUnitDecoder>) -> Self {
-        Self::with_decoder_factory(move || decoder)
+        Self::with_decoder_factory(
+            move || decoder,
+            picoo_transport::TransportEventWake::default(),
+        )
     }
 
     pub(super) fn submit(
@@ -305,14 +309,16 @@ fn run_worker(
     mut decoder: Box<dyn AccessUnitDecoder>,
     queue: Arc<WorkQueue>,
     events: Sender<DecoderEvent>,
+    event_wake: picoo_transport::TransportEventWake,
 ) {
     loop {
         let item = queue.pop();
         #[cfg(target_os = "macos")]
-        let should_stop =
-            objc2::rc::autoreleasepool(|_| process_work_item(item, &mut decoder, &events));
+        let should_stop = objc2::rc::autoreleasepool(|_| {
+            process_work_item(item, &mut decoder, &events, &event_wake)
+        });
         #[cfg(not(target_os = "macos"))]
-        let should_stop = process_work_item(item, &mut decoder, &events);
+        let should_stop = process_work_item(item, &mut decoder, &events, &event_wake);
         if should_stop {
             return;
         }
@@ -323,11 +329,12 @@ fn process_work_item(
     item: WorkItem,
     decoder: &mut Box<dyn AccessUnitDecoder>,
     events: &Sender<DecoderEvent>,
+    event_wake: &picoo_transport::TransportEventWake,
 ) -> bool {
     match item {
         WorkItem::Decode(job) => {
             let timeline = job.access_unit.timeline();
-            if events.send(DecoderEvent::Started).is_err() {
+            if send_decoder_event(events, event_wake, DecoderEvent::Started).is_err() {
                 return true;
             }
             let started = Instant::now();
@@ -344,15 +351,18 @@ fn process_work_item(
                 }
             };
             let decoded_at = Instant::now();
-            events
-                .send(DecoderEvent::Completed {
+            send_decoder_event(
+                events,
+                event_wake,
+                DecoderEvent::Completed {
                     timeline,
                     decoder_generation: job.decoder_generation,
                     decoded_at,
                     decode_time_us: started.elapsed().as_micros() as u64,
                     result,
-                })
-                .is_err()
+                },
+            )
+            .is_err()
         }
         WorkItem::Reset => {
             let reset = catch_unwind(AssertUnwindSafe(|| decoder.reset())).unwrap_or_else(|_| {
@@ -361,13 +371,27 @@ fn process_work_item(
                 ))
             });
             if let Err(error) = reset {
-                let _ = events.send(DecoderEvent::ResetFailed(error.to_string()));
+                let _ = send_decoder_event(
+                    events,
+                    event_wake,
+                    DecoderEvent::ResetFailed(error.to_string()),
+                );
                 *decoder = create_platform_decoder();
             }
             false
         }
         WorkItem::Shutdown => true,
     }
+}
+
+fn send_decoder_event(
+    events: &Sender<DecoderEvent>,
+    event_wake: &picoo_transport::TransportEventWake,
+    event: DecoderEvent,
+) -> Result<(), ()> {
+    events.send(event).map_err(|_| ())?;
+    event_wake.signal();
+    Ok(())
 }
 
 #[cfg(test)]

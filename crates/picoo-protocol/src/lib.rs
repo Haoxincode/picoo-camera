@@ -17,7 +17,8 @@ mod video_packet;
 pub use control_gate::{receiver_payload_allowed, ReceiverControlPhase};
 
 pub use video_fec::{
-    fec_group_ranges, make_fec_parity, reconstruct_fec_group, FecParityShard, FEC_DATA_SHARDS,
+    encode_fec_parity_into, fec_group_for_fragment, fec_group_ranges, make_fec_parity,
+    make_fec_parity_count, reconstruct_fec_group, FecParityShard, FEC_DATA_SHARDS,
     FEC_PARITY_PREFIX_SIZE, FEC_PARITY_SHARDS,
 };
 pub use video_packet::{VideoPacket, VideoPacketError, VideoPacketFlags};

@@ -66,8 +66,10 @@ impl PicooTransport for MemoryTransport {
             .filter_map(|datagram| picoo_protocol::VideoPacket::decode_bytes(datagram).ok())
             .collect::<Vec<_>>();
         if !packets.is_empty() {
-            self.events
-                .push_back(TransportEvent::VideoPackets(session, packets));
+            self.events.push_back(TransportEvent::VideoPackets(
+                session,
+                picoo_transport::ReceivedVideoPacketBatch::received_now(packets),
+            ));
         }
         Ok(())
     }

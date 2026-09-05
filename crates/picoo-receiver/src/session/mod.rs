@@ -10,12 +10,14 @@ mod lifecycle;
 #[cfg(any(test, feature = "loopback-diagnostics"))]
 mod loopback;
 mod media;
+mod media_ingress;
 mod pairing;
 mod recovery;
 mod reducer;
 mod stats;
 #[cfg(test)]
 mod test_support;
+mod transport_events;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,14 +40,14 @@ use picoo_session::{
     ConnectionState, NetworkHealthTracker, OutputState, SessionRuntimeState, StreamState,
     TrustState,
 };
-use picoo_transport::{Endpoint, QuicReceiverTransport, SessionId, TransportEvent};
+use picoo_transport::{Endpoint, QuicReceiverTransport, SessionId};
 
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use pairing::{ActiveSender, PendingPairing};
 use recovery::DecoderRecovery;
 use recovery::RecoveryReason;
-use reducer::{ReceiverCloseReason, ReceiverEffect, ReceiverEvent, ReceiverReducerState};
+use reducer::{ReceiverCloseReason, ReceiverEvent, ReceiverReducerState};
 use stats::{
     media_deadline_from_observations, observed_fragment_loss_ratio,
     playout_blocked_by_older_reassembly, InterarrivalJitter, StatsReporter,
@@ -56,6 +58,7 @@ pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
 pub use picoo_pairing::{TrustedIdentityCandidate, TrustedIdentityReplacement};
 
 pub struct ReceiverSession {
+    runtime_wake: picoo_transport::TransportEventWake,
     transport: QuicReceiverTransport,
     reassembly: ReassemblyMap,
     latest_frame_store: LatestFrameStore,
@@ -123,8 +126,10 @@ impl Default for ReceiverSession {
 
 impl ReceiverSession {
     pub fn new() -> Self {
+        let runtime_wake = picoo_transport::TransportEventWake::default();
         Self {
-            transport: QuicReceiverTransport::new(),
+            transport: QuicReceiverTransport::with_event_wake(runtime_wake.clone()),
+            runtime_wake: runtime_wake.clone(),
             reassembly: ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT),
             latest_frame_store: LatestFrameStore::new(),
             frame_buffer_pool: FrameBufferPool::default(),
@@ -145,7 +150,7 @@ impl ReceiverSession {
             waiting_for_stream_config_epoch: None,
             pending_stream_config_idr: None,
             receiver_capabilities_sent: None,
-            decoder_worker: DecoderWorker::new(),
+            decoder_worker: DecoderWorker::with_event_wake(runtime_wake),
             decoder_completions: 0,
             last_frame_hold: Duration::from_millis(500),
             placeholder_after: None,
@@ -164,6 +169,10 @@ impl ReceiverSession {
             last_received_control_message_id: 0,
             clock_sync: clock::ReceiverClockSync::default(),
         }
+    }
+
+    pub fn runtime_wake(&self) -> picoo_transport::TransportEventWake {
+        self.runtime_wake.clone()
     }
 
     /// Limit advertised Capabilities resolutions (REQ-PICOO-MEDIA-002). `720` or `1080`.
@@ -282,79 +291,44 @@ impl ReceiverSession {
         Ok(addr)
     }
 
-    pub fn pump(&mut self) -> Result<(), ReceiverError> {
-        self.drain_decoder_events()?;
-        self.expire_pending_pairing_if_needed();
-        self.expire_reassembly_deadline()?;
-
-        while let Some(event) = self.transport.poll_event() {
-            match event {
-                TransportEvent::Connected(session)
-                    if self.transport.active_session() == Some(session) =>
-                {
-                    self.apply_receiver_event(ReceiverEvent::TransportConnected {
-                        generation: session.0,
-                    })?;
-                }
-                TransportEvent::Disconnected(session, _)
-                    if self.transport.active_session().is_none() =>
-                {
-                    let retain_frame = self.lifecycle.runtime.stream().is_streaming()
-                        && self.latest_frame_store.latest().is_some()
-                        && !self.last_frame_hold.is_zero();
-                    self.apply_receiver_event(ReceiverEvent::TransportDisconnected {
-                        generation: session.0,
-                        retain_frame,
-                    })?;
-                }
-                TransportEvent::ControlMessage(session, msg) => {
-                    let effects = self.apply_receiver_event(ReceiverEvent::ControlReceived {
-                        generation: session.0,
-                    })?;
-                    if effects.contains(ReceiverEffect::AcceptControl) {
-                        if let Err(error) = self.handle_control(session, msg) {
-                            self.reject_control_session(session);
-                            return Err(error);
-                        }
-                    }
-                }
-                TransportEvent::VideoPackets(session, packets) => {
-                    let effects = self.apply_receiver_event(ReceiverEvent::VideoReceived {
-                        generation: session.0,
-                    })?;
-                    if effects.contains(ReceiverEffect::AcceptVideo) {
-                        for packet in packets {
-                            self.ingest_video_packet(packet)?;
-                        }
-                        // The transport queue can remain continuously readable on
-                        // a 1080p stream. Give every bounded ingress batch a
-                        // playout opportunity before polling more media.
-                        self.drain_jitter()?;
-                    }
-                }
-                _ => {
-                    // An event queued by an older connection generation must not
-                    // mutate the currently active Receiver session.
-                }
-            }
-        }
-
-        // QUIC Datagram may reorder fragments across access units. A newer AU
-        // is therefore not proof that an older partial AU was lost; only the
-        // bounded real-time deadline makes that decision.
-        self.expire_reassembly_deadline()?;
-
-        self.drain_jitter()?;
-        self.drain_decoder_events()?;
-        self.maybe_request_recovery_keyframe()?;
-        self.maybe_finalize_disconnect_hold()?;
-        self.maybe_send_receiver_stats()?;
-        self.maybe_send_clock_sync()?;
-
-        Ok(())
+    /// Time until the next media/session deadline when no transport, decoder,
+    /// or command event arrives. The dedicated Receiver owner sleeps on the
+    /// shared revision wake for at most this duration.
+    pub fn next_wake_delay(&self) -> Duration {
+        let now = Instant::now();
+        let now_us = self.timing_origin.elapsed().as_micros() as u64;
+        let maintenance = now + Duration::from_secs(1);
+        let media_deadline = self.media_deadline();
+        let jitter_deadline = self
+            .jitter
+            .next_release_delay_us(now_us)
+            .map(|delay| now + Duration::from_micros(delay));
+        let stats_deadline = self
+            .lifecycle
+            .runtime
+            .stream()
+            .is_streaming()
+            .then_some(self.stats_reporter.last_sent + Duration::from_secs(1));
+        [
+            Some(maintenance),
+            self.pending_pairing
+                .as_ref()
+                .map(|pending| pending.expires_at),
+            self.reassembly.next_expiration_at(media_deadline),
+            jitter_deadline,
+            self.placeholder_after,
+            stats_deadline,
+            self.clock_sync.next_sync_at(),
+            self.decoder_recovery.next_request_at(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .unwrap_or(maintenance)
+        .saturating_duration_since(now)
     }
 
-    fn expire_reassembly_deadline(&mut self) -> Result<(), ReceiverError> {
+    pub(super) fn expire_reassembly_deadline(&mut self) -> Result<(), ReceiverError> {
         let partial_drops_before = self.reassembly.partial_access_unit_drop_count();
         let gap_drops_before = self.reassembly.whole_access_unit_gap_drop_count();
         let media_deadline = self.media_deadline();
@@ -542,6 +516,7 @@ impl ReceiverSession {
             frame_publish_age_ms: latency.frame_publish_age_ms,
             end_to_end_latency_ms: latency.end_to_end_latency_ms,
             clock_uncertainty_ms: latency.clock_uncertainty_ms,
+            receive_queue_age_ms: self.stats_reporter.window_max_receive_queue_age_ms,
         };
 
         let sender_stats = self.last_sender_stats.as_ref();
@@ -563,6 +538,7 @@ impl ReceiverSession {
             frame_publish_age_ms: stats.frame_publish_age_ms,
             end_to_end_latency_ms: stats.end_to_end_latency_ms,
             clock_uncertainty_ms: stats.clock_uncertainty_ms,
+            receive_queue_age_ms: stats.receive_queue_age_ms,
             sender_queue_age_ms: sender_stats.map_or(0.0, |stats| stats.video_queue_age_ms),
             sender_queue_dropped_access_units: sender_stats
                 .map_or(0, |stats| stats.video_dropped_access_units),
@@ -603,6 +579,7 @@ impl ReceiverSession {
         self.stats_reporter.window_bytes = 0;
         self.stats_reporter.window_decoder_drops = 0;
         self.stats_reporter.window_decoded_frames = 0;
+        self.stats_reporter.window_max_receive_queue_age_ms = 0.0;
         self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
         self.stats_reporter.last_missing_fragments = self.reassembly.missing_fragment_count();
         self.stats_reporter.last_resolved_fragments = self.reassembly.resolved_fragment_count();

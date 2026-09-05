@@ -1,6 +1,7 @@
 //! Video fragment reassembly — REQ-PICOO-PROTOCOL-004.
 
 mod h264;
+mod reassembly_fec;
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
@@ -11,11 +12,13 @@ pub use h264::{
     annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
     length_prefixed_to_annex_b, split_annex_b_nals,
 };
-use picoo_protocol::{
-    fec_group_ranges, reconstruct_fec_group, VideoPacket, VideoPacketFlags, FEC_PARITY_PREFIX_SIZE,
-    FEC_PARITY_SHARDS, MAX_FEC_FRAGMENT_PAYLOAD,
-};
+use picoo_protocol::{VideoPacket, VideoPacketFlags};
 use thiserror::Error;
+
+use reassembly_fec::{
+    build_fec_state, is_recovered_fragment, mark_data_present, recover_affected_group,
+    store_parity_shard, validate_parity_shard, FecGroupState,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 struct FrameKey {
@@ -26,19 +29,13 @@ struct FrameKey {
 #[derive(Debug)]
 struct PartialFrame {
     fragments: HashMap<u16, Bytes>,
-    recovered_fragments: HashSet<u16>,
-    parity_shards: HashMap<(u16, u8), StoredParityShard>,
+    fec_groups: Vec<FecGroupState>,
+    fragment_groups: Vec<usize>,
     fragment_count: u16,
     flags: picoo_protocol::VideoPacketFlags,
     pts_us: u64,
     encoded_at_us: u64,
     first_fragment_at: Instant,
-}
-
-#[derive(Debug)]
-struct StoredParityShard {
-    last_data_len: u16,
-    bytes: Bytes,
 }
 
 #[derive(Debug)]
@@ -92,6 +89,10 @@ pub struct ReassemblyMap {
     resolved_fragments: u64,
     /// Data fragments reconstructed from parity before their AU deadline.
     fec_recovered_fragments: u64,
+    /// Number of affected FEC groups inspected after a data/parity arrival.
+    fec_group_checks: u64,
+    /// Number of Reed-Solomon reconstruction calls actually attempted.
+    fec_recovery_attempts: u64,
     /// Set when a non-discardable AU is dropped and the prediction chain may be invalid.
     reference_loss_pending: bool,
     /// Set when a partial KEYFRAME is discarded (REQ-PICOO-SESSION-003).
@@ -116,6 +117,8 @@ impl ReassemblyMap {
             missing_fragments: 0,
             resolved_fragments: 0,
             fec_recovered_fragments: 0,
+            fec_group_checks: 0,
+            fec_recovery_attempts: 0,
             reference_loss_pending: false,
             keyframe_loss_pending: false,
         }
@@ -156,6 +159,14 @@ impl ReassemblyMap {
         self.fec_recovered_fragments
     }
 
+    pub fn fec_group_check_count(&self) -> u64 {
+        self.fec_group_checks
+    }
+
+    pub fn fec_recovery_attempt_count(&self) -> u64 {
+        self.fec_recovery_attempts
+    }
+
     /// Oldest Sender PTS that still has an unresolved reassembly entry.
     /// Jitter playout uses this to avoid emitting a newer complete AU while an
     /// older AU is still legitimately inside its reassembly deadline.
@@ -170,6 +181,16 @@ impl ReassemblyMap {
             .keys()
             .map(|key| key.frame_id)
             .chain(self.frame_gaps.keys().copied())
+            .min()
+    }
+
+    /// Earliest wall-clock deadline among partial fragments and inferred AU
+    /// gaps. Runtime owners use it to sleep until real work is due.
+    pub fn next_expiration_at(&self, max_age: Duration) -> Option<Instant> {
+        self.frames
+            .values()
+            .map(|frame| frame.first_fragment_at + max_age)
+            .chain(self.frame_gaps.values().map(|gap| gap.noticed_at + max_age))
             .min()
     }
 
@@ -193,6 +214,59 @@ impl ReassemblyMap {
         for key in abandoned {
             self.remember_terminal(key);
         }
+    }
+
+    /// Abandon one complete AU before reassembly because its Receiver-local
+    /// transport queue age already exceeded the media deadline.
+    ///
+    /// This is deliberately separate from reassembly loss accounting: every
+    /// fragment may have arrived successfully, but decoding this AU would
+    /// still spend work on stale video. The monotonic boundary prevents a late
+    /// tail from recreating this or an older AU after the bounded terminal
+    /// cache rotates.
+    pub fn discard_stale_access_unit(
+        &mut self,
+        stream_epoch: u32,
+        frame_id: u64,
+        flags: VideoPacketFlags,
+    ) -> bool {
+        if stream_epoch < self.current_epoch {
+            return false;
+        }
+        if stream_epoch > self.current_epoch {
+            self.reset_pending_for_epoch();
+            self.current_epoch = stream_epoch;
+        }
+
+        let key = FrameKey {
+            stream_epoch,
+            frame_id,
+        };
+        if self
+            .expired_through_frame_id
+            .is_some_and(|expired| frame_id <= expired)
+            || self.terminal_frames.contains(&key)
+        {
+            return false;
+        }
+
+        let removed = self.frames.remove(&key);
+        let effective_flags = removed.as_ref().map_or(flags, |frame| frame.flags);
+        if !effective_flags.contains(VideoPacketFlags::DISCARDABLE) {
+            self.reference_loss_pending = true;
+        }
+        if Self::is_keyframe(effective_flags) {
+            self.keyframe_loss_pending = true;
+        }
+
+        self.frame_gaps.remove(&frame_id);
+        self.rejected_frames.remove(&key);
+        self.remember_terminal(key);
+        self.expired_through_frame_id = Some(
+            self.expired_through_frame_id
+                .map_or(frame_id, |expired| expired.max(frame_id)),
+        );
+        true
     }
 
     /// True if a keyframe was dropped since the last take (REQ-PICOO-SESSION-003).
@@ -358,16 +432,19 @@ impl ReassemblyMap {
             )?;
         }
 
-        let recovered_now = {
-            let entry = self.frames.entry(key).or_insert_with(|| PartialFrame {
-                fragment_count: packet.fragment_count,
-                flags: packet_flags,
-                pts_us: packet_pts,
-                encoded_at_us: packet_encoded_at,
-                fragments: HashMap::new(),
-                recovered_fragments: HashSet::new(),
-                parity_shards: HashMap::new(),
-                first_fragment_at: inferred_first_fragment_at.unwrap_or(now),
+        let (recovered_now, group_checked, recovery_attempted) = {
+            let entry = self.frames.entry(key).or_insert_with(|| {
+                let (fec_groups, fragment_groups) = build_fec_state(packet.fragment_count);
+                PartialFrame {
+                    fragment_count: packet.fragment_count,
+                    flags: packet_flags,
+                    pts_us: packet_pts,
+                    encoded_at_us: packet_encoded_at,
+                    fragments: HashMap::new(),
+                    fec_groups,
+                    fragment_groups,
+                    first_fragment_at: inferred_first_fragment_at.unwrap_or(now),
+                }
             });
 
             if entry.fragment_count != packet.fragment_count {
@@ -388,13 +465,13 @@ impl ReassemblyMap {
                 return Err(ReassemblyError::InconsistentFrameMetadata);
             }
 
-            if packet.flags.contains(VideoPacketFlags::FEC_PARITY) {
-                store_parity_shard(entry, packet.fragment_index, packet.payload)?;
+            let group_ix = if packet.flags.contains(VideoPacketFlags::FEC_PARITY) {
+                store_parity_shard(entry, packet.fragment_index, packet.payload)?
             } else {
                 if entry.fragments.contains_key(&packet.fragment_index) {
                     // A systematic fragment may arrive after parity already
                     // reconstructed it. It is redundant, not a protocol fault.
-                    if entry.recovered_fragments.contains(&packet.fragment_index) {
+                    if is_recovered_fragment(entry, packet.fragment_index) {
                         return Ok(None);
                     }
                     return Err(ReassemblyError::DuplicateFragment);
@@ -402,13 +479,20 @@ impl ReassemblyMap {
                 entry
                     .fragments
                     .insert(packet.fragment_index, packet.payload);
-            }
+                mark_data_present(entry, packet.fragment_index)
+            };
 
-            recover_available_groups(entry)
+            recover_affected_group(entry, group_ix)
         };
         self.fec_recovered_fragments = self
             .fec_recovered_fragments
             .saturating_add(recovered_now as u64);
+        self.fec_group_checks = self
+            .fec_group_checks
+            .saturating_add(u64::from(group_checked));
+        self.fec_recovery_attempts = self
+            .fec_recovery_attempts
+            .saturating_add(u64::from(recovery_attempted));
 
         let complete = self
             .frames
@@ -588,131 +672,6 @@ impl ReassemblyMap {
         self.highest_observed_frame_id = Some(frame_id);
         inferred_first_fragment_at
     }
-}
-
-fn store_parity_shard(
-    frame: &mut PartialFrame,
-    group_start: u16,
-    payload: Bytes,
-) -> Result<(), ReassemblyError> {
-    validate_parity_shard(frame.fragment_count, group_start, &payload)?;
-    let parity_index = payload[0];
-    let last_data_len = u16::from_be_bytes([payload[1], payload[2]]);
-    let parity_bytes = payload.slice(FEC_PARITY_PREFIX_SIZE..);
-    let key = (group_start, parity_index);
-    if frame.parity_shards.contains_key(&key) {
-        return Err(ReassemblyError::DuplicateFragment);
-    }
-    frame.parity_shards.insert(
-        key,
-        StoredParityShard {
-            last_data_len,
-            bytes: parity_bytes,
-        },
-    );
-    Ok(())
-}
-
-fn validate_parity_shard(
-    fragment_count: u16,
-    group_start: u16,
-    payload: &[u8],
-) -> Result<(), ReassemblyError> {
-    if payload.len() <= FEC_PARITY_PREFIX_SIZE {
-        return Err(ReassemblyError::InvalidFecParity);
-    }
-    let parity_index = payload[0];
-    if usize::from(parity_index) >= FEC_PARITY_SHARDS {
-        return Err(ReassemblyError::InvalidFecParity);
-    }
-    let last_data_len = u16::from_be_bytes([payload[1], payload[2]]);
-    let parity_bytes = &payload[FEC_PARITY_PREFIX_SIZE..];
-    if last_data_len == 0
-        || usize::from(last_data_len) > parity_bytes.len()
-        || parity_bytes.len() > MAX_FEC_FRAGMENT_PAYLOAD
-    {
-        return Err(ReassemblyError::InvalidFecParity);
-    }
-    let valid_group = fec_group_ranges(fragment_count)
-        .into_iter()
-        .any(|group| group.start == group_start && group.len() >= 2);
-    if !valid_group {
-        return Err(ReassemblyError::InvalidFecParity);
-    }
-    Ok(())
-}
-
-fn recover_available_groups(frame: &mut PartialFrame) -> usize {
-    let mut recovered_total = 0usize;
-    for group in fec_group_ranges(frame.fragment_count) {
-        if group.len() < 2 {
-            continue;
-        }
-        let missing = group
-            .clone()
-            .filter(|index| !frame.fragments.contains_key(index))
-            .collect::<Vec<_>>();
-        if missing.is_empty() || missing.len() > FEC_PARITY_SHARDS {
-            continue;
-        }
-
-        let parity = (0..FEC_PARITY_SHARDS)
-            .map(|index| frame.parity_shards.get(&(group.start, index as u8)))
-            .collect::<Vec<_>>();
-        if missing.len() > parity.iter().filter(|shard| shard.is_some()).count() {
-            continue;
-        }
-        let Some(last_data_len) = parity
-            .iter()
-            .flatten()
-            .map(|shard| shard.last_data_len)
-            .next()
-        else {
-            continue;
-        };
-        if parity
-            .iter()
-            .flatten()
-            .any(|shard| shard.last_data_len != last_data_len)
-        {
-            continue;
-        }
-
-        let rebuilt = {
-            let data = group
-                .clone()
-                .map(|index| frame.fragments.get(&index).map(Bytes::as_ref))
-                .collect::<Vec<_>>();
-            let parity = parity
-                .iter()
-                .map(|shard| shard.map(|shard| shard.bytes.as_ref()))
-                .collect::<Vec<_>>();
-            reconstruct_fec_group(&data, &parity, usize::from(last_data_len))
-        };
-        let Some(rebuilt) = rebuilt else {
-            continue;
-        };
-        for (offset, shard) in rebuilt.into_iter().enumerate() {
-            let index = group.start + offset as u16;
-            if !missing.contains(&index) {
-                continue;
-            }
-            let Some(shard) = shard else {
-                continue;
-            };
-            frame.fragments.insert(index, Bytes::from(shard));
-            frame.recovered_fragments.insert(index);
-            recovered_total += 1;
-        }
-    }
-    if recovered_total > 0 {
-        tracing::debug!(
-            recovered_fragments = recovered_total,
-            frame_fragments = frame.fragment_count,
-            "reconstructed video fragments from FEC parity"
-        );
-    }
-    recovered_total
 }
 
 #[cfg(test)]

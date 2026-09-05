@@ -22,8 +22,8 @@ use gpui_kit::*;
 
 use crate::model::VirtualCameraStatus;
 use crate::prefs::DesktopPreferences;
-use crate::preview_pipeline::PreviewPipeline;
-use crate::receiver_runtime::{ReceiverRuntime, ReceiverSnapshot};
+use crate::preview_pipeline::{PreviewPipeline, PreviewViewportTracker};
+use crate::receiver_runtime::{ReceiverRuntimeHandle, ReceiverSnapshot};
 use crate::video_surface::VideoSurface;
 
 use pages::DiagnosticsExportState;
@@ -90,7 +90,7 @@ impl DesktopSection {
 }
 
 struct PicooDesktopApp {
-    runtime: ReceiverRuntime,
+    runtime: ReceiverRuntimeHandle,
     prefs: DesktopPreferences,
     tray_policy: crate::tray::TrayPolicy,
     page: DesktopPage,
@@ -99,6 +99,7 @@ struct PicooDesktopApp {
     pump_started: bool,
     last_presented_snapshot: ReceiverSnapshot,
     preview_pipeline: PreviewPipeline,
+    preview_viewport: PreviewViewportTracker,
     video_surface: VideoSurface,
     display_name_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,

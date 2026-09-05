@@ -94,6 +94,9 @@ impl Default for ReceiverIdentity {
 pub struct IngressStats {
     pub access_units: u64,
     pub packets_received: u64,
+    /// Complete AUs discarded before reassembly because their local transport
+    /// queue age already exceeded the interactive media deadline.
+    pub receive_queue_expired_access_units: u64,
     /// Data fragments reconstructed from PCP FEC parity before AU expiry.
     pub fec_recovered_fragments: u64,
     /// Incomplete AUs for which Receiver observed at least one data fragment.

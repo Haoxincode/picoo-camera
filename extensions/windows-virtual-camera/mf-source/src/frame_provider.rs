@@ -9,11 +9,14 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use picoo_frame_hub::{waiting_placeholder, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
-use picoo_frame_hub::{
-    waiting_placeholder_for_size, SharedFrameRingConsumer, DEFAULT_MAX_FRAME_BYTES,
-};
+use picoo_frame_hub::{SharedFrameRingConsumer, DEFAULT_MAX_FRAME_BYTES};
 
 use crate::{format::nv12_len, DEFAULT_RING_NAME};
+
+mod preparation;
+use preparation::{
+    PlaceholderFrames, PreparationCounters, PreparationResources, PreparedFrameSet, PreparedFrames,
+};
 
 const LAST_FRAME_HOLD: Duration = Duration::from_millis(500);
 const GENERATION_PROBE_INTERVAL: Duration = Duration::from_millis(250);
@@ -60,6 +63,8 @@ enum SourceKey {
 struct SourceSnapshot {
     key: SourceKey,
     frame: Option<OwnedNv12Frame>,
+    output: OutputSize,
+    demand_revision: u64,
 }
 
 impl RingFrameReader {
@@ -165,15 +170,19 @@ impl RingFrameReader {
         FrameOrigin::Placeholder
     }
 
-    fn snapshot(&mut self) -> SourceSnapshot {
+    fn snapshot(&mut self, output: OutputSize, demand_revision: u64) -> SourceSnapshot {
         match self.refresh_source() {
             FrameOrigin::Fresh | FrameOrigin::Cached => SourceSnapshot {
                 key: SourceKey::Live(self.live_revision),
                 frame: self.last_live.clone(),
+                output,
+                demand_revision,
             },
             FrameOrigin::Placeholder => SourceSnapshot {
                 key: SourceKey::Placeholder,
                 frame: None,
+                output,
+                demand_revision,
             },
         }
     }
@@ -204,85 +213,132 @@ impl RingFrameReader {
     }
 }
 
-struct PreparedFrameSet {
-    key: SourceKey,
-    output_480: OwnedNv12Frame,
-    output_720: OwnedNv12Frame,
-    output_1080: OwnedNv12Frame,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OutputSize {
+    width: u32,
+    height: u32,
 }
 
-impl PreparedFrameSet {
-    fn placeholder() -> Self {
-        Self {
-            key: SourceKey::Placeholder,
-            output_480: placeholder_for_size(854, 480),
-            output_720: placeholder_for_size(1280, 720),
-            output_1080: placeholder_for_size(1920, 1080),
-        }
+impl OutputSize {
+    fn new(width: u32, height: u32) -> Option<Self> {
+        matches!((width, height), (854, 480) | (1280, 720) | (1920, 1080))
+            .then_some(Self { width, height })
     }
 
-    fn from_live(key: SourceKey, source: &OwnedNv12Frame) -> Self {
-        debug_assert!(matches!(key, SourceKey::Live(_)));
-        Self {
-            key,
-            output_480: prepare_for_size(source, 854, 480),
-            output_720: prepare_for_size(source, 1280, 720),
-            output_1080: prepare_for_size(source, 1920, 1080),
-        }
+    const fn bit(self) -> u8 {
+        1 << self.slot()
     }
 
-    fn output(&self, width: u32, height: u32) -> Option<OwnedNv12Frame> {
-        match (width, height) {
-            (854, 480) => Some(self.output_480.clone()),
-            (1280, 720) => Some(self.output_720.clone()),
-            (1920, 1080) => Some(self.output_1080.clone()),
-            _ => None,
+    const fn slot(self) -> usize {
+        match (self.width, self.height) {
+            (854, 480) => 0,
+            (1280, 720) => 1,
+            (1920, 1080) => 2,
+            _ => 3,
         }
     }
 }
 
-fn placeholder_for_size(width: u32, height: u32) -> OwnedNv12Frame {
-    OwnedNv12Frame {
-        width,
-        height,
-        stride: width,
-        pixels: waiting_placeholder_for_size(width, height).into(),
-    }
-}
+const OUTPUT_SIZES: [OutputSize; 3] = [
+    OutputSize {
+        width: 854,
+        height: 480,
+    },
+    OutputSize {
+        width: 1280,
+        height: 720,
+    },
+    OutputSize {
+        width: 1920,
+        height: 1080,
+    },
+];
 
-fn prepare_for_size(source: &OwnedNv12Frame, width: u32, height: u32) -> OwnedNv12Frame {
-    fit_nv12(source, width, height).unwrap_or_else(|| OwnedNv12Frame {
-        width,
-        height,
-        stride: width,
-        pixels: picoo_frame_hub::nv12_black(width, height).into(),
-    })
+#[derive(Default)]
+struct WorkerState {
+    stopped: bool,
+    active_outputs: u8,
+    demand_revision: u64,
 }
 
 #[derive(Default)]
 struct WorkerControl {
-    stopped: Mutex<bool>,
+    state: Mutex<WorkerState>,
     wake: Condvar,
 }
 
 impl WorkerControl {
-    fn wait_for_poll(&self) -> bool {
-        let stopped = self
-            .stopped
+    fn wait_until_active(&self) -> Option<(u8, u64)> {
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (stopped, _) = self
-            .wake
-            .wait_timeout_while(stopped, RING_POLL_INTERVAL, |stopped| !*stopped)
+        while !state.stopped && state.active_outputs == 0 {
+            state = self
+                .wake
+                .wait(state)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        (!state.stopped).then_some((state.active_outputs, state.demand_revision))
+    }
+
+    fn wait_for_poll(&self, demand_revision: u64) -> bool {
+        let state = self
+            .state
+            .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *stopped
+        let (state, _) = self
+            .wake
+            .wait_timeout_while(state, RING_POLL_INTERVAL, |state| {
+                !state.stopped
+                    && state.active_outputs != 0
+                    && state.demand_revision == demand_revision
+            })
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.stopped
+    }
+
+    fn set_output_active(&self, output: OutputSize, active: bool) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.stopped {
+            return false;
+        }
+        let previous = state.active_outputs;
+        if active {
+            state.active_outputs |= output.bit();
+        } else {
+            state.active_outputs &= !output.bit();
+        }
+        if state.active_outputs == previous {
+            return false;
+        }
+        state.demand_revision = state.demand_revision.wrapping_add(1).max(1);
+        self.wake.notify_all();
+        true
+    }
+
+    fn is_current_demand(&self, output: OutputSize, demand_revision: u64) -> bool {
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        !state.stopped
+            && state.active_outputs & output.bit() != 0
+            && state.demand_revision == demand_revision
     }
 
     fn stop(&self) {
         *self
-            .stopped
+            .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = WorkerState {
+            stopped: true,
+            active_outputs: 0,
+            demand_revision: 0,
+        };
         self.wake.notify_all();
     }
 }
@@ -296,9 +352,12 @@ struct WorkerHandles {
 /// two background workers; acquiring a frame only clones already prepared Arc
 /// storage under a short pointer lock (REQ-PICOO-VCAM-010).
 pub(crate) struct FrameProvider {
-    prepared: Arc<RwLock<Arc<PreparedFrameSet>>>,
-    last_delivered_live_revision: AtomicU64,
+    prepared: Arc<RwLock<PreparedFrames>>,
+    placeholders: Arc<PlaceholderFrames>,
+    last_delivered_live_revisions: [AtomicU64; 3],
     control: Arc<WorkerControl>,
+    #[cfg(test)]
+    preparation_counters: Arc<PreparationCounters>,
     workers: Mutex<Option<WorkerHandles>>,
 }
 
@@ -309,26 +368,56 @@ impl FrameProvider {
     }
 
     fn with_reader(reader: RingFrameReader) -> io::Result<Self> {
-        let placeholder = Arc::new(PreparedFrameSet::placeholder());
-        let prepared = Arc::new(RwLock::new(Arc::clone(&placeholder)));
+        let placeholders = Arc::new(PlaceholderFrames::new());
+        let prepared = Arc::new(RwLock::new(PreparedFrames::new(&placeholders)));
         let control = Arc::new(WorkerControl::default());
+        let preparation_counters = Arc::new(PreparationCounters::default());
         let (source_tx, source_rx) = mpsc::sync_channel::<SourceSnapshot>(0);
 
         let prepared_for_worker = Arc::clone(&prepared);
-        let placeholder_for_worker = Arc::clone(&placeholder);
+        let placeholders_for_worker = Arc::clone(&placeholders);
+        let control_for_preparation = Arc::clone(&control);
+        let counters_for_worker = Arc::clone(&preparation_counters);
         let output_preparation = thread::Builder::new()
             .name("picoo-vcam-output-preparation".into())
             .spawn(move || {
+                let mut resources = PreparationResources::default();
                 while let Ok(snapshot) = source_rx.recv() {
+                    if !control_for_preparation
+                        .is_current_demand(snapshot.output, snapshot.demand_revision)
+                    {
+                        continue;
+                    }
+                    if prepared_for_worker
+                        .read()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .get(snapshot.output)
+                        .key
+                        == snapshot.key
+                    {
+                        continue;
+                    }
                     let next = match (snapshot.key, snapshot.frame.as_ref()) {
                         (SourceKey::Live(_), Some(frame)) => {
-                            Arc::new(PreparedFrameSet::from_live(snapshot.key, frame))
+                            counters_for_worker.record(snapshot.output);
+                            Arc::new(PreparedFrameSet::from_live(
+                                snapshot.key,
+                                frame,
+                                snapshot.output,
+                                &mut resources,
+                            ))
                         }
-                        _ => Arc::clone(&placeholder_for_worker),
+                        _ => placeholders_for_worker.get(snapshot.output),
                     };
-                    *prepared_for_worker
+                    if !control_for_preparation
+                        .is_current_demand(snapshot.output, snapshot.demand_revision)
+                    {
+                        continue;
+                    }
+                    prepared_for_worker
                         .write()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = next;
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .set(snapshot.output, next);
                 }
             })?;
 
@@ -347,8 +436,11 @@ impl FrameProvider {
 
         Ok(Self {
             prepared,
-            last_delivered_live_revision: AtomicU64::new(0),
+            placeholders,
+            last_delivered_live_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
             control,
+            #[cfg(test)]
+            preparation_counters,
             workers: Mutex::new(Some(WorkerHandles {
                 ring_reader,
                 output_preparation,
@@ -356,23 +448,36 @@ impl FrameProvider {
         })
     }
 
+    pub(crate) fn set_output_active(&self, width: u32, height: u32, active: bool) {
+        let Some(output) = OutputSize::new(width, height) else {
+            return;
+        };
+        if self.control.set_output_active(output, active) {
+            self.last_delivered_live_revisions[output.slot()].store(0, Ordering::Release);
+            if active {
+                self.prepared
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .set(output, self.placeholders.get(output));
+            }
+        }
+    }
+
     pub(crate) fn acquire_for_output(&self, width: u32, height: u32) -> Option<AcquiredNv12Frame> {
-        let prepared = Arc::clone(
-            &self
-                .prepared
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        let requested = OutputSize::new(width, height)?;
+        let prepared = self
+            .prepared
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(requested);
         let frame = prepared.output(width, height)?;
         let origin = match prepared.key {
             SourceKey::Placeholder => {
-                self.last_delivered_live_revision
-                    .store(0, Ordering::Release);
+                self.last_delivered_live_revisions[requested.slot()].store(0, Ordering::Release);
                 FrameOrigin::Placeholder
             }
             SourceKey::Live(revision) => {
-                let previous = self
-                    .last_delivered_live_revision
+                let previous = self.last_delivered_live_revisions[requested.slot()]
                     .swap(revision, Ordering::AcqRel);
                 if previous == revision {
                     FrameOrigin::Cached
@@ -398,6 +503,17 @@ impl FrameProvider {
     }
 
     #[cfg(test)]
+    fn preparation_counts(&self) -> (u64, u64, u64) {
+        (
+            self.preparation_counters.output_480.load(Ordering::Relaxed),
+            self.preparation_counters.output_720.load(Ordering::Relaxed),
+            self.preparation_counters
+                .output_1080
+                .load(Ordering::Relaxed),
+        )
+    }
+
+    #[cfg(test)]
     pub(crate) fn with_ring_name(ring_name: String) -> io::Result<Self> {
         Self::with_reader(RingFrameReader::with_ring_name(ring_name))
     }
@@ -414,315 +530,28 @@ fn run_ring_reader(
     source_tx: mpsc::SyncSender<SourceSnapshot>,
     control: &WorkerControl,
 ) {
-    let mut last_sent = SourceKey::Placeholder;
-    loop {
-        let snapshot = reader.snapshot();
-        if snapshot.key != last_sent {
-            let key = snapshot.key;
-            match source_tx.try_send(snapshot) {
-                Ok(()) => last_sent = key,
-                Err(TrySendError::Full(_)) => {}
-                Err(TrySendError::Disconnected(_)) => break,
+    let mut last_sent: [Option<(SourceKey, u64)>; 3] = [None; 3];
+    while let Some((active_outputs, demand_revision)) = control.wait_until_active() {
+        for output in OUTPUT_SIZES {
+            if active_outputs & output.bit() == 0 {
+                continue;
+            }
+            let snapshot = reader.snapshot(output, demand_revision);
+            let request_key = (snapshot.key, demand_revision);
+            let slot = output.slot();
+            if Some(request_key) != last_sent[slot] {
+                match source_tx.try_send(snapshot) {
+                    Ok(()) => last_sent[slot] = Some(request_key),
+                    Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Disconnected(_)) => return,
+                }
             }
         }
-        if control.wait_for_poll() {
+        if control.wait_for_poll(demand_revision) {
             break;
         }
     }
 }
 
-fn fit_nv12(
-    frame: &OwnedNv12Frame,
-    output_width: u32,
-    output_height: u32,
-) -> Option<OwnedNv12Frame> {
-    if frame.width == output_width && frame.height == output_height && frame.stride == frame.width {
-        return Some(frame.clone());
-    }
-    if frame.width < 2
-        || frame.height < 2
-        || output_width < 2
-        || output_height < 2
-        || !frame.width.is_multiple_of(2)
-        || !frame.height.is_multiple_of(2)
-        || !output_width.is_multiple_of(2)
-        || !output_height.is_multiple_of(2)
-        || frame.stride < frame.width
-        || frame.pixels.len() < (frame.stride as usize * frame.height as usize * 3 / 2)
-    {
-        return None;
-    }
-
-    let source_wider = u64::from(frame.width) * u64::from(output_height)
-        > u64::from(output_width) * u64::from(frame.height);
-    let (fit_width, fit_height) = if source_wider {
-        let height =
-            (u64::from(output_width) * u64::from(frame.height) / u64::from(frame.width)) as u32;
-        (output_width, height.max(2) & !1)
-    } else {
-        let width =
-            (u64::from(output_height) * u64::from(frame.width) / u64::from(frame.height)) as u32;
-        (width.max(2) & !1, output_height)
-    };
-    let offset_x = ((output_width - fit_width) / 2) & !1;
-    let offset_y = ((output_height - fit_height) / 2) & !1;
-    let mut pixels = picoo_frame_hub::nv12_black(output_width, output_height);
-    let src_stride = frame.stride as usize;
-    let dst_stride = output_width as usize;
-    let src_y_len = src_stride * frame.height as usize;
-    let dst_y_len = dst_stride * output_height as usize;
-
-    for dy in 0..fit_height {
-        let sy = (u64::from(dy) * u64::from(frame.height) / u64::from(fit_height)) as usize;
-        for dx in 0..fit_width {
-            let sx = (u64::from(dx) * u64::from(frame.width) / u64::from(fit_width)) as usize;
-            let destination = (offset_y + dy) as usize * dst_stride + (offset_x + dx) as usize;
-            pixels[destination] = frame.pixels[sy * src_stride + sx];
-        }
-    }
-
-    for dy in (0..fit_height).step_by(2) {
-        let sy = (u64::from(dy) * u64::from(frame.height) / u64::from(fit_height)) as usize & !1;
-        for dx in (0..fit_width).step_by(2) {
-            let sx = (u64::from(dx) * u64::from(frame.width) / u64::from(fit_width)) as usize & !1;
-            let source = src_y_len + (sy / 2) * src_stride + sx;
-            let destination =
-                dst_y_len + ((offset_y + dy) / 2) as usize * dst_stride + (offset_x + dx) as usize;
-            pixels[destination] = frame.pixels[source];
-            pixels[destination + 1] = frame.pixels[source + 1];
-        }
-    }
-
-    Some(OwnedNv12Frame {
-        width: output_width,
-        height: output_height,
-        stride: output_width,
-        pixels: pixels.into(),
-    })
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use picoo_frame_hub::SharedFrameRingProducer;
-
-    fn test_ring_name() -> String {
-        format!(
-            "frame-provider-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("clock")
-                .as_nanos()
-        )
-    }
-
-    #[test]
-    fn starts_with_shared_branded_placeholder() {
-        let provider =
-            FrameProvider::with_ring_name(test_ring_name()).expect("isolated frame provider");
-        let acquired = provider
-            .acquire_for_output(1280, 720)
-            .expect("supported output");
-        let frame = acquired.frame;
-        assert_eq!(acquired.origin, FrameOrigin::Placeholder);
-        assert_eq!((frame.width, frame.height), (1280, 720));
-        assert_eq!(
-            frame.pixels.as_ref(),
-            waiting_placeholder_for_size(1280, 720).as_slice()
-        );
-
-        let negotiated = provider
-            .acquire_for_output(1920, 1080)
-            .expect("supported output");
-        assert_eq!(negotiated.origin, FrameOrigin::Placeholder);
-        assert_eq!(
-            (negotiated.frame.width, negotiated.frame.height),
-            (1920, 1080)
-        );
-        assert_eq!(
-            negotiated.frame.pixels.as_ref(),
-            waiting_placeholder_for_size(1920, 1080).as_slice()
-        );
-        let cached_pixels = negotiated.frame.pixels.as_ptr();
-        let repeated = provider
-            .acquire_for_output(1920, 1080)
-            .expect("supported output");
-        assert_eq!(repeated.origin, FrameOrigin::Placeholder);
-        assert_eq!(
-            repeated.frame.pixels.as_ptr(),
-            cached_pixels,
-            "cache hits must share immutable pixels instead of cloning the frame"
-        );
-        assert!(provider.acquire_for_output(640, 480).is_none());
-    }
-
-    #[test]
-    fn reconnects_to_new_mapping_generation_even_when_sequence_restarts() {
-        let ring_name = test_ring_name();
-        let frame_len = nv12_len(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT).expect("NV12 size");
-        let first_pixels = vec![1; frame_len];
-        let second_pixels = vec![2; frame_len];
-        let mut first_producer =
-            SharedFrameRingProducer::create(&ring_name, DEFAULT_MAX_FRAME_BYTES)
-                .expect("first producer");
-        first_producer
-            .publish_nv12(
-                PLACEHOLDER_WIDTH,
-                PLACEHOLDER_HEIGHT,
-                PLACEHOLDER_WIDTH,
-                0,
-                1,
-                &first_pixels,
-            )
-            .expect("first frame");
-        let mut provider = RingFrameReader::with_ring_name(ring_name.clone());
-        let acquired = provider.acquire();
-        assert_eq!(acquired.origin, FrameOrigin::Fresh);
-        assert_eq!(acquired.frame.pixels.as_ref(), first_pixels.as_slice());
-
-        provider.last_live_at = Some(Instant::now() - LAST_FRAME_HOLD);
-        let acquired = provider.acquire();
-        assert_eq!(acquired.origin, FrameOrigin::Cached);
-        assert_eq!(
-            acquired.frame.pixels.as_ref(),
-            first_pixels.as_slice(),
-            "a live producer with an unchanged sequence is not disconnected"
-        );
-        provider.last_live_at = Some(Instant::now());
-
-        drop(first_producer);
-        provider.next_generation_probe = Instant::now();
-        assert_eq!(
-            provider.acquire().frame.pixels.as_ref(),
-            first_pixels.as_slice(),
-            "brief generation gap keeps the last complete frame"
-        );
-        provider.last_live_at = Some(Instant::now() - LAST_FRAME_HOLD);
-        assert_eq!(
-            provider.acquire().frame.pixels.as_ref(),
-            waiting_placeholder().as_slice(),
-            "an extended generation gap falls back to the placeholder"
-        );
-
-        let mut second_producer =
-            SharedFrameRingProducer::create(&ring_name, DEFAULT_MAX_FRAME_BYTES)
-                .expect("second producer");
-        second_producer
-            .publish_nv12(
-                PLACEHOLDER_WIDTH,
-                PLACEHOLDER_HEIGHT,
-                PLACEHOLDER_WIDTH,
-                0,
-                2,
-                &second_pixels,
-            )
-            .expect("second generation frame");
-
-        provider.next_generation_probe = Instant::now();
-        let acquired = provider.acquire();
-        assert_eq!(acquired.origin, FrameOrigin::Fresh);
-        assert_eq!(acquired.frame.pixels.as_ref(), second_pixels.as_slice());
-
-        drop((provider, second_producer));
-        let _ = std::fs::remove_file(SharedFrameRingProducer::flink_path(&ring_name));
-    }
-
-    #[test]
-    fn background_workers_publish_latest_prepared_frames() {
-        let ring_name = test_ring_name();
-        let frame_len = nv12_len(1280, 720).expect("NV12 size");
-        let pixels = vec![73; frame_len];
-        let mut producer =
-            SharedFrameRingProducer::create(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("producer");
-        producer
-            .publish_nv12(1280, 720, 1280, 0, 1, &pixels)
-            .expect("publish");
-        let provider = FrameProvider::with_ring_name(ring_name.clone()).expect("provider");
-
-        let deadline = Instant::now() + Duration::from_secs(2);
-        let prepared = loop {
-            let acquired = provider
-                .acquire_for_output(1280, 720)
-                .expect("supported output");
-            if acquired.frame.pixels.as_ref() == pixels.as_slice() {
-                assert_eq!(acquired.origin, FrameOrigin::Fresh);
-                break acquired.frame;
-            }
-            assert_eq!(acquired.origin, FrameOrigin::Placeholder);
-            assert!(
-                Instant::now() < deadline,
-                "workers did not prepare live frame"
-            );
-            thread::sleep(Duration::from_millis(5));
-        };
-
-        let repeated = provider
-            .acquire_for_output(1280, 720)
-            .expect("supported output");
-        assert_eq!(repeated.origin, FrameOrigin::Cached);
-        assert_eq!(
-            repeated.frame.pixels.as_ptr(),
-            prepared.pixels.as_ptr(),
-            "RequestSample cache hits must only clone the prepared Arc"
-        );
-        assert_eq!(
-            provider
-                .acquire_for_output(854, 480)
-                .expect("480p")
-                .frame
-                .pixels
-                .len(),
-            nv12_len(854, 480).expect("480p size")
-        );
-        assert_eq!(
-            provider
-                .acquire_for_output(1920, 1080)
-                .expect("1080p")
-                .frame
-                .pixels
-                .len(),
-            nv12_len(1920, 1080).expect("1080p size")
-        );
-
-        provider.shutdown();
-        drop(producer);
-        let _ = std::fs::remove_file(SharedFrameRingProducer::flink_path(&ring_name));
-    }
-
-    #[test]
-    fn worker_shutdown_is_idempotent_and_keeps_last_prepared_frame_readable() {
-        let provider =
-            FrameProvider::with_ring_name(test_ring_name()).expect("isolated frame provider");
-        let before = provider
-            .acquire_for_output(1280, 720)
-            .expect("supported output");
-
-        provider.shutdown();
-        provider.shutdown();
-
-        let after = provider
-            .acquire_for_output(1280, 720)
-            .expect("prepared cache remains valid");
-        assert_eq!(after.origin, FrameOrigin::Placeholder);
-        assert_eq!(after.frame.pixels.as_ptr(), before.frame.pixels.as_ptr());
-    }
-
-    #[test]
-    fn negotiated_output_shape_is_stable_and_letterboxes_input() {
-        let source = OwnedNv12Frame {
-            width: 4,
-            height: 4,
-            stride: 4,
-            pixels: {
-                let mut pixels = vec![80; nv12_len(4, 4).expect("source size")];
-                pixels[16..].fill(128);
-                pixels.into()
-            },
-        };
-        let fitted = fit_nv12(&source, 8, 4).expect("fit");
-        assert_eq!((fitted.width, fitted.height, fitted.stride), (8, 4, 8));
-        assert_eq!(fitted.pixels[0], 0, "left pillar is black");
-        assert_eq!(fitted.pixels[2], 80, "source is centered");
-        assert_eq!(fitted.pixels[7], 0, "right pillar is black");
-    }
-}
+mod tests;

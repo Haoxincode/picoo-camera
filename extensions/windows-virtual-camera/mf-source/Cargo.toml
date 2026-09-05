@@ -10,6 +10,7 @@ name = "picoo_virtual_camera_source"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+fast_image_resize.workspace = true
 picoo-frame-hub.workspace = true
 
 [target.'cfg(windows)'.dependencies]

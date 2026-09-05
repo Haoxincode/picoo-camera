@@ -1,3 +1,4 @@
+import Accelerate
 import CoreVideo
 import Darwin
 import Foundation
@@ -130,8 +131,6 @@ final class SharedRingFrame: @unchecked Sendable {
               !yOverflow,
               !uvOverflow,
               !totalOverflow,
-              CVPixelBufferGetWidth(pixelBuffer) == width,
-              CVPixelBufferGetHeight(pixelBuffer) == height,
               CVPixelBufferGetPixelFormatType(pixelBuffer)
                 == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
               CVPixelBufferGetPlaneCount(pixelBuffer) == 2,
@@ -152,26 +151,75 @@ final class SharedRingFrame: @unchecked Sendable {
         }
         let yDestinationStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
         let uvDestinationStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1)
-        guard yDestinationStride >= width, uvDestinationStride >= width else {
+        let targetWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let targetHeight = CVPixelBufferGetHeight(pixelBuffer)
+        guard targetWidth > 0,
+              targetHeight > 0,
+              targetWidth.isMultiple(of: 2),
+              targetHeight.isMultiple(of: 2),
+              yDestinationStride >= targetWidth,
+              uvDestinationStride >= targetWidth
+        else {
             return false
         }
 
         let source = reader.base.advanced(by: Int(lease.pixel_offset))
-        for row in 0..<height {
-            memcpy(
-                yDestination.advanced(by: row * yDestinationStride),
-                source.advanced(by: row * stride),
-                width
-            )
-        }
         let sourceUV = source.advanced(by: stride * height)
-        for row in 0..<(height / 2) {
-            memcpy(
-                uvDestination.advanced(by: row * uvDestinationStride),
-                sourceUV.advanced(by: row * stride),
-                width
-            )
+        if targetWidth == width, targetHeight == height {
+            for row in 0..<height {
+                memcpy(
+                    yDestination.advanced(by: row * yDestinationStride),
+                    source.advanced(by: row * stride),
+                    width
+                )
+            }
+            for row in 0..<(height / 2) {
+                memcpy(
+                    uvDestination.advanced(by: row * uvDestinationStride),
+                    sourceUV.advanced(by: row * stride),
+                    width
+                )
+            }
+            return true
         }
-        return true
+
+        memset(yDestination, 16, yDestinationStride * targetHeight)
+        memset(uvDestination, 128, uvDestinationStride * (targetHeight / 2))
+        let scale = min(
+            Double(targetWidth) / Double(width),
+            Double(targetHeight) / Double(height)
+        )
+        let fittedWidth = max(2, Int(Double(width) * scale) & ~1)
+        let fittedHeight = max(2, Int(Double(height) * scale) & ~1)
+        let x = ((targetWidth - fittedWidth) / 2) & ~1
+        let y = ((targetHeight - fittedHeight) / 2) & ~1
+
+        var sourceY = vImage_Buffer(
+            data: source,
+            height: vImagePixelCount(height),
+            width: vImagePixelCount(width),
+            rowBytes: stride
+        )
+        var destinationY = vImage_Buffer(
+            data: yDestination.advanced(by: y * yDestinationStride + x),
+            height: vImagePixelCount(fittedHeight),
+            width: vImagePixelCount(fittedWidth),
+            rowBytes: yDestinationStride
+        )
+        var sourceCbCr = vImage_Buffer(
+            data: sourceUV,
+            height: vImagePixelCount(height / 2),
+            width: vImagePixelCount(width / 2),
+            rowBytes: stride
+        )
+        var destinationCbCr = vImage_Buffer(
+            data: uvDestination.advanced(by: (y / 2) * uvDestinationStride + x),
+            height: vImagePixelCount(fittedHeight / 2),
+            width: vImagePixelCount(fittedWidth / 2),
+            rowBytes: uvDestinationStride
+        )
+        let flags = vImage_Flags(kvImageHighQualityResampling)
+        return vImageScale_Planar8(&sourceY, &destinationY, nil, flags) == kvImageNoError
+            && vImageScale_CbCr8(&sourceCbCr, &destinationCbCr, nil, flags) == kvImageNoError
     }
 }

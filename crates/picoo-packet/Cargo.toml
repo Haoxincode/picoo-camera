@@ -13,3 +13,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 proptest = "=1.6.0"
+
+[[bench]]
+name = "reassembly_fec"
+harness = false

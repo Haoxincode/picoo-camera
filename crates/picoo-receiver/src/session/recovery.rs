@@ -68,6 +68,13 @@ impl DecoderRecovery {
             })
     }
 
+    pub(crate) fn next_request_at(&self, now: Instant) -> Option<Instant> {
+        self.awaiting_refresh.then(|| {
+            self.last_request_at
+                .map_or(now, |last| last + KEYFRAME_REQUEST_MIN_INTERVAL)
+        })
+    }
+
     fn note_request(&mut self, now: Instant) {
         self.last_request_at = Some(now);
     }

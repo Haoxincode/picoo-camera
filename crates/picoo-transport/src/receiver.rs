@@ -13,6 +13,7 @@ use crate::{
 
 pub struct QuicReceiverTransport {
     actor: Option<TransportActor>,
+    event_wake: crate::TransportEventWake,
 }
 
 impl Default for QuicReceiverTransport {
@@ -23,7 +24,18 @@ impl Default for QuicReceiverTransport {
 
 impl QuicReceiverTransport {
     pub fn new() -> Self {
-        Self { actor: None }
+        Self::with_event_wake(crate::TransportEventWake::default())
+    }
+
+    pub fn with_event_wake(event_wake: crate::TransportEventWake) -> Self {
+        Self {
+            actor: None,
+            event_wake,
+        }
+    }
+
+    pub fn event_wake(&self) -> crate::TransportEventWake {
+        self.event_wake.clone()
     }
 
     pub fn bind_addr(&self) -> Option<SocketAddr> {
@@ -51,7 +63,7 @@ impl QuicReceiverTransport {
     pub fn bind(&mut self, endpoint: Endpoint) -> Result<SocketAddr, TransportError> {
         let addr = SocketAddr::from_str(&format!("{}:{}", endpoint.host, endpoint.port))
             .map_err(|error| TransportError::ConnectFailed(error.to_string()))?;
-        let actor = TransportActor::server(addr)
+        let actor = TransportActor::server(addr, self.event_wake.clone())
             .map_err(|error| TransportError::ConnectFailed(error.to_string()))?;
         let local_addr = actor
             .local_addr()

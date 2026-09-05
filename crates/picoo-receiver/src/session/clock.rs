@@ -53,6 +53,10 @@ impl Default for ReceiverClockSync {
 }
 
 impl ReceiverClockSync {
+    pub(super) fn next_sync_at(&self) -> Option<Instant> {
+        self.next_sync_at
+    }
+
     fn reset(&mut self, stream_epoch: u32) {
         self.mapper.reset(u64::from(stream_epoch));
         self.pending.clear();

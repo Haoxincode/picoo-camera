@@ -76,6 +76,26 @@ object PicooNative {
         encoderHeight: Int,
     ): Int
 
+    /**
+     * Atomically validates one native encoder generation, optionally stages its StreamConfig,
+     * packetizes/flushes the AU, pumps control, and returns result flags.
+     */
+    external fun submitEncoderAccessUnit(
+        handle: Long,
+        data: ByteArray,
+        keyframe: Boolean,
+        ptsUs: Long,
+        encodedAtUs: Long,
+        streamEpoch: Int,
+        encoderGeneration: Long,
+        encoderWidth: Int,
+        encoderHeight: Int,
+        configureStream: Boolean,
+        mirrored: Boolean,
+        sps: ByteArray?,
+        pps: ByteArray?,
+    ): Int
+
     /** [accessUnits, packets, bytes, sentDatagrams, pendingPackets] */
     external fun getSenderStats(handle: Long): LongArray
 

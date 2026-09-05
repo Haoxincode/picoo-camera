@@ -28,6 +28,7 @@ pub(super) struct StatsReporter {
     pub(super) last_fec_recovered_fragments: u64,
     pub(super) window_decoder_drops: u64,
     pub(super) window_decoded_frames: u64,
+    pub(super) window_max_receive_queue_age_ms: f64,
 }
 
 impl StatsReporter {
@@ -41,6 +42,7 @@ impl StatsReporter {
             last_fec_recovered_fragments: 0,
             window_decoder_drops: 0,
             window_decoded_frames: 0,
+            window_max_receive_queue_age_ms: 0.0,
         }
     }
 
@@ -54,6 +56,12 @@ impl StatsReporter {
 
     pub(super) fn record_decoded_frame(&mut self) {
         self.window_decoded_frames += 1;
+    }
+
+    pub(super) fn record_receive_queue_age(&mut self, age: Duration) {
+        self.window_max_receive_queue_age_ms = self
+            .window_max_receive_queue_age_ms
+            .max(age.as_secs_f64() * 1_000.0);
     }
 
     pub(super) fn due(&self) -> bool {

@@ -117,13 +117,15 @@ Windows VCam 使用以下边界：
 ```text
 Shared Ring → RingReaderWorker → Arc<SourceFrame>
             → OutputPreparationWorker
-            → Arc<Prepared480/720/1080>
+            → Arc<Prepared(active output formats)>
             → RequestSample → 一次最终 MF buffer copy
 ```
 
 `RequestSample` 不打开 Ring、不检测 generation、不 resize/letterbox、不生成 placeholder、不深拷贝
 缓存帧，也不等待长期 mutex。CPU resize 只在新源帧到达时执行，并优先采用维护活跃、许可兼容、
 目标平台可构建的 SIMD 图像库；只有 profile 证明必要时才评审 GPU 路径。
+只有处于 Running 的协商格式构成准备需求；Stop 后 reader 与 resize 必须暂停。多消费者只能把各自
+正在使用的格式加入集合，不能恢复为每帧固定生成全部三档。
 
 VCam 持有独立 `SampleClock`。sample time 单调、duration 固定；请求过快时复用缓存内容但按输出
 节拍推进，请求过慢时跳过旧输出时刻而不补积压。最终策略必须由 Frame Server、Teams、Zoom、
@@ -131,6 +133,14 @@ OBS 和浏览器实测确认。
 
 ### 其余可观测性能边界
 
+- Quinn 在读到每批首个 Datagram 时记录 Receiver 本地单调时间。该时间贯穿 TransportEvent 与
+  Reassembly，使入口队列等待包含在同一媒体截止线内；超龄批次按完整 AU 建立 terminal boundary，
+  并复用参考链恢复，容量上界不得冒充时间上界。
+- GPUI 只以命令和不可变快照访问独占 Receiver 的线程；网络、重组、Decoder completion、deadline
+  共用 revision wake。16 ms UI timer 只负责展示，不能驱动媒体正确性或发布节奏。
+- Preview demand 由 Live 视频元素最近实际绘制的物理尺寸和页面可见性决定，目标 30 FPS；隐藏、
+  设置页或非 Live 状态不准备像素，恢复后只提交 LatestFrameStore 当前帧。缩小预览必须先缩 NV12
+  双平面再做目标尺寸色彩转换。
 - Receiver 无旋转/镜像时直接转移 Decoder buffer 所有权；需要变换时合并整帧遍历，避免
   `rotation → mirror → copy → ring copy` 的连续全帧扫描。
 - macOS Preview 不允许保留 `NV12 BT.709 limited → BGRA → NV12 BT.601 full` 双转换。当前上游 GPUI
@@ -141,8 +151,14 @@ OBS 和浏览器实测确认。
 - Sender 码流侧在同步分包期间直接借用原生 AU，以可复用的 fragment offset/length descriptor、
   预编码 Datagram 和 buffer reuse 减少复制与小对象；最终 Datagram 必须在调用返回前完成自持有。
   其优先级低于解码后 NV12 的全帧复制。
+- Android MediaCodec callback 只复制有效压缩字节、释放 codec buffer 并提交有界 GOP-aware handoff。
+  单一 Sender media worker 执行 generation/transaction 校验、StreamConfig、分包、flush、pump 与 IDR
+  消费；一次原子 JNI 调用只取得一次 Session mutex。handoff 同时限制 AU 数、字节和 250 ms 帧龄。
 - FEC 必须按观测损伤自适应：健康链路可为 0 parity，轻微损伤 1 parity，burst loss 2 parity；
   IDR/重要参考帧允许比 discardable delta 更强保护。
+- Reassembly 在 PartialFrame 建立平衡分组索引和组内位图，每个数据片或 parity 只检查受影响组；
+  Sender 只计算实际发送的 parity，并复用 padded shard scratch。轻量 parity 0 必须与强保护 parity 0
+  保持逐字节 wire 一致。
 - Android/iOS Session 正常运行由事件/wakeup 驱动；250/500 ms polling 只保留 timeout/stats 兜底。
 - Network health 使用 episode 与进入/恢复滞回，不把单个统计窗口覆盖 Streaming 状态。
 - 端到端延迟只有在 sender monotonic timestamp、ping/pong 与按 generation 重置的 affine clock
@@ -218,8 +234,11 @@ COM/Objective-C API 仍由平台 contract/stress 测试验证，不能用 Miri �
 
 ## 相关 Requirements
 
-- `REQ-PICOO-SESSION-011..014`
-- `REQ-PICOO-MEDIA-016..019`
+- `REQ-PICOO-SESSION-011..015`
+- `REQ-PICOO-TRANSPORT-011`
+- `REQ-PICOO-PROTOCOL-010`
+- `REQ-PICOO-MEDIA-005 / 016..021`
 - `REQ-PICOO-FRAME-008..010`
-- `REQ-PICOO-VCAM-010..012`
+- `REQ-PICOO-VCAM-010..013`
+- `REQ-PICOO-UI-004`
 - `REQ-PICOO-STACK-009`

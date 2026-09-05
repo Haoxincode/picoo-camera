@@ -6,6 +6,13 @@ import IOKit.audio
 import os
 
 private let frameRate: Int32 = 30
+private let ringIdentityProbeIntervalNanoseconds: UInt64 = NSEC_PER_SEC
+
+private struct PreparedFrameKey: Equatable {
+    let ringGeneration: UInt64
+    let sequence: UInt64
+    let formatIndex: Int
+}
 
 private struct OutputFormat {
     let width: Int
@@ -26,7 +33,11 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
     private var timer: DispatchSourceTimer?
     private var streamingClients: UInt32 = 0
     private var ringReader: SharedRingReader?
+    private var ringGeneration: UInt64 = 0
+    private var lastRingIdentityProbeAt: UInt64 = 0
     private var lastSequence: UInt64 = 0
+    private var preparedFrameKey: PreparedFrameKey?
+    private var preparedPixelBuffer: CVPixelBuffer?
     private let outputFormats: [OutputFormat]
     private var streamSource: PicooCameraStreamSource!
 
@@ -102,6 +113,8 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             timer?.cancel()
             timer = nil
             ringReader = nil
+            preparedFrameKey = nil
+            preparedPixelBuffer = nil
             lastSequence = 0
         }
     }
@@ -111,28 +124,62 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
         guard outputFormats.indices.contains(formatIndex) else { return }
         let format = outputFormats[formatIndex]
 
-        var pixelBuffer: CVPixelBuffer?
-        guard CVPixelBufferPoolCreatePixelBuffer(
-            kCFAllocatorDefault,
-            format.pool,
-            &pixelBuffer
-        ) == kCVReturnSuccess, let pixelBuffer
-        else {
-            Logger.extension.error("Unable to allocate output pixel buffer")
-            return
-        }
-
-        if ringReader?.stillMapsCurrentFile() == false {
-            ringReader = nil
-            lastSequence = 0
+        let now = DispatchTime.now().uptimeNanoseconds
+        if ringReader != nil,
+           now &- lastRingIdentityProbeAt >= ringIdentityProbeIntervalNanoseconds
+        {
+            lastRingIdentityProbeAt = now
+            if ringReader?.stillMapsCurrentFile() == false {
+                resetRingReader()
+            }
         }
         if ringReader == nil {
-            ringReader = try? SharedRingReader.openAppGroupRing()
+            if let opened = try? SharedRingReader.openAppGroupRing() {
+                ringReader = opened
+                ringGeneration &+= 1
+                lastRingIdentityProbeAt = now
+            }
         }
         let frame = ringReader?.acquireLatestFrame()
-        let copied = frame?.copyNV12(to: pixelBuffer) == true
-        if !copied {
-            Self.fillBlack(pixelBuffer)
+        if frame == nil, ringReader?.stillMapsCurrentFile() == false {
+            resetRingReader()
+        }
+
+        let key = frame.map {
+            PreparedFrameKey(
+                ringGeneration: ringGeneration,
+                sequence: $0.sequence,
+                formatIndex: formatIndex
+            )
+        }
+        let pixelBuffer: CVPixelBuffer
+        if key != nil, key == preparedFrameKey, let cached = preparedPixelBuffer {
+            pixelBuffer = cached
+        } else if frame == nil,
+                  preparedFrameKey?.ringGeneration == ringGeneration,
+                  preparedFrameKey?.formatIndex == formatIndex,
+                  let cached = preparedPixelBuffer
+        {
+            // Keep emitting fresh sample timestamps without recopying an
+            // unchanged source image while the ring briefly has no readable slot.
+            pixelBuffer = cached
+        } else {
+            var allocated: CVPixelBuffer?
+            guard CVPixelBufferPoolCreatePixelBuffer(
+                kCFAllocatorDefault,
+                format.pool,
+                &allocated
+            ) == kCVReturnSuccess, let allocated
+            else {
+                Logger.extension.error("Unable to allocate output pixel buffer")
+                return
+            }
+            if frame?.copyNV12(to: allocated) != true {
+                Self.fillBlack(allocated)
+            }
+            pixelBuffer = allocated
+            preparedFrameKey = key
+            preparedPixelBuffer = allocated
         }
 
         let presentationTime = CMClockGetTime(CMClockGetHostTimeClock())
@@ -173,6 +220,14 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
                 presentationTime.seconds * Double(NSEC_PER_SEC)
             )
         )
+    }
+
+    private func resetRingReader() {
+        ringReader = nil
+        preparedFrameKey = nil
+        preparedPixelBuffer = nil
+        lastSequence = 0
+        lastRingIdentityProbeAt = 0
     }
 
     private static func makeOutputFormat(width: Int, height: Int) throws -> OutputFormat {

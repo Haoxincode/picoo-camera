@@ -23,12 +23,18 @@ use windows::Win32::Media::MediaFoundation::{
     MF_E_TRANSFORM_NEED_MORE_INPUT, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
     MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
+    MF_SA_D3D11_AWARE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 
 use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
+
+mod nv12;
+#[cfg(test)]
+use nv12::normalize_contiguous_nv12;
+use nv12::normalize_contiguous_nv12_slice;
 
 const DEFAULT_WIDTH: u32 = 1280;
 const DEFAULT_HEIGHT: u32 = 720;
@@ -110,10 +116,24 @@ impl MfH264Decoder {
             unsafe { CoCreateInstance(&CMSH264DecoderMFT, None, CLSCTX_INPROC_SERVER) }
                 .map_err(|e| DecodeError::Platform(format!("CoCreateInstance H264 MFT: {e}")))?;
         unsafe {
-            transform
+            let attributes = transform
                 .GetAttributes()
-                .and_then(|attributes| attributes.SetUINT32(&MF_LOW_LATENCY, 1))
+                .map_err(|e| DecodeError::Platform(format!("read MF attributes: {e}")))?;
+            attributes
+                .SetUINT32(&MF_LOW_LATENCY, 1)
                 .map_err(|e| DecodeError::Platform(format!("enable MF low latency: {e}")))?;
+            let d3d11_aware = attributes.GetUINT32(&MF_SA_D3D11_AWARE).unwrap_or(0) != 0;
+            tracing::info!(
+                d3d11_aware,
+                d3d_manager_attached = false,
+                output_storage = "cpu-nv12",
+                "Media Foundation decoder capability"
+            );
+            if d3d11_aware {
+                tracing::warn!(
+                    "MF decoder advertises D3D11 awareness but Picoo has no device manager attached; hardware acceleration is not claimed"
+                );
+            }
         }
 
         Ok(Self {
@@ -426,23 +446,54 @@ unsafe fn output_sample_for_transform(
     Ok(Some(sample))
 }
 
-unsafe fn copy_buffer_to_bytes(buffer: &IMFMediaBuffer) -> Result<Vec<u8>, DecodeError> {
-    let mut dest: *mut u8 = std::ptr::null_mut();
-    let mut max_len = 0u32;
-    let mut current_len = 0u32;
-    buffer
-        .Lock(&mut dest, Some(&mut max_len), Some(&mut current_len))
-        .map_err(|e| DecodeError::Platform(format!("output lock: {e}")))?;
-    if dest.is_null() {
-        let _ = buffer.Unlock();
-        return Err(DecodeError::Platform("null output buffer".into()));
+struct LockedMediaBuffer<'a> {
+    buffer: &'a IMFMediaBuffer,
+    data: *mut u8,
+    len: usize,
+    locked: bool,
+}
+
+impl<'a> LockedMediaBuffer<'a> {
+    unsafe fn new(buffer: &'a IMFMediaBuffer) -> Result<Self, DecodeError> {
+        let mut data: *mut u8 = std::ptr::null_mut();
+        let mut max_len = 0u32;
+        let mut current_len = 0u32;
+        buffer
+            .Lock(&mut data, Some(&mut max_len), Some(&mut current_len))
+            .map_err(|e| DecodeError::Platform(format!("output lock: {e}")))?;
+        if data.is_null() {
+            let _ = buffer.Unlock();
+            return Err(DecodeError::Platform("null output buffer".into()));
+        }
+        Ok(Self {
+            buffer,
+            data,
+            len: current_len as usize,
+            locked: true,
+        })
     }
-    let slice = std::slice::from_raw_parts(dest, current_len as usize);
-    let out = slice.to_vec();
-    buffer
-        .Unlock()
-        .map_err(|e| DecodeError::Platform(format!("output unlock: {e}")))?;
-    Ok(out)
+
+    unsafe fn bytes(&self) -> &[u8] {
+        std::slice::from_raw_parts(self.data, self.len)
+    }
+
+    unsafe fn unlock(mut self) -> Result<(), DecodeError> {
+        let result = self.buffer.Unlock();
+        // Unlock was attempted exactly once. A failing COM call must not make
+        // Drop issue a second Unlock against the same MF buffer.
+        self.locked = false;
+        result.map_err(|e| DecodeError::Platform(format!("output unlock: {e}")))
+    }
+}
+
+impl Drop for LockedMediaBuffer<'_> {
+    fn drop(&mut self) {
+        if self.locked {
+            unsafe {
+                let _ = self.buffer.Unlock();
+            }
+        }
+    }
 }
 
 unsafe fn sample_to_frame(
@@ -453,8 +504,9 @@ unsafe fn sample_to_frame(
     let buffer = sample
         .ConvertToContiguousBuffer()
         .map_err(|e| DecodeError::Platform(format!("ConvertToContiguousBuffer: {e}")))?;
-    let nv12 = copy_buffer_to_bytes(&buffer)?;
-    let nv12 = normalize_contiguous_nv12(&nv12, width, height)?;
+    let locked = LockedMediaBuffer::new(&buffer)?;
+    let nv12 = normalize_contiguous_nv12_slice(locked.bytes(), width, height)?;
+    locked.unlock()?;
 
     Ok(DecodedFrame {
         width,
@@ -464,115 +516,6 @@ unsafe fn sample_to_frame(
         timestamp_us: now_timestamp_us(),
         nv12: Bytes::from(nv12),
     })
-}
-
-/// Media Foundation may expose a contiguous NV12 buffer whose allocation height
-/// is macroblock-aligned (for example 1920x1088 for a visible 1920x1080 frame).
-/// The UV plane then starts after the allocated Y rows, not after the visible
-/// rows. Normalize both vertically aligned and row-pitched storage to a tight
-/// visible frame so downstream consumers have one unambiguous layout.
-fn normalize_contiguous_nv12(
-    source: &[u8],
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, DecodeError> {
-    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
-        return Err(DecodeError::Platform(format!(
-            "invalid NV12 dimensions: {width}x{height}"
-        )));
-    }
-
-    let width = width as usize;
-    let height = height as usize;
-    let tight_len = width
-        .checked_mul(height)
-        .and_then(|value| value.checked_mul(3))
-        .map(|value| value / 2)
-        .ok_or_else(|| DecodeError::Platform("NV12 dimensions overflow".into()))?;
-    if source.len() < tight_len {
-        return Err(DecodeError::Platform(format!(
-            "short NV12 output: {} bytes, need {tight_len}",
-            source.len()
-        )));
-    }
-    if source.len() == tight_len {
-        return Ok(source.to_vec());
-    }
-
-    // The byte length alone can describe both a row-pitched buffer and a
-    // vertically aligned buffer. 1280x720 allocated as 1280x736 is the
-    // important ambiguous case: interpreting it as 1308-byte rows shears and
-    // vertically stretches the preview. Prefer the macroblock-aligned vertical
-    // interpretation when the competing row pitch is not macroblock aligned.
-    let visible_rows_x2 = height * 3;
-    let doubled_len = source.len().saturating_mul(2);
-    let row_pitch = if doubled_len.is_multiple_of(visible_rows_x2) {
-        let stride = doubled_len / visible_rows_x2;
-        (stride >= width).then_some(stride)
-    } else {
-        None
-    };
-
-    let width_x3 = width * 3;
-    let allocated_height = if doubled_len.is_multiple_of(width_x3) {
-        let allocated_height = doubled_len / width_x3;
-        (allocated_height >= height).then_some(allocated_height)
-    } else {
-        None
-    };
-
-    if let Some(allocated_height) = allocated_height {
-        let vertical_is_unambiguous = row_pitch.is_none();
-        let vertical_matches_macroblocks = allocated_height.is_multiple_of(16)
-            && row_pitch.is_some_and(|stride| !stride.is_multiple_of(16));
-        if vertical_is_unambiguous || vertical_matches_macroblocks {
-            return copy_visible_nv12(source, width, height, width, allocated_height);
-        }
-    }
-
-    if let Some(stride) = row_pitch {
-        return copy_visible_nv12(source, width, height, stride, height);
-    }
-
-    Err(DecodeError::Platform(format!(
-        "unsupported NV12 allocation: {} bytes for visible {width}x{height}",
-        source.len()
-    )))
-}
-
-fn copy_visible_nv12(
-    source: &[u8],
-    width: usize,
-    height: usize,
-    stride: usize,
-    allocated_height: usize,
-) -> Result<Vec<u8>, DecodeError> {
-    let uv_offset = stride
-        .checked_mul(allocated_height)
-        .ok_or_else(|| DecodeError::Platform("NV12 UV offset overflow".into()))?;
-    let required = uv_offset
-        .checked_add(stride * (height / 2))
-        .ok_or_else(|| DecodeError::Platform("NV12 allocation overflow".into()))?;
-    if source.len() < required {
-        return Err(DecodeError::Platform(format!(
-            "short NV12 planes: {} bytes, need {required}",
-            source.len()
-        )));
-    }
-
-    let mut tight = vec![0_u8; width * height * 3 / 2];
-    for row in 0..height {
-        let src = row * stride;
-        let dst = row * width;
-        tight[dst..dst + width].copy_from_slice(&source[src..src + width]);
-    }
-    let tight_uv_offset = width * height;
-    for row in 0..height / 2 {
-        let src = uv_offset + row * stride;
-        let dst = tight_uv_offset + row * width;
-        tight[dst..dst + width].copy_from_slice(&source[src..src + width]);
-    }
-    Ok(tight)
 }
 
 unsafe fn drain_output(
@@ -652,7 +595,7 @@ mod tests {
         source[width * allocated_height] = 23;
         source[width * allocated_height + 1] = 211;
 
-        let tight = normalize_contiguous_nv12(&source, width as u32, visible_height as u32)
+        let tight = normalize_contiguous_nv12(source, width as u32, visible_height as u32)
             .expect("normalize vertically aligned NV12");
 
         assert_eq!(tight.len(), width * visible_height * 3 / 2);
@@ -672,7 +615,7 @@ mod tests {
         source[width * allocated_height] = 23;
         source[width * allocated_height + 1] = 211;
 
-        let tight = normalize_contiguous_nv12(&source, width as u32, visible_height as u32)
+        let tight = normalize_contiguous_nv12(source, width as u32, visible_height as u32)
             .expect("normalize ambiguous 720p NV12 allocation");
 
         assert_eq!(tight.len(), width * visible_height * 3 / 2);
@@ -697,8 +640,18 @@ mod tests {
         source[8..12].copy_from_slice(&[5, 6, 7, 8]);
         source[16..20].copy_from_slice(&[9, 10, 11, 12]);
 
-        let tight = normalize_contiguous_nv12(&source, width as u32, height as u32)
+        let tight = normalize_contiguous_nv12(source, width as u32, height as u32)
             .expect("normalize pitched NV12");
         assert_eq!(tight, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn tight_nv12_normalization_reuses_the_input_allocation() {
+        let source = vec![7_u8; 4 * 2 * 3 / 2];
+        let source_ptr = source.as_ptr();
+
+        let tight = normalize_contiguous_nv12(source, 4, 2).expect("normalize tight NV12");
+
+        assert_eq!(tight.as_ptr(), source_ptr);
     }
 }

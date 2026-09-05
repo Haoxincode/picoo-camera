@@ -6,7 +6,7 @@ use gpui_kit::*;
 use picoo_receiver::ReceiverError;
 
 use crate::prefs::load_prefs;
-use crate::receiver_runtime::ReceiverRuntime;
+use crate::receiver_runtime::ReceiverRuntimeHandle;
 use crate::vcam_status::detect_vcam_status;
 
 use super::identity_recovery::{IdentityRecoveryView, PairingRecoveryKind};
@@ -38,7 +38,7 @@ struct PicooAssets;
 const PRODUCT_WINDOW_SIZE: gpui_kit::Size<Pixels> = size(px(1440.), px(900.));
 
 enum DesktopStartup {
-    Ready(Box<ReceiverRuntime>),
+    Ready(Box<ReceiverRuntimeHandle>),
     PairingRecovery(PairingRecoveryKind),
 }
 
@@ -80,11 +80,8 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     // decoder; otherwise an earlier MTA init makes platform construction panic.
     let app = gpui_kit::application().with_assets(PicooAssets);
     let vcam_status = detect_vcam_status();
-    let startup = match ReceiverRuntime::from_prefs(&prefs) {
-        Ok(mut runtime) => {
-            runtime.set_virtual_camera_status(vcam_status);
-            DesktopStartup::Ready(Box::new(runtime))
-        }
+    let startup = match ReceiverRuntimeHandle::start_from_prefs(prefs.clone(), vcam_status) {
+        Ok(runtime) => DesktopStartup::Ready(Box::new(runtime)),
         Err(error) => match PairingRecoveryKind::classify(&error) {
             Some(kind) => {
                 tracing::error!(%error, "Receiver identity/trust startup failed closed");
@@ -193,7 +190,7 @@ mod tests {
             .find("let app = gpui_kit::application()")
             .expect("GPUI platform initialization");
         let receiver = body
-            .find("ReceiverRuntime::from_prefs")
+            .find("ReceiverRuntimeHandle::start_from_prefs")
             .expect("receiver runtime initialization");
         assert!(
             platform < receiver,

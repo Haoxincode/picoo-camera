@@ -194,19 +194,6 @@ internal class MediaCodecH264Encoder(
             }
 
             val keyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-            if (keyFrame) {
-                encoder.appliedStreamEpoch = generationEpoch
-                encoder.appliedEncoderHeight = generationHeight
-            }
-            encoder.frameCount += 1
-            if (keyFrame) encoder.keyFrameCount += 1
-            encoder.bytesSinceLastEstimate += info.size
-            updateBitrateEstimate()
-            encoder.stats = EncoderStats(
-                encoder.frameCount,
-                encoder.keyFrameCount,
-                encoder.stats.lastBitrateEstimateKbps,
-            )
             encoder.frameListener.onEncodedFrame(
                 data,
                 keyFrame,
@@ -249,6 +236,27 @@ internal class MediaCodecH264Encoder(
                 handleCodecConfig(copy)
             }
         }
+    }
+
+    internal fun recordAcceptedFrame(
+        byteCount: Int,
+        keyFrame: Boolean,
+        streamEpoch: Int,
+        encoderHeight: Int,
+    ) {
+        if (keyFrame) {
+            encoder.appliedStreamEpoch = streamEpoch
+            encoder.appliedEncoderHeight = encoderHeight
+        }
+        encoder.frameCount += 1
+        if (keyFrame) encoder.keyFrameCount += 1
+        encoder.bytesSinceLastEstimate += byteCount
+        updateBitrateEstimate()
+        encoder.stats = EncoderStats(
+            encoder.frameCount,
+            encoder.keyFrameCount,
+            encoder.stats.lastBitrateEstimateKbps,
+        )
     }
 
     private fun handleCodecConfig(data: ByteArray) {

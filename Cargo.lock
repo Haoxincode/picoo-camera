@@ -5755,6 +5755,7 @@ dependencies = [
 name = "picoo-windows-vcam-source"
 version = "0.1.1"
 dependencies = [
+ "fast_image_resize",
  "picoo-frame-hub",
  "windows 0.62.2",
  "windows-core 0.62.2",

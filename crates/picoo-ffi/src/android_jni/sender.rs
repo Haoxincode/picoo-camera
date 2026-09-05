@@ -14,6 +14,8 @@ use super::{identities, java_string, new_java_string, senders, with_sender};
 use crate::c_sender::sender_snapshot;
 use crate::handles::SenderInner;
 
+mod access_unit;
+
 #[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getProtocolName(
     mut env: JNIEnv<'_>,

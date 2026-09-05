@@ -156,6 +156,7 @@ fn analyze(
     if stats.jitter_ms >= 30.0
         || stats.jitter_buffer_target_ms >= 80.0
         || stats.jitter_buffer_actual_delay_ms >= 100.0
+        || stats.receive_queue_age_ms >= 100.0
     {
         return DiagnosticAnalysis {
             health: DiagnosticHealth::Attention,
@@ -344,6 +345,7 @@ mod tests {
             frame_publish_age_ms: None,
             end_to_end_latency_ms: None,
             clock_uncertainty_ms: None,
+            receive_queue_age_ms: 0.0,
             sender_queue_age_ms: 0.0,
             sender_queue_dropped_access_units: 0,
             sender_quic_lost_packets: 0,

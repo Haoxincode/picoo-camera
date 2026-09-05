@@ -116,6 +116,13 @@ class Camera2MediaEncoder(
         h264Encoder.requestSyncFrame()
     }
 
+    internal fun recordAcceptedFrame(
+        byteCount: Int,
+        keyFrame: Boolean,
+        streamEpoch: Int,
+        encoderHeight: Int,
+    ) = h264Encoder.recordAcceptedFrame(byteCount, keyFrame, streamEpoch, encoderHeight)
+
     override fun setExposureCompensation(index: Int) {
         val clamped = ExposureCompensation.clamp(index, exposureCompensationRange)
         if (clamped == exposureCompensation) return

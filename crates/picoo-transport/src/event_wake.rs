@@ -25,7 +25,9 @@ pub struct TransportEventWake {
 }
 
 impl TransportEventWake {
-    pub(crate) fn notify(&self) {
+    /// Advance the revision and wake every waiter. Runtime owners use the same
+    /// signal for transport, decoder completion, and control-command ingress.
+    pub fn signal(&self) {
         let mut state = self
             .inner
             .state
@@ -34,6 +36,10 @@ impl TransportEventWake {
         state.revision = state.revision.saturating_add(1);
         drop(state);
         self.inner.changed.notify_all();
+    }
+
+    pub(crate) fn notify(&self) {
+        self.signal();
     }
 
     pub fn revision(&self) -> u64 {

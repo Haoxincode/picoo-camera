@@ -9,9 +9,11 @@ use std::time::{Duration, Instant};
 
 use crate::control_framing::{encode_control_frame, ControlFrameDecoder};
 use crate::{
-    ChannelBinding, ClientNetworkBinding, CloseReason, SessionId, TransportEvent,
-    TransportEventWake, TransportLinkStats, VideoDatagramBatch,
+    ChannelBinding, ClientNetworkBinding, CloseReason, ReceivedVideoPacketBatch, SessionId,
+    TransportEvent, TransportEventWake, TransportLinkStats, VideoDatagramBatch,
 };
+
+mod stats;
 use bytes::Bytes;
 use picoo_protocol::VideoPacket;
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
@@ -20,6 +22,7 @@ use quinn::{
 };
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
 use socket2::{Domain, Protocol, Socket, Type};
+use stats::{link_stats, should_enqueue_access_unit};
 use thiserror::Error;
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc;
@@ -149,14 +152,16 @@ impl TransportActor {
         Ok(actor)
     }
 
-    pub(crate) fn server(addr: SocketAddr) -> Result<Self, QuicTransportError> {
+    pub(crate) fn server(
+        addr: SocketAddr,
+        wake: TransportEventWake,
+    ) -> Result<Self, QuicTransportError> {
         let runtime = shared_runtime()?;
         let endpoint = {
             let _runtime_guard = runtime.enter();
             Endpoint::server(server_config()?, addr)?
         };
-        let (actor, command_rx, video_rx, events, state) =
-            Self::channels(endpoint.clone(), TransportEventWake::default());
+        let (actor, command_rx, video_rx, events, state) = Self::channels(endpoint.clone(), wake);
         runtime.spawn(server_worker(endpoint, command_rx, video_rx, events, state));
         Ok(actor)
     }
@@ -567,7 +572,10 @@ async fn server_worker(
 
 enum Inbound {
     Control(Vec<u8>),
-    Datagrams(Vec<Bytes>),
+    Datagrams {
+        received_at: Instant,
+        datagrams: Vec<Bytes>,
+    },
 }
 
 async fn receive_control(connection: Connection, inbound: mpsc::Sender<Inbound>) {
@@ -592,6 +600,7 @@ async fn receive_datagrams(connection: Connection, inbound: mpsc::Sender<Inbound
     const MAX_BATCH_WAIT: Duration = Duration::from_millis(1);
 
     while let Ok(first) = connection.read_datagram().await {
+        let received_at = Instant::now();
         let mut batch = Vec::with_capacity(MAX_BATCH_DATAGRAMS);
         batch.push(first);
         let deadline = tokio::time::Instant::now() + MAX_BATCH_WAIT;
@@ -601,7 +610,14 @@ async fn receive_datagrams(connection: Connection, inbound: mpsc::Sender<Inbound
                 Ok(Err(_)) | Err(_) => break,
             }
         }
-        if inbound.send(Inbound::Datagrams(batch)).await.is_err() {
+        if inbound
+            .send(Inbound::Datagrams {
+                received_at,
+                datagrams: batch,
+            })
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -740,13 +756,16 @@ async fn run_connection(
                             Err(error) => break CloseReason::Error(error.to_string()),
                         }
                     }
-                    Some(Inbound::Datagrams(datagrams)) => {
+                    Some(Inbound::Datagrams { received_at, datagrams }) => {
                         let packets = datagrams
                             .into_iter()
                             .filter_map(|datagram| VideoPacket::decode_bytes(datagram).ok())
                             .collect::<Vec<_>>();
                         if !packets.is_empty() {
-                            events.video(TransportEvent::VideoPackets(session, packets));
+                            events.video(TransportEvent::VideoPackets(
+                                session,
+                                ReceivedVideoPacketBatch::new(received_at, packets),
+                            ));
                         }
                     }
                     None => break CloseReason::PeerClose,
@@ -773,26 +792,6 @@ async fn run_connection(
         }
     }
     events.critical(TransportEvent::Disconnected(session, disconnect_reason));
-}
-
-fn should_enqueue_access_unit(available: usize, required: usize) -> bool {
-    available >= required
-}
-
-fn link_stats(connection: &Connection, shared: &SharedState) -> TransportLinkStats {
-    let stats = connection.stats();
-    TransportLinkStats {
-        rtt_ms: stats.path.rtt.as_secs_f64() * 1_000.0,
-        lost_packets: stats.path.lost_packets,
-        sent_packets: stats.path.sent_packets,
-        recv_packets: stats.udp_rx.datagrams,
-        dgram_recv: stats.frame_rx.datagram,
-        video_queue_age_ms: shared.video_queue_age_ms,
-        video_dropped_access_units: shared.video_dropped_access_units,
-        video_buffered_bytes: DATAGRAM_SEND_BUFFER_SIZE
-            .saturating_sub(connection.datagram_send_buffer_space())
-            as u64,
-    }
 }
 
 #[cfg(test)]

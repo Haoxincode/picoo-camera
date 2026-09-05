@@ -152,6 +152,8 @@ message ReceiverStats {
   optional double frame_publish_age_ms = 16;
   optional double end_to_end_latency_ms = 17;
   optional double clock_uncertainty_ms = 18;
+  // Oldest Receiver-local transport/event queue wait observed in this window.
+  double receive_queue_age_ms = 19;
 }
 
 // Sender -> Receiver transport observability. This travels on the reliable

@@ -10,6 +10,7 @@ mod sender;
 
 use bytes::Bytes;
 use picoo_protocol::{VideoPacket, MAX_DATAGRAM_SIZE};
+use std::time::Instant;
 use thiserror::Error;
 
 pub use control_framing::{
@@ -125,8 +126,47 @@ pub enum TransportEvent {
     /// A short receive-side transport batch. Batching prevents one encoded
     /// keyframe from consuming hundreds of cross-thread event slots while the
     /// media layer still owns AU reassembly and deadline decisions.
-    VideoPackets(SessionId, Vec<VideoPacket>),
+    VideoPackets(SessionId, ReceivedVideoPacketBatch),
     Disconnected(SessionId, CloseReason),
+}
+
+/// One bounded receive batch stamped when Quinn delivered its first Datagram.
+/// The Receiver-local instant includes every later transport/event queue wait
+/// without requiring clocks on the phone and desktop to be synchronized.
+#[derive(Debug, Clone)]
+pub struct ReceivedVideoPacketBatch {
+    received_at: Instant,
+    packets: Vec<VideoPacket>,
+}
+
+impl ReceivedVideoPacketBatch {
+    pub fn new(received_at: Instant, packets: Vec<VideoPacket>) -> Self {
+        Self {
+            received_at,
+            packets,
+        }
+    }
+
+    pub fn received_now(packets: Vec<VideoPacket>) -> Self {
+        Self::new(Instant::now(), packets)
+    }
+
+    pub fn received_at(&self) -> Instant {
+        self.received_at
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, VideoPacket> {
+        self.packets.iter()
+    }
+}
+
+impl IntoIterator for ReceivedVideoPacketBatch {
+    type Item = VideoPacket;
+    type IntoIter = std::vec::IntoIter<VideoPacket>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.packets.into_iter()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -48,6 +48,9 @@ pub struct DiagnosticSessionSnapshot {
     pub reassembly_partial_access_unit_drops: u64,
     #[serde(default)]
     pub reassembly_whole_access_unit_gap_drops: u64,
+    /// Receiver AUs discarded before reassembly due to local queue age.
+    #[serde(default)]
+    pub receive_queue_expired_access_units: u64,
     /// Receiver decoder invocations; 0 for senders and older producers.
     #[serde(default)]
     pub decode_invocations: u64,
@@ -223,6 +226,7 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
             fec_recovered_fragments: 0,
             reassembly_partial_access_unit_drops: 0,
             reassembly_whole_access_unit_gap_drops: 0,
+            receive_queue_expired_access_units: 0,
             decode_invocations: 0,
             decoded_frames: 0,
             recovery_dropped_access_units: 0,
@@ -332,6 +336,7 @@ mod tests {
                 fec_recovered_fragments: 0,
                 reassembly_partial_access_unit_drops: 0,
                 reassembly_whole_access_unit_gap_drops: 0,
+                receive_queue_expired_access_units: 0,
                 decode_invocations: 1,
                 decoded_frames: 1,
                 recovery_dropped_access_units: 0,

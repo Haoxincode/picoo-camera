@@ -1,5 +1,5 @@
 use super::*;
-use picoo_protocol::{make_fec_parity, VideoPacket};
+use picoo_protocol::{make_fec_parity, VideoPacket, FEC_PARITY_PREFIX_SIZE};
 
 fn fragment(
     epoch: u32,
@@ -103,6 +103,29 @@ fn fec_does_not_hide_loss_beyond_its_recovery_budget() {
     assert_eq!(map.fec_recovered_fragment_count(), 0);
     assert_eq!(map.drop_count(), 1);
     assert_eq!(map.missing_fragment_count(), 3);
+}
+
+#[test]
+fn fec_checks_only_the_group_affected_by_each_fragment() {
+    let mut map = ReassemblyMap::new(8, 1_024);
+    for index in 0..13_u16 {
+        let payload = Bytes::from(vec![index as u8]);
+        let packet = VideoPacket {
+            flags: VideoPacketFlags::empty(),
+            stream_epoch: 1,
+            frame_id: 10,
+            pts_us: 0,
+            encoded_at_us: 0,
+            fragment_index: index,
+            fragment_count: 13,
+            payload,
+        };
+        let assembled = map.ingest(packet).expect("valid fragment");
+        assert_eq!(assembled.is_some(), index == 12);
+    }
+
+    assert_eq!(map.fec_group_check_count(), 13);
+    assert_eq!(map.fec_recovery_attempt_count(), 0);
 }
 
 #[test]
@@ -271,6 +294,23 @@ fn clearing_pending_rejects_late_tails_after_terminal_cache_rotates() {
         .is_none());
     assert_eq!(map.drop_count(), 0);
     assert_eq!(map.missing_fragment_count(), 0);
+}
+
+#[test]
+fn stale_queue_discard_is_terminal_without_counting_network_loss() {
+    let mut map = ReassemblyMap::new(2, 32);
+    let packet = fragment(1, 7, 0, 2, b"old");
+    let flags = packet.flags;
+
+    assert!(map.discard_stale_access_unit(1, 7, flags));
+    assert!(!map.discard_stale_access_unit(1, 7, flags));
+    assert!(map
+        .ingest(fragment(1, 7, 1, 2, b"tail"))
+        .expect("late tail is ignored")
+        .is_none());
+    assert_eq!(map.drop_count(), 0);
+    assert_eq!(map.partial_access_unit_drop_count(), 0);
+    assert!(map.take_reference_chain_loss());
 }
 
 #[test]
