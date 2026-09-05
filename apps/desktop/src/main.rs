@@ -362,6 +362,24 @@ fn spawn_stdin_commands() -> mpsc::Receiver<String> {
     rx
 }
 
+fn poll_stdin_command(
+    stdin_rx: &mut Option<mpsc::Receiver<String>>,
+    timeout: std::time::Duration,
+) -> Option<String> {
+    let Some(receiver) = stdin_rx.as_ref() else {
+        thread::sleep(timeout);
+        return None;
+    };
+    match receiver.recv_timeout(timeout) {
+        Ok(line) => Some(line),
+        Err(mpsc::RecvTimeoutError::Timeout) => None,
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            *stdin_rx = None;
+            None
+        }
+    }
+}
+
 fn wait_console_reply<T>(mut reply: ReceiverReply<T>) -> Result<T, ReceiverError> {
     loop {
         match reply.try_recv() {
@@ -454,18 +472,15 @@ fn run_serve_mode() {
         "Type `confirm` when pairing code matches, `list`, `remove <device_id>`, `stats`, `export-diagnostics`, or `quit`."
     );
 
-    let stdin_rx = spawn_stdin_commands();
+    let mut stdin_rx = Some(spawn_stdin_commands());
     let mut last_pairing_hint = String::new();
 
     loop {
-        match stdin_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(line) => {
-                if !handle_console_command(&runtime, &line) {
-                    break;
-                }
+        if let Some(line) = poll_stdin_command(&mut stdin_rx, std::time::Duration::from_millis(100))
+        {
+            if !handle_console_command(&runtime, &line) {
+                break;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
         if let Some(code) = runtime.snapshot().pairing_short_code.as_deref() {
@@ -488,5 +503,22 @@ mod tests {
     fn default_trusted_store_path_is_non_empty() {
         let path = default_trusted_store_path();
         assert!(!path.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn stdin_eof_disables_commands_without_requesting_service_exit() {
+        let (sender, receiver) = mpsc::channel();
+        drop(sender);
+        let mut stdin_rx = Some(receiver);
+
+        assert_eq!(
+            poll_stdin_command(&mut stdin_rx, std::time::Duration::ZERO),
+            None
+        );
+        assert!(stdin_rx.is_none());
+        assert_eq!(
+            poll_stdin_command(&mut stdin_rx, std::time::Duration::ZERO),
+            None
+        );
     }
 }
