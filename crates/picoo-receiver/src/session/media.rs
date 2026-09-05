@@ -21,9 +21,7 @@ use super::decoder_worker::{
 use super::decoder_worker::{DecoderWorker, FrameKind};
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
-use crate::ReceiverError;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::DEFAULT_SHARED_RING_NAME;
+use crate::{ReceiverError, DEFAULT_SHARED_RING_NAME};
 
 #[cfg(test)]
 mod tests {
