@@ -13,6 +13,7 @@ import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.EncodedFrameListener
 import com.picoo.camera.media.EncodedAccessUnitBuffer
 import com.picoo.camera.media.EncodedAccessUnitHandoff
+import com.picoo.camera.media.EncoderSubmitOutcome
 import com.picoo.camera.media.EncoderReconfigurationCoordinator
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
@@ -161,11 +162,19 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             sps = parameterSets?.first,
             pps = parameterSets?.second,
         )
-        if (configureStream && (result and SUBMIT_STREAM_CONFIGURED) == 0) {
+        val outcome = EncoderSubmitOutcome.fromNative(result)
+        if (outcome is EncoderSubmitOutcome.Failure) {
+            // JNI failures have no success-side effects. In particular, a
+            // negative two's-complement value must never be read as flags.
+            if (configureStream) streamConfigDirty.set(true)
+            return
+        }
+        outcome as EncoderSubmitOutcome.Success
+        if (configureStream && !outcome.streamConfigured) {
             // A stale generation must not consume the active generation's config.
             streamConfigDirty.set(true)
         }
-        if ((result and SUBMIT_ENCODER_ACCEPTED) != 0) {
+        if (outcome.encoderAccepted) {
             encoder.recordAcceptedFrame(
                 accessUnit.data.size,
                 accessUnit.isKeyFrame,
@@ -173,7 +182,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 accessUnit.encoderHeight,
             )
         }
-        if ((result and SUBMIT_KEYFRAME_REQUESTED) != 0) {
+        if (outcome.keyframeRequested) {
             encoderRef.get()?.requestKeyFrame()
         }
     }
@@ -676,8 +685,5 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         const val MAINTENANCE_TIMEOUT_MS = 500
         const val CONNECT_TIMEOUT_MS = 10_000L
         const val THERMAL_INTERVAL_MS = 5_000L
-        const val SUBMIT_ENCODER_ACCEPTED = 1
-        const val SUBMIT_STREAM_CONFIGURED = 1 shl 1
-        const val SUBMIT_KEYFRAME_REQUESTED = 1 shl 2
     }
 }

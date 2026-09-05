@@ -93,6 +93,18 @@ final class SharedRingReader: @unchecked Sendable {
     }
 }
 
+final class VImageScaleWorkspace {
+    private var storage: [UInt8] = []
+
+    func withBuffer<T>(minimumByteCount: Int, _ body: (UnsafeMutableRawPointer?) -> T) -> T {
+        guard minimumByteCount > 0 else { return body(nil) }
+        if storage.count < minimumByteCount {
+            storage = [UInt8](repeating: 0, count: minimumByteCount)
+        }
+        return storage.withUnsafeMutableBytes { body($0.baseAddress) }
+    }
+}
+
 final class SharedRingFrame: @unchecked Sendable {
     let sequence: UInt64
     let timestampMicroseconds: UInt64
@@ -119,7 +131,7 @@ final class SharedRingFrame: @unchecked Sendable {
         picoo_ring_release(reader.base, &lease)
     }
 
-    func copyNV12(to pixelBuffer: CVPixelBuffer) -> Bool {
+    func copyNV12(to pixelBuffer: CVPixelBuffer, workspace: VImageScaleWorkspace) -> Bool {
         let (yBytes, yOverflow) = stride.multipliedReportingOverflow(by: height)
         let (uvBytes, uvOverflow) = stride.multipliedReportingOverflow(by: height / 2)
         let (requiredBytes, totalOverflow) = yBytes.addingReportingOverflow(uvBytes)
@@ -219,7 +231,29 @@ final class SharedRingFrame: @unchecked Sendable {
             rowBytes: uvDestinationStride
         )
         let flags = vImage_Flags(kvImageHighQualityResampling)
-        return vImageScale_Planar8(&sourceY, &destinationY, nil, flags) == kvImageNoError
-            && vImageScale_CbCr8(&sourceCbCr, &destinationCbCr, nil, flags) == kvImageNoError
+        let queryFlags = flags | vImage_Flags(kvImageGetTempBufferSize)
+        let yWorkspaceSize = vImageScale_Planar8(
+            &sourceY,
+            &destinationY,
+            nil,
+            queryFlags
+        )
+        let uvWorkspaceSize = vImageScale_CbCr8(
+            &sourceCbCr,
+            &destinationCbCr,
+            nil,
+            queryFlags
+        )
+        guard yWorkspaceSize >= 0, uvWorkspaceSize >= 0 else { return false }
+        let workspaceSize = max(Int(yWorkspaceSize), Int(uvWorkspaceSize))
+        return workspace.withBuffer(minimumByteCount: workspaceSize) { temporary in
+            vImageScale_Planar8(&sourceY, &destinationY, temporary, flags) == kvImageNoError
+                && vImageScale_CbCr8(
+                    &sourceCbCr,
+                    &destinationCbCr,
+                    temporary,
+                    flags
+                ) == kvImageNoError
+        }
     }
 }

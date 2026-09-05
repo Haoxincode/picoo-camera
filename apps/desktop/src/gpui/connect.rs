@@ -1,7 +1,6 @@
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::button::*;
 use gpui_kit::component::menu::DropdownMenu;
-use gpui_kit::component::notification::NotificationType;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::separator::Separator;
 use gpui_kit::component::*;
@@ -12,7 +11,7 @@ use picoo_protocol::control::{camera_command, CameraCommand, Resolution};
 use serde::Deserialize;
 
 use crate::model::VirtualCameraStatus;
-use crate::receiver_runtime::ReceiverSnapshot;
+use crate::receiver_runtime::{await_receiver_reply, ReceiverSnapshot};
 
 use super::icons::{reicon_button_content, reicon_named};
 use super::pairing::{connection_code_hero, format_pairing_code};
@@ -183,29 +182,17 @@ impl PicooDesktopApp {
                                         .primary()
                                         .label(if self.pairing_locally_confirmed {
                                             "已确认，等待手机"
+                                        } else if self.receiver_command_pending {
+                                            "正在提交…"
                                         } else {
                                             "两端一致，确认配对"
                                         })
-                                        .disabled(self.pairing_locally_confirmed)
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            match this.confirm_pairing_request(cx) {
-                                                Ok(()) => {
-                                                    if window.has_active_dialog(cx) {
-                                                        window.close_dialog(cx);
-                                                    }
-                                                    window.push_notification(
-                                                        (
-                                                            NotificationType::Success,
-                                                            "电脑端已确认，正在等待手机完成配对",
-                                                        ),
-                                                        cx,
-                                                    );
-                                                }
-                                                Err(message) => window.push_notification(
-                                                    (NotificationType::Error, message),
-                                                    cx,
-                                                ),
-                                            }
+                                        .disabled(
+                                            self.pairing_locally_confirmed
+                                                || self.receiver_command_pending,
+                                        )
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.confirm_pairing_request(cx);
                                         })),
                                 )
                                 .child(
@@ -213,18 +200,9 @@ impl PicooDesktopApp {
                                         .outline()
                                         .danger()
                                         .label("拒绝")
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            match this.reject_pairing_request(cx) {
-                                                Ok(()) => {
-                                                    if window.has_active_dialog(cx) {
-                                                        window.close_dialog(cx);
-                                                    }
-                                                }
-                                                Err(message) => window.push_notification(
-                                                    (NotificationType::Error, message),
-                                                    cx,
-                                                ),
-                                            }
+                                        .disabled(self.receiver_command_pending)
+                                        .on_click(cx.listener(|this, _, _window, cx| {
+                                            this.reject_pairing_request(cx);
                                         })),
                                 ),
                         )
@@ -383,17 +361,53 @@ impl PicooDesktopApp {
             ))
     }
 
-    pub(super) fn send_live_camera_command(&mut self, command: CameraCommand) {
+    pub(super) fn send_live_camera_command(
+        &mut self,
+        command: CameraCommand,
+        cx: &mut Context<Self>,
+    ) {
         // REQ-PICOO-UI-009 / PUC-005: desktop Live remote camera controls.
-        match self.runtime.send_camera_command(command) {
-            Ok(()) => {
-                self.diagnostics_error = None;
-            }
-            Err(err) => {
-                tracing::warn!("CameraCommand failed: {err}");
-                self.diagnostics_error = Some(format!("远程摄像头控制失败：{err}"));
-            }
+        if self.receiver_command_pending {
+            return;
         }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.send_camera_command(command);
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                match result {
+                    Ok(()) => this.diagnostics_error = None,
+                    Err(err) => {
+                        tracing::warn!("CameraCommand failed: {err}");
+                        this.diagnostics_error = Some(format!("远程摄像头控制失败：{err}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn request_live_keyframe(&mut self, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.request_keyframe();
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                if let Err(err) = result {
+                    this.diagnostics_error = Some(format!("请求关键帧失败：{err}"));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(super) fn render_live(
@@ -538,6 +552,7 @@ impl PicooDesktopApp {
         let resolution = Button::new("live-resolution-trigger")
             .outline()
             .small()
+            .disabled(self.receiver_command_pending)
             .tooltip("选择推流分辨率")
             .accessibility_label("推流分辨率")
             .child(
@@ -580,12 +595,14 @@ impl PicooDesktopApp {
                     LiveToolbarAction::Resolution720 => (1280, 720),
                     LiveToolbarAction::Resolution1080 => (1920, 1080),
                 };
-                this.send_live_camera_command(CameraCommand {
-                    command: camera_command::Command::SetResolution as i32,
-                    resolution: Some(Resolution { width, height }),
-                    mirrored: false,
-                });
-                cx.notify();
+                this.send_live_camera_command(
+                    CameraCommand {
+                        command: camera_command::Command::SetResolution as i32,
+                        resolution: Some(Resolution { width, height }),
+                        mirrored: false,
+                    },
+                    cx,
+                );
             }))
             .child(
                 div()
@@ -637,6 +654,7 @@ impl PicooDesktopApp {
                                 Button::new("remote-mirror-toolbar")
                                     .outline()
                                     .small()
+                                    .disabled(self.receiver_command_pending)
                                     .selected(remote_mirrored)
                                     .toggled(remote_mirrored)
                                     .tooltip("镜像翻转")
@@ -647,18 +665,21 @@ impl PicooDesktopApp {
                                         mirror_icon_color,
                                     ))
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.send_live_camera_command(CameraCommand {
-                                            command: camera_command::Command::SetMirror as i32,
-                                            resolution: None,
-                                            mirrored: !remote_mirrored,
-                                        });
-                                        cx.notify();
+                                        this.send_live_camera_command(
+                                            CameraCommand {
+                                                command: camera_command::Command::SetMirror as i32,
+                                                resolution: None,
+                                                mirrored: !remote_mirrored,
+                                            },
+                                            cx,
+                                        );
                                     })),
                             )
                             .child(
                                 Button::new("switch-camera-toolbar")
                                     .outline()
                                     .small()
+                                    .disabled(self.receiver_command_pending)
                                     .tooltip("镜头切换")
                                     .accessibility_label("镜头切换")
                                     .child(reicon_button_content(
@@ -667,18 +688,22 @@ impl PicooDesktopApp {
                                         cx.theme().primary,
                                     ))
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.send_live_camera_command(CameraCommand {
-                                            command: camera_command::Command::SwitchCamera as i32,
-                                            resolution: None,
-                                            mirrored: false,
-                                        });
-                                        cx.notify();
+                                        this.send_live_camera_command(
+                                            CameraCommand {
+                                                command: camera_command::Command::SwitchCamera
+                                                    as i32,
+                                                resolution: None,
+                                                mirrored: false,
+                                            },
+                                            cx,
+                                        );
                                     })),
                             )
                             .child(
                                 Button::new("request-idr-toolbar")
                                     .outline()
                                     .small()
+                                    .disabled(self.receiver_command_pending)
                                     .tooltip("请求关键帧以修复卡顿或花屏")
                                     .accessibility_label("画面修复")
                                     .child(reicon_button_content(
@@ -687,11 +712,7 @@ impl PicooDesktopApp {
                                         cx.theme().primary,
                                     ))
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Err(err) = this.runtime.request_keyframe() {
-                                            this.diagnostics_error =
-                                                Some(format!("请求关键帧失败：{err}"));
-                                        }
-                                        cx.notify();
+                                        this.request_live_keyframe(cx);
                                     })),
                             )
                             .child(

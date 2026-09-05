@@ -3,7 +3,7 @@
 use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, TrySendError};
-use std::sync::{Arc, Condvar, Mutex, RwLock};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -143,7 +143,7 @@ impl RingFrameReader {
                         width: view.width,
                         height: view.height,
                         stride: view.stride,
-                        pixels: view.nv12.to_vec().into(),
+                        pixels: Arc::<[u8]>::from(view.nv12),
                     };
                     self.last_sequence = view.sequence;
                     self.live_revision = self.live_revision.wrapping_add(1).max(1);
@@ -254,20 +254,31 @@ const OUTPUT_SIZES: [OutputSize; 3] = [
     },
 ];
 
-#[derive(Default)]
 struct WorkerState {
     stopped: bool,
     active_outputs: u8,
     demand_revision: u64,
+    prepared: PreparedFrames,
 }
 
-#[derive(Default)]
 struct WorkerControl {
     state: Mutex<WorkerState>,
     wake: Condvar,
 }
 
 impl WorkerControl {
+    fn new(placeholders: &PlaceholderFrames) -> Self {
+        Self {
+            state: Mutex::new(WorkerState {
+                stopped: false,
+                active_outputs: 0,
+                demand_revision: 0,
+                prepared: PreparedFrames::new(placeholders),
+            }),
+            wake: Condvar::new(),
+        }
+    }
+
     fn wait_until_active(&self) -> Option<(u8, u64)> {
         let mut state = self
             .state
@@ -298,7 +309,12 @@ impl WorkerControl {
         state.stopped
     }
 
-    fn set_output_active(&self, output: OutputSize, active: bool) -> bool {
+    fn set_output_active(
+        &self,
+        output: OutputSize,
+        active: bool,
+        placeholder: Arc<PreparedFrameSet>,
+    ) -> bool {
         let mut state = self
             .state
             .lock()
@@ -316,11 +332,16 @@ impl WorkerControl {
             return false;
         }
         state.demand_revision = state.demand_revision.wrapping_add(1).max(1);
+        if active {
+            // Demand revision and invalidation share this lock with publish,
+            // so a freshly prepared frame cannot be overwritten afterward.
+            state.prepared.set(output, placeholder);
+        }
         self.wake.notify_all();
         true
     }
 
-    fn is_current_demand(&self, output: OutputSize, demand_revision: u64) -> bool {
+    fn needs_preparation(&self, output: OutputSize, demand_revision: u64, key: SourceKey) -> bool {
         let state = self
             .state
             .lock()
@@ -328,18 +349,54 @@ impl WorkerControl {
         !state.stopped
             && state.active_outputs & output.bit() != 0
             && state.demand_revision == demand_revision
+            && state.prepared.get(output).key != key
+    }
+
+    fn publish_if_current(
+        &self,
+        output: OutputSize,
+        demand_revision: u64,
+        frame: Arc<PreparedFrameSet>,
+    ) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.stopped
+            || state.active_outputs & output.bit() == 0
+            || state.demand_revision != demand_revision
+        {
+            return false;
+        }
+        state.prepared.set(output, frame);
+        true
+    }
+
+    fn prepared(&self, output: OutputSize) -> Arc<PreparedFrameSet> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .prepared
+            .get(output)
     }
 
     fn stop(&self) {
-        *self
+        let mut state = self
             .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = WorkerState {
-            stopped: true,
-            active_outputs: 0,
-            demand_revision: 0,
-        };
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.stopped = true;
+        state.active_outputs = 0;
+        state.demand_revision = 0;
         self.wake.notify_all();
+    }
+
+    #[cfg(test)]
+    fn demand_revision(&self) -> u64 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .demand_revision
     }
 }
 
@@ -352,7 +409,6 @@ struct WorkerHandles {
 /// two background workers; acquiring a frame only clones already prepared Arc
 /// storage under a short pointer lock (REQ-PICOO-VCAM-010).
 pub(crate) struct FrameProvider {
-    prepared: Arc<RwLock<PreparedFrames>>,
     placeholders: Arc<PlaceholderFrames>,
     last_delivered_live_revisions: [AtomicU64; 3],
     control: Arc<WorkerControl>,
@@ -369,12 +425,10 @@ impl FrameProvider {
 
     fn with_reader(reader: RingFrameReader) -> io::Result<Self> {
         let placeholders = Arc::new(PlaceholderFrames::new());
-        let prepared = Arc::new(RwLock::new(PreparedFrames::new(&placeholders)));
-        let control = Arc::new(WorkerControl::default());
+        let control = Arc::new(WorkerControl::new(&placeholders));
         let preparation_counters = Arc::new(PreparationCounters::default());
         let (source_tx, source_rx) = mpsc::sync_channel::<SourceSnapshot>(0);
 
-        let prepared_for_worker = Arc::clone(&prepared);
         let placeholders_for_worker = Arc::clone(&placeholders);
         let control_for_preparation = Arc::clone(&control);
         let counters_for_worker = Arc::clone(&preparation_counters);
@@ -383,18 +437,11 @@ impl FrameProvider {
             .spawn(move || {
                 let mut resources = PreparationResources::default();
                 while let Ok(snapshot) = source_rx.recv() {
-                    if !control_for_preparation
-                        .is_current_demand(snapshot.output, snapshot.demand_revision)
-                    {
-                        continue;
-                    }
-                    if prepared_for_worker
-                        .read()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .get(snapshot.output)
-                        .key
-                        == snapshot.key
-                    {
+                    if !control_for_preparation.needs_preparation(
+                        snapshot.output,
+                        snapshot.demand_revision,
+                        snapshot.key,
+                    ) {
                         continue;
                     }
                     let next = match (snapshot.key, snapshot.frame.as_ref()) {
@@ -409,15 +456,11 @@ impl FrameProvider {
                         }
                         _ => placeholders_for_worker.get(snapshot.output),
                     };
-                    if !control_for_preparation
-                        .is_current_demand(snapshot.output, snapshot.demand_revision)
-                    {
-                        continue;
-                    }
-                    prepared_for_worker
-                        .write()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .set(snapshot.output, next);
+                    control_for_preparation.publish_if_current(
+                        snapshot.output,
+                        snapshot.demand_revision,
+                        next,
+                    );
                 }
             })?;
 
@@ -435,7 +478,6 @@ impl FrameProvider {
         };
 
         Ok(Self {
-            prepared,
             placeholders,
             last_delivered_live_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
             control,
@@ -452,24 +494,17 @@ impl FrameProvider {
         let Some(output) = OutputSize::new(width, height) else {
             return;
         };
-        if self.control.set_output_active(output, active) {
+        if self
+            .control
+            .set_output_active(output, active, self.placeholders.get(output))
+        {
             self.last_delivered_live_revisions[output.slot()].store(0, Ordering::Release);
-            if active {
-                self.prepared
-                    .write()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .set(output, self.placeholders.get(output));
-            }
         }
     }
 
     pub(crate) fn acquire_for_output(&self, width: u32, height: u32) -> Option<AcquiredNv12Frame> {
         let requested = OutputSize::new(width, height)?;
-        let prepared = self
-            .prepared
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(requested);
+        let prepared = self.control.prepared(requested);
         let frame = prepared.output(width, height)?;
         let origin = match prepared.key {
             SourceKey::Placeholder => {

@@ -7,7 +7,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
-use crate::receiver_runtime::ReceiverSnapshot;
+use crate::receiver_runtime::{await_receiver_reply, ReceiverSnapshot};
 
 use super::icons::reicon_named;
 use super::widgets::status_badge;
@@ -279,6 +279,86 @@ impl PicooDesktopApp {
         cx.notify();
     }
 
+    fn remove_trusted_device_request(&mut self, device_id: String, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.remove_trusted_device(&device_id);
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let message = match result {
+                Ok(true) => None,
+                Ok(false) => Some(format!("未找到配对设备：{device_id}")),
+                Err(error) => Some(format!("删除配对失败：{error}")),
+            };
+            let succeeded = message.is_none();
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                if succeeded {
+                    this.diagnostics_error = None;
+                    this.diagnostics_message = Some(format!("已删除配对：{device_id}"));
+                } else {
+                    this.diagnostics_error = message.clone();
+                }
+                cx.notify();
+            });
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if succeeded && window.has_active_dialog(cx) {
+                    window.close_dialog(cx);
+                } else if let Some(message) = message {
+                    window.push_notification((NotificationType::Error, message), cx);
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn clear_trusted_devices_request(&mut self, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.clear_trusted_devices();
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let succeeded = result.is_ok();
+            let notification = match &result {
+                Ok(removed) => (
+                    NotificationType::Success,
+                    format!("已重置 {removed} 台设备的配对"),
+                ),
+                Err(error) => (NotificationType::Error, format!("重置配对失败：{error}")),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                match result {
+                    Ok(removed) => {
+                        this.runtime.disconnect();
+                        this.page = DesktopPage::Waiting;
+                        this.diagnostics_error = None;
+                        this.diagnostics_message = Some(format!("已重置 {removed} 台设备的配对"));
+                    }
+                    Err(error) => {
+                        this.diagnostics_error = Some(format!("重置配对失败：{error}"));
+                    }
+                }
+                cx.notify();
+            });
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if succeeded && window.has_active_dialog(cx) {
+                    window.close_dialog(cx);
+                }
+                window.push_notification(notification, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
     pub(super) fn open_remove_trusted_dialog(
         app: WeakEntity<Self>,
         device_id: String,
@@ -300,36 +380,12 @@ impl PicooDesktopApp {
                         .cancel_text("取消")
                         .show_cancel(true),
                 )
-                .on_ok(move |_, window, cx| {
-                    let outcome = app.update(cx, |this, cx| {
-                        let result = match this.runtime.remove_trusted_device(&device_id) {
-                            Ok(true) => {
-                                this.diagnostics_error = None;
-                                this.diagnostics_message = Some(format!("已删除配对：{device_id}"));
-                                Ok(())
-                            }
-                            Ok(false) => {
-                                let message = format!("未找到配对设备：{device_id}");
-                                this.diagnostics_error = Some(message.clone());
-                                Err(message)
-                            }
-                            Err(err) => {
-                                let message = format!("删除配对失败：{err}");
-                                this.diagnostics_error = Some(message.clone());
-                                Err(message)
-                            }
-                        };
-                        cx.notify();
-                        result
+                .on_ok(move |_, _window, cx| {
+                    let device_id = device_id.clone();
+                    let _ = app.update(cx, |this, cx| {
+                        this.remove_trusted_device_request(device_id, cx)
                     });
-                    match outcome {
-                        Ok(Ok(())) => true,
-                        Ok(Err(message)) => {
-                            window.push_notification((NotificationType::Error, message), cx);
-                            false
-                        }
-                        Err(_) => false,
-                    }
+                    false
                 })
         });
     }
@@ -353,44 +409,9 @@ impl PicooDesktopApp {
                         .cancel_text("取消")
                         .show_cancel(true),
                 )
-                .on_ok(move |_, window, cx| {
-                    let outcome = app.update(cx, |this, cx| {
-                        match this.runtime.clear_trusted_devices() {
-                            Ok(removed) => {
-                                this.runtime.disconnect();
-                                this.page = DesktopPage::Waiting;
-                                this.diagnostics_error = None;
-                                this.diagnostics_message = Some(format!(
-                                    "已重置 {removed} 台设备的配对"
-                                ));
-                                cx.notify();
-                                Ok(removed)
-                            }
-                            Err(error) => {
-                                let message = format!("重置配对失败：{error}");
-                                this.diagnostics_error = Some(message.clone());
-                                cx.notify();
-                                Err(message)
-                            }
-                        }
-                    });
-                    match outcome {
-                        Ok(Ok(removed)) => {
-                            window.push_notification(
-                                (
-                                    NotificationType::Success,
-                                    format!("已重置 {removed} 台设备的配对"),
-                                ),
-                                cx,
-                            );
-                            true
-                        }
-                        Ok(Err(message)) => {
-                            window.push_notification((NotificationType::Error, message), cx);
-                            false
-                        }
-                        Err(_) => false,
-                    }
+                .on_ok(move |_, _window, cx| {
+                    let _ = app.update(cx, |this, cx| this.clear_trusted_devices_request(cx));
+                    false
                 })
         });
     }

@@ -299,10 +299,23 @@ impl ReceiverSession {
         let now_us = self.timing_origin.elapsed().as_micros() as u64;
         let maintenance = now + Duration::from_secs(1);
         let media_deadline = self.media_deadline();
-        let jitter_deadline = self
+        let playout_blocked = self
             .jitter
-            .next_release_delay_us(now_us)
-            .map(|delay| now + Duration::from_micros(delay));
+            .front_frame_id()
+            .is_some_and(|candidate_frame_id| {
+                playout_blocked_by_older_reassembly(
+                    self.reassembly.oldest_unresolved_frame_id(),
+                    candidate_frame_id,
+                )
+            });
+        let max_queue_age_us = media_deadline.as_micros() as u64;
+        let jitter_deadline = (if playout_blocked {
+            self.jitter
+                .next_expiration_delay_us(now_us, max_queue_age_us)
+        } else {
+            self.jitter.next_release_delay_us(now_us)
+        })
+        .map(|delay| now + Duration::from_micros(delay));
         let stats_deadline = self
             .lifecycle
             .runtime

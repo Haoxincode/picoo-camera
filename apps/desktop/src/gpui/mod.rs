@@ -19,6 +19,7 @@ pub use bootstrap::run_gpui_app;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::*;
+use std::sync::Arc;
 
 use crate::model::VirtualCameraStatus;
 use crate::prefs::DesktopPreferences;
@@ -97,7 +98,7 @@ struct PicooDesktopApp {
     section: DesktopSection,
     sidebar_collapsed: bool,
     pump_started: bool,
-    last_presented_snapshot: ReceiverSnapshot,
+    last_presented_snapshot: Arc<ReceiverSnapshot>,
     preview_pipeline: PreviewPipeline,
     preview_viewport: PreviewViewportTracker,
     video_surface: VideoSurface,
@@ -115,6 +116,8 @@ struct PicooDesktopApp {
     pairing_dialog_pending: Option<String>,
     pairing_dialog: PairingDialogLifecycle,
     pairing_locally_confirmed: bool,
+    /// Serializes side-effecting Receiver commands and disables duplicate UI submission.
+    receiver_command_pending: bool,
     /// Current post-pairing same-name replacement prompt. Domain identity,
     /// never a list index (REQ-PICOO-PAIRING-006).
     identity_replacement_dialog_revision: Option<u64>,

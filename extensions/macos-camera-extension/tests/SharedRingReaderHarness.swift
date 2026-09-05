@@ -150,7 +150,7 @@ private enum SharedRingReaderHarness {
         ) == kCVReturnSuccess, let pixelBuffer else {
             throw HarnessError.invalidFrame("unable to allocate CVPixelBuffer")
         }
-        guard frame.copyNV12(to: pixelBuffer) else {
+        guard frame.copyNV12(to: pixelBuffer, workspace: VImageScaleWorkspace()) else {
             throw HarnessError.invalidFrame("NV12 copy failed")
         }
 

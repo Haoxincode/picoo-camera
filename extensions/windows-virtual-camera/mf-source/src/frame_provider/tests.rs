@@ -235,3 +235,48 @@ fn negotiated_output_shape_is_stable_and_letterboxes_input() {
     assert_eq!(fitted.pixels[2], 80, "source is centered");
     assert_eq!(fitted.pixels[7], 0, "right pillar is black");
 }
+
+#[test]
+fn demand_revision_and_cache_publication_are_atomic() {
+    let placeholders = PlaceholderFrames::new();
+    let control = WorkerControl::new(&placeholders);
+    let output = OutputSize::new(1280, 720).expect("supported size");
+    let placeholder = placeholders.get(output);
+    assert!(control.set_output_active(output, true, Arc::clone(&placeholder)));
+    let stale_revision = control.demand_revision();
+
+    assert!(control.set_output_active(output, false, Arc::clone(&placeholder)));
+    assert!(control.set_output_active(output, true, Arc::clone(&placeholder)));
+    let current_revision = control.demand_revision();
+    assert_ne!(current_revision, stale_revision);
+
+    let source = OwnedNv12Frame {
+        width: 1280,
+        height: 720,
+        stride: 1280,
+        pixels: vec![32; nv12_len(1280, 720).expect("NV12 size")].into(),
+    };
+    let stale = Arc::new(PreparedFrameSet::from_live(
+        SourceKey::Live(1),
+        &source,
+        output,
+        &mut PreparationResources::default(),
+    ));
+    assert!(!control.publish_if_current(output, stale_revision, stale));
+    assert_eq!(control.prepared(output).key, SourceKey::Placeholder);
+
+    let current = Arc::new(PreparedFrameSet::from_live(
+        SourceKey::Live(2),
+        &source,
+        output,
+        &mut PreparationResources::default(),
+    ));
+    assert!(control.publish_if_current(output, current_revision, current));
+    assert_eq!(control.prepared(output).key, SourceKey::Live(2));
+
+    assert!(
+        !control.set_output_active(output, true, placeholder),
+        "an idempotent activation must not invalidate a newly published frame"
+    );
+    assert_eq!(control.prepared(output).key, SourceKey::Live(2));
+}

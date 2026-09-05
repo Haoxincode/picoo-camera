@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
@@ -76,11 +77,12 @@ impl PicooDesktopApp {
             pairing_dialog_pending: None,
             pairing_dialog: Default::default(),
             pairing_locally_confirmed: false,
+            receiver_command_pending: false,
             identity_replacement_dialog_revision: None,
         }
     }
 
-    pub(super) fn snapshot(&self) -> ReceiverSnapshot {
+    pub(super) fn snapshot(&self) -> Arc<ReceiverSnapshot> {
         self.runtime.snapshot()
     }
 
@@ -360,7 +362,7 @@ impl PicooDesktopApp {
                             .detach();
                         }
                     }
-                    let snapshot_changed = snapshot != this.last_presented_snapshot;
+                    let snapshot_changed = !Arc::ptr_eq(&snapshot, &this.last_presented_snapshot);
                     if snapshot_changed {
                         this.last_presented_snapshot = snapshot;
                     }

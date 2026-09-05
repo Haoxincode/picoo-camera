@@ -84,10 +84,28 @@ impl PlatformPreviewResources {
         output_width: u32,
         output_height: u32,
     ) -> Option<()> {
-        copy_tight_nv12(frame, &mut self.source_nv12)?;
         if output_width == frame.width && output_height == frame.height {
-            std::mem::swap(&mut self.source_nv12, &mut self.prepared_nv12);
+            // The color-range/matrix adaptation is in-place, so native-size
+            // output still needs one owned writable copy.
+            copy_tight_nv12(frame, &mut self.prepared_nv12)?;
+        } else if frame.stride == frame.width {
+            let source_len = (frame.width as usize)
+                .checked_mul(frame.height as usize)?
+                .checked_mul(3)?
+                .checked_div(2)?;
+            // Scaling only reads its input; borrow compact decoded storage
+            // directly instead of first copying another full NV12 frame.
+            resize_nv12_into(
+                &mut self.resizer,
+                &frame.pixel_data[..source_len],
+                &mut self.prepared_nv12,
+                frame.width,
+                frame.height,
+                output_width,
+                output_height,
+            )?;
         } else {
+            copy_tight_nv12(frame, &mut self.source_nv12)?;
             resize_nv12_into(
                 &mut self.resizer,
                 &self.source_nv12,

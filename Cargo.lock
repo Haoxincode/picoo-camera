@@ -5481,6 +5481,7 @@ dependencies = [
  "core-video",
  "dispatch2",
  "fast_image_resize",
+ "futures-channel",
  "gpui-kit",
  "image",
  "libc",

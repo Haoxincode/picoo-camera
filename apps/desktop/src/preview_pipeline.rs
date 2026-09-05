@@ -25,7 +25,7 @@ mod macos_surface;
 use macos_surface::PlatformPreviewResources;
 
 const PREVIEW_MAX_DETAIL_WIDTH: u32 = 1920;
-const PREVIEW_TARGET_FRAME_INTERVAL: Duration = Duration::from_millis(33);
+const PREVIEW_TARGET_FRAME_INTERVAL: Duration = Duration::from_nanos(33_333_333);
 const PREVIEW_PAINT_FRESHNESS: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
@@ -142,8 +142,43 @@ pub(crate) struct PreviewPipeline {
     shared: Arc<(Mutex<WorkerState>, Condvar)>,
     worker: Option<JoinHandle<()>>,
     last_submitted_sequence: u64,
-    last_submitted_at: Option<Instant>,
+    cadence: PreviewCadence,
     target_width: u32,
+}
+
+#[derive(Debug)]
+struct PreviewCadence {
+    interval: Duration,
+    next_deadline: Option<Instant>,
+}
+
+impl PreviewCadence {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            next_deadline: None,
+        }
+    }
+
+    fn take_due(&mut self, now: Instant) -> bool {
+        let Some(deadline) = self.next_deadline else {
+            self.next_deadline = Some(now + self.interval);
+            return true;
+        };
+        if now < deadline {
+            return false;
+        }
+
+        // Advance from the fixed cadence, skipping missed periods after a
+        // hidden/stalled UI without replaying historical preview frames.
+        let periods = now.duration_since(deadline).as_nanos() / self.interval.as_nanos() + 1;
+        self.next_deadline = u32::try_from(periods)
+            .ok()
+            .and_then(|periods| self.interval.checked_mul(periods))
+            .and_then(|advance| deadline.checked_add(advance))
+            .or_else(|| now.checked_add(self.interval));
+        true
+    }
 }
 
 impl Default for PreviewPipeline {
@@ -164,7 +199,7 @@ impl PreviewPipeline {
             shared,
             worker: Some(worker),
             last_submitted_sequence: 0,
-            last_submitted_at: None,
+            cadence: PreviewCadence::new(PREVIEW_TARGET_FRAME_INTERVAL),
             target_width: PREVIEW_MAX_DETAIL_WIDTH,
         }
     }
@@ -182,14 +217,10 @@ impl PreviewPipeline {
         if frame.sequence <= self.last_submitted_sequence {
             return false;
         }
-        if self
-            .last_submitted_at
-            .is_some_and(|submitted_at| submitted_at.elapsed() < PREVIEW_TARGET_FRAME_INTERVAL)
-        {
+        if !self.cadence.take_due(Instant::now()) {
             return false;
         }
         self.last_submitted_sequence = frame.sequence;
-        self.last_submitted_at = Some(Instant::now());
         let request = PreviewRequest {
             frame: Arc::clone(frame),
             target_width: self.target_width,
@@ -512,6 +543,39 @@ mod tests {
         assert_eq!(target_width_for_viewport(960.0), 960);
         assert_eq!(target_width_for_viewport(1440.1), 1440);
         assert_eq!(target_width_for_viewport(2560.0), 1920);
+    }
+
+    #[test]
+    fn cadence_stays_near_thirty_fps_across_common_ui_check_intervals() {
+        for check_interval in [
+            Duration::from_millis(16),
+            Duration::from_micros(16_200),
+            Duration::from_micros(16_667),
+        ] {
+            let start = Instant::now();
+            let end = start + Duration::from_secs(100);
+            let mut cadence = PreviewCadence::new(PREVIEW_TARGET_FRAME_INTERVAL);
+            let mut now = start;
+            let mut submitted = 0_u32;
+            while now <= end {
+                submitted += u32::from(cadence.take_due(now));
+                now += check_interval;
+            }
+            let fps = f64::from(submitted) / 100.0;
+            assert!(
+                (29.9..=30.1).contains(&fps),
+                "check interval {check_interval:?} produced {fps:.2} fps"
+            );
+        }
+    }
+
+    #[test]
+    fn cadence_skips_hidden_periods_without_replaying_them() {
+        let start = Instant::now();
+        let mut cadence = PreviewCadence::new(PREVIEW_TARGET_FRAME_INTERVAL);
+        assert!(cadence.take_due(start));
+        assert!(cadence.take_due(start + Duration::from_secs(5)));
+        assert!(!cadence.take_due(start + Duration::from_secs(5) + Duration::from_millis(1)));
     }
 
     #[test]

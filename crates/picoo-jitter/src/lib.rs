@@ -238,6 +238,28 @@ impl JitterBuffer {
         })
     }
 
+    /// Receiver-local delay until any complete AU reaches its absolute queue
+    /// age bound. This is distinct from the normal playout deadline: callers
+    /// use it while an older, incomplete AU blocks the front complete AU.
+    pub fn next_expiration_delay_us(&self, now_us: u64, max_queue_age_us: u64) -> Option<u64> {
+        if self.fixed_target_us.is_some() {
+            return None;
+        }
+        let max_queue_age_us = max_queue_age_us.max(self.target_us());
+        self.frames
+            .iter()
+            .map(|buffered| {
+                // drop_expired keeps an AU at the exact deadline, so wake one
+                // microsecond later rather than scheduling a zero-delay retry.
+                buffered
+                    .completed_at_us
+                    .saturating_add(max_queue_age_us)
+                    .saturating_add(1)
+            })
+            .min()
+            .map(|deadline| deadline.saturating_sub(now_us))
+    }
+
     /// Discard media while preserving the current network/decode estimate.
     pub fn discard_queued(&mut self) {
         self.frames.clear();
@@ -442,6 +464,18 @@ mod tests {
         assert!(!buffer.drop_expired(120_000, 120_000));
         assert!(buffer.drop_expired(120_001, 120_000));
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn hard_expiration_deadline_ignores_an_already_due_playout_deadline() {
+        let mut buffer = JitterBuffer::new();
+        buffer.push_at(frame(0, true), 0, 10_000);
+
+        assert_eq!(buffer.next_release_delay_us(50_000), Some(0));
+        assert_eq!(
+            buffer.next_expiration_delay_us(50_000, 120_000),
+            Some(80_001),
+        );
     }
 
     #[test]

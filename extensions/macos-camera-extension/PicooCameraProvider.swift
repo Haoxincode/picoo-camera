@@ -38,6 +38,7 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
     private var lastSequence: UInt64 = 0
     private var preparedFrameKey: PreparedFrameKey?
     private var preparedPixelBuffer: CVPixelBuffer?
+    private let scaleWorkspace = VImageScaleWorkspace()
     private let outputFormats: [OutputFormat]
     private var streamSource: PicooCameraStreamSource!
 
@@ -174,7 +175,7 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
                 Logger.extension.error("Unable to allocate output pixel buffer")
                 return
             }
-            if frame?.copyNV12(to: allocated) != true {
+            if frame?.copyNV12(to: allocated, workspace: scaleWorkspace) != true {
                 Self.fillBlack(allocated)
             }
             pixelBuffer = allocated

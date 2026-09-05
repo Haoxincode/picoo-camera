@@ -27,7 +27,7 @@ pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 #[cfg(feature = "gpui-ui")]
 mod worker;
 #[cfg(feature = "gpui-ui")]
-pub use worker::ReceiverRuntimeHandle;
+pub use worker::{await_receiver_reply, ReceiverRuntimeHandle};
 
 #[cfg(any(target_os = "macos", windows))]
 const RECEIVER_IDENTITY_SERVICE: &str = "site.nebula-tech.picoo-camera";

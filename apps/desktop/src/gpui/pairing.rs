@@ -6,25 +6,144 @@ use gpui_kit::component::*;
 use gpui_kit::*;
 use picoo_receiver::{TrustedIdentityCandidate, TrustedIdentityReplacement};
 
+use crate::receiver_runtime::await_receiver_reply;
+
 use super::PicooDesktopApp;
 
 impl PicooDesktopApp {
-    pub(super) fn confirm_pairing_request(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
-        self.runtime
-            .confirm_pairing()
-            .map_err(|error| format!("配对确认失败：{error}"))?;
-        self.pairing_locally_confirmed = true;
+    pub(super) fn confirm_pairing_request(&mut self, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.confirm_pairing();
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply)
+                .await
+                .map_err(|error| format!("配对确认失败：{error}"));
+            let succeeded = result.is_ok();
+            let message = result.err();
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                if succeeded {
+                    this.pairing_locally_confirmed = true;
+                }
+                cx.notify();
+            });
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if succeeded {
+                    if window.has_active_dialog(cx) {
+                        window.close_dialog(cx);
+                    }
+                    window.push_notification(
+                        (
+                            NotificationType::Success,
+                            "电脑端已确认，正在等待手机完成配对",
+                        ),
+                        cx,
+                    );
+                } else if let Some(message) = message {
+                    window.push_notification((NotificationType::Error, message), cx);
+                }
+            });
+        })
+        .detach();
         cx.notify();
-        Ok(())
     }
 
-    pub(super) fn reject_pairing_request(&mut self, cx: &mut Context<Self>) -> Result<(), String> {
-        self.runtime
-            .reject_pairing()
-            .map_err(|error| format!("拒绝配对失败：{error}"))?;
-        self.pairing_locally_confirmed = false;
+    pub(super) fn reject_pairing_request(&mut self, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.reject_pairing();
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply)
+                .await
+                .map_err(|error| format!("拒绝配对失败：{error}"));
+            let succeeded = result.is_ok();
+            let message = result.err();
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                if succeeded {
+                    this.pairing_locally_confirmed = false;
+                }
+                cx.notify();
+            });
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if succeeded && window.has_active_dialog(cx) {
+                    window.close_dialog(cx);
+                } else if let Some(message) = message {
+                    window.push_notification((NotificationType::Error, message), cx);
+                }
+            });
+        })
+        .detach();
         cx.notify();
-        Ok(())
+    }
+
+    fn replace_identity_history(&mut self, revision: u64, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.replace_trusted_identity_history(revision);
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let notification = match &result {
+                Ok(removed) => (
+                    NotificationType::Success,
+                    format!("已撤销 {removed} 个同名旧配对"),
+                ),
+                Err(error) => (NotificationType::Error, format!("替换旧配对失败：{error}")),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                cx.notify();
+            });
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if result.is_ok() && window.has_active_dialog(cx) {
+                    window.close_dialog(cx);
+                }
+                window.push_notification(notification, cx);
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn dismiss_identity_replacement(&mut self, revision: u64, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
+        self.receiver_command_pending = true;
+        let reply = self.runtime.dismiss_trusted_identity_replacement(revision);
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let close = matches!(result, Ok(true));
+            let message = match result {
+                Ok(true) => None,
+                Ok(false) => Some("配对记录已变化，请重新确认".to_owned()),
+                Err(error) => Some(format!("保存配对记录失败：{error}")),
+            };
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                cx.notify();
+            });
+            let _ = window_handle.update(cx, |_, window, cx| {
+                if close && window.has_active_dialog(cx) {
+                    window.close_dialog(cx);
+                } else if let Some(message) = message {
+                    window.push_notification((NotificationType::Error, message), cx);
+                }
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     pub(super) fn open_pairing_dialog(
@@ -63,41 +182,17 @@ impl PicooDesktopApp {
                 )
                 .on_ok({
                     let confirm_app = confirm_app.clone();
-                    move |_, window, cx| {
-                        let outcome =
-                            confirm_app.update(cx, |this, cx| this.confirm_pairing_request(cx));
-                        match outcome {
-                            Ok(Ok(())) => {
-                                window.push_notification(
-                                    (
-                                        NotificationType::Success,
-                                        "电脑端已确认，正在等待手机完成配对",
-                                    ),
-                                    cx,
-                                );
-                                true
-                            }
-                            Ok(Err(message)) => {
-                                window.push_notification((NotificationType::Error, message), cx);
-                                false
-                            }
-                            Err(_) => false,
-                        }
+                    move |_, _window, cx| {
+                        let _ = confirm_app.update(cx, |this, cx| this.confirm_pairing_request(cx));
+                        // The async completion owns close/error presentation.
+                        false
                     }
                 })
                 .on_cancel({
                     let cancel_app = cancel_app.clone();
-                    move |_, window, cx| {
-                        let outcome =
-                            cancel_app.update(cx, |this, cx| this.reject_pairing_request(cx));
-                        match outcome {
-                            Ok(Ok(())) => true,
-                            Ok(Err(message)) => {
-                                window.push_notification((NotificationType::Error, message), cx);
-                                false
-                            }
-                            Err(_) => false,
-                        }
+                    move |_, _window, cx| {
+                        let _ = cancel_app.update(cx, |this, cx| this.reject_pairing_request(cx));
+                        false
                     }
                 })
                 .on_close({
@@ -144,60 +239,18 @@ impl PicooDesktopApp {
                         .show_cancel(true),
                 )
                 .on_ok({
-                    move |_, window, cx| {
-                        let result = ok_app.update(cx, |this, cx| {
-                            let result = this.runtime.replace_trusted_identity_history(revision);
-                            cx.notify();
-                            result
-                        });
-                        match result {
-                            Ok(Ok(removed)) => {
-                                window.push_notification(
-                                    (
-                                        NotificationType::Success,
-                                        format!("已撤销 {removed} 个同名旧配对"),
-                                    ),
-                                    cx,
-                                );
-                                true
-                            }
-                            Ok(Err(error)) => {
-                                window.push_notification(
-                                    (
-                                        NotificationType::Error,
-                                        format!("替换旧配对失败：{error}"),
-                                    ),
-                                    cx,
-                                );
-                                false
-                            }
-                            Err(_) => false,
-                        }
+                    move |_, _window, cx| {
+                        let _ = ok_app
+                            .update(cx, |this, cx| this.replace_identity_history(revision, cx));
+                        false
                     }
                 })
                 .on_cancel({
-                    move |_, window, cx| {
-                        let result = cancel_app.update(cx, |this, cx| {
-                            let result = this
-                                .runtime
-                                .dismiss_trusted_identity_replacement(revision);
-                            cx.notify();
-                            result
+                    move |_, _window, cx| {
+                        let _ = cancel_app.update(cx, |this, cx| {
+                            this.dismiss_identity_replacement(revision, cx)
                         });
-                        match result {
-                            Ok(Ok(true)) => true,
-                            Ok(Ok(false)) | Err(_) => false,
-                            Ok(Err(error)) => {
-                                window.push_notification(
-                                    (
-                                        NotificationType::Error,
-                                        format!("保存配对记录失败：{error}"),
-                                    ),
-                                    cx,
-                                );
-                                false
-                            }
-                        }
+                        false
                     }
                 })
                 .on_close({
