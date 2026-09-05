@@ -43,12 +43,19 @@ QUIC、Decoder、时钟、磁盘可信存储、Frame Sink 和平台生命周期�
 ### 每会话单一运行时所有者
 
 每个 Receiver 会话由 Rust Core 的专用单线程 owner 创建并独占。QUIC、重组、播放队列、Decoder
-completion 和平台输出 adapter 都不能进入 GPUI `Entity`；桌面只实现
+completion 和平台输出 adapter 都不能进入 GPUI `Entity` 或 CLI 输入循环；桌面只实现
 `ReceiverRuntimeAdapter`，通过命令、oneshot reply、`Arc<ReceiverSnapshot>` 与独立发布的 latest frame
 交互。owner 以 transport/event revision 和最近媒体 deadline 等待，每轮命令处理受 64 条/2 ms
 公平预算约束。完整快照最多每 100 ms 构建一次，命令后立即构建，内容无变化时保持同一个 `Arc`；
 可信设备排序/指纹摘要按进程内 trust revision 缓存，历史指标摘要只在样本集合变化时重算。销毁句柄
-只请求 Shutdown，join 交给清理线程，不能阻塞 UI teardown。
+只请求 Shutdown，join 交给清理线程，不能阻塞 UI teardown。GPUI 与 `--serve` 必须使用同一个 Core
+owner；CLI 可同步等待自身命令 reply，但不得直接调用 `pump()` 或恢复固定媒体轮询。
+
+owner 的命令邮箱必须有界且由提交方非阻塞写入；容量耗尽或 owner 已关闭时，要求 reply 的命令连同其
+oneshot sender 返回给平台 adapter，由 adapter 立即发送明确的 `Full`/`Closed` 错误，不能让 UI
+误判为普通 reply channel 取消。展示名、自动接受、占位图与虚拟摄像头状态等可合并设置共用一个
+capacity-one latest mailbox，但平台 adapter 必须先按字段合并最新值，避免不同设置之间互相覆盖。
+UI 线程不得使用阻塞 `send()` 向 owner 施加反压。
 
 `ReceiverRuntimeAdapter` 不要求 `Send`：adapter 和 `ReceiverSession` 必须在 owner 线程内构造。这一
 边界用于阻止为了移动 mmap、COM 或其他平台资源而增加宽泛 `unsafe impl Send`。Sender 同样遵循
@@ -106,8 +113,11 @@ surface 只有在存在显式、可跨线程转移的 owner 时才能加入非�
 队列在 Worker 上执行，不能同步阻塞控制消息、统计、IDR 请求和断线处理。
 
 Worker 队列最多保留两个尚未开始的 AU。新 IDR 取代全部排队 AU；reference delta 优先淘汰
-discardable delta，自身无法入队时触发参考链恢复；discardable delta 可直接丢弃。Reset 清除所有
-排队 Decode、推进 decoder generation，但不等待正在执行的平台调用，完成事件同时受 decoder、
+discardable delta；队列暂满且没有可替换项时，尚未过硬期限的 reference delta 留在 Jitter 等待
+Decoder capacity event，真正超期才触发参考链恢复；饱和时的 discardable delta 可直接丢弃。
+准入检查发生在 `pop_ready()` 之前，且只有 Session owner 能提交 Decode，因此 Worker 并发取走任务
+只会让检查后的容量增加，不会被第二个生产者抢占。Reset 清除所有排队 Decode、推进 decoder
+generation，但不等待正在执行的平台调用，完成事件同时受 decoder、
 connection 与 stream generation 门禁。Worker 析构只请求 Shutdown，不得为无法控制的平台调用执行
 无界 join。队列需要检查并替换任意 pending job，标准库 `Mutex<VecDeque> + Condvar` 比只支持
 端点背压的 channel 更贴合这项 Picoo 特有语义；macOS Worker 每个任务使用 `objc2` autorelease pool，
@@ -116,10 +126,11 @@ connection 与 stream generation 门禁。Worker 析构只请求 Shutdown，不�
 
 ### 统一媒体调度决策
 
-Reassembly、Jitter 和 Decoder 队列继续保留各自专用数据结构，但“下一步解码、硬过期、等待旧 AU、
-等待播放点或等待事件”只能由纯 `MediaScheduler` 决定。输入是完整 AU 队首、最旧未完成 frame ID、
-正常播放 delay 与绝对帧龄 deadline；输出是 `DecodeReadyFrame`、`DiscardExpired`、`WaitUntil`、
-`WaitForEvent` 或 `Idle`。生产 Receiver 的 drain 与 next wake 必须调用同一个函数，不能各自复制一套
+Reassembly、Jitter 和 Decoder 队列继续保留各自专用数据结构，但“下一步解码、丢弃可抛帧、
+硬过期、等待旧 AU、等待 Decoder 容量、等待播放点或等待事件”只能由纯 `MediaScheduler` 决定。
+输入是完整 AU 队首、最旧未完成 frame ID、正常播放 delay、绝对帧龄 deadline 与 Decoder 准入事实；
+输出是 `DecodeReadyFrame`、`DiscardReadyFrame`、`DiscardExpired`、`WaitUntil`、`WaitForEvent` 或
+`Idle`。生产 Receiver 的 drain 与 next wake 必须调用同一个函数，不能各自复制一套
 阻塞判断；`picoo-sim` 也直接依赖该纯决策，从而让乱序、旧 AU 阻塞与硬过期的模拟证据覆盖生产
 语义，而不是覆盖一个相似实现。
 
@@ -136,8 +147,9 @@ Decoder 输出只分配一次，Preview、Shared Ring Writer 和可选 Recorder 
 Shared Ring Writer 位于 `LatestFrameStore` 之后并拥有独立线程。Receiver 发布完成后只提交
 `Arc<VideoFrame>`；Writer 的 pending 容量为一，新帧覆盖尚未开始的旧工作，实际 mmap Producer 在
 Writer 线程内构造并终身留在该线程。发布成功/失败通过事件回报诊断，像素复制失败不破坏 Decoder
-参考链，也不能同步阻塞 Session owner。Preview 与 Shared Ring 是 LatestFrameStore 的两个独立
-消费者，任何一方变慢都不能阻塞另一方。
+参考链，也不能同步阻塞 Session owner。所有槽位忙时 Producer 返回显式 `Busy`，Writer 保留最新
+未落地帧并限频重试；新帧可替换它，一次性占位帧不能把旧 sequence 伪报成新发布。Preview 与
+Shared Ring 是 LatestFrameStore 的两个独立消费者，任何一方变慢都不能阻塞另一方。
 
 `FrameBufferPool` 复用 `bytes 1.12.1+` 的 `Bytes::from_owner`，由最后一个不可变 `Bytes` 视图的
 析构归还 backing `Vec`；无需引入面向连接或异步资源的通用对象池。`bytes` 为项目既有、维护活跃
@@ -238,6 +250,11 @@ Receiver Core → Scripted Decoder → Fake Frame Sink。它必须覆盖丢包�
 IDR fragment 丢失、StreamConfig 晚到、epoch 连续变化、前后台切换、编码重配置失败、快速重连、
 Receiver 重启、控制消息重复/越序/非法阶段、UI 不消费和 VCam 快慢消费。
 
+快速场景可使用零播放等待和同步完成 Decoder；涉及 deadline、背压和代际切换的生产等价场景必须
+启用自适应 Jitter，并以虚拟完成时刻模拟 Decoder active/pending 容量、开始、完成和 reset。完整 AU
+在 Reassembly 完成后直接进入与产品一致的 Jitter/`MediaScheduler` 路径，不得在模拟器外层另建
+`completed_access_units` 队列提前复制旧 AU 阻塞决策。
+
 持续验证以下 invariant：
 
 - 未认证设备永远不能发送媒体或特权控制；
@@ -254,6 +271,7 @@ Receiver 重启、控制消息重复/越序/非法阶段、UI 不消费和 VCam 
 最小离散事件适配器，并直接复用生产 `ControlEnvelope`、`SenderPipeline`、Reassembly、Jitter 和
 `LatestFrameStore`。生产 Reassembly 同时提供显式 monotonic instant 入口，产品路径仍使用系统
 `Instant`；模拟器不得复制 packet/FEC/jitter 算法，也不得复制生产 `MediaScheduler` 的跨层推进决策。
+Scripted Decoder 只模拟平台 adapter 的时序和资源边界，不模拟硬件像素算法。
 
 补充 ControlEnvelope、pairing transcript、reassembly/FEC fuzz，Shared Ring kill/restart stress，unsafe
 Miri，原子协议 Loom model，夜间网络损伤/soak，以及 Windows 安装、注册、枚举和启动 VCam 的
