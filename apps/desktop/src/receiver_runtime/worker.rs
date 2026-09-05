@@ -1,20 +1,19 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use futures_channel::oneshot;
 use picoo_protocol::control::CameraCommand;
 use picoo_receiver::runtime::{
     ReceiverRuntimeAdapter, ReceiverRuntimeHandle as CoreRuntimeHandle, RuntimeCommandOutcome,
+    RuntimeCommandSubmitOutcome,
 };
 use picoo_receiver::ReceiverError;
 
 use super::{ReceiverRuntime, ReceiverSnapshot};
 use crate::prefs::DesktopPreferences;
 
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub(crate) enum ReceiverCommand {
-    SetDisplayName(String),
-    SetAutoAcceptPaired(bool),
-    SetPlaceholderMode(picoo_frame_hub::PlaceholderMode),
-    SetVirtualCameraStatus(crate::model::VirtualCameraStatus),
+    ApplyPendingSettings(Arc<Mutex<PendingReceiverSettings>>),
     Disconnect,
     SendCameraCommand(CameraCommand, oneshot::Sender<Result<(), ReceiverError>>),
     RequestKeyframe(oneshot::Sender<Result<(), ReceiverError>>),
@@ -27,6 +26,36 @@ pub(crate) enum ReceiverCommand {
     Shutdown,
 }
 
+#[derive(Default)]
+pub(crate) struct PendingReceiverSettings {
+    display_name: Option<String>,
+    auto_accept_paired: Option<bool>,
+    placeholder_mode: Option<picoo_frame_hub::PlaceholderMode>,
+    virtual_camera_status: Option<crate::model::VirtualCameraStatus>,
+}
+
+impl ReceiverCommand {
+    fn reject(self, error: ReceiverError) {
+        match self {
+            Self::SendCameraCommand(_, response)
+            | Self::RequestKeyframe(response)
+            | Self::ConfirmPairing(response)
+            | Self::RejectPairing(response) => {
+                let _ = response.send(Err(error));
+            }
+            Self::RemoveTrustedDevice(_, response)
+            | Self::DismissTrustedIdentityReplacement(_, response) => {
+                let _ = response.send(Err(error));
+            }
+            Self::ReplaceTrustedIdentityHistory(_, response)
+            | Self::ClearTrustedDevices(response) => {
+                let _ = response.send(Err(error));
+            }
+            Self::ApplyPendingSettings(_) | Self::Disconnect | Self::Shutdown => {}
+        }
+    }
+}
+
 /// GPUI-facing handle for the dedicated Receiver owner thread.
 ///
 /// The handle carries commands and immutable snapshots only; QUIC, decoder,
@@ -34,27 +63,43 @@ pub(crate) enum ReceiverCommand {
 /// entity or run inside a UI update closure.
 pub struct ReceiverRuntimeHandle {
     inner: CoreRuntimeHandle<ReceiverCommand, ReceiverSnapshot>,
+    pending_settings: Arc<Mutex<PendingReceiverSettings>>,
 }
 
 pub type ReceiverReply<T> = oneshot::Receiver<Result<T, ReceiverError>>;
 
+#[cfg(feature = "gpui-ui")]
 pub async fn await_receiver_reply<T>(reply: ReceiverReply<T>) -> Result<T, ReceiverError> {
     reply
         .await
         .map_err(|_| ReceiverError::Protocol("Receiver worker response channel closed".into()))?
 }
 
+#[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 impl ReceiverRuntimeHandle {
+    pub fn start(config: super::ReceiverRuntimeConfig) -> Result<Self, ReceiverError> {
+        let pending_settings = Arc::new(Mutex::new(PendingReceiverSettings::default()));
+        let inner = CoreRuntimeHandle::start(move || ReceiverRuntime::start(config))?;
+        Ok(Self {
+            inner,
+            pending_settings,
+        })
+    }
+
     pub fn start_from_prefs(
         prefs: DesktopPreferences,
         virtual_camera: crate::model::VirtualCameraStatus,
     ) -> Result<Self, ReceiverError> {
+        let pending_settings = Arc::new(Mutex::new(PendingReceiverSettings::default()));
         let inner = CoreRuntimeHandle::start(move || {
             let mut runtime = ReceiverRuntime::from_prefs(&prefs)?;
             runtime.set_virtual_camera_status(virtual_camera);
             Ok(runtime)
         })?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            pending_settings,
+        })
     }
 
     pub fn snapshot(&self) -> Arc<ReceiverSnapshot> {
@@ -66,7 +111,26 @@ impl ReceiverRuntimeHandle {
     }
 
     fn send(&self, command: ReceiverCommand) {
-        let _ = self.inner.submit(command);
+        if let Err(error) = self.inner.submit(command) {
+            tracing::warn!(outcome = ?error.outcome(), "Receiver command was not queued");
+        }
+    }
+
+    fn update_settings(&self, update: impl FnOnce(&mut PendingReceiverSettings)) {
+        update(
+            &mut self
+                .pending_settings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let outcome = self
+            .inner
+            .submit_latest(ReceiverCommand::ApplyPendingSettings(Arc::clone(
+                &self.pending_settings,
+            )));
+        if outcome != RuntimeCommandSubmitOutcome::Queued {
+            tracing::warn!(?outcome, "Receiver settings were not queued");
+        }
     }
 
     fn request<T>(
@@ -74,24 +138,34 @@ impl ReceiverRuntimeHandle {
         command: impl FnOnce(oneshot::Sender<Result<T, ReceiverError>>) -> ReceiverCommand,
     ) -> ReceiverReply<T> {
         let (response_tx, response_rx) = oneshot::channel();
-        let _ = self.inner.submit(command(response_tx));
+        if let Err(rejected) = self.inner.submit(command(response_tx)) {
+            let outcome = rejected.outcome();
+            let message = match outcome {
+                RuntimeCommandSubmitOutcome::Full => "Receiver command queue is full",
+                RuntimeCommandSubmitOutcome::Closed => "Receiver worker is closed",
+                RuntimeCommandSubmitOutcome::Queued => unreachable!("queued commands are Ok"),
+            };
+            rejected
+                .into_command()
+                .reject(ReceiverError::Protocol(message.into()));
+        }
         response_rx
     }
 
     pub fn set_display_name(&self, name: String) {
-        self.send(ReceiverCommand::SetDisplayName(name));
+        self.update_settings(|settings| settings.display_name = Some(name));
     }
 
     pub fn set_auto_accept_paired(&self, enabled: bool) {
-        self.send(ReceiverCommand::SetAutoAcceptPaired(enabled));
+        self.update_settings(|settings| settings.auto_accept_paired = Some(enabled));
     }
 
     pub fn set_placeholder_mode(&self, mode: picoo_frame_hub::PlaceholderMode) {
-        self.send(ReceiverCommand::SetPlaceholderMode(mode));
+        self.update_settings(|settings| settings.placeholder_mode = Some(mode));
     }
 
     pub fn set_virtual_camera_status(&self, status: crate::model::VirtualCameraStatus) {
-        self.send(ReceiverCommand::SetVirtualCameraStatus(status));
+        self.update_settings(|settings| settings.virtual_camera_status = Some(status));
     }
 
     pub fn disconnect(&self) {
@@ -140,11 +214,24 @@ fn apply_receiver_command(
     command: ReceiverCommand,
 ) -> RuntimeCommandOutcome {
     match command {
-        ReceiverCommand::SetDisplayName(name) => runtime.set_display_name(name),
-        ReceiverCommand::SetAutoAcceptPaired(enabled) => runtime.set_auto_accept_paired(enabled),
-        ReceiverCommand::SetPlaceholderMode(mode) => runtime.set_placeholder_mode(mode),
-        ReceiverCommand::SetVirtualCameraStatus(status) => {
-            runtime.set_virtual_camera_status(status)
+        ReceiverCommand::ApplyPendingSettings(settings) => {
+            let settings = std::mem::take(
+                &mut *settings
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            if let Some(name) = settings.display_name {
+                runtime.set_display_name(name);
+            }
+            if let Some(enabled) = settings.auto_accept_paired {
+                runtime.set_auto_accept_paired(enabled);
+            }
+            if let Some(mode) = settings.placeholder_mode {
+                runtime.set_placeholder_mode(mode);
+            }
+            if let Some(status) = settings.virtual_camera_status {
+                runtime.set_virtual_camera_status(status);
+            }
         }
         ReceiverCommand::Disconnect => runtime.disconnect(),
         ReceiverCommand::SendCameraCommand(command, response) => {
@@ -206,5 +293,26 @@ impl ReceiverRuntimeAdapter for ReceiverRuntime {
 
     fn latest_frame(&self) -> Option<Arc<picoo_frame_hub::VideoFrame>> {
         self.receiver().latest_frame().cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejected_side_effect_command_returns_an_explicit_reply() {
+        let (response, mut reply) = oneshot::channel();
+        ReceiverCommand::RequestKeyframe(response)
+            .reject(ReceiverError::Protocol("queue full".into()));
+
+        let result = reply
+            .try_recv()
+            .expect("reply channel remains valid")
+            .expect("rejection reply is immediate");
+        assert!(matches!(
+            result,
+            Err(ReceiverError::Protocol(message)) if message == "queue full"
+        ));
     }
 }

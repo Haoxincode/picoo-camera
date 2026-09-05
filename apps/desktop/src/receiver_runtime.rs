@@ -26,10 +26,10 @@ use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
-#[cfg(feature = "gpui-ui")]
 mod worker;
 #[cfg(feature = "gpui-ui")]
-pub use worker::{await_receiver_reply, ReceiverRuntimeHandle};
+pub use worker::await_receiver_reply;
+pub use worker::{ReceiverReply, ReceiverRuntimeHandle};
 
 #[cfg(any(target_os = "macos", windows))]
 const RECEIVER_IDENTITY_SERVICE: &str = "site.nebula-tech.picoo-camera";
@@ -538,10 +538,6 @@ impl ReceiverRuntime {
 
     pub fn receiver(&self) -> &ReceiverSession {
         &self.receiver
-    }
-
-    pub fn receiver_mut(&mut self) -> &mut ReceiverSession {
-        &mut self.receiver
     }
 
     #[allow(dead_code)]

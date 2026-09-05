@@ -516,6 +516,8 @@ pub fn take_pending_menu_action() -> Option<TrayMenuAction> {
 mod tests {
     use super::*;
 
+    static TRAY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn close_hides_when_tray_enabled() {
         assert_eq!(
@@ -627,6 +629,7 @@ mod tests {
 
     #[test]
     fn note_hidden_to_tray_shows_global_icon() {
+        let _test_guard = TRAY_TEST_LOCK.lock().expect("test lock");
         note_tray_cleared();
         note_hidden_to_tray_with_tip("Picoo Camera — Discovering");
         let icon = NOTIFY_ICON.lock().expect("lock");
@@ -637,6 +640,7 @@ mod tests {
 
     #[test]
     fn sync_tray_tip_updates_while_visible() {
+        let _test_guard = TRAY_TEST_LOCK.lock().expect("test lock");
         note_tray_cleared();
         note_hidden_to_tray_with_tip("Picoo Camera — Discovering");
         sync_tray_tip(ReceiverStatus::Streaming);

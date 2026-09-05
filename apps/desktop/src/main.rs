@@ -37,9 +37,11 @@ use std::thread;
 use diagnostics_export::export_diagnostics_json;
 use model::DesktopAppState;
 use picoo_pairing::TrustedDeviceStore;
-use picoo_receiver::ReceiverSession;
+use picoo_receiver::ReceiverError;
 use prefs::load_prefs;
-use receiver_runtime::{default_trusted_store_path, ReceiverRuntime, ReceiverRuntimeConfig};
+use receiver_runtime::{
+    default_trusted_store_path, ReceiverReply, ReceiverRuntimeConfig, ReceiverRuntimeHandle,
+};
 
 fn main() {
     let prefs = load_prefs();
@@ -360,18 +362,32 @@ fn spawn_stdin_commands() -> mpsc::Receiver<String> {
     rx
 }
 
-fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
+fn wait_console_reply<T>(mut reply: ReceiverReply<T>) -> Result<T, ReceiverError> {
+    loop {
+        match reply.try_recv() {
+            Ok(Some(result)) => return result,
+            Ok(None) => thread::sleep(std::time::Duration::from_millis(1)),
+            Err(_) => {
+                return Err(ReceiverError::Protocol(
+                    "Receiver worker response channel closed".into(),
+                ));
+            }
+        }
+    }
+}
+
+fn handle_console_command(runtime: &ReceiverRuntimeHandle, line: &str) -> bool {
     let line = line.trim();
     if line.is_empty() {
-        return;
+        return true;
     }
     match line {
-        "confirm" | "confirm-pairing" => match receiver.confirm_pairing_locally() {
+        "confirm" | "confirm-pairing" => match wait_console_reply(runtime.confirm_pairing()) {
             Ok(()) => println!("Desktop confirmed pairing locally."),
             Err(error) => eprintln!("Desktop pairing confirmation failed: {error}"),
         },
         "list" | "list-paired" => {
-            for device in receiver.trusted_devices().list() {
+            for device in runtime.snapshot().trusted_devices.iter() {
                 println!(
                     "{} | {} | fp={}",
                     device.device_id,
@@ -382,30 +398,32 @@ fn handle_console_command(receiver: &mut ReceiverSession, line: &str) {
         }
         cmd if cmd.starts_with("remove ") => {
             let device_id = cmd.trim_start_matches("remove ").trim();
-            match receiver.remove_trusted_device(device_id) {
+            match wait_console_reply(runtime.remove_trusted_device(device_id)) {
                 Ok(true) => println!("Removed paired device {device_id}"),
                 Ok(false) => println!("Device not found: {device_id}"),
                 Err(err) => eprintln!("Remove failed: {err}"),
             }
         }
         "export-diagnostics" | "export" => {
-            let stats = receiver.ingress_stats();
-            match export_diagnostics_json(receiver.status(), stats) {
+            let snapshot = runtime.snapshot();
+            match export_diagnostics_json(snapshot.status, snapshot.ingress) {
                 Ok(json) => println!("{json}"),
                 Err(err) => eprintln!("Export failed: {err}"),
             }
         }
-        "stats" | "live-stats" => match receiver.last_stats() {
+        "stats" | "live-stats" => match runtime.snapshot().receiver_stats.as_ref() {
             Some(stats) => println!("{stats:#?}"),
             None => println!("No completed ReceiverStats window yet."),
         },
         "help" => {
             println!(
-                "Commands: confirm | list | remove <device_id> | stats | export-diagnostics | help"
+                "Commands: confirm | list | remove <device_id> | stats | export-diagnostics | help | quit"
             );
         }
+        "quit" | "exit" => return false,
         other => println!("Unknown command: {other} (type help)"),
     }
+    true
 }
 
 fn run_serve_mode() {
@@ -417,7 +435,7 @@ fn run_serve_mode() {
         }
     };
     let trusted_path = config.trusted_store_path.clone();
-    let mut runtime = match ReceiverRuntime::start(config) {
+    let runtime = match ReceiverRuntimeHandle::start(config) {
         Ok(runtime) => runtime,
         Err(err) => {
             eprintln!("Failed to start receiver: {err}");
@@ -433,21 +451,24 @@ fn run_serve_mode() {
         );
     }
     println!(
-        "Type `confirm` when pairing code matches, `list`, `remove <device_id>`, `stats`, or `export-diagnostics`."
+        "Type `confirm` when pairing code matches, `list`, `remove <device_id>`, `stats`, `export-diagnostics`, or `quit`."
     );
 
     let stdin_rx = spawn_stdin_commands();
     let mut last_pairing_hint = String::new();
 
     loop {
-        while let Ok(line) = stdin_rx.try_recv() {
-            handle_console_command(runtime.receiver_mut(), &line);
+        match stdin_rx.recv_timeout(std::time::Duration::from_millis(100)) {
+            Ok(line) => {
+                if !handle_console_command(&runtime, &line) {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        if let Err(err) = runtime.pump() {
-            eprintln!("Receiver pump error: {err}");
-        }
-        if let Some(code) = runtime.receiver().pairing_short_code() {
+        if let Some(code) = runtime.snapshot().pairing_short_code.as_deref() {
             let hint = format!("Pairing code: {code} — type `confirm` on desktop to approve");
             if hint != last_pairing_hint {
                 println!("{hint}");
@@ -456,7 +477,6 @@ fn run_serve_mode() {
         } else {
             last_pairing_hint.clear();
         }
-        thread::sleep(std::time::Duration::from_millis(16));
     }
 }
 
