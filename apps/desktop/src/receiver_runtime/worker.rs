@@ -14,7 +14,7 @@ use crate::prefs::DesktopPreferences;
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub(crate) enum ReceiverCommand {
     ApplyPendingSettings(Arc<Mutex<PendingReceiverSettings>>),
-    Disconnect,
+    Disconnect(oneshot::Sender<Result<(), ReceiverError>>),
     SendCameraCommand(CameraCommand, oneshot::Sender<Result<(), ReceiverError>>),
     RequestKeyframe(oneshot::Sender<Result<(), ReceiverError>>),
     ConfirmPairing(oneshot::Sender<Result<(), ReceiverError>>),
@@ -37,7 +37,8 @@ pub(crate) struct PendingReceiverSettings {
 impl ReceiverCommand {
     fn reject(self, error: ReceiverError) {
         match self {
-            Self::SendCameraCommand(_, response)
+            Self::Disconnect(response)
+            | Self::SendCameraCommand(_, response)
             | Self::RequestKeyframe(response)
             | Self::ConfirmPairing(response)
             | Self::RejectPairing(response) => {
@@ -51,7 +52,7 @@ impl ReceiverCommand {
             | Self::ClearTrustedDevices(response) => {
                 let _ = response.send(Err(error));
             }
-            Self::ApplyPendingSettings(_) | Self::Disconnect | Self::Shutdown => {}
+            Self::ApplyPendingSettings(_) | Self::Shutdown => {}
         }
     }
 }
@@ -110,12 +111,6 @@ impl ReceiverRuntimeHandle {
         self.inner.latest_frame()
     }
 
-    fn send(&self, command: ReceiverCommand) {
-        if let Err(error) = self.inner.submit(command) {
-            tracing::warn!(outcome = ?error.outcome(), "Receiver command was not queued");
-        }
-    }
-
     fn update_settings(&self, update: impl FnOnce(&mut PendingReceiverSettings)) {
         update(
             &mut self
@@ -168,8 +163,8 @@ impl ReceiverRuntimeHandle {
         self.update_settings(|settings| settings.virtual_camera_status = Some(status));
     }
 
-    pub fn disconnect(&self) {
-        self.send(ReceiverCommand::Disconnect);
+    pub fn disconnect(&self) -> ReceiverReply<()> {
+        self.request(ReceiverCommand::Disconnect)
     }
 
     pub fn send_camera_command(&self, command: CameraCommand) -> ReceiverReply<()> {
@@ -233,7 +228,10 @@ fn apply_receiver_command(
                 runtime.set_virtual_camera_status(status);
             }
         }
-        ReceiverCommand::Disconnect => runtime.disconnect(),
+        ReceiverCommand::Disconnect(response) => {
+            runtime.disconnect();
+            let _ = response.send(Ok(()));
+        }
         ReceiverCommand::SendCameraCommand(command, response) => {
             let _ = response.send(runtime.send_camera_command(command));
         }
@@ -256,7 +254,11 @@ fn apply_receiver_command(
             let _ = response.send(runtime.dismiss_trusted_identity_replacement(revision));
         }
         ReceiverCommand::ClearTrustedDevices(response) => {
-            let _ = response.send(runtime.clear_trusted_devices());
+            let result = runtime.clear_trusted_devices();
+            if result.is_ok() {
+                runtime.disconnect();
+            }
+            let _ = response.send(result);
         }
         ReceiverCommand::Shutdown => return RuntimeCommandOutcome::Shutdown,
     }
@@ -299,6 +301,55 @@ impl ReceiverRuntimeAdapter for ReceiverRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    struct PausedAdapter {
+        wake: picoo_transport::TransportEventWake,
+        pump_entered: Arc<AtomicBool>,
+        release_pump: Arc<AtomicBool>,
+    }
+
+    impl ReceiverRuntimeAdapter for PausedAdapter {
+        type Command = ReceiverCommand;
+        type Snapshot = u64;
+
+        fn runtime_wake(&self) -> picoo_transport::TransportEventWake {
+            self.wake.clone()
+        }
+
+        fn shutdown_command() -> Self::Command {
+            ReceiverCommand::Shutdown
+        }
+
+        fn apply_command(&mut self, command: Self::Command) -> RuntimeCommandOutcome {
+            if matches!(command, ReceiverCommand::Shutdown) {
+                RuntimeCommandOutcome::Shutdown
+            } else {
+                RuntimeCommandOutcome::Continue
+            }
+        }
+
+        fn pump(&mut self) -> Result<(), ReceiverError> {
+            self.pump_entered.store(true, Ordering::Release);
+            while !self.release_pump.load(Ordering::Acquire) {
+                std::thread::yield_now();
+            }
+            Ok(())
+        }
+
+        fn next_wake_delay(&self) -> Duration {
+            Duration::from_secs(1)
+        }
+
+        fn snapshot(&self) -> Self::Snapshot {
+            0
+        }
+
+        fn latest_frame(&self) -> Option<Arc<picoo_frame_hub::VideoFrame>> {
+            None
+        }
+    }
 
     #[test]
     fn rejected_side_effect_command_returns_an_explicit_reply() {
@@ -313,6 +364,71 @@ mod tests {
         assert!(matches!(
             result,
             Err(ReceiverError::Protocol(message)) if message == "queue full"
+        ));
+    }
+
+    #[test]
+    fn rejected_disconnect_returns_an_explicit_reply() {
+        let (response, mut reply) = oneshot::channel();
+        ReceiverCommand::Disconnect(response).reject(ReceiverError::Protocol("queue full".into()));
+
+        let result = reply
+            .try_recv()
+            .expect("reply channel remains valid")
+            .expect("rejection reply is immediate");
+        assert!(matches!(
+            result,
+            Err(ReceiverError::Protocol(message)) if message == "queue full"
+        ));
+    }
+
+    #[test]
+    fn full_owner_queue_rejects_disconnect_with_an_explicit_reply() {
+        let pump_entered = Arc::new(AtomicBool::new(false));
+        let release_pump = Arc::new(AtomicBool::new(false));
+        let entered = Arc::clone(&pump_entered);
+        let release = Arc::clone(&release_pump);
+        let runtime = CoreRuntimeHandle::start(move || {
+            Ok(PausedAdapter {
+                wake: picoo_transport::TransportEventWake::default(),
+                pump_entered: entered,
+                release_pump: release,
+            })
+        })
+        .expect("start paused Receiver owner");
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !pump_entered.load(Ordering::Acquire) && Instant::now() < deadline {
+            std::thread::yield_now();
+        }
+        assert!(pump_entered.load(Ordering::Acquire));
+
+        let settings = Arc::new(Mutex::new(PendingReceiverSettings::default()));
+        for _ in 0..128 {
+            assert!(
+                runtime
+                    .submit(ReceiverCommand::ApplyPendingSettings(Arc::clone(&settings)))
+                    .is_ok(),
+                "fill bounded command queue"
+            );
+        }
+        let (response, mut reply) = oneshot::channel();
+        let rejected = runtime
+            .submit(ReceiverCommand::Disconnect(response))
+            .expect_err("Disconnect must be rejected when the queue is full");
+        assert_eq!(rejected.outcome(), RuntimeCommandSubmitOutcome::Full);
+        rejected.into_command().reject(ReceiverError::Protocol(
+            "Receiver command queue is full".into(),
+        ));
+        release_pump.store(true, Ordering::Release);
+
+        let result = reply
+            .try_recv()
+            .expect("reply channel remains valid")
+            .expect("full rejection reply is immediate");
+        assert!(matches!(
+            result,
+            Err(ReceiverError::Protocol(message))
+                if message == "Receiver command queue is full"
         ));
     }
 }

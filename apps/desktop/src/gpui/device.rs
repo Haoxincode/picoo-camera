@@ -269,13 +269,39 @@ impl PicooDesktopApp {
             )
     }
 
-    /// Desktop Live disconnect is an immediate, reversible command. Keeping it
-    /// on the owning entity avoids an overlay lifecycle for a command whose
-    /// visible result is the Waiting page itself.
+    /// Desktop Live disconnect is reversible, but the page only changes after
+    /// the bounded Receiver owner confirms that it executed the command.
     pub(super) fn disconnect_active_sender(&mut self, cx: &mut Context<Self>) {
+        if self.receiver_command_pending {
+            return;
+        }
         tracing::info!("desktop disconnect button clicked");
-        self.runtime.disconnect();
-        self.page = DesktopPage::Waiting;
+        self.receiver_command_pending = true;
+        let reply = self.runtime.disconnect();
+        let window_handle = self.window_handle;
+        cx.spawn(async move |this, cx| {
+            let result = await_receiver_reply(reply).await;
+            let error_message = result
+                .as_ref()
+                .err()
+                .map(|error| format!("断开设备失败：{error}"));
+            let _ = this.update(cx, |this, cx| {
+                this.receiver_command_pending = false;
+                if result.is_ok() {
+                    this.page = DesktopPage::Waiting;
+                    this.diagnostics_error = None;
+                } else {
+                    this.diagnostics_error = error_message.clone();
+                }
+                cx.notify();
+            });
+            if let Some(message) = error_message {
+                let _ = window_handle.update(cx, |_, window, cx| {
+                    window.push_notification((NotificationType::Error, message), cx);
+                });
+            }
+        })
+        .detach();
         cx.notify();
     }
 
@@ -337,7 +363,6 @@ impl PicooDesktopApp {
                 this.receiver_command_pending = false;
                 match result {
                     Ok(removed) => {
-                        this.runtime.disconnect();
                         this.page = DesktopPage::Waiting;
                         this.diagnostics_error = None;
                         this.diagnostics_message = Some(format!("已重置 {removed} 台设备的配对"));
