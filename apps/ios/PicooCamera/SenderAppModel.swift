@@ -160,7 +160,7 @@ final class SenderAppModel {
                         case let .accessUnit(accessUnit):
                             guard self.encoderApply.accepts(accessUnit) else { continue }
                             do {
-                                try await mediaPipeline.consume(event)
+                                if try await mediaPipeline.consume(event) { await self.camera.requestKeyframe() }
                                 self.encoderApply.didCommit(accessUnit, host: self)
                             } catch {
                                 self.errorMessage = error.localizedDescription

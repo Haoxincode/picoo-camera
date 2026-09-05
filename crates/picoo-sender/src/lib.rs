@@ -18,8 +18,9 @@ use thiserror::Error;
 
 pub use picoo_rate_control::BitrateAction;
 pub use session::{
-    EncoderDirective, EncoderDirectiveKind, EncoderFailureOutcome, NativeEncoderAccessUnit,
-    SenderSession, SessionStats, INITIAL_STREAM_EPOCH, MAX_STREAM_EPOCH,
+    EncoderDirective, EncoderDirectiveKind, EncoderEventOutcome, EncoderFailureOutcome,
+    NativeEncoderAccessUnit, NativeEncoderEvent, SenderSession, SessionStats, INITIAL_STREAM_EPOCH,
+    MAX_STREAM_EPOCH,
 };
 pub use stream_config::StreamConfigParams;
 

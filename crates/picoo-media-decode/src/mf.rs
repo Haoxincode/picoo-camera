@@ -508,14 +508,14 @@ unsafe fn sample_to_frame(
     let nv12 = normalize_contiguous_nv12_slice(locked.bytes(), width, height)?;
     locked.unlock()?;
 
-    Ok(DecodedFrame {
+    Ok(DecodedFrame::cpu_nv12(
         width,
         height,
-        stride: width,
-        rotation: 0,
-        timestamp_us: now_timestamp_us(),
-        nv12: Bytes::from(nv12),
-    })
+        width,
+        0,
+        now_timestamp_us(),
+        Bytes::from(nv12),
+    ))
 }
 
 unsafe fn drain_output(

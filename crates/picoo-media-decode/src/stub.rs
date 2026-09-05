@@ -52,14 +52,14 @@ impl AccessUnitDecoder for StubDecoder {
         };
 
         Ok(DecodeOutcome::frame(
-            DecodedFrame {
+            DecodedFrame::cpu_nv12(
                 width,
                 height,
-                stride: width,
-                rotation: 0,
-                timestamp_us: now_timestamp_us(),
-                nv12: Bytes::from(nv12),
-            },
+                width,
+                0,
+                now_timestamp_us(),
+                Bytes::from(nv12),
+            ),
             true,
         ))
     }

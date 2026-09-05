@@ -1,6 +1,6 @@
 import Foundation
 
-// REQ-PICOO-MEDIA-011 / REQ-PICOO-PROTOCOL-005: encoded AUs are the only
+// REQ-PICOO-MEDIA-011/022 / REQ-PICOO-PROTOCOL-005: encoded AUs are the only
 // camera payload crossing Swift -> Rust. Raw pixel buffers stay in AVFoundation.
 
 nonisolated enum SenderMediaPipelineError: LocalizedError {
@@ -50,14 +50,14 @@ actor SenderMediaPipeline {
         self.configuration = configuration
     }
 
-    func consume(_ event: VideoEncoderEvent) throws {
+    func consume(_ event: VideoEncoderEvent) throws -> Bool {
         switch event {
         case let .failure(_, _, message):
             throw SenderMediaPipelineError.encoder(message)
         case let .accessUnit(accessUnit):
-            try consume(accessUnit)
+            return try consume(accessUnit)
         case .queueOverflow:
-            break
+            return false
         }
     }
 
@@ -78,7 +78,7 @@ actor SenderMediaPipeline {
         self.configuration = updated
     }
 
-    private func consume(_ accessUnit: EncodedAccessUnit) throws {
+    private func consume(_ accessUnit: EncodedAccessUnit) throws -> Bool {
         let previous = configuration
         let parameterSets = accessUnit.parameterSets
         let updated = SenderStreamConfiguration(
@@ -97,14 +97,14 @@ actor SenderMediaPipeline {
                 ?? Data()
         )
 
-        if updated != previous {
-            try session.setStreamConfiguration(updated)
-            // Submit reliable control before the corresponding datagram. QUIC
-            // does not promise cross-channel ordering, so keyframes also carry
-            // in-band SPS/PPS and Receiver gates mismatched epochs.
-            try session.pump()
+        let configurationChanged = updated != previous
+        let keyframeRequested = try session.send(
+            accessUnit,
+            streamConfiguration: configurationChanged ? updated : nil
+        )
+        if configurationChanged {
             configuration = updated
         }
-        try session.send(accessUnit)
+        return keyframeRequested
     }
 }

@@ -412,7 +412,17 @@ fn unpaired_video_keeps_shared_ring_on_placeholder() {
         .expect("attach shared ring");
     let consumer =
         SharedFrameRingConsumer::open(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("consumer");
-    let before = consumer.latest_frame().expect("placeholder");
+    let placeholder_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    let before = loop {
+        if let Some(frame) = consumer.latest_frame() {
+            break frame;
+        }
+        assert!(
+            std::time::Instant::now() < placeholder_deadline,
+            "asynchronous ring writer did not publish placeholder"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    };
     assert_eq!(before.timestamp_us, 0);
     assert!(before.width >= 640);
     let before_seq = before.sequence;

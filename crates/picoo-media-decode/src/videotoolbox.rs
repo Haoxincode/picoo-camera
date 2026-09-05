@@ -189,14 +189,14 @@ impl VideoToolboxDecoder {
             return Ok(DecodeOutcome::accepted_without_frame(contains_idr));
         };
         Ok(DecodeOutcome::frame(
-            DecodedFrame {
-                width: output.width,
-                height: output.height,
-                stride: output.stride,
-                rotation: stream_config.map(|config| config.rotation).unwrap_or(0),
-                timestamp_us: now_timestamp_us(),
-                nv12: Bytes::from(output.bytes),
-            },
+            DecodedFrame::cpu_nv12(
+                output.width,
+                output.height,
+                output.stride,
+                stream_config.map(|config| config.rotation).unwrap_or(0),
+                now_timestamp_us(),
+                Bytes::from(output.bytes),
+            ),
             contains_idr,
         ))
     }
@@ -519,9 +519,14 @@ mod tests {
             .expect("VideoToolbox decode")
             .frame
             .expect("decoded frame");
-        assert_eq!((frame.width, frame.height, frame.stride), (64, 64, 64));
-        assert_eq!(frame.nv12.len(), 64 * 64 * 3 / 2);
-        assert!(frame.nv12.iter().any(|byte| *byte != 16 && *byte != 128));
+        let description = frame.description();
+        let nv12 = frame.cpu_nv12_bytes().expect("CPU NV12");
+        assert_eq!(
+            (description.width, description.height, description.stride),
+            (64, 64, 64)
+        );
+        assert_eq!(nv12.len(), 64 * 64 * 3 / 2);
+        assert!(nv12.iter().any(|byte| *byte != 16 && *byte != 128));
     }
 
     #[test]
@@ -548,8 +553,15 @@ mod tests {
             .expect("VideoToolbox decode")
             .frame
             .expect("decoded frame");
-        assert_eq!((frame.width, frame.height, frame.stride), (64, 64, 64));
-        assert_eq!(frame.nv12.len(), 64 * 64 * 3 / 2);
+        let description = frame.description();
+        assert_eq!(
+            (description.width, description.height, description.stride),
+            (64, 64, 64)
+        );
+        assert_eq!(
+            frame.cpu_nv12_bytes().expect("CPU NV12").len(),
+            64 * 64 * 3 / 2
+        );
     }
 
     #[test]
@@ -580,7 +592,10 @@ mod tests {
             .expect("64x64 decode")
             .frame
             .expect("64x64 frame");
-        assert_eq!((first.width, first.height), (64, 64));
+        assert_eq!(
+            (first.description().width, first.description().height),
+            (64, 64)
+        );
         let first_sps = decoder.sps.clone();
 
         let second = decoder
@@ -588,7 +603,10 @@ mod tests {
             .expect("1280x720 decode")
             .frame
             .expect("1280x720 frame");
-        assert_eq!((second.width, second.height), (1280, 720));
+        assert_eq!(
+            (second.description().width, second.description().height),
+            (1280, 720)
+        );
         assert_ne!(first_sps, decoder.sps);
         assert_eq!(
             decoder.sps,

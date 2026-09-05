@@ -1,4 +1,4 @@
-//! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006/012.
+//! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006/012/023.
 //!
 //! Receiver decodes once; output NV12 feeds LatestFrameStore and Shared Frame Ring.
 //! - Windows: Media Foundation (`windows-mf`)
@@ -34,14 +34,103 @@ pub enum DecodeError {
     OutputTooLarge(usize),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodedFrame {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoPixelFormat {
+    Nv12,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoColorMatrix {
+    Bt709,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoColorRange {
+    Limited,
+}
+
+/// Pixel interpretation independent of the backing storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodedFrameDescription {
     pub width: u32,
     pub height: u32,
     pub stride: u32,
     pub rotation: u32,
-    pub timestamp_us: u64,
-    pub nv12: Bytes,
+    pub pixel_format: VideoPixelFormat,
+    pub color_matrix: VideoColorMatrix,
+    pub color_range: VideoColorRange,
+}
+
+/// Owned decoder output storage.
+///
+/// CPU NV12 is the portable fallback and the current Shared Ring contract.
+/// Future native variants must carry an explicitly transfer-safe owner; a raw
+/// platform pointer is not sufficient and must never be made broadly `Send`.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedFrameStorage {
+    CpuNv12(Bytes),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecodedFrame {
+    description: DecodedFrameDescription,
+    timestamp_us: u64,
+    storage: DecodedFrameStorage,
+}
+
+impl DecodedFrame {
+    #[allow(clippy::too_many_arguments)]
+    pub fn cpu_nv12(
+        width: u32,
+        height: u32,
+        stride: u32,
+        rotation: u32,
+        timestamp_us: u64,
+        nv12: Bytes,
+    ) -> Self {
+        Self {
+            description: DecodedFrameDescription {
+                width,
+                height,
+                stride,
+                rotation,
+                pixel_format: VideoPixelFormat::Nv12,
+                color_matrix: VideoColorMatrix::Bt709,
+                color_range: VideoColorRange::Limited,
+            },
+            timestamp_us,
+            storage: DecodedFrameStorage::CpuNv12(nv12),
+        }
+    }
+
+    pub fn description(&self) -> DecodedFrameDescription {
+        self.description
+    }
+
+    pub fn timestamp_us(&self) -> u64 {
+        self.timestamp_us
+    }
+
+    pub fn storage(&self) -> &DecodedFrameStorage {
+        &self.storage
+    }
+
+    pub fn cpu_nv12_bytes(&self) -> Option<&Bytes> {
+        match &self.storage {
+            DecodedFrameStorage::CpuNv12(bytes) => Some(bytes),
+        }
+    }
+
+    pub fn set_rotation(&mut self, rotation: u32) {
+        self.description.rotation = rotation;
+    }
+
+    pub fn into_cpu_nv12(self) -> Bytes {
+        match self.storage {
+            DecodedFrameStorage::CpuNv12(bytes) => bytes,
+        }
+    }
 }
 
 /// Result of submitting one access unit to a platform decoder.
@@ -178,9 +267,9 @@ mod tests {
             .expect("decode")
             .frame
             .expect("frame");
-        assert!(!frame.nv12.is_empty());
-        assert_eq!(frame.width, 1280);
-        assert_eq!(frame.height, 720);
+        assert!(!frame.cpu_nv12_bytes().expect("CPU NV12").is_empty());
+        assert_eq!(frame.description().width, 1280);
+        assert_eq!(frame.description().height, 720);
     }
 
     #[test]
@@ -216,14 +305,16 @@ mod tests {
             .expect("decode")
             .frame
             .expect("picture");
-        assert_eq!(frame.width, width as u32);
-        assert_eq!(frame.height, height as u32);
+        let description = frame.description();
+        let nv12 = frame.cpu_nv12_bytes().expect("CPU NV12");
+        assert_eq!(description.width, width as u32);
+        assert_eq!(description.height, height as u32);
         assert_eq!(
-            frame.nv12.len(),
-            picoo_frame_hub::nv12_byte_size(frame.width, frame.height)
+            nv12.len(),
+            picoo_frame_hub::nv12_byte_size(description.width, description.height)
         );
         // Real decode should not be constant grey placeholder.
-        assert!(frame.nv12.iter().any(|b| *b != 16 && *b != 128));
+        assert!(nv12.iter().any(|b| *b != 16 && *b != 128));
     }
 
     #[test]
@@ -235,8 +326,8 @@ mod tests {
             .expect("decode")
             .frame
             .expect("frame");
-        assert_eq!(frame.width, 1280);
-        assert_eq!(frame.height, 720);
+        assert_eq!(frame.description().width, 1280);
+        assert_eq!(frame.description().height, 720);
     }
 
     #[test]
@@ -274,7 +365,7 @@ mod tests {
             .expect("decode")
             .frame
             .expect("picture");
-        assert_eq!(frame.width, width as u32);
-        assert_eq!(frame.height, height as u32);
+        assert_eq!(frame.description().width, width as u32);
+        assert_eq!(frame.description().height, height as u32);
     }
 }

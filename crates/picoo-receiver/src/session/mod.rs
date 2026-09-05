@@ -25,9 +25,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use bytes::Bytes;
-use picoo_frame_hub::{
-    FrameBufferPool, LatestFrameStore, PlaceholderMode, SharedFrameRingProducer,
-};
+use picoo_frame_hub::{FrameBufferPool, LatestFrameStore, PlaceholderMode, SharedFrameRingWriter};
 use picoo_jitter::JitterBuffer;
 use picoo_packet::{AssembledAccessUnit, ReassemblyMap};
 use picoo_pairing::TrustedDeviceStore;
@@ -42,6 +40,7 @@ use picoo_session::{
 };
 use picoo_transport::{Endpoint, QuicReceiverTransport, SessionId};
 
+use crate::media_scheduler::{schedule_media, MediaScheduleDecision, MediaScheduleInput};
 use crate::{IngressStats, ReceiverError, ReceiverIdentity};
 use decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use pairing::{ActiveSender, PendingPairing};
@@ -49,8 +48,8 @@ use recovery::DecoderRecovery;
 use recovery::RecoveryReason;
 use reducer::{ReceiverCloseReason, ReceiverEvent, ReceiverReducerState};
 use stats::{
-    media_deadline_from_observations, observed_fragment_loss_ratio,
-    playout_blocked_by_older_reassembly, InterarrivalJitter, StatsReporter,
+    media_deadline_from_observations, observed_fragment_loss_ratio, InterarrivalJitter,
+    StatsReporter,
 };
 
 #[cfg(any(test, feature = "loopback-diagnostics"))]
@@ -77,7 +76,8 @@ pub struct ReceiverSession {
     auto_accept_paired: bool,
     /// Idle placeholder style (PRD §16 / AC-D-SET-01).
     placeholder_mode: picoo_frame_hub::PlaceholderMode,
-    shared_ring: Option<SharedFrameRingProducer>,
+    shared_ring: Option<SharedFrameRingWriter>,
+    last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
     /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
     waiting_for_stream_config_epoch: Option<u32>,
@@ -146,6 +146,7 @@ impl ReceiverSession {
             auto_accept_paired: true,
             placeholder_mode: PlaceholderMode::Logo,
             shared_ring: None,
+            last_shared_ring_error: None,
             current_stream_config: None,
             waiting_for_stream_config_epoch: None,
             pending_stream_config_idr: None,
@@ -253,6 +254,10 @@ impl ReceiverSession {
         self.last_media_error.as_deref()
     }
 
+    pub fn last_shared_ring_error(&self) -> Option<&str> {
+        self.last_shared_ring_error.as_deref()
+    }
+
     /// Last ReceiverStats sent upstream (REQ-PICOO-PROTOCOL-006 / PUC-005 live metrics).
     pub fn last_stats(&self) -> Option<&picoo_metrics::ReceiverStats> {
         self.last_stats.as_ref()
@@ -299,23 +304,11 @@ impl ReceiverSession {
         let now_us = self.timing_origin.elapsed().as_micros() as u64;
         let maintenance = now + Duration::from_secs(1);
         let media_deadline = self.media_deadline();
-        let playout_blocked = self
-            .jitter
-            .front_frame_id()
-            .is_some_and(|candidate_frame_id| {
-                playout_blocked_by_older_reassembly(
-                    self.reassembly.oldest_unresolved_frame_id(),
-                    candidate_frame_id,
-                )
-            });
         let max_queue_age_us = media_deadline.as_micros() as u64;
-        let jitter_deadline = (if playout_blocked {
-            self.jitter
-                .next_expiration_delay_us(now_us, max_queue_age_us)
-        } else {
-            self.jitter.next_release_delay_us(now_us)
-        })
-        .map(|delay| now + Duration::from_micros(delay));
+        let media_wake = self
+            .media_schedule_decision(now_us, max_queue_age_us)
+            .wake_delay()
+            .map(|delay| now + delay);
         let stats_deadline = self
             .lifecycle
             .runtime
@@ -328,7 +321,7 @@ impl ReceiverSession {
                 .as_ref()
                 .map(|pending| pending.expires_at),
             self.reassembly.next_expiration_at(media_deadline),
-            jitter_deadline,
+            media_wake,
             self.placeholder_after,
             stats_deadline,
             self.clock_sync.next_sync_at(),
@@ -372,49 +365,62 @@ impl ReceiverSession {
     fn drain_jitter(&mut self) -> Result<(), ReceiverError> {
         let now_us = self.timing_origin.elapsed().as_micros() as u64;
         let max_queue_age_us = self.media_deadline().as_micros() as u64;
-        if self.jitter.drop_expired(now_us, max_queue_age_us) {
-            self.ingress.recovery_jitter_expired =
-                self.ingress.recovery_jitter_expired.saturating_add(1);
-            self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?;
-            return Ok(());
-        }
-        while let Some(candidate_frame_id) = self.jitter.front_frame_id() {
-            // QUIC Datagrams can complete newer AUs before an older AU. Do not
-            // advance the decoder prediction chain while that older AU is
-            // still inside the reassembly deadline; expiry/FEC owns its final
-            // outcome. Otherwise the older AU becomes falsely "late" merely
-            // because two pipeline stages were scheduled independently.
-            if playout_blocked_by_older_reassembly(
-                self.reassembly.oldest_unresolved_frame_id(),
-                candidate_frame_id,
-            ) {
-                break;
+        loop {
+            match self.media_schedule_decision(now_us, max_queue_age_us) {
+                MediaScheduleDecision::DiscardExpired => {
+                    if self.jitter.drop_expired(now_us, max_queue_age_us) {
+                        self.ingress.recovery_jitter_expired =
+                            self.ingress.recovery_jitter_expired.saturating_add(1);
+                        self.enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLate, true)?;
+                        return Ok(());
+                    }
+                }
+                MediaScheduleDecision::DecodeReadyFrame => {
+                    let Some(frame) = self.jitter.pop_ready(now_us) else {
+                        break;
+                    };
+                    self.publish_timeline_access_unit(EncodedAccessUnit {
+                        connection_generation: self
+                            .transport
+                            .active_session()
+                            .map_or(0, |session| session.0),
+                        stream_generation: frame.stream_generation,
+                        frame_id: frame.frame_id,
+                        source_pts_us: frame.pts_us,
+                        encoded_at_us: frame.encoded_at_us,
+                        received_at_us: frame.received_at_us,
+                        decode_submitted_at_us: now_us,
+                        kind: if frame.keyframe {
+                            FrameKind::Key
+                        } else if frame.discardable {
+                            FrameKind::DiscardableDelta
+                        } else {
+                            FrameKind::ReferenceDelta
+                        },
+                        data: frame.data,
+                    })?;
+                }
+                MediaScheduleDecision::WaitUntil { .. }
+                | MediaScheduleDecision::WaitForEvent(_)
+                | MediaScheduleDecision::Idle => break,
             }
-            let Some(frame) = self.jitter.pop_ready(now_us) else {
-                break;
-            };
-            self.publish_timeline_access_unit(EncodedAccessUnit {
-                connection_generation: self
-                    .transport
-                    .active_session()
-                    .map_or(0, |session| session.0),
-                stream_generation: frame.stream_generation,
-                frame_id: frame.frame_id,
-                source_pts_us: frame.pts_us,
-                encoded_at_us: frame.encoded_at_us,
-                received_at_us: frame.received_at_us,
-                decode_submitted_at_us: now_us,
-                kind: if frame.keyframe {
-                    FrameKind::Key
-                } else if frame.discardable {
-                    FrameKind::DiscardableDelta
-                } else {
-                    FrameKind::ReferenceDelta
-                },
-                data: frame.data,
-            })?;
         }
         Ok(())
+    }
+
+    fn media_schedule_decision(&self, now_us: u64, max_queue_age_us: u64) -> MediaScheduleDecision {
+        schedule_media(MediaScheduleInput {
+            front_frame_id: self.jitter.front_frame_id(),
+            oldest_unresolved_frame_id: self.reassembly.oldest_unresolved_frame_id(),
+            release_delay: self
+                .jitter
+                .next_release_delay_us(now_us)
+                .map(Duration::from_micros),
+            expiration_delay: self
+                .jitter
+                .next_expiration_delay_us(now_us, max_queue_age_us)
+                .map(Duration::from_micros),
+        })
     }
 
     /// A deadline is a failure/recovery bound, not the normal playout target.

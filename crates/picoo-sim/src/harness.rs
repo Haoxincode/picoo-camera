@@ -1,3 +1,5 @@
+//! Production scheduler simulation — REQ-PICOO-STACK-009/011.
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,6 +10,7 @@ use picoo_jitter::{Frame as JitterFrame, JitterBuffer, PushOutcome};
 use picoo_packet::{AssembledAccessUnit, ReassemblyMap};
 use picoo_protocol::control::{control_envelope::Payload as ControlPayload, StreamConfig};
 use picoo_protocol::{decode_control_envelope, encode_control_envelope};
+use picoo_receiver::media_scheduler::{schedule_media, MediaScheduleDecision, MediaScheduleInput};
 use picoo_sender::{FecProtection, SenderPipeline};
 
 use crate::encoder::{
@@ -339,7 +342,36 @@ impl ReceiverCore {
     }
 
     fn drain_jitter(&mut self, now: &VirtualClock) {
-        while let Some(frame) = self.jitter.pop_ready(now.now_us()) {
+        loop {
+            let max_queue_age_us = 300_000;
+            let decision = schedule_media(MediaScheduleInput {
+                front_frame_id: self.jitter.front_frame_id(),
+                oldest_unresolved_frame_id: self.reassembly.oldest_unresolved_frame_id(),
+                release_delay: self
+                    .jitter
+                    .next_release_delay_us(now.now_us())
+                    .map(Duration::from_micros),
+                expiration_delay: self
+                    .jitter
+                    .next_expiration_delay_us(now.now_us(), max_queue_age_us)
+                    .map(Duration::from_micros),
+            });
+            match decision {
+                MediaScheduleDecision::DiscardExpired => {
+                    if self.jitter.drop_expired(now.now_us(), max_queue_age_us) {
+                        self.reference_chain_intact = false;
+                        self.waiting_for_idr = true;
+                    }
+                    continue;
+                }
+                MediaScheduleDecision::DecodeReadyFrame => {}
+                MediaScheduleDecision::WaitUntil { .. }
+                | MediaScheduleDecision::WaitForEvent(_)
+                | MediaScheduleDecision::Idle => break,
+            }
+            let Some(frame) = self.jitter.pop_ready(now.now_us()) else {
+                break;
+            };
             let Some(config) = self.stream_config.as_ref() else {
                 continue;
             };

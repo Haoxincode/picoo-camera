@@ -164,14 +164,14 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return Ok(DecodeOutcome::accepted_without_frame(false));
         };
         Ok(DecodeOutcome::frame(
-            DecodedFrame {
+            DecodedFrame::cpu_nv12(
                 width,
                 height,
                 stride,
-                rotation: stream_config.map(|c| c.rotation).unwrap_or(0),
-                timestamp_us: now_timestamp_us(),
-                nv12: Bytes::from(nv12),
-            },
+                stream_config.map(|c| c.rotation).unwrap_or(0),
+                now_timestamp_us(),
+                Bytes::from(nv12),
+            ),
             contains_idr,
         ))
     }
@@ -185,14 +185,14 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return Ok(None);
         };
         let (width, height, stride, nv12) = Self::i420_to_nv12(yuv)?;
-        Ok(Some(DecodedFrame {
+        Ok(Some(DecodedFrame::cpu_nv12(
             width,
             height,
             stride,
-            rotation: 0,
-            timestamp_us: now_timestamp_us(),
-            nv12: Bytes::from(nv12),
-        }))
+            0,
+            now_timestamp_us(),
+            Bytes::from(nv12),
+        )))
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {

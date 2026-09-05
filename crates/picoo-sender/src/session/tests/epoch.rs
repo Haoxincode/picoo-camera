@@ -1,6 +1,103 @@
 use super::*;
 
 #[test]
+fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.force_status_for_test(SenderStatus::Streaming);
+    let epoch = session.current_stream_epoch();
+
+    let outcome = session
+        .submit_encoder_event(crate::NativeEncoderEvent {
+            data: b"complete-native-idr",
+            is_keyframe: true,
+            pts_us: 1,
+            encoded_at_us: 2,
+            encoder_generation: 10,
+            stream_epoch: epoch,
+            width: 1920,
+            height: 1080,
+            stream_config: Some(StreamConfigParams {
+                width: 1920,
+                height: 1080,
+                fps: 30,
+                bitrate_bps: 8_000_000,
+                stream_epoch: epoch,
+                ..Default::default()
+            }),
+        })
+        .expect("complete event");
+
+    assert!(outcome.encoder_accepted);
+    assert!(outcome.stream_configured);
+    assert!(outcome.packet_count > 0);
+    assert!(outcome.sent_count > 0);
+    let sent = &session.transport().sent_order;
+    let first_video = sent.iter().position(|kind| *kind == "video").unwrap();
+    assert!(sent[..first_video].contains(&"control"));
+
+    let delta_outcome = session
+        .submit_encoder_event(crate::NativeEncoderEvent {
+            data: b"committed-native-delta",
+            is_keyframe: false,
+            pts_us: 3,
+            encoded_at_us: 4,
+            encoder_generation: 10,
+            stream_epoch: epoch,
+            width: 1920,
+            height: 1080,
+            stream_config: Some(StreamConfigParams {
+                width: 1920,
+                height: 1080,
+                fps: 30,
+                bitrate_bps: 7_000_000,
+                stream_epoch: epoch,
+                ..Default::default()
+            }),
+        })
+        .expect("committed generation config update");
+    assert!(delta_outcome.encoder_accepted);
+    assert!(delta_outcome.stream_configured);
+}
+
+#[test]
+fn rejected_complete_encoder_event_does_not_mutate_staged_configuration() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    let original = session.pending_stream_config().cloned();
+    let stale_epoch = session.current_stream_epoch() + 1;
+
+    let outcome = session
+        .submit_encoder_event(crate::NativeEncoderEvent {
+            data: b"stale-native-idr",
+            is_keyframe: true,
+            pts_us: 1,
+            encoded_at_us: 2,
+            encoder_generation: 10,
+            stream_epoch: stale_epoch,
+            width: 1280,
+            height: 720,
+            stream_config: Some(StreamConfigParams {
+                width: 1280,
+                height: 720,
+                fps: 30,
+                bitrate_bps: 4_000_000,
+                stream_epoch: stale_epoch,
+                ..Default::default()
+            }),
+        })
+        .expect("rejected facts are a typed outcome");
+
+    assert!(!outcome.encoder_accepted);
+    assert!(!outcome.stream_configured);
+    assert_eq!(session.pending_stream_config().cloned(), original);
+}
+
+#[test]
 fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session

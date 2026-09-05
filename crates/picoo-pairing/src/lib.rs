@@ -71,6 +71,14 @@ pub struct TrustedDeviceStore {
     devices: HashMap<String, TrustedDevice>,
     pending_identity_replacement: Option<TrustedIdentityReplacement>,
     next_identity_replacement_revision: u64,
+    /// Process-local observation revision. Persistence has its own schema and
+    /// must not turn this cache-invalidation detail into stored trust state.
+    #[serde(skip, default = "initial_store_revision")]
+    revision: u64,
+}
+
+const fn initial_store_revision() -> u64 {
+    1
 }
 
 impl Default for TrustedDeviceStore {
@@ -79,6 +87,7 @@ impl Default for TrustedDeviceStore {
             devices: HashMap::new(),
             pending_identity_replacement: None,
             next_identity_replacement_revision: 1,
+            revision: initial_store_revision(),
         }
     }
 }
@@ -97,18 +106,34 @@ impl TrustedDeviceStore {
     }
 
     pub fn upsert(&mut self, device: TrustedDevice) {
+        if self.devices.get(&device.device_id) == Some(&device) {
+            return;
+        }
         self.devices.insert(device.device_id.clone(), device);
+        self.bump_revision();
     }
 
     pub fn remove(&mut self, device_id: &str) -> bool {
-        self.devices.remove(device_id).is_some()
+        let removed = self.devices.remove(device_id).is_some();
+        if removed {
+            self.bump_revision();
+        }
+        removed
     }
 
     /// Remove every trusted device (REQ-PICOO-PAIRING-005 / PUC-007 wipe).
     pub fn clear(&mut self) -> usize {
         let n = self.devices.len();
         self.devices.clear();
+        if n > 0 {
+            self.bump_revision();
+        }
         n
+    }
+
+    /// Monotonic process-local revision for immutable presentation caches.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub fn len(&self) -> usize {
@@ -160,7 +185,11 @@ impl TrustedDeviceStore {
     }
 
     pub fn set_identity_replacement(&mut self, replacement: Option<TrustedIdentityReplacement>) {
+        if self.pending_identity_replacement == replacement {
+            return;
+        }
         self.pending_identity_replacement = replacement;
+        self.bump_revision();
     }
 
     pub fn dismiss_identity_replacement(&mut self, revision: u64) -> bool {
@@ -170,6 +199,7 @@ impl TrustedDeviceStore {
             .is_some_and(|replacement| replacement.revision == revision)
         {
             self.pending_identity_replacement = None;
+            self.bump_revision();
             true
         } else {
             false
@@ -190,6 +220,10 @@ impl TrustedDeviceStore {
             device.last_connected_at_ms = Some(now_ms);
             self.upsert(device);
         }
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.saturating_add(1);
     }
 }
 
@@ -244,5 +278,30 @@ mod tests {
         );
         assert!(store.is_paired("current"));
         assert!(store.is_paired("older-a"));
+    }
+
+    #[test]
+    fn observation_revision_changes_only_when_visible_trust_state_changes() {
+        let mut store = TrustedDeviceStore::new();
+        let initial = store.revision();
+        let device = TrustedDevice {
+            device_id: "current".into(),
+            device_name: "Phone".into(),
+            public_key: vec![1],
+            certificate_fingerprint: "fingerprint".into(),
+            paired_at_ms: 1,
+            last_connected_at_ms: None,
+        };
+
+        store.upsert(device.clone());
+        let inserted = store.revision();
+        assert!(inserted > initial);
+        store.upsert(device);
+        assert_eq!(store.revision(), inserted);
+
+        assert!(!store.remove("missing"));
+        assert_eq!(store.revision(), inserted);
+        assert!(store.remove("current"));
+        assert!(store.revision() > inserted);
     }
 }

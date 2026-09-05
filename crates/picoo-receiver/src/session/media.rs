@@ -1,11 +1,9 @@
 //! LatestFrameStore, Shared Frame Ring, placeholders, and H.264 decode publish.
 //!
-//! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009.
+//! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009/017/023.
 
 use bytes::Bytes;
-use picoo_frame_hub::{
-    PlaceholderMode, SharedFrameRingProducer, VideoFrame, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
-};
+use picoo_frame_hub::{PlaceholderMode, VideoFrame, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
 use picoo_media_decode::DecodedFrame;
 use picoo_packet::AssembledAccessUnit;
@@ -171,14 +169,14 @@ mod tests {
                         decode_submitted_at_us: frame_id * 1_150,
                         decoded_at: Some(Instant::now()),
                     },
-                    DecodedFrame {
-                        width: 4,
-                        height: 2,
-                        stride: 4,
-                        rotation: 90,
-                        timestamp_us: frame_id * 1_200,
-                        nv12: Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]),
-                    },
+                    DecodedFrame::cpu_nv12(
+                        4,
+                        2,
+                        4,
+                        90,
+                        frame_id * 1_200,
+                        Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]),
+                    ),
                 )
                 .expect("publish transformed frame");
         }
@@ -407,47 +405,66 @@ impl ReceiverSession {
 
     /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
     pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
-        #[cfg(target_os = "windows")]
-        let ring = if name == DEFAULT_SHARED_RING_NAME {
-            SharedFrameRingProducer::open_or_create_file(
-                picoo_frame_hub::windows_shared_ring_path(name),
+        let name = name.to_owned();
+        let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
+        let ring = picoo_frame_hub::SharedFrameRingWriter::start(move || {
+            #[cfg(target_os = "windows")]
+            if use_platform_ring {
+                return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
+                    picoo_frame_hub::windows_shared_ring_path(&name),
+                    picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+                );
+            }
+            #[cfg(target_os = "macos")]
+            if use_platform_ring {
+                let path = picoo_frame_hub::macos_app_group_ring_path(&name)?;
+                return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
+                    path,
+                    picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+                );
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            let _ = use_platform_ring;
+            picoo_frame_hub::SharedFrameRingProducer::open_or_create(
+                &name,
                 picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-            )?
-        } else {
-            SharedFrameRingProducer::open_or_create(name, picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES)?
-        };
-        #[cfg(target_os = "macos")]
-        let ring = if name == DEFAULT_SHARED_RING_NAME {
-            let path = picoo_frame_hub::macos_app_group_ring_path(name)?;
-            SharedFrameRingProducer::open_or_create_file(
-                path,
-                picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-            )?
-        } else {
-            SharedFrameRingProducer::open_or_create(name, picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES)?
-        };
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-        let ring = SharedFrameRingProducer::open_or_create(
-            name,
-            picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-        )?;
+            )
+        })?;
         self.shared_ring = Some(ring);
+        self.last_shared_ring_error = None;
         self.publish_waiting_placeholder()?;
         Ok(())
+    }
+
+    pub(super) fn drain_shared_ring_events(&mut self) {
+        let Some(ring) = self.shared_ring.as_ref() else {
+            return;
+        };
+        while let Some(event) = ring.poll_event() {
+            match event {
+                picoo_frame_hub::SharedRingWriterEvent::Published { .. } => {
+                    self.last_shared_ring_error = None;
+                }
+                picoo_frame_hub::SharedRingWriterEvent::Failed { error, .. } => {
+                    tracing::warn!(%error, "Shared Frame Ring output failed");
+                    self.last_shared_ring_error = Some(error.to_string());
+                }
+            }
+        }
     }
 
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.waiting_frame();
         self.publish_decoded_frame(
             FrameTimeline::default(),
-            DecodedFrame {
-                width: PLACEHOLDER_WIDTH,
-                height: PLACEHOLDER_HEIGHT,
-                stride: PLACEHOLDER_WIDTH,
-                rotation: 0,
-                timestamp_us: 0,
-                nv12: Bytes::from(nv12),
-            },
+            DecodedFrame::cpu_nv12(
+                PLACEHOLDER_WIDTH,
+                PLACEHOLDER_HEIGHT,
+                PLACEHOLDER_WIDTH,
+                0,
+                0,
+                Bytes::from(nv12),
+            ),
         )
     }
 
@@ -456,14 +473,14 @@ impl ReceiverSession {
         let nv12 = self.placeholder_mode.reconnecting_frame();
         self.publish_decoded_frame(
             FrameTimeline::default(),
-            DecodedFrame {
-                width: PLACEHOLDER_WIDTH,
-                height: PLACEHOLDER_HEIGHT,
-                stride: PLACEHOLDER_WIDTH,
-                rotation: 0,
-                timestamp_us: 0,
-                nv12: Bytes::from(nv12),
-            },
+            DecodedFrame::cpu_nv12(
+                PLACEHOLDER_WIDTH,
+                PLACEHOLDER_HEIGHT,
+                PLACEHOLDER_WIDTH,
+                0,
+                0,
+                Bytes::from(nv12),
+            ),
         )
     }
 
@@ -589,11 +606,12 @@ impl ReceiverSession {
         match outcome.frame {
             Some(mut frame) => {
                 // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
-                frame.rotation = self
+                let rotation = self
                     .current_stream_config
                     .as_ref()
                     .map(|c| c.rotation)
-                    .unwrap_or(frame.rotation);
+                    .unwrap_or(frame.description().rotation);
+                frame.set_rotation(rotation);
                 self.publish_decoded_frame(
                     FrameTimeline {
                         stream_generation: timeline.stream_generation,
@@ -636,14 +654,15 @@ impl ReceiverSession {
         timeline: FrameTimeline,
         frame: DecodedFrame,
     ) -> Result<(), ReceiverError> {
-        let DecodedFrame {
-            width,
-            height,
-            stride,
-            rotation,
-            timestamp_us,
-            nv12,
-        } = frame;
+        let description = frame.description();
+        let timestamp_us = frame.timestamp_us();
+        let nv12 = frame.into_cpu_nv12();
+        let (width, height, stride, rotation) = (
+            description.width,
+            description.height,
+            description.stride,
+            description.rotation,
+        );
         let mirrored = self
             .current_stream_config
             .as_ref()
@@ -683,15 +702,10 @@ impl ReceiverSession {
             published_rotation,
             pixels,
         ));
-        if let Some(ring) = self.shared_ring.as_mut() {
-            ring.publish_nv12(
-                width,
-                height,
-                stride,
-                published_rotation,
-                timestamp_us,
-                &published.pixel_data,
-            )?;
+        if let Some(ring) = self.shared_ring.as_ref() {
+            if ring.submit(published) == picoo_frame_hub::SharedRingSubmitOutcome::Stopped {
+                self.last_shared_ring_error = Some("Shared Frame Ring writer stopped".into());
+            }
         }
         Ok(())
     }

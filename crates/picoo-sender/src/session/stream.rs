@@ -61,6 +61,29 @@ impl<T: PicooTransport> SenderSession<T> {
             && self.committed_encoder_height == height
     }
 
+    /// Bind the first encoder from a complete native event whose configuration
+    /// is being staged atomically after this shape validation.
+    pub(super) fn report_initial_encoder_event_started(
+        &mut self,
+        encoder_generation: u64,
+        stream_epoch: u32,
+        height: u32,
+    ) -> bool {
+        if encoder_generation == 0
+            || height == 0
+            || height != picoo_rate_control::normalize_height(height)
+            || self.encoder_apply_state.is_applying()
+            || self.committed_encoder_generation != 0
+            || stream_epoch != self.current_stream_epoch
+        {
+            return false;
+        }
+        self.committed_encoder_generation = encoder_generation;
+        self.committed_encoder_height = height;
+        self.bitrate.sync_encode_height(height);
+        true
+    }
+
     pub fn report_encoder_failed(
         &mut self,
         transaction_id: u64,

@@ -3,10 +3,12 @@
 //! Owns QUIC listen, mDNS advertisement, and session pump. UI layers
 //! observe [`ReceiverSnapshot`] and invoke commands without touching transport.
 
+use std::cell::RefCell;
 #[cfg(any(target_os = "macos", windows))]
 use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use picoo_discovery::{
     local_advertise_host, MdnsAdvertiser, ReceiverAdvertisement, ReceiverPlatform,
@@ -114,7 +116,7 @@ pub struct ReceiverSnapshot {
     pub stream_config: Option<StreamConfig>,
     pub stream_metrics: picoo_metrics::StreamMetrics,
     pub trusted_device_count: usize,
-    pub trusted_devices: Vec<TrustedDeviceSummary>,
+    pub trusted_devices: Arc<[TrustedDeviceSummary]>,
     /// Present only while the active, already-trusted Sender has older
     /// same-name credentials that the user may explicitly revoke.
     pub trusted_identity_replacement: Option<TrustedIdentityReplacement>,
@@ -129,7 +131,7 @@ pub struct ReceiverSnapshot {
     pub media_error: Option<String>,
 }
 
-pub struct ReceiverRuntime {
+pub(crate) struct ReceiverRuntime {
     receiver: ReceiverSession,
     #[allow(dead_code)]
     mdns: Option<MdnsAdvertiser>,
@@ -142,6 +144,14 @@ pub struct ReceiverRuntime {
     virtual_camera: crate::model::VirtualCameraStatus,
     shared_ring_error: Option<String>,
     metrics_history: LiveMetricsHistory,
+    trusted_snapshot_cache: RefCell<TrustedSnapshotCache>,
+}
+
+#[derive(Default)]
+struct TrustedSnapshotCache {
+    revision: Option<u64>,
+    devices: Arc<[TrustedDeviceSummary]>,
+    identity_replacement: Option<TrustedIdentityReplacement>,
 }
 
 impl ReceiverRuntime {
@@ -220,6 +230,7 @@ impl ReceiverRuntime {
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
             shared_ring_error,
             metrics_history: LiveMetricsHistory::default(),
+            trusted_snapshot_cache: RefCell::new(TrustedSnapshotCache::default()),
         })
     }
 
@@ -362,34 +373,7 @@ impl ReceiverRuntime {
                     device_name,
                 });
         let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
-        let mut trusted_devices = self
-            .receiver
-            .trusted_devices()
-            .list()
-            .map(|d| TrustedDeviceSummary {
-                device_id: d.device_id.clone(),
-                device_name: d.device_name.clone(),
-                certificate_fingerprint: d.certificate_fingerprint.clone(),
-                identity_prefix: String::new(),
-                last_connected_at_ms: d.last_connected_at_ms.unwrap_or(0),
-                platform: "Android",
-            })
-            .collect::<Vec<_>>();
-        let identity_prefixes = trusted_devices
-            .iter()
-            .map(|device| distinguishable_fingerprint_prefix(device, &trusted_devices))
-            .collect::<Vec<_>>();
-        for (device, prefix) in trusted_devices.iter_mut().zip(identity_prefixes) {
-            device.identity_prefix = prefix;
-        }
-        trusted_devices.sort_by(|left, right| {
-            right
-                .last_connected_at_ms
-                .cmp(&left.last_connected_at_ms)
-                .then_with(|| left.device_name.cmp(&right.device_name))
-                .then_with(|| left.device_id.cmp(&right.device_id))
-        });
-        let trusted_identity_replacement = self.receiver.trusted_identity_replacement().cloned();
+        let (trusted_devices, trusted_identity_replacement) = self.trusted_snapshot();
         ReceiverSnapshot {
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
@@ -448,9 +432,59 @@ impl ReceiverRuntime {
             display_name: self.display_name.clone(),
             active_sender,
             virtual_camera: self.virtual_camera,
-            shared_ring_error: self.shared_ring_error.clone(),
+            shared_ring_error: self
+                .receiver
+                .last_shared_ring_error()
+                .map(str::to_owned)
+                .or_else(|| self.shared_ring_error.clone()),
             media_error: self.receiver.last_media_error().map(str::to_string),
         }
+    }
+
+    fn trusted_snapshot(
+        &self,
+    ) -> (
+        Arc<[TrustedDeviceSummary]>,
+        Option<TrustedIdentityReplacement>,
+    ) {
+        let revision = self.receiver.trusted_devices().revision();
+        let mut cache = self.trusted_snapshot_cache.borrow_mut();
+        if cache.revision != Some(revision) {
+            let mut devices = self
+                .receiver
+                .trusted_devices()
+                .list()
+                .map(|device| TrustedDeviceSummary {
+                    device_id: device.device_id.clone(),
+                    device_name: device.device_name.clone(),
+                    certificate_fingerprint: device.certificate_fingerprint.clone(),
+                    identity_prefix: String::new(),
+                    last_connected_at_ms: device.last_connected_at_ms.unwrap_or(0),
+                    platform: "Android",
+                })
+                .collect::<Vec<_>>();
+            let identity_prefixes = devices
+                .iter()
+                .map(|device| distinguishable_fingerprint_prefix(device, &devices))
+                .collect::<Vec<_>>();
+            for (device, prefix) in devices.iter_mut().zip(identity_prefixes) {
+                device.identity_prefix = prefix;
+            }
+            devices.sort_by(|left, right| {
+                right
+                    .last_connected_at_ms
+                    .cmp(&left.last_connected_at_ms)
+                    .then_with(|| left.device_name.cmp(&right.device_name))
+                    .then_with(|| left.device_id.cmp(&right.device_id))
+            });
+            cache.devices = devices.into();
+            cache.identity_replacement = self.receiver.trusted_identity_replacement().cloned();
+            cache.revision = Some(revision);
+        }
+        (
+            Arc::clone(&cache.devices),
+            cache.identity_replacement.clone(),
+        )
     }
 
     #[allow(dead_code)]

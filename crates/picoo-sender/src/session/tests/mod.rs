@@ -46,6 +46,7 @@ struct MemoryTransport {
     next_session: u64,
     connected: Option<SessionId>,
     events: VecDeque<TransportEvent>,
+    sent_order: Vec<&'static str>,
 }
 
 impl MemoryTransport {
@@ -54,6 +55,7 @@ impl MemoryTransport {
             next_session: 1,
             connected: None,
             events: VecDeque::new(),
+            sent_order: Vec::new(),
         }
     }
 }
@@ -69,6 +71,7 @@ impl PicooTransport for MemoryTransport {
 
     fn send_control(&mut self, session: SessionId, _message: Bytes) -> Result<(), TransportError> {
         if self.connected == Some(session) {
+            self.sent_order.push("control");
             Ok(())
         } else {
             Err(TransportError::NotConnected)
@@ -81,6 +84,7 @@ impl PicooTransport for MemoryTransport {
         _batch: VideoDatagramBatch,
     ) -> Result<(), TransportError> {
         if self.connected == Some(session) {
+            self.sent_order.push("video");
             Ok(())
         } else {
             Err(TransportError::NotConnected)

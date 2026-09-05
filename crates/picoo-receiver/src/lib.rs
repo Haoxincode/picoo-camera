@@ -2,7 +2,10 @@
 //!
 //! REQ-PICOO-FRAME-001, REQ-PICOO-MEDIA-005/006 via picoo-media-decode.
 //! REQ-PICOO-PAIRING-*: ClientHello/ServerHello gate before video ingress.
+//! REQ-PICOO-SESSION-016/017: shared scheduling and owner-loop boundaries.
 
+pub mod media_scheduler;
+pub mod runtime;
 mod session;
 
 use std::time::Duration;

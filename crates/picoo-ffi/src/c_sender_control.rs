@@ -1,8 +1,104 @@
+//! Native Sender control ABI — REQ-PICOO-MEDIA-016/022.
+
 use crate::c_media::copy_parameter_sets;
 use crate::c_sender::PicooEncoderDirective;
 use crate::handles::{copy_str_to_buf, RecoverMutex, SenderInner};
-use picoo_sender::{EncoderFailureOutcome, StreamConfigParams};
+use picoo_sender::{EncoderFailureOutcome, NativeEncoderEvent, StreamConfigParams};
 use std::ffi::CStr;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PicooEncoderSubmitOutcome {
+    pub encoder_accepted: u8,
+    pub stream_configured: u8,
+    pub keyframe_requested: u8,
+    pub packet_count: u32,
+    pub sent_count: u32,
+}
+
+/// Submit one complete native encoder callback under the Rust-owned operation order.
+#[no_mangle]
+pub extern "C" fn picoo_sender_submit_encoder_event(
+    handle: *mut std::ffi::c_void,
+    data: *const u8,
+    len: usize,
+    is_keyframe: u8,
+    pts_us: u64,
+    encoded_at_us: u64,
+    stream_epoch: u32,
+    encoder_generation: u64,
+    encoder_width: u32,
+    encoder_height: u32,
+    fps: u32,
+    bitrate_bps: u32,
+    mirrored: u8,
+    rotation: u32,
+    configure_stream: u8,
+    sps: *const u8,
+    sps_len: usize,
+    pps: *const u8,
+    pps_len: usize,
+    out_outcome: *mut PicooEncoderSubmitOutcome,
+) -> i32 {
+    if handle.is_null()
+        || data.is_null()
+        || len == 0
+        || stream_epoch == 0
+        || encoder_generation == 0
+        || encoder_width == 0
+        || encoder_height == 0
+    {
+        return -1;
+    }
+    let data = unsafe { std::slice::from_raw_parts(data, len) };
+    let stream_config = if configure_stream != 0 {
+        let (sps, pps) = copy_parameter_sets(sps, sps_len, pps, pps_len);
+        Some(StreamConfigParams {
+            width: encoder_width,
+            height: encoder_height,
+            fps,
+            bitrate_bps,
+            stream_epoch,
+            mirrored: mirrored != 0,
+            rotation,
+            sps,
+            pps,
+        })
+    } else {
+        None
+    };
+    let inner = unsafe { &*(handle as *mut SenderInner) };
+    match inner
+        .session
+        .lock_or_recover()
+        .submit_encoder_event(NativeEncoderEvent {
+            data,
+            is_keyframe: is_keyframe != 0,
+            pts_us,
+            encoded_at_us,
+            encoder_generation,
+            stream_epoch,
+            width: encoder_width,
+            height: encoder_height,
+            stream_config,
+        }) {
+        Ok(outcome) => {
+            if !out_outcome.is_null() {
+                unsafe {
+                    *out_outcome = PicooEncoderSubmitOutcome {
+                        encoder_accepted: u8::from(outcome.encoder_accepted),
+                        stream_configured: u8::from(outcome.stream_configured),
+                        keyframe_requested: u8::from(outcome.keyframe_requested),
+                        packet_count: outcome.packet_count as u32,
+                        sent_count: outcome.sent_count as u32,
+                    };
+                }
+            }
+            0
+        }
+        Err(_) => -2,
+    }
+}
 
 /// Send ClientHello after QUIC connect (PUC-001 / PUC-008).
 #[no_mangle]

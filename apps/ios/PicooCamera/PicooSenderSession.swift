@@ -219,45 +219,52 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         try check(code, operation: "sender_set_stream_config")
     }
 
-    func send(_ accessUnit: EncodedAccessUnit) throws {
-        let transactionID = encoderTransactionID(for: accessUnit.streamEpoch)
-        guard picoo_sender_report_encoder_started(
-            sender,
-            transactionID,
-            accessUnit.encoderGeneration,
-            accessUnit.streamEpoch,
-            accessUnit.height
-        ) == 1 else {
-            throw PicooSenderSessionError.operationFailed(
-                name: "sender_report_encoder_started",
-                code: 0
-            )
-        }
-        var packetCount: UInt32 = 0
-        let ingestCode = accessUnit.data.withUnsafeBytes { bytes in
-            picoo_sender_ingest_access_unit(
-                sender,
-                bytes.bindMemory(to: UInt8.self).baseAddress,
-                UInt(bytes.count),
-                accessUnit.isKeyframe ? 1 : 0,
-                accessUnit.presentationTimeUs,
-                accessUnit.encodedAtUs,
-                accessUnit.streamEpoch,
-                transactionID,
-                accessUnit.encoderGeneration,
-                accessUnit.height,
-                &packetCount
-            )
-        }
-        try check(ingestCode, operation: "sender_ingest_access_unit")
-        guard packetCount > 0 else { return }
-
-        var sentCount: UInt32 = 0
-        try check(
-            picoo_sender_flush(sender, &sentCount),
-            operation: "sender_flush"
+    func send(
+        _ accessUnit: EncodedAccessUnit,
+        streamConfiguration: SenderStreamConfiguration?
+    ) throws -> Bool {
+        let configuration = streamConfiguration ?? SenderStreamConfiguration(
+            width: accessUnit.width,
+            height: accessUnit.height,
+            framesPerSecond: accessUnit.framesPerSecond,
+            bitrateBps: accessUnit.bitrateBps,
+            streamEpoch: accessUnit.streamEpoch,
+            mirrored: false,
+            rotation: accessUnit.rotation,
+            sequenceParameterSet: Data(),
+            pictureParameterSet: Data()
         )
-        try pump()
+        var outcome = PicooEncoderSubmitOutcome()
+        let submitCode = accessUnit.data.withUnsafeBytes { accessUnitBytes in
+            configuration.sequenceParameterSet.withUnsafeBytes { sequenceBytes in
+                configuration.pictureParameterSet.withUnsafeBytes { pictureBytes in
+                    picoo_sender_submit_encoder_event(
+                        sender,
+                        accessUnitBytes.bindMemory(to: UInt8.self).baseAddress,
+                        UInt(accessUnitBytes.count),
+                        accessUnit.isKeyframe ? 1 : 0,
+                        accessUnit.presentationTimeUs,
+                        accessUnit.encodedAtUs,
+                        accessUnit.streamEpoch,
+                        accessUnit.encoderGeneration,
+                        accessUnit.width,
+                        accessUnit.height,
+                        accessUnit.framesPerSecond,
+                        accessUnit.bitrateBps,
+                        configuration.mirrored ? 1 : 0,
+                        accessUnit.rotation,
+                        streamConfiguration == nil ? 0 : 1,
+                        sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
+                        UInt(sequenceBytes.count),
+                        pictureBytes.bindMemory(to: UInt8.self).baseAddress,
+                        UInt(pictureBytes.count),
+                        &outcome
+                    )
+                }
+            }
+        }
+        try check(submitCode, operation: "sender_submit_encoder_event")
+        return outcome.keyframe_requested != 0
     }
 
     func takeKeyframeRequest() throws -> Bool {

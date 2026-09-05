@@ -81,6 +81,32 @@ pub struct NativeEncoderAccessUnit<'a> {
     pub height: u32,
 }
 
+/// One complete platform encoder callback handed to the Rust runtime.
+///
+/// The transaction id and operation order remain Core-owned. Native adapters
+/// provide facts and an optional configuration observed with this access unit.
+#[derive(Debug)]
+pub struct NativeEncoderEvent<'a> {
+    pub data: &'a [u8],
+    pub is_keyframe: bool,
+    pub pts_us: u64,
+    pub encoded_at_us: u64,
+    pub encoder_generation: u64,
+    pub stream_epoch: u32,
+    pub width: u32,
+    pub height: u32,
+    pub stream_config: Option<StreamConfigParams>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EncoderEventOutcome {
+    pub encoder_accepted: bool,
+    pub stream_configured: bool,
+    pub keyframe_requested: bool,
+    pub packet_count: usize,
+    pub sent_count: usize,
+}
+
 pub struct SenderSession<T: PicooTransport> {
     pipeline: SenderPipeline,
     transport: T,

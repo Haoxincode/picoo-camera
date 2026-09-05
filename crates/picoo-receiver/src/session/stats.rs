@@ -109,14 +109,6 @@ pub(super) fn observed_fragment_loss_ratio(resolved_fragments: u64, missing_frag
     }
 }
 
-pub(super) fn playout_blocked_by_older_reassembly(
-    oldest_unresolved_frame_id: Option<u64>,
-    candidate_frame_id: u64,
-) -> bool {
-    oldest_unresolved_frame_id
-        .is_some_and(|unresolved_frame_id| unresolved_frame_id < candidate_frame_id)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,14 +141,6 @@ mod tests {
         assert_eq!(observed_fragment_loss_ratio(0, 0), 0.0);
         assert_eq!(observed_fragment_loss_ratio(10, 1), 0.1);
         assert_eq!(observed_fragment_loss_ratio(1, 1), 1.0);
-    }
-
-    #[test]
-    fn newer_playout_waits_for_an_older_unresolved_access_unit() {
-        assert!(playout_blocked_by_older_reassembly(Some(100), 200));
-        assert!(!playout_blocked_by_older_reassembly(Some(200), 200));
-        assert!(!playout_blocked_by_older_reassembly(Some(300), 200));
-        assert!(!playout_blocked_by_older_reassembly(None, 200));
     }
 
     #[test]

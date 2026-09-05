@@ -12,6 +12,7 @@ mod layout;
 mod lock;
 mod mapping;
 mod producer;
+mod writer;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod file_mapping;
@@ -36,6 +37,9 @@ pub use macos_app_group::{
 pub use producer::SharedFrameRingProducer;
 #[cfg(target_os = "windows")]
 pub use windows_machine::{windows_shared_ring_path, WINDOWS_SHARED_RING_DIRECTORY};
+pub use writer::{
+    SharedFrameRingWriter, SharedRingSubmitOutcome, SharedRingWriterEvent, SharedRingWriterStats,
+};
 
 #[derive(Debug, Error)]
 pub enum SharedRingError {

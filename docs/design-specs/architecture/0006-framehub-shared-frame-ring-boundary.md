@@ -19,7 +19,7 @@ LatestFrameStore 是解码帧的统一出口，位于桌面主进程内：
 Decoded Frame (NV12)
   ↓ LatestFrameStore（容量一、Arc<VideoFrame>）
   ├── Preview Pipeline（单槽 latest-only 后台转换）→ GPUI VideoSurface
-  └── Shared Frame Ring Writer → Shared Frame Ring → Virtual Camera
+  └── Shared Frame Ring Writer（单槽、独立线程）→ Shared Frame Ring → Virtual Camera
 ```
 
 Receiver reducer 是唯一写入者。Store 完整替换当前 `Arc<VideoFrame>`，消费者只克隆同一个不可变
@@ -32,13 +32,18 @@ Receiver reducer 是唯一写入者。Store 完整替换当前 `Arc<VideoFrame>`
 
 同进程 Store 不拥有 ready state、reader lease 或三槽原子协议；这些只属于下述跨进程 Shared
 Frame Ring。需要方向变换时由有界 `FrameBufferPool` 提供 backing storage；无需变换时直接接管
-Decoder 输出，Preview 与 Ring Writer 不得再次深拷贝整帧。
+Decoder 输出；Preview 与 Ring Writer 的交接只克隆 `Arc`，跨进程 Ring 所需的最终一次像素复制由
+Writer 独立完成。
 
 ### 桌面预览转换
 
 GPUI `VideoSurface` 只持有并渲染已经准备好的平台 Surface，不得在 UI 更新或绘制阶段执行 NV12 色彩转换、缩放或解码。独立 Preview Pipeline 从 LatestFrameStore 观察最新完整帧，以容量为一的 latest-only 待处理槽把转换放到专用后台线程：新帧可以覆盖尚未开始的旧帧，转换速度不足时主动跳过旧帧，不允许形成增加延迟的队列。
 
-预览保持 BT.709 limited range。Preview Pipeline 根据窗口物理像素宽度自适应准备图像：下限为 1280 像素宽，上限为 1920 像素宽，并且不得放大低分辨率源帧；因此 1080p 源在 Full HD 或高 DPI 窗口中保留原始细节，只在较小窗口中按实际显示需求缩小。缩小时使用有抗锯齿能力的卷积滤波，不允许先以最近邻降到 640 像素再放大。每次只发布完整转换结果；UI 线程只接管缓冲所有权、创建纹理并触发重绘。
+预览保持 BT.709 limited range。Preview demand 由 Live 视频元素最近一次实际绘制的物理像素宽高、
+页面/窗口可见性和 30 FPS 目标节拍决定，而不是使用整个窗口宽度或人为设置 1280 像素下限。目标
+尺寸不得超过源帧；隐藏、设置页或非 Live 状态停止准备像素，恢复显示时只处理
+LatestFrameStore 当前帧，不补历史帧。缩小时使用有抗锯齿能力的卷积滤波，不允许先以最近邻缩小
+再放大。每次只发布完整转换结果；UI 线程只接管平台 Surface 并触发重绘。
 
 通用实现候选与判断：
 
@@ -50,6 +55,11 @@ GPUI `VideoSurface` 只持有并渲染已经准备好的平台 Surface，不得�
 | GPUI/平台专属 NV12 GPU shader | 暂不作为本次路径。长期可减少纹理上传和 RGB 中间缓冲，但需要扩展 GPUI 平台纹理边界；在统一跨平台 Preview Pipeline 达到验收前不提前分叉。 |
 
 ### Shared Frame Ring
+
+Shared Frame Ring Writer 是 LatestFrameStore 后的 capacity-one output adapter。mmap Producer 在
+Writer 线程内创建并保持线程亲和；Receiver 只提交不可变 `Arc<VideoFrame>`，新帧可覆盖未开始的
+旧帧。Ring 写入成功/失败进入可观察事件与计数，但不能同步阻塞 Receiver、触发 Decoder reference
+recovery 或让 Preview 停顿。关闭时只发 stop，join 在独立清理线程完成。
 
 主应用与虚拟摄像头扩展/组件之间的跨进程共享：
 
@@ -117,4 +127,4 @@ macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`
 
 ## 相关 Requirements
 
-- [REQ-PICOO-FRAME-001..010](../requirements/frame.md)
+- [REQ-PICOO-FRAME-001..011](../requirements/frame.md)

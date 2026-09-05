@@ -1,3 +1,6 @@
+//! Native encoder event boundary — REQ-PICOO-MEDIA-003/016/020..022.
+
+use picoo_packet::extract_sps_pps;
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
 #[cfg(any(test, feature = "test-support"))]
 use picoo_session::{ConnectionState, OutputState, SenderStatus, SessionRuntimeState};
@@ -6,7 +9,10 @@ use picoo_transport::PicooTransport;
 #[cfg(any(test, feature = "test-support"))]
 use picoo_transport::SessionId;
 
-use super::{EncoderDirectiveKind, NativeEncoderAccessUnit, SenderSession};
+use super::{
+    EncoderDirectiveKind, EncoderEventOutcome, NativeEncoderAccessUnit, NativeEncoderEvent,
+    SenderSession,
+};
 use crate::{FecProtection, SenderError};
 
 impl<T: PicooTransport> SenderSession<T> {
@@ -204,6 +210,117 @@ impl<T: PicooTransport> SenderSession<T> {
             self.keyframe_requested = false;
         }
         Ok(packets)
+    }
+
+    /// Apply one complete native encoder callback under the Core-owned order.
+    ///
+    /// FFI adapters call this once while holding the session lock. A normal
+    /// generation publishes a changed reliable StreamConfig before flushing
+    /// its datagrams; a pending encoder transaction keeps its existing atomic
+    /// candidate-epoch commit path.
+    pub fn submit_encoder_event(
+        &mut self,
+        event: NativeEncoderEvent<'_>,
+    ) -> Result<EncoderEventOutcome, SenderError> {
+        let NativeEncoderEvent {
+            data,
+            is_keyframe,
+            pts_us,
+            encoded_at_us,
+            encoder_generation,
+            stream_epoch,
+            width,
+            height,
+            mut stream_config,
+        } = event;
+        if encoder_generation == 0 || width == 0 || height == 0 {
+            return Err(SenderError::Protocol(
+                "native encoder event has invalid generation or dimensions".into(),
+            ));
+        }
+        if stream_config
+            .as_ref()
+            .is_some_and(|config| config.width != width || config.height != height)
+        {
+            return Err(SenderError::Protocol(
+                "native stream configuration does not match encoder output dimensions".into(),
+            ));
+        }
+        let transaction_id = self.encoder_transaction_id_for_epoch(stream_epoch);
+        // An already committed generation may update descriptive fields such
+        // as bitrate without an IDR. Initial binding and candidate-generation
+        // state still require a keyframe so rejected facts cannot stage state.
+        if stream_config.is_some()
+            && !is_keyframe
+            && (transaction_id != 0 || self.committed_encoder_generation == 0)
+        {
+            return Err(SenderError::Protocol(
+                "initial or transactional stream configuration requires a keyframe".into(),
+            ));
+        }
+        let stream_configured = stream_config.is_some();
+        if let Some(config) = stream_config.as_mut() {
+            if config.pps.is_empty() {
+                if let Some((sps, pps)) = extract_sps_pps(&config.sps) {
+                    config.sps = sps;
+                    config.pps = pps;
+                }
+            }
+        }
+
+        let mut config_staged = false;
+        // A complete first callback can atomically establish its own shape;
+        // all rejection checks still happen before pending config is mutated.
+        let encoder_accepted = if transaction_id == 0
+            && self.committed_encoder_generation == 0
+            && stream_config.is_some()
+        {
+            self.report_initial_encoder_event_started(encoder_generation, stream_epoch, height)
+        } else {
+            self.report_encoder_started(transaction_id, encoder_generation, stream_epoch, height)
+        };
+        if !encoder_accepted {
+            self.pump()?;
+            return Ok(EncoderEventOutcome {
+                keyframe_requested: self.take_keyframe_request(),
+                ..EncoderEventOutcome::default()
+            });
+        }
+
+        if let Some(config) = stream_config {
+            self.set_stream_config(config);
+            config_staged = true;
+        }
+        // Applying transactions publish the candidate epoch from the IDR
+        // admission below. A committed generation can publish now, before any
+        // corresponding datagram is flushed.
+        if config_staged && !self.encoder_apply_state.is_applying() {
+            self.pump()?;
+        }
+
+        let packet_count = self.ingest_encoder_access_unit(NativeEncoderAccessUnit {
+            data,
+            is_keyframe,
+            pts_us,
+            encoded_at_us,
+            transaction_id,
+            encoder_generation,
+            stream_epoch,
+            height,
+        })?;
+        let sent_count = if packet_count > 0 {
+            self.flush_pending()?
+        } else {
+            0
+        };
+        self.pump()?;
+        Ok(EncoderEventOutcome {
+            encoder_accepted: true,
+            stream_configured,
+            keyframe_requested: self.take_keyframe_request(),
+            packet_count,
+            sent_count,
+        })
     }
 
     pub fn ingest_access_unit(

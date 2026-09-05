@@ -1,6 +1,6 @@
 # ARCH-PICOO-RUNTIME-001：显式状态、媒体所有权与性能边界
 
-Status: planned
+Status: implemented
 Source: ARCH-PICOO-SESSION-001 / ARCH-PICOO-MEDIA-001 / ARCH-PICOO-FRAME-001 / ARCH-PICOO-VCAM-001
 
 ## 背景
@@ -40,6 +40,20 @@ QUIC、Decoder、时钟、磁盘可信存储、Frame Sink 和平台生命周期�
 旧 connection generation 的事件不得修改新会话；teardown 只有一个幂等入口。上层不构造
 `SessionId`，Transport 提供 `close_active(reason)`。
 
+### 每会话单一运行时所有者
+
+每个 Receiver 会话由 Rust Core 的专用单线程 owner 创建并独占。QUIC、重组、播放队列、Decoder
+completion 和平台输出 adapter 都不能进入 GPUI `Entity`；桌面只实现
+`ReceiverRuntimeAdapter`，通过命令、oneshot reply、`Arc<ReceiverSnapshot>` 与独立发布的 latest frame
+交互。owner 以 transport/event revision 和最近媒体 deadline 等待，每轮命令处理受 64 条/2 ms
+公平预算约束。完整快照最多每 100 ms 构建一次，命令后立即构建，内容无变化时保持同一个 `Arc`；
+可信设备排序/指纹摘要按进程内 trust revision 缓存，历史指标摘要只在样本集合变化时重算。销毁句柄
+只请求 Shutdown，join 交给清理线程，不能阻塞 UI teardown。
+
+`ReceiverRuntimeAdapter` 不要求 `Send`：adapter 和 `ReceiverSession` 必须在 owner 线程内构造。这一
+边界用于阻止为了移动 mmap、COM 或其他平台资源而增加宽泛 `unsafe impl Send`。Sender 同样遵循
+“一个会话一个原生媒体 owner”的原则；平台 callback 只交付事实，不同时承担 Session 编排。
+
 ### Rust 统一编码器事务
 
 Rust Core 是编码重配置事务的唯一语义所有者，显式保存 transaction ID、候选 stream epoch、
@@ -48,6 +62,12 @@ Rust Core 是编码重配置事务的唯一语义所有者，显式保存 transa
 只有匹配 transaction、generation、epoch 和目标分辨率的首个 IDR 完整进入 packetization 后，Core
 才允许 commit；原生层只从 Rust snapshot 观察结果，不发送 ACK/NACK。
 原生层继续拥有 Camera2/MediaCodec/AVFoundation/VideoToolbox 生命周期，但不独立决定协议提交。
+
+Android JNI 与 iOS C ABI 对每个原生编码 AU 只暴露一个完整事件入口。事件同时携带
+generation/transaction、时间线、关键帧事实和可选参数集；Core 在一次 Session 独占中完成 started
+事实、StreamConfig stage/可靠控制推进、packetization、flush、pump 与 IDR 请求消费，并返回类型化
+结果。FFI 只做参数转换和错误映射，不得重新编排这些业务步骤。MediaCodec/VideoToolbox 借用内存
+不能越过平台释放边界；异步 handoff 中的数据必须已经拥有所有权。
 
 ### 类型化媒体时间线
 
@@ -76,6 +96,12 @@ struct VideoFrame {
 }
 ```
 
+Decoder 公共输出把帧描述与存储能力分开：`DecodedFrameDescription` 固定表达尺寸、stride、旋转、
+像素格式、色彩矩阵与范围，`DecodedFrame` 另持时间戳，`DecodedFrameStorage` 表达实际 backing。当前产品只启用安全的
+`CpuNv12(Bytes)`，保持 Shared Ring 和软件消费者的明确生命周期；未来 CVPixelBuffer 或 D3D11
+surface 只有在存在显式、可跨线程转移的 owner 时才能加入非穷尽存储枚举，禁止把裸平台指针直接
+标记为 `Send`。需要 CPU 像素的消费者按能力生成并缓存 fallback，不要求跨进程 GPU surface。
+
 跨 generation 旧帧不能发布；同一 AU 最多解码一次。Decoder 通过有界、reference-aware 的 Effect
 队列在 Worker 上执行，不能同步阻塞控制消息、统计、IDR 请求和断线处理。
 
@@ -88,6 +114,15 @@ connection 与 stream generation 门禁。Worker 析构只请求 Shutdown，不�
 平台 Decoder panic 被收敛为可观察错误并由 Worker 重建。每个 job 共享 `Arc<StreamConfig>`，不得为
 每个 AU 深拷贝 SPS/PPS 等配置字节。
 
+### 统一媒体调度决策
+
+Reassembly、Jitter 和 Decoder 队列继续保留各自专用数据结构，但“下一步解码、硬过期、等待旧 AU、
+等待播放点或等待事件”只能由纯 `MediaScheduler` 决定。输入是完整 AU 队首、最旧未完成 frame ID、
+正常播放 delay 与绝对帧龄 deadline；输出是 `DecodeReadyFrame`、`DiscardExpired`、`WaitUntil`、
+`WaitForEvent` 或 `Idle`。生产 Receiver 的 drain 与 next wake 必须调用同一个函数，不能各自复制一套
+阻塞判断；`picoo-sim` 也直接依赖该纯决策，从而让乱序、旧 AU 阻塞与硬过期的模拟证据覆盖生产
+语义，而不是覆盖一个相似实现。
+
 ### LatestFrameStore 与共享不可变帧
 
 同进程使用 `LatestFrameStore` 与 `Arc<VideoFrame>`。Receiver reducer 当前是
@@ -97,6 +132,12 @@ reader lease/原子协议。`VideoFrame` 内部使用可从 Decoder `Vec<u8>` �
 `Arc` 同时共享完整时间线与像素 backing storage。
 Decoder 输出只分配一次，Preview、Shared Ring Writer 和可选 Recorder Sink 只持有共享引用；
 慢消费者不得反压 Decoder。需要反复分配的像素缓冲进入有界 `FrameBufferPool`。
+
+Shared Ring Writer 位于 `LatestFrameStore` 之后并拥有独立线程。Receiver 发布完成后只提交
+`Arc<VideoFrame>`；Writer 的 pending 容量为一，新帧覆盖尚未开始的旧工作，实际 mmap Producer 在
+Writer 线程内构造并终身留在该线程。发布成功/失败通过事件回报诊断，像素复制失败不破坏 Decoder
+参考链，也不能同步阻塞 Session owner。Preview 与 Shared Ring 是 LatestFrameStore 的两个独立
+消费者，任何一方变慢都不能阻塞另一方。
 
 `FrameBufferPool` 复用 `bytes 1.12.1+` 的 `Bytes::from_owner`，由最后一个不可变 `Bytes` 视图的
 析构归还 backing `Vec`；无需引入面向连接或异步资源的通用对象池。`bytes` 为项目既有、维护活跃
@@ -212,7 +253,7 @@ Receiver 重启、控制消息重复/越序/非法阶段、UI 不消费和 VCam 
 承载 Quinn Datagram、PCP 整 AU/FEC 语义和平台 Codec 事实。Picoo 因而保留一个无异步 runtime 的
 最小离散事件适配器，并直接复用生产 `ControlEnvelope`、`SenderPipeline`、Reassembly、Jitter 和
 `LatestFrameStore`。生产 Reassembly 同时提供显式 monotonic instant 入口，产品路径仍使用系统
-`Instant`；模拟器不得复制 packet/FEC/jitter 算法。
+`Instant`；模拟器不得复制 packet/FEC/jitter 算法，也不得复制生产 `MediaScheduler` 的跨层推进决策。
 
 补充 ControlEnvelope、pairing transcript、reassembly/FEC fuzz，Shared Ring kill/restart stress，unsafe
 Miri，原子协议 Loom model，夜间网络损伤/soak，以及 Windows 安装、注册、枚举和启动 VCam 的
@@ -234,11 +275,11 @@ COM/Objective-C API 仍由平台 contract/stress 测试验证，不能用 Miri �
 
 ## 相关 Requirements
 
-- `REQ-PICOO-SESSION-011..015`
+- `REQ-PICOO-SESSION-011..017`
 - `REQ-PICOO-TRANSPORT-011`
 - `REQ-PICOO-PROTOCOL-010`
-- `REQ-PICOO-MEDIA-005 / 016..021`
-- `REQ-PICOO-FRAME-008..010`
+- `REQ-PICOO-MEDIA-005 / 016..023`
+- `REQ-PICOO-FRAME-008..011`
 - `REQ-PICOO-VCAM-010..013`
 - `REQ-PICOO-UI-004`
-- `REQ-PICOO-STACK-009`
+- `REQ-PICOO-STACK-009 / 011`

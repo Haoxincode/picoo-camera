@@ -1,10 +1,9 @@
-//! Atomic MediaCodec access-unit handoff into the Rust Sender session.
+//! Atomic MediaCodec access-unit handoff — REQ-PICOO-MEDIA-021/022.
 
 use jni::objects::{JByteArray, JObject};
 use jni::sys::{jboolean, jint, jlong, JNI_TRUE};
 use jni::JNIEnv;
-use picoo_packet::extract_sps_pps;
-use picoo_sender::StreamConfigParams;
+use picoo_sender::{NativeEncoderEvent, StreamConfigParams};
 
 use super::super::with_sender;
 
@@ -58,65 +57,44 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_submitEncoderAccess
             return -1;
         };
         let stream_epoch = stream_epoch as u32;
-        let transaction_id = session.encoder_transaction_id_for_epoch(stream_epoch);
-        if !session.report_encoder_started(
-            transaction_id,
-            encoder_generation as u64,
-            stream_epoch,
-            encoder_height as u32,
-        ) {
-            let _ = session.pump();
-            return if session.take_keyframe_request() {
-                SUBMIT_KEYFRAME_REQUESTED
-            } else {
-                0
-            };
-        }
-
-        let mut result = SUBMIT_ENCODER_ACCEPTED;
-        if configure_stream == JNI_TRUE && keyframe == JNI_TRUE {
-            let (sps, pps) = if pps.is_empty() {
-                extract_sps_pps(&sps).unwrap_or((sps, pps))
-            } else {
-                (sps, pps)
-            };
-            let bitrate_bps = session.current_bitrate_bps();
-            session.set_stream_config(StreamConfigParams {
+        let stream_config =
+            (configure_stream == JNI_TRUE && keyframe == JNI_TRUE).then(|| StreamConfigParams {
                 width: encoder_width as u32,
                 height: encoder_height as u32,
                 fps: 30,
-                bitrate_bps,
+                bitrate_bps: session.current_bitrate_bps(),
                 stream_epoch,
                 mirrored: mirrored == JNI_TRUE,
                 rotation: 0,
                 sps,
                 pps,
             });
-            result |= SUBMIT_STREAM_CONFIGURED;
-        }
-        let fragments = session.ingest_encoder_access_unit(picoo_sender::NativeEncoderAccessUnit {
-            data: &data,
-            is_keyframe: keyframe == JNI_TRUE,
-            pts_us: pts_us as u64,
-            encoded_at_us: encoded_at_us as u64,
-            transaction_id,
-            encoder_generation: encoder_generation as u64,
-            stream_epoch,
-            height: encoder_height as u32,
-        });
-        if fragments.is_err() {
-            return -2;
-        }
-        if fragments.is_ok_and(|count| count > 0) && session.flush_pending().is_err() {
-            return -2;
-        }
-        if session.pump().is_err() {
-            return -2;
-        }
-        if session.take_keyframe_request() {
-            result |= SUBMIT_KEYFRAME_REQUESTED;
-        }
-        result
+        session
+            .submit_encoder_event(NativeEncoderEvent {
+                data: &data,
+                is_keyframe: keyframe == JNI_TRUE,
+                pts_us: pts_us as u64,
+                encoded_at_us: encoded_at_us as u64,
+                encoder_generation: encoder_generation as u64,
+                stream_epoch,
+                width: encoder_width as u32,
+                height: encoder_height as u32,
+                stream_config,
+            })
+            .map(|outcome| {
+                let mut result = 0;
+                if outcome.encoder_accepted {
+                    result |= SUBMIT_ENCODER_ACCEPTED;
+                }
+                if outcome.stream_configured {
+                    result |= SUBMIT_STREAM_CONFIGURED;
+                }
+                if outcome.keyframe_requested {
+                    result |= SUBMIT_KEYFRAME_REQUESTED;
+                }
+                result
+            })
+            .unwrap_or(-2)
     })
     .unwrap_or(-1)
 }

@@ -3,6 +3,7 @@
 //! Receiver owns measurements; this module owns bounded presentation history
 //! and fault attribution. GPUI views only render the resulting snapshot.
 
+use std::cell::Cell;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
@@ -233,6 +234,9 @@ pub struct HistorySummary {
 pub struct LiveMetricsHistory {
     samples: VecDeque<LiveMetricSample>,
     last_stats_revision: Option<u64>,
+    revision: u64,
+    summary_revision: Cell<u64>,
+    cached_summary: Cell<HistorySummary>,
 }
 
 impl LiveMetricsHistory {
@@ -248,12 +252,23 @@ impl LiveMetricsHistory {
                 self.samples
                     .push_back(LiveMetricSample::from_values(stats, actual_fps, now));
                 self.last_stats_revision = Some(stats_revision);
+                self.bump_revision();
             }
         }
         self.discard_expired(now);
     }
 
     pub fn summary(&self) -> HistorySummary {
+        if self.summary_revision.get() == self.revision {
+            return self.cached_summary.get();
+        }
+        let summary = self.compute_summary();
+        self.cached_summary.set(summary);
+        self.summary_revision.set(self.revision);
+        summary
+    }
+
+    fn compute_summary(&self) -> HistorySummary {
         let Some(first) = self.samples.front() else {
             return HistorySummary::default();
         };
@@ -286,17 +301,26 @@ impl LiveMetricsHistory {
     }
 
     fn discard_expired(&mut self, now: Instant) {
+        let original_len = self.samples.len();
         while self.samples.front().is_some_and(|sample| {
             now.saturating_duration_since(sample.captured_at) > HISTORY_WINDOW
         }) {
             self.samples.pop_front();
+        }
+        if self.samples.len() != original_len {
+            self.bump_revision();
         }
     }
 
     #[cfg(test)]
     fn record_for_test(&mut self, sample: LiveMetricSample, now: Instant) {
         self.samples.push_back(sample);
+        self.bump_revision();
         self.discard_expired(now);
+    }
+
+    fn bump_revision(&mut self) {
+        self.revision = self.revision.saturating_add(1);
     }
 }
 
@@ -508,6 +532,22 @@ mod tests {
 
         history.observe(None, 8, 0, start + Duration::from_secs(3));
         assert_eq!(history.summary().sample_count, 2);
+    }
+
+    #[test]
+    fn history_summary_cache_is_invalidated_only_by_sample_changes() {
+        let start = Instant::now();
+        let mut history = LiveMetricsHistory::default();
+        let stats = stats();
+
+        assert_eq!(history.summary_revision.get(), history.revision);
+        history.observe(Some(&stats), 7, 30, start);
+        assert_ne!(history.summary_revision.get(), history.revision);
+        assert_eq!(history.summary().sample_count, 1);
+        assert_eq!(history.summary_revision.get(), history.revision);
+
+        history.observe(Some(&stats), 7, 30, start + Duration::from_secs(1));
+        assert_eq!(history.summary_revision.get(), history.revision);
     }
 
     #[test]
