@@ -24,6 +24,13 @@ pub struct SharedFrameRingProducer {
     pub(super) _producer_lock: Option<KernelLockGuard>,
 }
 
+/// Result of one non-blocking Shared Frame Ring publish attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RingPublishOutcome {
+    Published { sequence: u64 },
+    Busy,
+}
+
 impl SharedFrameRingProducer {
     #[cfg(target_os = "windows")]
     fn from_named_mapping(
@@ -203,7 +210,7 @@ impl SharedFrameRingProducer {
         rotation: u32,
         timestamp_us: u64,
         nv12: &[u8],
-    ) -> Result<u64, SharedRingError> {
+    ) -> Result<RingPublishOutcome, SharedRingError> {
         if nv12.len() > self.max_frame_bytes {
             return Err(SharedRingError::FrameTooLarge(
                 nv12.len(),
@@ -253,7 +260,7 @@ impl SharedFrameRingProducer {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             let Some((index, slot, _slot_lock)) = writable
             else {
-                return Ok(meta.latest_sequence.load(Ordering::Acquire));
+                return Ok(RingPublishOutcome::Busy);
             };
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let Some((index, slot)) = writable
@@ -261,7 +268,7 @@ impl SharedFrameRingProducer {
                 // A consumer holding all three slots is slower than the
                 // producer. Keep the previous complete frame instead of
                 // blocking or overwriting memory being read.
-                return Ok(meta.latest_sequence.load(Ordering::Acquire));
+                return Ok(RingPublishOutcome::Busy);
             };
 
             slot.timestamp_us = timestamp_us;
@@ -284,7 +291,7 @@ impl SharedFrameRingProducer {
                 (index as u32 + 1) % RING_SLOT_COUNT as u32,
                 Ordering::Release,
             );
-            Ok(sequence)
+            Ok(RingPublishOutcome::Published { sequence })
         }
     }
 

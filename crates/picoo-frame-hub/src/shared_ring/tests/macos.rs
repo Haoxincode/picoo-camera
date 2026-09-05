@@ -456,16 +456,21 @@ fn per_slot_file_locks_allow_parallel_write_and_multiple_views() {
     let third = consumer.latest_frame().expect("third lease");
 
     drop(first_a);
-    let unchanged = producer
+    let outcome = producer
         .publish_nv12(64, 64, 64, 0, 4, &frame)
         .expect("all slots remain protected");
-    assert_eq!(unchanged, third.sequence);
+    assert_eq!(outcome, RingPublishOutcome::Busy);
 
     drop(first_b);
     let fourth = producer
         .publish_nv12(64, 64, 64, 0, 4, &frame)
         .expect("slot zero becomes writable");
-    assert_eq!(fourth, third.sequence + 1);
+    assert_eq!(
+        fourth,
+        RingPublishOutcome::Published {
+            sequence: third.sequence + 1
+        }
+    );
     assert_eq!(second.timestamp_us, 2);
     assert_eq!(third.timestamp_us, 3);
 

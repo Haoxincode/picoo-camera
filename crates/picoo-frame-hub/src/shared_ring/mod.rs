@@ -34,7 +34,7 @@ pub use macos_app_group::{
     macos_app_group_identifier, macos_app_group_ring_path, MACOS_APP_GROUP_INFO_KEY,
     MACOS_UNSIGNED_BUILD_INFO_KEY,
 };
-pub use producer::SharedFrameRingProducer;
+pub use producer::{RingPublishOutcome, SharedFrameRingProducer};
 #[cfg(target_os = "windows")]
 pub use windows_machine::{windows_shared_ring_path, WINDOWS_SHARED_RING_DIRECTORY};
 pub use writer::{

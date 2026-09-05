@@ -10,7 +10,7 @@ fn producer_consumer_roundtrip_in_two_handles() {
     let consumer = SharedFrameRingConsumer::open(&name, max).expect("open");
 
     let frame = nv12_black(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT);
-    let seq = producer
+    let outcome = producer
         .publish_nv12(
             PLACEHOLDER_WIDTH,
             PLACEHOLDER_HEIGHT,
@@ -20,6 +20,9 @@ fn producer_consumer_roundtrip_in_two_handles() {
             &frame,
         )
         .expect("publish");
+    let RingPublishOutcome::Published { sequence: seq } = outcome else {
+        panic!("initial publish unexpectedly busy");
+    };
 
     let view = consumer.latest_frame().expect("latest");
     assert_eq!(view.sequence, seq);
@@ -155,9 +158,13 @@ fn rapid_overwrite_consumer_sees_latest_sequence() {
 
     let mut last_seq = 0u64;
     for i in 0..32u64 {
-        last_seq = producer
+        let outcome = producer
             .publish_nv12(64, 64, 64, 0, i * 1_000, &frame)
             .expect("publish");
+        let RingPublishOutcome::Published { sequence } = outcome else {
+            panic!("unleased publish unexpectedly busy");
+        };
+        last_seq = sequence;
         // Interleave polls while overwriting (REQ-PICOO-FRAME-002).
         let _ = consumer.latest_frame();
     }
@@ -209,10 +216,10 @@ fn leased_slots_are_never_overwritten() {
         .expect("third");
     let third = consumer.latest_frame().expect("lease third");
 
-    let unchanged = producer
+    let outcome = producer
         .publish_nv12(64, 64, 64, 0, 4, &frame)
         .expect("drop while all slots leased");
-    assert_eq!(unchanged, third.sequence);
+    assert_eq!(outcome, RingPublishOutcome::Busy);
     assert_eq!(first.timestamp_us, 1);
     assert_eq!(second.timestamp_us, 2);
     assert_eq!(third.timestamp_us, 3);
