@@ -4,6 +4,7 @@ import android.app.Application
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.picoo.camera.discovery.PairedAutoConnect
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
 import com.picoo.camera.media.CaptureState
@@ -520,6 +521,18 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 previousStatus != PicooNative.STATUS_STREAMING
             ) {
                 reloadTrustedStore()
+            }
+            if (!ui.suppressAutoConnect &&
+                PairedAutoConnect.shouldSuppressAfterRemoteStop(
+                    previousStatus = previousStatus,
+                    currentStatus = ui.senderStatus,
+                )
+            ) {
+                // REQ-PICOO-SESSION-009: Rust has already cleared its reconnect
+                // intent. Keep NSD auto-connect from creating a brand-new session
+                // to the Receiver that just asked us to stop.
+                ui.suppressAutoConnect = true
+                resetToDevices()
             }
             if (ui.senderStatus == PicooNative.STATUS_DISCONNECTED &&
                 previousStatus != PicooNative.STATUS_DISCONNECTED &&

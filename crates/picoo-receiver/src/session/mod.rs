@@ -662,6 +662,19 @@ impl ReceiverSession {
     }
 
     pub fn close(&mut self) {
+        // REQ-PICOO-SESSION-009: tell the Sender this is an intentional user
+        // stop before closing QUIC. A bare peer close is indistinguishable from
+        // a network interruption and would correctly arm automatic reconnect.
+        if let Some(session) = self.transport.active_session() {
+            if self.video_allowed() {
+                let _ = self.send_control_payload(
+                    session,
+                    picoo_protocol::control::control_envelope::Payload::StopStream(
+                        picoo_protocol::control::StopStream {},
+                    ),
+                );
+            }
+        }
         // close is intentionally infallible for UI teardown, but decoder state
         // must never survive into a later session.
         let _ = self.apply_receiver_event(ReceiverEvent::UserClose);

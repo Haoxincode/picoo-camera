@@ -255,6 +255,37 @@ fn user_disconnect_stays_disconnected_without_reconnect() {
 }
 
 #[test]
+fn receiver_stop_stream_stays_disconnected_without_reconnect() {
+    // REQ-PICOO-SESSION-009: the desktop Disconnect command must stop the
+    // Sender's reconnect policy before the Receiver closes QUIC.
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .expect("connect");
+    session.send_client_hello().expect("hello");
+    let receiver = picoo_pairing::DeviceIdentity::generate("Desktop").expect("identity");
+    authenticate_trusted_receiver(&mut session, &receiver);
+    assert_eq!(session.status(), SenderStatus::Streaming);
+
+    session
+        .inject_control_payload_for_test(ControlPayload::StopStream(
+            picoo_protocol::control::StopStream {},
+        ))
+        .expect("Receiver StopStream");
+
+    assert_eq!(session.status(), SenderStatus::Disconnected);
+    assert!(!session.is_connected());
+    for _ in 0..10 {
+        session.pump().expect("pump");
+    }
+    assert_eq!(session.status(), SenderStatus::Disconnected);
+    assert_eq!(session.last_scheduled_reconnect_delay_ms(), None);
+}
+
+#[test]
 fn high_packet_loss_marks_network_unstable() {
     // REQ-PICOO-SESSION-001
     let mut session = SenderSession::new(MemoryTransport::new());

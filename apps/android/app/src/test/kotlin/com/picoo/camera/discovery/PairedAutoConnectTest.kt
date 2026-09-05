@@ -2,7 +2,9 @@ package com.picoo.camera.discovery
 
 import com.picoo.camera.jni.PicooNative
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PairedAutoConnectTest {
@@ -57,5 +59,37 @@ class PairedAutoConnectTest {
             alreadyAttemptedIds = emptySet(),
         )
         assertNull(pick)
+    }
+
+    @Test
+    fun remoteStopFromLiveSessionSuppressesNewAutoConnect() {
+        for (liveStatus in listOf(
+            PicooNative.STATUS_STREAMING,
+            PicooNative.STATUS_NETWORK_UNSTABLE,
+            PicooNative.STATUS_PERMISSION_REQUIRED,
+        )) {
+            assertTrue(
+                PairedAutoConnect.shouldSuppressAfterRemoteStop(
+                    previousStatus = liveStatus,
+                    currentStatus = PicooNative.STATUS_DISCONNECTED,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun reconnectingAndNonDisconnectedTransitionsRemainAutomatic() {
+        assertFalse(
+            PairedAutoConnect.shouldSuppressAfterRemoteStop(
+                previousStatus = PicooNative.STATUS_RECONNECTING,
+                currentStatus = PicooNative.STATUS_DISCONNECTED,
+            ),
+        )
+        assertFalse(
+            PairedAutoConnect.shouldSuppressAfterRemoteStop(
+                previousStatus = PicooNative.STATUS_STREAMING,
+                currentStatus = PicooNative.STATUS_RECONNECTING,
+            ),
+        )
     }
 }

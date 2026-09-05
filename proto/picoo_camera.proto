@@ -104,6 +104,8 @@ message StreamConfig {
 }
 
 message StartStream {}
+// Bidirectional intentional session stop. The recipient must remain
+// disconnected instead of treating the following QUIC close as recoverable.
 message StopStream {}
 
 message CameraCommand {

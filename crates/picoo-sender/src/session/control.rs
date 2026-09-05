@@ -51,6 +51,14 @@ impl<T: PicooTransport> SenderSession<T> {
             }
             ControlPayload::ServerHello(hello) => self.on_server_hello(hello),
             ControlPayload::ClockSyncPing(ping) => self.handle_clock_sync_ping(session, ping),
+            ControlPayload::StopStream(_) => {
+                // REQ-PICOO-SESSION-009: a Receiver-side disconnect is a user
+                // stop, not a transient transport failure. Clear connection
+                // intent so the following QUIC peer-close cannot reconnect.
+                let _ = self.apply_sender_event(super::SenderEvent::UserDisconnect {
+                    domain_resources_active: true,
+                });
+            }
             _ => {}
         }
     }
@@ -75,7 +83,8 @@ impl<T: PicooTransport> SenderSession<T> {
             | ControlPayload::ReceiverStats(_)
             | ControlPayload::EncoderCommand(_)
             | ControlPayload::CameraCommand(_)
-            | ControlPayload::ClockSyncPing(_) => {
+            | ControlPayload::ClockSyncPing(_)
+            | ControlPayload::StopStream(_) => {
                 self.lifecycle.runtime.stream().is_streaming()
                     && self.lifecycle.runtime.trust() == TrustState::Authenticated
                     && self.receiver_is_authenticated()

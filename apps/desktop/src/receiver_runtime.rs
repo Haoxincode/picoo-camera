@@ -310,8 +310,10 @@ impl ReceiverRuntime {
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn disconnect(&mut self) {
+        tracing::info!("desktop requested receiver disconnect");
         self.receiver.close();
         let _ = self.receiver.publish_waiting_placeholder();
+        tracing::info!("receiver disconnect completed");
     }
 
     /// Desktop → phone remote camera control while streaming (PUC-005 / REQ-PICOO-UI-009).

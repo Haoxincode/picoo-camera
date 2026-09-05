@@ -147,6 +147,72 @@ fn brief_disconnect_recovers_streaming_under_five_seconds() {
 }
 
 #[test]
+fn receiver_user_disconnect_stops_sender_reconnect() {
+    // REQ-PICOO-SESSION-009: Receiver-side Disconnect sends StopStream before
+    // closing QUIC, so the Sender must not classify it as a recoverable outage.
+    let mut receiver = ReceiverSession::new();
+    let bind = receiver
+        .listen(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 0,
+        })
+        .expect("listen");
+    let mut sender = SenderSession::new(QuicSenderTransport::new());
+    super::trust_receiver(&mut sender, &mut receiver);
+    sender
+        .connect(Endpoint {
+            host: bind.ip().to_string(),
+            port: bind.port(),
+        })
+        .expect("connect");
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sender.send_client_hello().expect("hello");
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if receiver.status() == ReceiverStatus::Streaming
+            && sender.status() == SenderStatus::Streaming
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(receiver.status(), ReceiverStatus::Streaming);
+    assert_eq!(sender.status(), SenderStatus::Streaming);
+
+    receiver.close();
+    for _ in 0..400 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        if sender.status() == SenderStatus::Disconnected && !sender.is_connected() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(sender.status(), SenderStatus::Disconnected);
+    assert!(!sender.is_connected());
+    assert_eq!(sender.last_scheduled_reconnect_delay_ms(), None);
+
+    // Cross the first 500 ms reconnect deadline. A regression would reconnect
+    // to the still-live Receiver listener during this interval.
+    for _ in 0..350 {
+        receiver.pump().ok();
+        sender.pump().ok();
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(sender.status(), SenderStatus::Disconnected);
+    assert!(!sender.is_connected());
+}
+
+#[test]
 fn paired_loopback_binds_lan_only_without_wan() {
     // REQ-PICOO-PRIVACY-005: discovery/transport stay on LAN; no WAN dependency.
     use picoo_pairing::TrustedDevice;

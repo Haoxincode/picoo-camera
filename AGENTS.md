@@ -98,6 +98,15 @@ Cloud Agent 运行在 Linux 环境，**不能**在本机构建 Windows 桌面程
 
 Android + Windows 已进入功能实现与产物验证；iOS + macOS 已进入平台构建基线与原生边界实现。Apple job 必须明确区分“Core/桌面可编译”和“App、Camera Extension、签名、真机链路已验证”，不得用前者替代后者的验收证据。
 
+### macOS 本机真机调试启动
+
+- 完成 `cargo xtask build macos && cargo xtask package macos` 后，必须使用
+  `open -n "target/apple/macos/Picoo Camera.app"` 以正常 GUI App 语义启动测试包。
+- 不要直接执行 `Picoo Camera.app/Contents/MacOS/picoo-desktop`。终端直接启动会使
+  macOS Keychain 将身份读取置于非交互上下文，并可能返回“平台安全存储失败：不允许用户进行交互操作”。
+- 首次或重新打包后若出现 Keychain 授权框，由用户在系统界面选择“允许”或“始终允许”，
+  再检查 UDP 4433 监听与真机发现；不要先退回终端直启重试。
+
 ### CI 变更原则
 
 - 新增平台构建时，先扩展 `xtask` 命令，再在 workflow 中增加对应 job。

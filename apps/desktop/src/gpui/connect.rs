@@ -405,7 +405,6 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|sender| sender.device_name.clone())
             .unwrap_or_else(|| "当前设备".into());
-        let disconnect_sender_name = sender_name.clone();
         let current_resolution_height = snapshot.stream_config.as_ref().map(|config| config.height);
         let resolution_label = current_resolution_height
             .map(|height| format!("{height}p"))
@@ -709,13 +708,8 @@ impl PicooDesktopApp {
                                         "xmark",
                                         cx.theme().danger,
                                     ))
-                                    .on_click(cx.listener(move |_, _, window, cx| {
-                                        PicooDesktopApp::open_disconnect_dialog(
-                                            cx.entity().downgrade(),
-                                            disconnect_sender_name.clone(),
-                                            window,
-                                            cx,
-                                        );
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.disconnect_active_sender(cx);
                                     })),
                             ),
                     ),
@@ -758,4 +752,22 @@ pub(super) fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
         return "—".into();
     }
     format!("{}:{DEFAULT_QUIC_PORT}", snapshot.advertise_host)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn desktop_disconnect_is_bound_to_the_owner_command_without_a_dialog() {
+        let source = include_str!("connect.rs");
+        let button = source
+            .split("Button::new(\"disconnect-active-device\")")
+            .nth(1)
+            .expect("Live disconnect button")
+            .split("),\n                            ),")
+            .next()
+            .expect("Live disconnect button body");
+
+        assert!(button.contains("this.disconnect_active_sender(cx)"));
+        assert!(!button.contains("open_disconnect_dialog"));
+    }
 }

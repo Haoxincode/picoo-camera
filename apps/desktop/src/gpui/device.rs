@@ -269,33 +269,14 @@ impl PicooDesktopApp {
             )
     }
 
-    pub(super) fn open_disconnect_dialog(
-        app: WeakEntity<Self>,
-        sender_name: String,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let app = app.clone();
-            alert
-                .title(format!("断开“{sender_name}”？"))
-                .description("视频推流和虚拟摄像头画面会立即停止，设备之后仍可重新连接。")
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("断开")
-                        .ok_variant(ButtonVariant::Danger)
-                        .cancel_text("取消")
-                        .show_cancel(true),
-                )
-                .on_ok(move |_, _, cx| {
-                    let _ = app.update(cx, |this, cx| {
-                        this.runtime.disconnect();
-                        this.page = DesktopPage::Waiting;
-                        cx.notify();
-                    });
-                    true
-                })
-        });
+    /// Desktop Live disconnect is an immediate, reversible command. Keeping it
+    /// on the owning entity avoids an overlay lifecycle for a command whose
+    /// visible result is the Waiting page itself.
+    pub(super) fn disconnect_active_sender(&mut self, cx: &mut Context<Self>) {
+        tracing::info!("desktop disconnect button clicked");
+        self.runtime.disconnect();
+        self.page = DesktopPage::Waiting;
+        cx.notify();
     }
 
     pub(super) fn open_remove_trusted_dialog(

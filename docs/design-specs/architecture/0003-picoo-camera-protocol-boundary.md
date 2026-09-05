@@ -42,7 +42,8 @@ EncoderCommand、Stats、Capabilities 和 StreamConfig 只能在相应的已认�
 - `Capabilities`
 - `PairingConfirm` / `PairingApproval` / `PairingCommit` / `PairingComplete`；SAS 由双方根据
   Hello 内 nonce、公钥、设备 ID、TLS exporter 与 connection generation 独立计算，不作为消息字段传输
-- `StartStream` / `StopStream`
+- `StartStream` / `StopStream`；`StopStream` 是双向的主动会话终止意图，接收方必须在随后 QUIC
+  关闭前清除自动重连意图，不能把用户从任一端发起的断开误判为网络中断
 - `StreamConfig`
 - `CameraCommand` / `EncoderCommand`；其中交互式「切换镜头」使用 `SWITCH_CAMERA`，由持有实际镜头状态的 Sender 决定目标朝向，`SWITCH_FRONT` / `SWITCH_BACK` 只表达调用方明确指定朝向的命令
 - `ReceiverStats`
