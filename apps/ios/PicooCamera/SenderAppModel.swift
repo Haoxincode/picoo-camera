@@ -44,7 +44,6 @@ final class SenderAppModel {
             }
         }
     }
-
     let camera: CameraCaptureModel
     let protocolName = PicooSenderSession.protocolName
 
@@ -103,7 +102,6 @@ final class SenderAppModel {
             isDiscovering = false
         }
     }
-
     deinit {
         runtimeTask?.cancel()
         mediaTask?.cancel()
@@ -130,7 +128,6 @@ final class SenderAppModel {
                 self?.tick()
             }
         }
-
         if let mediaPipeline {
             let signals = camera.encoderEventSignals
             mediaTask = Task { [weak self] in
@@ -160,8 +157,11 @@ final class SenderAppModel {
                         case let .accessUnit(accessUnit):
                             guard self.encoderApply.accepts(accessUnit) else { continue }
                             do {
-                                if try await mediaPipeline.consume(event) { await self.camera.requestKeyframe() }
-                                self.encoderApply.didCommit(accessUnit, host: self)
+                                let result = try await mediaPipeline.consume(event)
+                                if result.keyframeRequested { await self.camera.requestKeyframe() }
+                                if result.encoderAccepted {
+                                    self.encoderApply.didCommit(accessUnit, host: self)
+                                }
                             } catch {
                                 self.errorMessage = error.localizedDescription
                             }

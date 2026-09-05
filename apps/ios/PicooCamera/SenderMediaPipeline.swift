@@ -50,14 +50,14 @@ actor SenderMediaPipeline {
         self.configuration = configuration
     }
 
-    func consume(_ event: VideoEncoderEvent) throws -> Bool {
+    func consume(_ event: VideoEncoderEvent) throws -> EncoderSubmitResult {
         switch event {
         case let .failure(_, _, message):
             throw SenderMediaPipelineError.encoder(message)
         case let .accessUnit(accessUnit):
             return try consume(accessUnit)
         case .queueOverflow:
-            return false
+            return .ignored
         }
     }
 
@@ -78,7 +78,7 @@ actor SenderMediaPipeline {
         self.configuration = updated
     }
 
-    private func consume(_ accessUnit: EncodedAccessUnit) throws -> Bool {
+    private func consume(_ accessUnit: EncodedAccessUnit) throws -> EncoderSubmitResult {
         let previous = configuration
         let parameterSets = accessUnit.parameterSets
         let updated = SenderStreamConfiguration(
@@ -98,13 +98,13 @@ actor SenderMediaPipeline {
         )
 
         let configurationChanged = updated != previous
-        let keyframeRequested = try session.send(
+        let result = try session.send(
             accessUnit,
             streamConfiguration: configurationChanged ? updated : nil
         )
-        if configurationChanged {
+        if configurationChanged && result.streamConfigured {
             configuration = updated
         }
-        return keyframeRequested
+        return result
     }
 }

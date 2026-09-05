@@ -10,6 +10,65 @@ nonisolated enum PicooSenderSessionError: Error, Equatable {
     case operationFailed(name: String, code: Int32)
 }
 
+/// Typed result of one Rust-owned encoder event transaction.
+///
+/// A zero C return code only means the FFI call completed. These facts decide
+/// which native-side state may advance after Core applies generation/epoch
+/// admission and stream-configuration rules.
+nonisolated struct EncoderSubmitResult: Equatable, Sendable {
+    let encoderAccepted: Bool
+    let streamConfigured: Bool
+    let keyframeRequested: Bool
+    let packetCount: UInt32
+    let sentCount: UInt32
+
+    static let ignored = Self(
+        encoderAccepted: false,
+        streamConfigured: false,
+        keyframeRequested: false,
+        packetCount: 0,
+        sentCount: 0
+    )
+
+    init(_ outcome: PicooEncoderSubmitOutcome) {
+        self.init(
+            cEncoderAccepted: outcome.encoder_accepted,
+            cStreamConfigured: outcome.stream_configured,
+            cKeyframeRequested: outcome.keyframe_requested,
+            packetCount: outcome.packet_count,
+            sentCount: outcome.sent_count
+        )
+    }
+
+    init(
+        cEncoderAccepted: UInt8,
+        cStreamConfigured: UInt8,
+        cKeyframeRequested: UInt8,
+        packetCount: UInt32,
+        sentCount: UInt32
+    ) {
+        encoderAccepted = cEncoderAccepted != 0
+        streamConfigured = cStreamConfigured != 0
+        keyframeRequested = cKeyframeRequested != 0
+        self.packetCount = packetCount
+        self.sentCount = sentCount
+    }
+
+    init(
+        encoderAccepted: Bool,
+        streamConfigured: Bool,
+        keyframeRequested: Bool,
+        packetCount: UInt32 = 0,
+        sentCount: UInt32 = 0
+    ) {
+        self.encoderAccepted = encoderAccepted
+        self.streamConfigured = streamConfigured
+        self.keyframeRequested = keyframeRequested
+        self.packetCount = packetCount
+        self.sentCount = sentCount
+    }
+}
+
 /// Swift-owned lifetime boundary for the opaque Rust Sender handle.
 ///
 /// Raw pointers never escape this type. Platform camera code hands encoded
@@ -222,7 +281,7 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
     func send(
         _ accessUnit: EncodedAccessUnit,
         streamConfiguration: SenderStreamConfiguration?
-    ) throws -> Bool {
+    ) throws -> EncoderSubmitResult {
         let configuration = streamConfiguration ?? SenderStreamConfiguration(
             width: accessUnit.width,
             height: accessUnit.height,
@@ -264,7 +323,7 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             }
         }
         try check(submitCode, operation: "sender_submit_encoder_event")
-        return outcome.keyframe_requested != 0
+        return EncoderSubmitResult(outcome)
     }
 
     func takeKeyframeRequest() throws -> Bool {

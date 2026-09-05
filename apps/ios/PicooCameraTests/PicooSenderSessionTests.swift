@@ -167,6 +167,23 @@ struct PicooSenderSessionTests {
         #expect(configuration.rotation == 90)
     }
 
+    @Test("a successful C call keeps rejected encoder facts rejected in Swift")
+    func rejectedEncoderOutcomeRemainsRejected() {
+        let result = EncoderSubmitResult(
+            cEncoderAccepted: 0,
+            cStreamConfigured: 0,
+            cKeyframeRequested: 1,
+            packetCount: 0,
+            sentCount: 0
+        )
+
+        #expect(!result.encoderAccepted)
+        #expect(!result.streamConfigured)
+        #expect(result.keyframeRequested)
+        #expect(result.packetCount == 0)
+        #expect(result.sentCount == 0)
+    }
+
     @Test("bounded encoder queue drops dependent frames until a fresh IDR")
     func encoderQueueRecoversAtKeyframe() {
         let buffer = VideoEncoderEventBuffer(capacity: 2)
