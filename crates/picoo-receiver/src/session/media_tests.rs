@@ -34,8 +34,60 @@ fn access_unit_with_kind(generation: u64, frame_id: u64, kind: FrameKind) -> Enc
         received_at_us: 50_000,
         decode_submitted_at_us: 55_000,
         kind,
-        data: Bytes::from_static(b"typed-au"),
+        data: Bytes::from(vec![frame_id as u8]),
     }
+}
+
+struct RecoveryBlockingDecoder {
+    started: Arc<std::sync::atomic::AtomicBool>,
+    release: Arc<std::sync::atomic::AtomicBool>,
+    submitted: Arc<std::sync::Mutex<Vec<u8>>>,
+}
+
+impl picoo_media_decode::AccessUnitDecoder for RecoveryBlockingDecoder {
+    fn decode_access_unit(
+        &mut self,
+        access_unit: &[u8],
+        _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+    ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+        let marker = access_unit.first().copied().unwrap_or(0);
+        self.submitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(marker);
+        self.started
+            .store(true, std::sync::atomic::Ordering::Release);
+        while !self.release.load(std::sync::atomic::Ordering::Acquire) {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
+            marker == 100,
+        ))
+    }
+
+    fn reset(&mut self) -> Result<(), picoo_media_decode::DecodeError> {
+        Ok(())
+    }
+}
+
+fn push_reference(receiver: &mut ReceiverSession, frame_id: u64) {
+    assert_eq!(
+        receiver.jitter.push_at(
+            JitterFrame {
+                stream_generation: 2,
+                frame_id,
+                pts_us: frame_id * 1_000,
+                encoded_at_us: frame_id * 1_000,
+                received_at_us: frame_id * 1_000,
+                data: Bytes::from(vec![frame_id as u8]),
+                keyframe: false,
+                discardable: false,
+            },
+            0,
+            0,
+        ),
+        PushOutcome::Accepted
+    );
 }
 
 fn packet(
@@ -181,6 +233,109 @@ fn ready_reference_waits_in_jitter_until_decoder_capacity_is_available() {
         "waiting AU never reached decoder"
     );
     assert!(!receiver.decoder_recovery.awaiting_refresh());
+}
+
+#[test]
+fn recovery_idr_completion_releases_following_references_in_order() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let started = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let submitted = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut receiver = receiver_for_generation(2);
+    receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(RecoveryBlockingDecoder {
+        started: Arc::clone(&started),
+        release: Arc::clone(&release),
+        submitted: Arc::clone(&submitted),
+    }));
+    receiver.jitter.set_fixed_target_ms(Some(0));
+    receiver
+        .enter_decoder_recovery(RecoveryReason::DecoderError, true)
+        .expect("enter recovery");
+    receiver
+        .publish_timeline_access_unit(access_unit(2, 100))
+        .expect("submit recovery IDR");
+
+    let start_deadline = Instant::now() + std::time::Duration::from_secs(1);
+    while !started.load(Ordering::Acquire) && Instant::now() < start_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        started.load(Ordering::Acquire),
+        "recovery IDR never started"
+    );
+
+    push_reference(&mut receiver, 101);
+    push_reference(&mut receiver, 102);
+    receiver.drain_jitter().expect("wait for IDR completion");
+    assert_eq!(receiver.jitter.len(), 2);
+    assert!(receiver.decoder_recovery.awaiting_refresh());
+
+    release.store(true, Ordering::Release);
+    let completion_deadline = Instant::now() + std::time::Duration::from_secs(1);
+    loop {
+        receiver.drain_decoder_events().expect("decoder events");
+        receiver.drain_jitter().expect("release recovered chain");
+        let submitted_len = submitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        if submitted_len == 3 || Instant::now() >= completion_deadline {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+
+    assert_eq!(
+        *submitted
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![100, 101, 102]
+    );
+    assert!(receiver.jitter.is_empty());
+    assert!(!receiver.decoder_recovery.awaiting_refresh());
+}
+
+#[test]
+fn reference_loss_invalidates_in_flight_idr_completion() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let started = Arc::new(AtomicBool::new(false));
+    let release = Arc::new(AtomicBool::new(false));
+    let submitted = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let mut receiver = receiver_for_generation(2);
+    receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(RecoveryBlockingDecoder {
+        started: Arc::clone(&started),
+        release: Arc::clone(&release),
+        submitted,
+    }));
+    receiver.jitter.set_fixed_target_ms(Some(0));
+    receiver
+        .enter_decoder_recovery(RecoveryReason::DecoderError, true)
+        .expect("enter recovery");
+    receiver
+        .publish_timeline_access_unit(access_unit(2, 100))
+        .expect("submit recovery IDR");
+
+    let start_deadline = Instant::now() + std::time::Duration::from_secs(1);
+    while !started.load(Ordering::Acquire) && Instant::now() < start_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        started.load(Ordering::Acquire),
+        "recovery IDR never started"
+    );
+    push_reference(&mut receiver, 101);
+    receiver.drain_jitter().expect("wait for IDR completion");
+
+    receiver
+        .enter_decoder_recovery(RecoveryReason::ReferenceAccessUnitLost, true)
+        .expect("invalidate recovery candidate");
+    assert!(receiver.jitter.is_empty());
+    release.store(true, Ordering::Release);
+    receiver.drain_decoder_until_idle_for_test();
+
+    assert!(receiver.decoder_recovery.awaiting_refresh());
 }
 
 #[test]

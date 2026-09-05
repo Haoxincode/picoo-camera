@@ -58,7 +58,7 @@ pub(super) struct AccessUnitTimeline {
 }
 
 impl EncodedAccessUnit {
-    fn timeline(&self) -> AccessUnitTimeline {
+    pub(super) fn timeline(&self) -> AccessUnitTimeline {
         AccessUnitTimeline {
             connection_generation: self.connection_generation,
             stream_generation: self.stream_generation,

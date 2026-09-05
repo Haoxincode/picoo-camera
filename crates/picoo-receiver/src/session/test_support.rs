@@ -1,12 +1,14 @@
 //! Test-only adapters kept outside production media paths.
 
 use bytes::Bytes;
+use picoo_jitter::FrontFrameDescriptor;
 use picoo_media_decode::AccessUnitDecoder;
 use picoo_protocol::control::StreamConfig;
 use std::sync::Arc;
 
 use super::decoder_worker::{DecoderWorker, EncodedAccessUnit, FrameKind};
 use super::ReceiverSession;
+use crate::media_scheduler::RecoveryAdmission;
 use crate::ReceiverError;
 
 impl ReceiverSession {
@@ -36,6 +38,20 @@ impl ReceiverSession {
                 stream_epoch: stream_generation as u32,
                 ..Default::default()
             }));
+        }
+        let recovery_admission = self.decoder_recovery.admission(
+            connection_generation,
+            FrontFrameDescriptor {
+                stream_generation,
+                frame_id: 0,
+                keyframe,
+                discardable: false,
+            },
+        );
+        if recovery_admission != RecoveryAdmission::Ready {
+            self.ingress.recovery_dropped_access_units =
+                self.ingress.recovery_dropped_access_units.saturating_add(1);
+            return Ok(());
         }
         let now_us = self.timing_origin.elapsed().as_micros() as u64;
         self.publish_timeline_access_unit(EncodedAccessUnit {

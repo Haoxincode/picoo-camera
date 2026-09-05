@@ -2,9 +2,12 @@
 
 use std::time::{Duration, Instant};
 
+use picoo_jitter::FrontFrameDescriptor;
 use picoo_session::StreamState;
 
+use super::decoder_worker::AccessUnitTimeline;
 use super::ReceiverSession;
+use crate::media_scheduler::RecoveryAdmission;
 use crate::ReceiverError;
 
 const KEYFRAME_REQUEST_MIN_INTERVAL: Duration = Duration::from_secs(1);
@@ -34,42 +37,137 @@ impl RecoveryReason {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RefreshCandidate {
+    connection_generation: u64,
+    stream_generation: u64,
+    frame_id: u64,
+}
+
+impl RefreshCandidate {
+    fn from_timeline(timeline: AccessUnitTimeline) -> Self {
+        Self {
+            connection_generation: timeline.connection_generation,
+            stream_generation: timeline.stream_generation,
+            frame_id: timeline.frame_id,
+        }
+    }
+
+    fn matches(self, timeline: AccessUnitTimeline) -> bool {
+        self.connection_generation == timeline.connection_generation
+            && self.stream_generation == timeline.stream_generation
+            && self.frame_id == timeline.frame_id
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum DecoderRecoveryPhase {
+    #[default]
+    Healthy,
+    AwaitingRefresh,
+    RefreshInFlight(RefreshCandidate),
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RecoveryTransition {
+    newly_awaiting: bool,
+    invalidated_candidate: bool,
+}
+
+impl RecoveryTransition {
+    fn requires_media_cleanup(self) -> bool {
+        self.newly_awaiting || self.invalidated_candidate
+    }
+}
+
 #[derive(Debug)]
-pub(crate) struct DecoderRecovery {
-    awaiting_refresh: bool,
+pub(super) struct DecoderRecovery {
+    phase: DecoderRecoveryPhase,
     reason: Option<RecoveryReason>,
     last_request_at: Option<Instant>,
 }
 
 impl DecoderRecovery {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            awaiting_refresh: false,
+            phase: DecoderRecoveryPhase::Healthy,
             reason: None,
             last_request_at: None,
         }
     }
 
-    fn enter(&mut self, reason: RecoveryReason) -> bool {
-        let newly_awaiting = !self.awaiting_refresh;
-        self.awaiting_refresh = true;
+    fn enter(&mut self, reason: RecoveryReason) -> RecoveryTransition {
+        let transition = RecoveryTransition {
+            newly_awaiting: self.phase == DecoderRecoveryPhase::Healthy,
+            invalidated_candidate: matches!(self.phase, DecoderRecoveryPhase::RefreshInFlight(_)),
+        };
+        self.phase = DecoderRecoveryPhase::AwaitingRefresh;
         self.reason = Some(reason);
-        newly_awaiting
+        transition
     }
 
-    pub(crate) fn accepts(&self, keyframe: bool) -> bool {
-        !self.awaiting_refresh || keyframe
+    pub(super) fn admission(
+        &self,
+        connection_generation: u64,
+        frame: FrontFrameDescriptor,
+    ) -> RecoveryAdmission {
+        match self.phase {
+            DecoderRecoveryPhase::Healthy => RecoveryAdmission::Ready,
+            DecoderRecoveryPhase::AwaitingRefresh => {
+                if frame.keyframe {
+                    RecoveryAdmission::Ready
+                } else {
+                    RecoveryAdmission::Drop
+                }
+            }
+            DecoderRecoveryPhase::RefreshInFlight(candidate) => {
+                if frame.keyframe {
+                    RecoveryAdmission::Ready
+                } else if frame.discardable {
+                    RecoveryAdmission::Drop
+                } else if candidate.connection_generation == connection_generation
+                    && candidate.stream_generation == frame.stream_generation
+                    && frame.frame_id > candidate.frame_id
+                {
+                    RecoveryAdmission::WaitForRefresh
+                } else {
+                    RecoveryAdmission::Drop
+                }
+            }
+        }
+    }
+
+    pub(super) fn accepts_completion(&self, timeline: AccessUnitTimeline) -> bool {
+        match self.phase {
+            DecoderRecoveryPhase::Healthy => true,
+            DecoderRecoveryPhase::AwaitingRefresh => false,
+            DecoderRecoveryPhase::RefreshInFlight(candidate) => candidate.matches(timeline),
+        }
+    }
+
+    pub(super) fn is_refresh_candidate(&self, timeline: AccessUnitTimeline) -> bool {
+        matches!(
+            self.phase,
+            DecoderRecoveryPhase::RefreshInFlight(candidate) if candidate.matches(timeline)
+        )
+    }
+
+    pub(super) fn note_refresh_submitted(&mut self, timeline: AccessUnitTimeline) {
+        if timeline.kind.is_keyframe() && self.phase != DecoderRecoveryPhase::Healthy {
+            self.phase =
+                DecoderRecoveryPhase::RefreshInFlight(RefreshCandidate::from_timeline(timeline));
+        }
     }
 
     fn request_due(&self, now: Instant) -> bool {
-        self.awaiting_refresh
+        self.is_awaiting_refresh()
             && self.last_request_at.is_none_or(|last| {
                 now.saturating_duration_since(last) >= KEYFRAME_REQUEST_MIN_INTERVAL
             })
     }
 
-    pub(crate) fn next_request_at(&self, now: Instant) -> Option<Instant> {
-        self.awaiting_refresh.then(|| {
+    pub(super) fn next_request_at(&self, now: Instant) -> Option<Instant> {
+        self.is_awaiting_refresh().then(|| {
             self.last_request_at
                 .map_or(now, |last| last + KEYFRAME_REQUEST_MIN_INTERVAL)
         })
@@ -79,20 +177,36 @@ impl DecoderRecovery {
         self.last_request_at = Some(now);
     }
 
-    pub(crate) fn mark_recovered(&mut self) {
-        self.awaiting_refresh = false;
+    pub(super) fn mark_recovered(&mut self, timeline: AccessUnitTimeline) -> bool {
+        if !matches!(
+            self.phase,
+            DecoderRecoveryPhase::RefreshInFlight(candidate) if candidate.matches(timeline)
+        ) {
+            return false;
+        }
+        self.phase = DecoderRecoveryPhase::Healthy;
         self.reason = None;
+        true
     }
 
-    pub(crate) fn reset_session(&mut self) {
-        self.awaiting_refresh = false;
+    pub(super) fn reset_session(&mut self) {
+        self.phase = DecoderRecoveryPhase::Healthy;
         self.reason = None;
         self.last_request_at = None;
     }
 
+    fn is_awaiting_refresh(&self) -> bool {
+        self.phase != DecoderRecoveryPhase::Healthy
+    }
+
     #[cfg(test)]
-    pub(crate) fn awaiting_refresh(&self) -> bool {
-        self.awaiting_refresh
+    pub(super) fn awaiting_refresh(&self) -> bool {
+        self.is_awaiting_refresh()
+    }
+
+    #[cfg(test)]
+    fn refresh_in_flight(&self) -> bool {
+        matches!(self.phase, DecoderRecoveryPhase::RefreshInFlight(_))
     }
 }
 
@@ -102,7 +216,7 @@ impl ReceiverSession {
         reason: RecoveryReason,
         reset_decoder: bool,
     ) -> Result<(), ReceiverError> {
-        let newly_awaiting = self.decoder_recovery.enter(reason);
+        let transition = self.decoder_recovery.enter(reason);
         if self.lifecycle.runtime.stream().is_streaming() {
             let generation = self
                 .current_stream_config
@@ -112,7 +226,7 @@ impl ReceiverSession {
                 .runtime
                 .set_stream(StreamState::AwaitingRefresh { generation });
         }
-        if newly_awaiting {
+        if transition.newly_awaiting {
             match reason {
                 RecoveryReason::ReferenceAccessUnitLost => {
                     self.ingress.recovery_reference_lost =
@@ -131,15 +245,20 @@ impl ReceiverSession {
                 | RecoveryReason::EpochChanged
                 | RecoveryReason::ManualRepair => {}
             }
+            tracing::warn!(reason = reason.label(), "decoder awaiting fresh IDR");
+        }
+
+        if transition.requires_media_cleanup() {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
             // Decoder recovery discards dependent media but preserves the
             // current network/decode timing estimate for this stream epoch.
             self.jitter.discard_queued();
-            tracing::warn!(reason = reason.label(), "decoder awaiting fresh IDR");
         }
 
-        if reset_decoder && (newly_awaiting || reason == RecoveryReason::DecoderError) {
+        if reset_decoder
+            && (transition.requires_media_cleanup() || reason == RecoveryReason::DecoderError)
+        {
             self.ingress.decoder_resets = self.ingress.decoder_resets.saturating_add(1);
             self.decoder_worker.reset();
         }
@@ -160,8 +279,10 @@ impl ReceiverSession {
         Ok(())
     }
 
-    pub(crate) fn mark_decoder_refresh_accepted(&mut self) {
-        self.decoder_recovery.mark_recovered();
+    pub(super) fn mark_decoder_refresh_accepted(&mut self, timeline: AccessUnitTimeline) {
+        if !self.decoder_recovery.mark_recovered(timeline) {
+            return;
+        }
         if matches!(
             self.lifecycle.runtime.stream(),
             StreamState::AwaitingRefresh { .. }
@@ -176,15 +297,11 @@ impl ReceiverSession {
         }
     }
 
-    pub(crate) fn accepts_access_unit_for_decode(&self, keyframe: bool) -> bool {
-        self.decoder_recovery.accepts(keyframe)
-    }
-
     pub(crate) fn force_decoder_recovery_request(
         &mut self,
         reason: RecoveryReason,
     ) -> Result<(), ReceiverError> {
-        let newly_awaiting = self.decoder_recovery.enter(reason);
+        let transition = self.decoder_recovery.enter(reason);
         if self.lifecycle.runtime.stream().is_streaming() {
             let generation = self
                 .current_stream_config
@@ -194,7 +311,7 @@ impl ReceiverSession {
                 .runtime
                 .set_stream(StreamState::AwaitingRefresh { generation });
         }
-        if newly_awaiting {
+        if transition.requires_media_cleanup() {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
             self.jitter.discard_queued();
@@ -222,7 +339,11 @@ mod tests {
     fn request_window_coalesces_automatic_keyframe_requests() {
         let start = Instant::now();
         let mut state = DecoderRecovery::new();
-        assert!(state.enter(RecoveryReason::ReferenceAccessUnitLost));
+        assert!(
+            state
+                .enter(RecoveryReason::ReferenceAccessUnitLost)
+                .newly_awaiting
+        );
         assert!(state.request_due(start));
         state.note_request(start);
         assert!(!state.request_due(start + Duration::from_millis(999)));
@@ -230,13 +351,29 @@ mod tests {
     }
 
     #[test]
-    fn awaiting_refresh_rejects_delta_until_keyframe_is_accepted() {
+    fn awaiting_refresh_holds_following_reference_until_matching_keyframe_completion() {
         let mut state = DecoderRecovery::new();
         state.enter(RecoveryReason::DecoderError);
-        assert!(!state.accepts(false));
-        assert!(state.accepts(true));
-        state.mark_recovered();
-        assert!(state.accepts(false));
+        let key = timeline(1, 2, 100, true);
+        assert_eq!(
+            state.admission(1, descriptor(2, 99, false, false)),
+            RecoveryAdmission::Drop
+        );
+        assert_eq!(
+            state.admission(1, descriptor(2, 100, true, false)),
+            RecoveryAdmission::Ready
+        );
+        state.note_refresh_submitted(key);
+        assert_eq!(
+            state.admission(1, descriptor(2, 101, false, false)),
+            RecoveryAdmission::WaitForRefresh
+        );
+        assert!(!state.mark_recovered(timeline(1, 2, 99, true)));
+        assert!(state.mark_recovered(key));
+        assert_eq!(
+            state.admission(1, descriptor(2, 101, false, false)),
+            RecoveryAdmission::Ready
+        );
     }
 
     #[test]
@@ -245,10 +382,63 @@ mod tests {
         let mut state = DecoderRecovery::new();
         state.enter(RecoveryReason::DecoderError);
         state.note_request(start);
-        state.mark_recovered();
+        let key = timeline(1, 2, 100, true);
+        state.note_refresh_submitted(key);
+        assert!(state.mark_recovered(key));
         state.enter(RecoveryReason::DecoderError);
 
         assert!(!state.request_due(start + Duration::from_millis(100)));
         assert!(state.request_due(start + Duration::from_secs(1)));
+    }
+
+    #[test]
+    fn reference_loss_invalidates_an_in_flight_candidate() {
+        let mut state = DecoderRecovery::new();
+        state.enter(RecoveryReason::DecoderError);
+        let key = timeline(1, 2, 100, true);
+        state.note_refresh_submitted(key);
+
+        let transition = state.enter(RecoveryReason::ReferenceAccessUnitLost);
+
+        assert!(transition.invalidated_candidate);
+        assert!(!state.refresh_in_flight());
+        assert!(!state.mark_recovered(key));
+        assert!(state.awaiting_refresh());
+    }
+
+    fn timeline(
+        connection_generation: u64,
+        stream_generation: u64,
+        frame_id: u64,
+        keyframe: bool,
+    ) -> AccessUnitTimeline {
+        AccessUnitTimeline {
+            connection_generation,
+            stream_generation,
+            frame_id,
+            source_pts_us: 0,
+            encoded_at_us: 0,
+            received_at_us: 0,
+            decode_submitted_at_us: 0,
+            kind: if keyframe {
+                super::super::decoder_worker::FrameKind::Key
+            } else {
+                super::super::decoder_worker::FrameKind::ReferenceDelta
+            },
+        }
+    }
+
+    fn descriptor(
+        stream_generation: u64,
+        frame_id: u64,
+        keyframe: bool,
+        discardable: bool,
+    ) -> FrontFrameDescriptor {
+        FrontFrameDescriptor {
+            stream_generation,
+            frame_id,
+            keyframe,
+            discardable,
+        }
     }
 }

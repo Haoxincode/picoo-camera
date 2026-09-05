@@ -10,7 +10,7 @@ use picoo_packet::{AssembledAccessUnit, ReassemblyMap};
 use picoo_protocol::control::{control_envelope::Payload as ControlPayload, StreamConfig};
 use picoo_protocol::{decode_control_envelope, encode_control_envelope};
 use picoo_receiver::media_scheduler::{
-    schedule_media, DecoderAdmission, MediaScheduleDecision, MediaScheduleInput,
+    schedule_media, DecoderAdmission, MediaScheduleDecision, MediaScheduleInput, RecoveryAdmission,
 };
 use picoo_sender::{FecProtection, SenderPipeline};
 
@@ -19,6 +19,10 @@ use crate::encoder::{
 };
 use crate::sim_decoder::{SimDecodeJob, SimulatedDecoder};
 use crate::{NetworkScript, SimDelivery, SimulatedNetwork, VirtualClock};
+
+mod receiver_recovery;
+
+use receiver_recovery::RefreshCandidate;
 
 const REASSEMBLY_CAPACITY: usize = 8;
 const REASSEMBLY_MAX_FRAGMENTS: u16 = 1_024;
@@ -72,6 +76,7 @@ struct ReceiverCore {
     stream_config: Option<StreamConfig>,
     waiting_for_idr: bool,
     reference_chain_intact: bool,
+    refresh_candidate: Option<RefreshCandidate>,
     pending_future_idr: Option<AssembledAccessUnit>,
     reassembly: ReassemblyMap,
     jitter: JitterBuffer,
@@ -99,6 +104,7 @@ impl ReceiverCore {
             stream_config: None,
             waiting_for_idr: false,
             reference_chain_intact: true,
+            refresh_candidate: None,
             pending_future_idr: None,
             reassembly: ReassemblyMap::new(REASSEMBLY_CAPACITY, REASSEMBLY_MAX_FRAGMENTS),
             jitter,
@@ -117,6 +123,7 @@ impl ReceiverCore {
         self.stream_config = None;
         self.waiting_for_idr = false;
         self.reference_chain_intact = true;
+        self.refresh_candidate = None;
         self.pending_future_idr = None;
         self.reassembly = ReassemblyMap::new(REASSEMBLY_CAPACITY, REASSEMBLY_MAX_FRAGMENTS);
         self.jitter.clear();
@@ -148,6 +155,9 @@ impl ReceiverCore {
                     self.authenticated = false;
                     self.streaming = false;
                     self.stream_config = None;
+                    self.waiting_for_idr = false;
+                    self.reference_chain_intact = true;
+                    self.refresh_candidate = None;
                     self.pending_future_idr = None;
                     self.reassembly =
                         ReassemblyMap::new(REASSEMBLY_CAPACITY, REASSEMBLY_MAX_FRAGMENTS);
@@ -209,6 +219,7 @@ impl ReceiverCore {
                 if previous_epoch != Some(epoch) {
                     self.waiting_for_idr = true;
                     self.reference_chain_intact = false;
+                    self.refresh_candidate = None;
                     self.jitter.discard_queued();
                     self.decoder.reset();
                 }
@@ -231,6 +242,9 @@ impl ReceiverCore {
                 self.streaming = false;
                 self.stream_config = None;
                 self.pending_future_idr = None;
+                self.waiting_for_idr = false;
+                self.reference_chain_intact = true;
+                self.refresh_candidate = None;
                 self.reassembly.clear_pending();
                 self.jitter.clear();
                 self.decoder.reset();
@@ -293,15 +307,6 @@ impl ReceiverCore {
     }
 
     fn accept_access_unit(&mut self, now: &VirtualClock, frame: AssembledAccessUnit) {
-        if (self.waiting_for_idr || !self.reference_chain_intact) && !frame.keyframe {
-            self.counters.pre_refresh_delta_drops =
-                self.counters.pre_refresh_delta_drops.saturating_add(1);
-            return;
-        }
-        if frame.keyframe {
-            self.waiting_for_idr = false;
-            self.reference_chain_intact = true;
-        }
         let first_fragment_at_us = now.micros_since_origin(frame.first_fragment_at);
         let jitter_frame = JitterFrame {
             stream_generation: u64::from(frame.stream_epoch),
@@ -322,8 +327,7 @@ impl ReceiverCore {
             | PushOutcome::DroppedLate {
                 requires_refresh: true,
             } => {
-                self.reference_chain_intact = false;
-                self.waiting_for_idr = true;
+                self.enter_recovery();
             }
             PushOutcome::DroppedLate {
                 requires_refresh: false,
@@ -346,12 +350,13 @@ impl ReceiverCore {
         let mut advanced = false;
         loop {
             let max_queue_age_us = 300_000;
-            let decoder_admission = self
-                .jitter
-                .front_frame_flags()
-                .map_or(DecoderAdmission::Ready, |(keyframe, discardable)| {
-                    self.decoder.admission(keyframe, discardable)
-                });
+            let front = self.jitter.front_frame_descriptor();
+            let recovery_admission = front.map_or(RecoveryAdmission::Ready, |frame| {
+                self.recovery_admission(frame)
+            });
+            let decoder_admission = front.map_or(DecoderAdmission::Ready, |frame| {
+                self.decoder.admission(frame.keyframe, frame.discardable)
+            });
             let decision = schedule_media(MediaScheduleInput {
                 front_frame_id: self.jitter.front_frame_id(),
                 oldest_unresolved_frame_id: self.reassembly.oldest_unresolved_frame_id(),
@@ -363,15 +368,13 @@ impl ReceiverCore {
                     .jitter
                     .next_expiration_delay_us(now.now_us(), max_queue_age_us)
                     .map(Duration::from_micros),
+                recovery_admission,
                 decoder_admission,
             });
             match decision {
                 MediaScheduleDecision::DiscardExpired => {
                     if self.jitter.drop_expired(now.now_us(), max_queue_age_us) {
-                        self.reference_chain_intact = false;
-                        self.waiting_for_idr = true;
-                        self.jitter.discard_queued();
-                        self.decoder.reset();
+                        self.enter_recovery();
                     }
                     advanced = true;
                     continue;
@@ -380,6 +383,13 @@ impl ReceiverCore {
                     let _ = self.jitter.pop_ready(now.now_us());
                     self.counters.decoder_discardable_drops =
                         self.counters.decoder_discardable_drops.saturating_add(1);
+                    advanced = true;
+                    continue;
+                }
+                MediaScheduleDecision::DiscardRecoveryBlockedFrame => {
+                    let _ = self.jitter.pop_ready(now.now_us());
+                    self.counters.pre_refresh_delta_drops =
+                        self.counters.pre_refresh_delta_drops.saturating_add(1);
                     advanced = true;
                     continue;
                 }
@@ -408,6 +418,7 @@ impl ReceiverCore {
                 continue;
             }
             self.last_decoded = Some(key);
+            let keyframe = frame.keyframe;
             self.decoder.submit(
                 SimDecodeJob {
                     connection_generation: key.0,
@@ -418,6 +429,13 @@ impl ReceiverCore {
                 },
                 now.now_us(),
             );
+            if keyframe && self.waiting_for_idr {
+                self.refresh_candidate = Some(RefreshCandidate {
+                    connection_generation: key.0,
+                    stream_generation: u64::from(key.1),
+                    frame_id: key.2,
+                });
+            }
             advanced = true;
         }
         advanced
@@ -436,6 +454,20 @@ impl ReceiverCore {
                 })
             {
                 continue;
+            }
+            if self.waiting_for_idr {
+                let refresh_matches = job.frame.keyframe
+                    && self.refresh_candidate.is_some_and(|candidate| {
+                        candidate.connection_generation == job.connection_generation
+                            && candidate.stream_generation == job.frame.stream_generation
+                            && candidate.frame_id == job.frame.frame_id
+                    });
+                if !refresh_matches {
+                    continue;
+                }
+                self.waiting_for_idr = false;
+                self.reference_chain_intact = true;
+                self.refresh_candidate = None;
             }
             let pixel_len = nv12_byte_size(job.width, job.height);
             let marker = job.frame.data.first().copied().unwrap_or(0);
@@ -468,10 +500,7 @@ impl ReceiverCore {
             .incomplete_access_unit_drops
             .saturating_add(self.reassembly.drop_count().saturating_sub(before));
         if self.reassembly.take_reference_chain_loss() {
-            self.reference_chain_intact = false;
-            self.waiting_for_idr = true;
-            self.jitter.discard_queued();
-            self.decoder.reset();
+            self.enter_recovery();
         }
         self.drive_media(now);
     }

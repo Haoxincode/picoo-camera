@@ -48,7 +48,7 @@ impl ReceiverSession {
                     if !decoder_generation_current || !timeline_current {
                         continue;
                     }
-                    if !self.decoder_recovery.accepts(timeline.kind.is_keyframe()) {
+                    if !self.decoder_recovery.accepts_completion(timeline) {
                         continue;
                     }
                     self.handle_decoder_result(timeline, decoded_at, result)?;
@@ -97,8 +97,13 @@ impl ReceiverSession {
                 return Ok(());
             }
         };
-        if timeline.kind.is_keyframe() && outcome.refresh_accepted {
-            self.mark_decoder_refresh_accepted();
+        if timeline.kind.is_keyframe() {
+            if outcome.refresh_accepted {
+                self.mark_decoder_refresh_accepted(timeline);
+            } else if self.decoder_recovery.is_refresh_candidate(timeline) {
+                self.enter_decoder_recovery(RecoveryReason::DecoderError, true)?;
+                return Ok(());
+            }
         }
         match outcome.frame {
             Some(mut frame) => {

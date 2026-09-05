@@ -75,6 +75,18 @@ pub enum PushOutcome {
     DroppedLate { requires_refresh: bool },
 }
 
+/// Immutable identity and prediction facts for the oldest complete AU.
+///
+/// Scheduling must inspect these facts before removing the frame so recovery
+/// and Decoder-capacity admission share the same bounded Jitter owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrontFrameDescriptor {
+    pub stream_generation: u64,
+    pub frame_id: u64,
+    pub keyframe: bool,
+    pub discardable: bool,
+}
+
 impl Default for JitterBuffer {
     fn default() -> Self {
         Self::new()
@@ -230,12 +242,15 @@ impl JitterBuffer {
         self.frames.front().map(|buffered| buffered.frame.frame_id)
     }
 
-    /// Key/reference facts needed for Decoder admission without removing the
-    /// candidate or advancing playout accounting.
-    pub fn front_frame_flags(&self) -> Option<(bool, bool)> {
-        self.frames
-            .front()
-            .map(|buffered| (buffered.frame.keyframe, buffered.frame.discardable))
+    /// Identity and prediction facts needed for recovery and Decoder
+    /// admission without advancing playout accounting.
+    pub fn front_frame_descriptor(&self) -> Option<FrontFrameDescriptor> {
+        self.frames.front().map(|buffered| FrontFrameDescriptor {
+            stream_generation: buffered.frame.stream_generation,
+            frame_id: buffered.frame.frame_id,
+            keyframe: buffered.frame.keyframe,
+            discardable: buffered.frame.discardable,
+        })
     }
 
     /// Receiver-local delay until the oldest complete AU should enter decode.

@@ -209,16 +209,14 @@ impl ReceiverSession {
                 self.ingress.recovery_dropped_access_units.saturating_add(1);
             return Ok(());
         }
-        if !self.accepts_access_unit_for_decode(access_unit.kind.is_keyframe()) {
-            self.ingress.recovery_dropped_access_units =
-                self.ingress.recovery_dropped_access_units.saturating_add(1);
-            return Ok(());
-        }
+        let timeline = access_unit.timeline();
         match self
             .decoder_worker
             .submit(access_unit, self.current_stream_config.clone())
         {
-            DecodeSubmitOutcome::Queued => {}
+            DecodeSubmitOutcome::Queued => {
+                self.decoder_recovery.note_refresh_submitted(timeline);
+            }
             DecodeSubmitOutcome::Dropped { requires_refresh } => {
                 self.ingress.recovery_dropped_access_units =
                     self.ingress.recovery_dropped_access_units.saturating_add(1);

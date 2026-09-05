@@ -140,6 +140,43 @@ fn incomplete_idr_breaks_reference_chain_until_a_complete_idr() {
 }
 
 #[test]
+fn production_timing_holds_references_until_recovery_idr_completion() {
+    let mut sim = production_equivalent_stream(Duration::from_millis(100));
+    assert!(sim.snapshot().waiting_for_idr);
+
+    sim.submit_camera_frame(frame(100, true, 10_000, 1, 1), FecProtection::None)
+        .unwrap();
+    sim.advance(Duration::from_millis(2));
+    sim.advance(Duration::from_millis(24));
+    assert!(sim.snapshot().decoder_active);
+    assert!(sim.snapshot().waiting_for_idr);
+
+    sim.submit_camera_frame(frame(101, false, 44_000, 1, 1), FecProtection::None)
+        .unwrap();
+    sim.advance(Duration::from_millis(2));
+    sim.submit_camera_frame(frame(102, false, 78_000, 1, 1), FecProtection::None)
+        .unwrap();
+    sim.advance(Duration::from_millis(2));
+
+    let in_flight = sim.snapshot();
+    assert_eq!(in_flight.counters.decoded, 0);
+    assert_eq!(in_flight.jitter_depth, 2);
+    assert!(in_flight.waiting_for_idr);
+
+    sim.advance(Duration::from_millis(100));
+    let released = sim.snapshot();
+    assert_eq!(released.counters.decoded, 1);
+    assert_eq!(released.jitter_depth, 0);
+    assert!(!released.waiting_for_idr);
+    assert!(released.reference_chain_intact);
+
+    sim.advance(Duration::from_millis(250));
+    let complete = sim.snapshot();
+    assert_eq!(complete.counters.decoded, 3);
+    assert_eq!(sim.consume_preview_latest().unwrap().pixel_data[0], 102);
+}
+
+#[test]
 fn newer_reference_au_waits_for_an_older_incomplete_au_outcome() {
     let mut sim = authenticated_stream(NetworkScript::default());
     sim.submit_camera_frame(frame(1, true, 10_000, 1, 1), FecProtection::None)
@@ -179,15 +216,21 @@ fn newer_reference_au_waits_for_an_older_incomplete_au_outcome() {
 #[test]
 fn production_timing_waits_for_decoder_capacity_without_breaking_reference_chain() {
     let mut sim = production_equivalent_stream(Duration::from_millis(100));
-    for (frame_id, marker) in (1_u64..=4).zip(1_u8..=4) {
+    sim.submit_camera_frame(frame(1, true, 10_000, 1, 1), FecProtection::None)
+        .unwrap();
+    sim.advance(Duration::from_millis(2));
+    sim.advance(Duration::from_millis(24));
+    sim.advance(Duration::from_millis(100));
+    assert_eq!(sim.snapshot().counters.decoded, 1);
+
+    for (frame_id, marker) in (2_u64..=5).zip(2_u8..=5) {
         sim.submit_camera_frame(
-            frame(marker, frame_id == 1, 10_000, 1, 1),
+            frame(marker, false, 10_000 + (frame_id - 1) * 34_000, 1, 1),
             FecProtection::None,
         )
         .unwrap();
     }
     sim.advance(Duration::from_millis(2));
-    sim.advance(Duration::from_millis(40));
 
     let saturated = sim.snapshot();
     assert!(saturated.decoder_active);
@@ -198,7 +241,7 @@ fn production_timing_waits_for_decoder_capacity_without_breaking_reference_chain
 
     sim.advance(Duration::from_millis(100));
     let released = sim.snapshot();
-    assert_eq!(released.counters.decoded, 1);
+    assert_eq!(released.counters.decoded, 2);
     assert_eq!(released.jitter_depth, 0);
     assert_eq!(released.decoder_pending_depth, 2);
     assert!(!released.waiting_for_idr);
@@ -208,15 +251,21 @@ fn production_timing_waits_for_decoder_capacity_without_breaking_reference_chain
 #[test]
 fn production_timing_recovers_only_after_capacity_wait_exceeds_hard_age() {
     let mut sim = production_equivalent_stream(Duration::from_secs(1));
-    for (frame_id, marker) in (1_u64..=4).zip(1_u8..=4) {
+    sim.submit_camera_frame(frame(1, true, 10_000, 1, 1), FecProtection::None)
+        .unwrap();
+    sim.advance(Duration::from_millis(2));
+    sim.advance(Duration::from_millis(24));
+    sim.advance(Duration::from_secs(1));
+    assert_eq!(sim.snapshot().counters.decoded, 1);
+
+    for (frame_id, marker) in (2_u64..=5).zip(2_u8..=5) {
         sim.submit_camera_frame(
-            frame(marker, frame_id == 1, 10_000, 1, 1),
+            frame(marker, false, 10_000 + (frame_id - 1) * 34_000, 1, 1),
             FecProtection::None,
         )
         .unwrap();
     }
     sim.advance(Duration::from_millis(2));
-    sim.advance(Duration::from_millis(40));
     assert_eq!(sim.snapshot().jitter_depth, 1);
     assert!(!sim.snapshot().waiting_for_idr);
 
