@@ -53,9 +53,11 @@ owner；CLI 可同步等待自身命令 reply，但不得直接调用 `pump()` �
 
 owner 的命令邮箱必须有界且由提交方非阻塞写入；容量耗尽或 owner 已关闭时，要求 reply 的命令连同其
 oneshot sender 返回给平台 adapter，由 adapter 立即发送明确的 `Full`/`Closed` 错误，不能让 UI
-误判为普通 reply channel 取消。展示名、自动接受、占位图与虚拟摄像头状态等可合并设置共用一个
+误判为普通 reply channel 取消。`Disconnect` 与其他有副作用命令一样必须返回 reply，队列满或关闭时
+不得只记录日志。展示名、自动接受、占位图与虚拟摄像头状态等可合并设置共用一个
 capacity-one latest mailbox，但平台 adapter 必须先按字段合并最新值，避免不同设置之间互相覆盖。
-UI 线程不得使用阻塞 `send()` 向 owner 施加反压。
+UI 线程不得使用阻塞 `send()` 向 owner 施加反压。CLI stdin EOF 只表示不再有控制台命令，
+不表示 Receiver 服务退出；`--serve` 只能由 `quit`、显式关闭信号或 runtime 终止结束。
 
 `ReceiverRuntimeAdapter` 不要求 `Send`：adapter 和 `ReceiverSession` 必须在 owner 线程内构造。这一
 边界用于阻止为了移动 mmap、COM 或其他平台资源而增加宽泛 `unsafe impl Send`。Sender 同样遵循
@@ -126,9 +128,10 @@ connection 与 stream generation 门禁。Worker 析构只请求 Shutdown，不�
 
 ### 统一媒体调度决策
 
-Reassembly、Jitter 和 Decoder 队列继续保留各自专用数据结构，但“下一步解码、丢弃可抛帧、
-硬过期、等待旧 AU、等待 Decoder 容量、等待播放点或等待事件”只能由纯 `MediaScheduler` 决定。
-输入是完整 AU 队首、最旧未完成 frame ID、正常播放 delay、绝对帧龄 deadline 与 Decoder 准入事实；
+Reassembly、Jitter 和 Decoder 队列继续保留各自专用数据结构，但“下一步解码、丢弃恢复阻塞帧、丢弃可抛帧、
+硬过期、等待旧 AU、等待恢复 IDR completion、等待 Decoder 容量、等待播放点或等待事件”只能由纯
+`MediaScheduler` 决定。输入是完整 AU 队首身份、最旧未完成 frame ID、正常播放 delay、绝对帧龄 deadline、
+恢复准入与 Decoder 准入事实；
 输出是 `DecodeReadyFrame`、`DiscardReadyFrame`、`DiscardExpired`、`WaitUntil`、`WaitForEvent` 或
 `Idle`。生产 Receiver 的 drain 与 next wake 必须调用同一个函数，不能各自复制一套
 阻塞判断；`picoo-sim` 也直接依赖该纯决策，从而让乱序、旧 AU 阻塞与硬过期的模拟证据覆盖生产
@@ -253,7 +256,8 @@ Receiver 重启、控制消息重复/越序/非法阶段、UI 不消费和 VCam 
 快速场景可使用零播放等待和同步完成 Decoder；涉及 deadline、背压和代际切换的生产等价场景必须
 启用自适应 Jitter，并以虚拟完成时刻模拟 Decoder active/pending 容量、开始、完成和 reset。完整 AU
 在 Reassembly 完成后直接进入与产品一致的 Jitter/`MediaScheduler` 路径，不得在模拟器外层另建
-`completed_access_units` 队列提前复制旧 AU 阻塞决策。
+`completed_access_units` 队列提前复制旧 AU 阻塞决策。模拟器的恢复 IDR 也必须在 Decoder completion
+且 candidate 身份匹配时才恢复参考链，不得在 `accept_access_unit()` 或 Decoder submit 时提前恢复。
 
 持续验证以下 invariant：
 

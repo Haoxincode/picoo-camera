@@ -76,9 +76,18 @@ AwaitingRefresh
   → reset Decoder，丢弃旧参考链和延迟输出
   → 合并并限频发送 RequestKeyframe
   → 丢弃普通 delta AU，不再反复喂给已知损坏的预测链
-  → 完整且匹配当前 StreamConfig/stream_epoch 的 IDR 被 Decoder 接受
+  → 完整且匹配当前 connection/stream generation 的 IDR 成功提交
+RefreshInFlight(candidate IDR)
+  → 同代且位于 candidate 之后的 reference AU 保留在有界 Jitter，等待 Decoder 确认或硬截止时间
+  → discardable AU 可直接丢弃；新 IDR 可替换 candidate，旧 completion 不得解除恢复
+  → candidate 之后的 reference AU 丢失、过期或 Decoder drop 使 candidate 失效，回到 AwaitingRefresh
+  → 仅当 candidate 身份完全匹配且 Decoder 确认 refresh accepted
 Healthy
 ```
+
+不得在 IDR 到达或刚提交时提前恢复 Healthy；否则同一次 drain 中已就绪的后续
+reference AU 可能被旧 AwaitingRefresh 规则丢弃，而 IDR completion 又会错误放行依赖它的
+更新 AU。恢复 candidate 必须同时绑定 connection generation、stream generation 和 frame ID。
 
 `flush` 与 `reset` 语义必须分离：`flush` 可以排空 Decoder 已产生的延迟输出，
 `reset` 必须丢弃所有参考状态并准备从新 IDR 开始。平台 Decoder 不得用“排空残帧”
