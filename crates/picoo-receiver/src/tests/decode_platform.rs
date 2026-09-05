@@ -574,8 +574,19 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
 
     let consumer =
         SharedFrameRingConsumer::open(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("consumer");
-    // Placeholder is published on attach.
-    let placeholder = consumer.latest_frame().expect("placeholder on ring");
+    // The ring is an asynchronous output adapter, so attachment must not make
+    // the Receiver owner wait for the initial placeholder copy.
+    let placeholder_deadline = std::time::Instant::now() + Duration::from_secs(1);
+    let placeholder = loop {
+        if let Some(frame) = consumer.latest_frame() {
+            break frame;
+        }
+        assert!(
+            std::time::Instant::now() < placeholder_deadline,
+            "asynchronous ring writer did not publish placeholder"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    };
     assert!(placeholder.sequence >= 1);
     let placeholder_seq = placeholder.sequence;
 
