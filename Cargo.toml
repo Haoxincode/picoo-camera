@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
+  "crates/picoo-bitstream",
   "crates/picoo-pairing",
   "crates/picoo-discovery",
   "crates/picoo-session",
@@ -58,6 +59,7 @@ gpui-kit = {
 
 picoo-protocol = { path = "crates/picoo-protocol" }
 picoo-packet = { path = "crates/picoo-packet" }
+picoo-bitstream = { path = "crates/picoo-bitstream" }
 picoo-pairing = { path = "crates/picoo-pairing" }
 picoo-discovery = { path = "crates/picoo-discovery" }
 picoo-session = { path = "crates/picoo-session" }

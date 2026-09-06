@@ -5473,6 +5473,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5be167a7af36ee22fe3115051bc51f6e6c7054c9348e28deb4f49bd6f705a315"
 
 [[package]]
+name = "picoo-bitstream"
+version = "0.1.1"
+
+[[package]]
 name = "picoo-desktop"
 version = "0.1.1"
 dependencies = [
@@ -5535,9 +5539,9 @@ version = "0.1.1"
 dependencies = [
  "cbindgen 0.27.0",
  "jni",
+ "picoo-bitstream",
  "picoo-diagnostics",
  "picoo-discovery",
- "picoo-packet",
  "picoo-pairing",
  "picoo-protocol",
  "picoo-rate-control",
@@ -5581,8 +5585,8 @@ dependencies = [
  "objc2-core-video",
  "objc2-video-toolbox",
  "openh264",
+ "picoo-bitstream",
  "picoo-frame-hub",
- "picoo-packet",
  "picoo-protocol",
  "picoo-testkit",
  "thiserror 2.0.20",
@@ -5653,6 +5657,7 @@ dependencies = [
  "bytes",
  "objc2 0.6.4",
  "openh264",
+ "picoo-bitstream",
  "picoo-discovery",
  "picoo-frame-hub",
  "picoo-jitter",
@@ -5676,6 +5681,7 @@ name = "picoo-sender"
 version = "0.1.1"
 dependencies = [
  "bytes",
+ "picoo-bitstream",
  "picoo-metrics",
  "picoo-packet",
  "picoo-pairing",

@@ -1,5 +1,7 @@
 # 无线手机摄像头系统：产品需求与技术设计文档
 
+> 2026-09-06：用户已采纳 [Next v2 产品方案](picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md) 并开始破坏性重构。本文旧基线中的 H.264-only/30fps、公共 CPU 帧、CPU 预览、无录像及旧版本约束不再作为新实现目标；未冲突的安全与业务约束继续有效。新架构为 ARCH-PICOO-MEDIA-002，验收按 REQ-PICOO-NEXT；不得把旧实现状态视为新版完成。
+
 暂定产品名： Picoo Camera
 
 文档版本： V1.0

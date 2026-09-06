@@ -11,7 +11,7 @@ use crate::ReceiverSession;
 pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Vec<u8>, Vec<u8>) {
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
-    use picoo_packet::extract_sps_pps;
+    use picoo_bitstream::avc::extract_sps_pps;
 
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
@@ -317,8 +317,8 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     // REQ-PICOO-SESSION-003: incomplete IDR → RequestKeyframe → fresh IDR → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -363,7 +363,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
         .expect("recovery encode")
         .to_vec();
     assert!(
-        picoo_packet::split_annex_b_nals(&recovery_au)
+        picoo_bitstream::avc::split_annex_b_nals(&recovery_au)
             .iter()
             .any(|nal| nal.first().is_some_and(|byte| byte & 0x1f == 5)),
         "same-epoch recovery fixture must contain an IDR"

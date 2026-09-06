@@ -1,4 +1,4 @@
-//! Annex-B / AVCC parameter-set helpers — REQ-PICOO-PROTOCOL-005.
+//! AVC Annex-B / AVCC helpers — REQ-PICOO-BITSTREAM-001 / REQ-PICOO-PROTOCOL-005.
 
 /// Split Annex-B byte stream into NAL units (start codes stripped).
 pub fn split_annex_b_nals(data: &[u8]) -> Vec<&[u8]> {

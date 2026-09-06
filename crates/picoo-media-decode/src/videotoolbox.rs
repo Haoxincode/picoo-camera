@@ -25,11 +25,11 @@ use objc2_video_toolbox::{
     kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder, VTDecodeFrameFlags,
     VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSession,
 };
-use picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES;
-use picoo_packet::{
+use picoo_bitstream::avc::{
     access_unit_contains_idr, annex_b_to_length_prefixed, extract_sps_pps,
     is_length_prefixed_access_unit, split_annex_b_nals,
 };
+use picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES;
 use picoo_protocol::control::StreamConfig;
 
 use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};

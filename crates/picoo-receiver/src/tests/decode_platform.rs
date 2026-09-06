@@ -16,8 +16,8 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     // REQ-PICOO-MEDIA-005/006: real Annex-B H.264 through QUIC → decode → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -144,10 +144,10 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
 fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU reaches the
     // platform decoder. The encoded fixture avoids a test-only native codec.
-    use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::{
+    use picoo_bitstream::avc::{
         annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
     };
+    use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
@@ -257,8 +257,8 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
 fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     // REQ-PICOO-MEDIA-003/010/012: ABR epoch changes flow through QUIC and
     // rebuild VideoToolbox with the dimensions advertised by StreamConfig.
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;
     use picoo_testkit::{H264_1280X720_RED_IDR, H264_854X480_RED_IDR};
@@ -520,10 +520,10 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     // REQ-PICOO-FRAME-003 / VCAM-003: decode once → Shared Frame Ring for VCam consumer.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::{
         nv12_byte_size, SharedFrameRingConsumer, SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES,
     };
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;

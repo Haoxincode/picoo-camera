@@ -1,4 +1,4 @@
-use picoo_packet::extract_sps_pps;
+use picoo_bitstream::avc::extract_sps_pps;
 use picoo_rate_control::BitrateLadder;
 use std::slice;
 

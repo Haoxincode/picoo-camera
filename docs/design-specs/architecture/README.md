@@ -21,3 +21,5 @@ ARCH-PICOO-<AREA>-NNN
 - [ARCH-PICOO-UI-001: 桌面 GPUI 与手机原生 UI 边界](0009-desktop-gpui-mobile-native-ui-boundary.md)
 - [ARCH-PICOO-UI-002: 跨端视觉语义、原生适配与 Icon 边界](0010-cross-platform-design-system-boundary.md)
 - [ARCH-PICOO-RUNTIME-001: 显式状态、媒体所有权与性能边界](0011-runtime-state-and-performance-boundary.md)
+
+- [ARCH-PICOO-MEDIA-002：原生媒体与独立多输出边界](0012-native-media-multi-output-boundary.md)

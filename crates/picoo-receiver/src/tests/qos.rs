@@ -74,7 +74,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     let soak_au: Vec<u8> = {
         use openh264::encoder::Encoder;
         use openh264::formats::YUVBuffer;
-        use picoo_packet::extract_sps_pps;
+        use picoo_bitstream::avc::extract_sps_pps;
         use picoo_sender::StreamConfigParams;
 
         let width = 160usize;

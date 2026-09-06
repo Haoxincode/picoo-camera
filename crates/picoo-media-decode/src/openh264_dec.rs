@@ -4,11 +4,11 @@ use bytes::Bytes;
 use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use openh264::nal_units;
-use picoo_frame_hub::nv12_byte_size;
-use picoo_packet::{
+use picoo_bitstream::avc::{
     access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
     is_length_prefixed_access_unit,
 };
+use picoo_frame_hub::nv12_byte_size;
 use picoo_protocol::control::StreamConfig;
 
 use crate::stub::StubDecoder;

@@ -34,6 +34,7 @@ tracing.workspace = true
 objc2 = "0.6.4"
 
 [dev-dependencies]
+picoo-bitstream.workspace = true
 picoo-discovery.workspace = true
 picoo-protocol.workspace = true
 picoo-sender = { workspace = true, features = ["test-support"] }

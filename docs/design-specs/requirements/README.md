@@ -41,3 +41,5 @@ Requirements 是代码实现、单元测试和验收测试的直接映射层。
 ```text
 BUC-001 / PUC-* → REQ-* → crates/apps/tests → validation
 ```
+
+- [Next 原生媒体与多输出需求](next-media.md)：40 项稳定追溯与位流边界分解。

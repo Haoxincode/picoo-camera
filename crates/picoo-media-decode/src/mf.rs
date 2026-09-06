@@ -8,7 +8,9 @@
 use std::mem::ManuallyDrop;
 
 use bytes::Bytes;
-use picoo_packet::{access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets};
+use picoo_bitstream::avc::{
+    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
+};
 use picoo_protocol::control::StreamConfig;
 use windows::core::{GUID, HRESULT};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;

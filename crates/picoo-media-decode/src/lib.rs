@@ -335,7 +335,7 @@ mod tests {
     fn openh264_decodes_length_prefixed_au() {
         use openh264::encoder::Encoder;
         use openh264::formats::YUVBuffer;
-        use picoo_packet::{length_prefixed_to_annex_b, split_annex_b_nals};
+        use picoo_bitstream::avc::{length_prefixed_to_annex_b, split_annex_b_nals};
 
         let width = 64usize;
         let height = 64usize;

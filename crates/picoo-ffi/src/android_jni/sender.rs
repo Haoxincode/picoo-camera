@@ -5,7 +5,7 @@ use std::time::Duration;
 use jni::objects::{JByteArray, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jobjectArray, jstring, JNI_TRUE};
 use jni::JNIEnv;
-use picoo_packet::extract_sps_pps;
+use picoo_bitstream::avc::extract_sps_pps;
 use picoo_rate_control::BitrateLadder;
 use picoo_sender::{EncoderFailureOutcome, SenderError, SenderSession, StreamConfigParams};
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};

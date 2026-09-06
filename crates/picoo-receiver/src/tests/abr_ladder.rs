@@ -13,8 +13,8 @@ fn abr_downshift_updates_stream_config_and_latest_frame_store() {
     // REQ-PICOO-MEDIA-010: sustained congestion → DownshiftResolution → 720p StreamConfig → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;
@@ -276,8 +276,8 @@ fn abr_upshift_updates_stream_config_and_latest_frame_store() {
     // REQ-PICOO-MEDIA-010: after downshift, sustained health → UpshiftResolution → 1080p LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;

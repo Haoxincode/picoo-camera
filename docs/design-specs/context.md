@@ -1,5 +1,7 @@
 # Design Specs Context：管理规范、追溯规则与概念对齐
 
+> 2026-09-06：用户已采纳 [Next v2 产品方案](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md) 并开始破坏性重构。本文旧基线中的 H.264-only/30fps、公共 CPU 帧、CPU 预览、无录像及旧版本约束不再作为新实现目标；未冲突的安全与业务约束继续有效。新架构为 ARCH-PICOO-MEDIA-002，验收按 REQ-PICOO-NEXT；不得把旧实现状态视为新版完成。
+
 仓库名：`picoo-camera` · 产品名：**Picoo Camera**
 
 这份文件不是 Picoo Camera 的产品总览。它是 `docs/design-specs/` 下的管理上下文，用于统一 Design Specs 的文档空间、长期评审层、需求分解流程、追溯 ID 规则和核心术语。

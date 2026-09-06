@@ -1,6 +1,6 @@
 //! Native encoder event boundary — REQ-PICOO-MEDIA-003/016/020..022.
 
-use picoo_packet::extract_sps_pps;
+use picoo_bitstream::avc::extract_sps_pps;
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
 #[cfg(any(test, feature = "test-support"))]
 use picoo_session::{ConnectionState, OutputState, SenderStatus, SessionRuntimeState};
