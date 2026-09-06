@@ -205,7 +205,7 @@ impl ReceiverSession {
             ReceiverError::Protocol("source configuration revision exhausted".into())
         })?;
         self.current_stream_config = Some(std::sync::Arc::new(config));
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(output) = &self.shared_ring {
             output.invalidate();
         }

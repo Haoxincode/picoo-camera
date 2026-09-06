@@ -1,6 +1,6 @@
-//! Decoder output ownership. Mac output cannot be materialized as CPU pixels.
+//! Native Decoder output ownership on supported product platforms; no source CPU pixels.
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use bytes::Bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,7 +19,7 @@ pub enum VideoColorRange {
 }
 
 /// Geometry and interpretation of the immutable native output, not CPU layout.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NativeDecodedFormat {
     pub coded_size: picoo_frame_hub::ImageSize,
@@ -31,11 +31,11 @@ pub struct NativeDecodedFormat {
 /// Pixel interpretation independent of the backing storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DecodedFrameDescription {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub native_format: NativeDecodedFormat,
     pub width: u32,
     pub height: u32,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub stride: u32,
     pub rotation: u32,
     pub pixel_format: VideoPixelFormat,
@@ -43,8 +43,8 @@ pub struct DecodedFrameDescription {
     pub color_range: VideoColorRange,
 }
 
-/// Non-Apple adapter storage, pending its native D3D11 replacement.
-#[cfg(not(target_os = "macos"))]
+/// CPU diagnostic storage for targets without a native product Decoder.
+#[cfg(not(any(target_os = "macos", windows)))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodedFrameStorage {
     CpuNv12(Bytes),
@@ -54,9 +54,9 @@ pub enum DecodedFrameStorage {
 pub struct DecodedFrame {
     description: DecodedFrameDescription,
     timestamp_us: u64,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     storage: DecodedFrameStorage,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     image: picoo_frame_hub::NativeImage,
 }
 
@@ -71,7 +71,7 @@ impl DecodedFrame {
         timestamp_us: u64,
         pixels: bytes::Bytes,
     ) -> Result<Self, crate::DecodeError> {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         {
             Ok(Self::native(
                 crate::native_fixture::upload(width, height, stride, &pixels)?,
@@ -93,7 +93,7 @@ impl DecodedFrame {
                 timestamp_us,
             ))
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             Ok(Self::cpu_nv12(
                 width,
@@ -105,7 +105,7 @@ impl DecodedFrame {
             ))
         }
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn native(
         image: picoo_frame_hub::NativeImage,
         native_format: NativeDecodedFormat,
@@ -127,17 +127,17 @@ impl DecodedFrame {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn native_image(&self) -> &picoo_frame_hub::NativeImage {
         &self.image
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn into_native_image(self) -> picoo_frame_hub::NativeImage {
         self.image
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     #[allow(clippy::too_many_arguments)]
     pub fn cpu_nv12(
         width: u32,
@@ -170,12 +170,12 @@ impl DecodedFrame {
         self.timestamp_us
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn storage(&self) -> &DecodedFrameStorage {
         &self.storage
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn cpu_nv12_bytes(&self) -> Option<&Bytes> {
         match &self.storage {
             DecodedFrameStorage::CpuNv12(bytes) => Some(bytes),
@@ -186,7 +186,7 @@ impl DecodedFrame {
         self.description.rotation = rotation;
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn into_cpu_nv12(self) -> Bytes {
         match self.storage {
             DecodedFrameStorage::CpuNv12(bytes) => bytes,

@@ -17,7 +17,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_bitstream::avc::extract_sps_pps;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
@@ -153,7 +153,7 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     use picoo_bitstream::avc::{
         annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
     };
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
@@ -241,7 +241,7 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
                 if super::source_dimensions(frame) == (width as u32, height as u32) {
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(not(any(target_os = "macos", windows)))]
                     {
                         assert_eq!(
                             frame.pixel_data.len(),
@@ -249,7 +249,7 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
                         );
                         assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
                     }
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     assert_eq!(frame.description().visible_rect.width, width as u32);
                     return;
                 }
@@ -270,7 +270,7 @@ fn macos_videotoolbox_explicit_source_configuration() {
     // REQ-PICOO-MEDIA-027/028: explicit epoch changes flow through QUIC and
     // rebuild VideoToolbox with the dimensions advertised by StreamConfig.
     use picoo_bitstream::avc::extract_sps_pps;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     use picoo_frame_hub::nv12_byte_size;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;

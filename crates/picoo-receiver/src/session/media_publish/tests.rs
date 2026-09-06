@@ -85,7 +85,7 @@ fn delayed_batch_uses_each_original_frame_id_time_and_presentation() {
         "must publish both delayed pictures"
     );
     let frame = receiver.frames.latest().unwrap();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         assert_eq!(frame.frame_id, 2);
         assert_eq!(frame.source_pts_us, 200);
@@ -94,7 +94,7 @@ fn delayed_batch_uses_each_original_frame_id_time_and_presentation() {
         assert_eq!(frame.decode_submitted_at_us, 800);
         assert_eq!((frame.width, frame.height), (32, 64));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         assert_eq!(frame.identity().frame_id, 2);
         assert_eq!(frame.source_pts_us(), 200);

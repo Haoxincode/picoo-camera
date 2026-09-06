@@ -494,3 +494,21 @@ GPUI Windows 的 standalone --tests --no-default-features --features test-suppor
 REQ-PICOO-NEXT-029/033/034：将 Apple renderer/exporter 资源与 prepare 移到 output/apple.rs，需求请求、单槽最新帧、缓存、失效世代、IPC 发布和错误回报留在 CpuOutput。删除 MacCpuOutput 名称，不提供旧别名。此次仍只在 Mac 接入；Windows 替换原生源时应复用此 worker，而不是再建一套需求/失效调度。
 
 Receiver all-targets Clippy 通过；实际 VideoToolbox→FrameBus→GPU→CPU 输出测试通过（1 passed），包含无 consumer 不导出、请求触发导出、同帧缓存及内容失效。CI 34052549802 的 Windows 原生测试步骤已通过，显示读取器 busy/重复同图像/失效池回归已实际执行；最终构建打包仍进行中。
+
+## Windows 原生源到输出接线（工作区验证中）
+
+REQ-PICOO-NEXT-011/016/025/029：Windows DecodedFrame 改为 NativeImage 与不可变原生描述，移除源 CPU stride/storage/pixel getter。硬件 MF 输出在已有 GPU 完成边界后保留原始 sample 和 runtime；GetOutputCurrentType 读取颜色、PAR、frame size、minimum display aperture，不 Map/Lock。协商保留 MFT advertised NV12 media type 的 aperture，缺失或冲突描述明确拒绝。原缓冲映射只在 test/test-codecs 诊断编译，诊断结果显式上传 NV12 原生图像；无软件生产回退。
+
+Receiver Windows 切换 FrameBus/native_publish，方向作为剩余变换保留；CPU sink 复用 CpuOutput 的消费者请求/失效门禁，Windows adapter 才执行 Video Processor 与 exporter。桌面 Windows preview 生成 BGRA NT shared 目标，由 WindowsDisplayImage 实现 GPUI 资源提供者；桌面场景使用 SurfaceSource，不再把 Windows 视频上传 CPU atlas。预览和 CPU 输出按连接/Decoder 世代及规格绑定资源。
+
+Windows Decoder 生产与 test-codecs 两种库 Clippy 已通过；完整 Windows Receiver/测试的本机交叉检查因缺少 Windows CRT assert.h 在 ring C 构建阶段失败，未到达产品检查，不算通过。Mac Receiver/Desktop（启用 gpui-ui）all-targets Clippy 在第一轮接线后通过，后续测试修正仍需重新检查。新增 MF metadata 测试与 Windows 整条原生源验收待执行；此批尚未提交，不能视为 native end-to-end 已验证。
+
+诊断 NV12 上传同样改为复用 picoo-gpu 已有 submit_owned，完成资源在 CreateTexture2D 前保留，texture/sample/runtime 覆盖失败与取消。WARP factory 仅由显式 test-support 提供；生产 factory/adoption 继续拒绝软件 adapter。避免另建诊断事件调度器，也不把 CreateTexture2D 消费 initial data 误当成 GPU 初始化完成。
+
+框架 CI 34053537489 的 Windows 因仓库精确锁定 proptest 1.6 缺少 GPUI test-support 的 RngSeed API 失败，shader 测试未执行。修复 6fa3372 已单独提交并推送，统一五个测试调用方的 proptest 版本；116 项现有回归通过、2 项忽略。CI 34054474529 运行中。原生源接线仍未提交；不要将上述 CI 归到此工作区变更。
+
+CI 34054474529（6fa3372）全部成功；Windows 日志确认 native_surface_shader_draws_bgra_and_respects_clip 实际执行通过，覆盖原生 shader 像素与裁剪。该运行不包含尚未提交的 Windows Decoder→FrameBus→Preview 接线。
+
+桌面预览删除旧 CPU BGRA 转换、缩放和 RenderImage 路径，以及直接 image/yuv/fast_image_resize/smallvec 依赖。Windows/macOS 共用仅持有 SurfaceSource 的 VideoSurface；GUI 模块只在这两个正式桌面平台编译。原生预览接线的 macOS gpui-ui all-targets Clippy 通过，预览测试继续验证。本机 ADB 当前未列出手机。
+
+原生预览最终验证：macOS 独立目录运行的 preview_pipeline 5 项和 VideoSurface 1 项全部通过；Windows MF/test-codecs 库跨目标 Clippy 通过；文档链接检查零错误。完整 Windows Receiver/桌面及新增 MF 元数据测试仍待本批 CI，不把跨目标库检查作为 Windows 硬件执行证据。

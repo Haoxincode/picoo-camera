@@ -6,11 +6,11 @@
 
 pub mod media_scheduler;
 pub mod runtime;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub use picoo_frame_hub::NativeVideoFrame as ReceiverFrame;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub use picoo_frame_hub::VideoFrame as ReceiverFrame;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod output;
 mod session;
 

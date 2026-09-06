@@ -28,11 +28,13 @@ use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame, Decoded
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+#[cfg(any(test, feature = "test-codecs"))]
 mod buffers;
 mod device;
+mod native_output;
 mod output;
-mod runtime;
-use buffers::sample_to_frame;
+use crate::windows_runtime as runtime;
+
 #[cfg(test)]
 use runtime::com_initialization_ownership;
 use runtime::MfRuntimeGuard;
@@ -153,6 +155,7 @@ impl MfH264Decoder {
         }
 
         if let Some(gpu) = self.device.gpu() {
+            crate::source_format::validate_source(&geometry)?;
             device::validate_configuration(gpu, &geometry, fps)?;
         }
         unsafe {
@@ -291,6 +294,28 @@ fn pack_frame_size(width: u32, height: u32) -> u64 {
     ((width as u64) << 32) | height as u64
 }
 
+unsafe fn advertised_nv12_type(
+    transform: &IMFTransform,
+) -> Result<windows::Win32::Media::MediaFoundation::IMFMediaType, DecodeError> {
+    for index in 0..64 {
+        let candidate = match transform.GetOutputAvailableType(0, index) {
+            Ok(candidate) => candidate,
+            Err(error) if error.code() == MF_E_NO_MORE_TYPES => break,
+            Err(error) => {
+                return Err(DecodeError::Platform(format!(
+                    "output type enumeration: {error}"
+                )))
+            }
+        };
+        if candidate.GetGUID(&MF_MT_SUBTYPE).ok() == Some(MFVideoFormat_NV12) {
+            return Ok(candidate);
+        }
+    }
+    Err(DecodeError::Platform(
+        "Decoder offers no native NV12 type".into(),
+    ))
+}
+
 unsafe fn configure_transform(
     transform: &IMFTransform,
     width: u32,
@@ -327,17 +352,24 @@ unsafe fn configure_transform(
         .SetInputType(0, &in_type, 0)
         .map_err(|e| DecodeError::Platform(format!("SetInputType: {e}")))?;
 
-    let out_type = MFCreateMediaType()
-        .map_err(|e| DecodeError::Platform(format!("MFCreateMediaType output: {e}")))?;
+    // Preserve the MFT's native aperture/geometry rather than invent a bare
+    // output type that discards the Decoder's display metadata.
+    let out_type = advertised_nv12_type(transform)?;
     out_type
         .SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)
         .map_err(|e| DecodeError::Platform(format!("output major type: {e}")))?;
     out_type
         .SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)
         .map_err(|e| DecodeError::Platform(format!("output subtype: {e}")))?;
-    out_type
-        .SetUINT64(&MF_MT_FRAME_SIZE, pack_frame_size(width, height))
-        .map_err(|e| DecodeError::Platform(format!("output frame size: {e}")))?;
+    match out_type.GetUINT64(&MF_MT_FRAME_SIZE) {
+        Ok(_) => {}
+        Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => {
+            out_type
+                .SetUINT64(&MF_MT_FRAME_SIZE, pack_frame_size(width, height))
+                .map_err(|e| DecodeError::Platform(format!("output frame size: {e}")))?;
+        }
+        Err(error) => return Err(DecodeError::Platform(format!("output frame size: {error}"))),
+    }
     out_type
         .SetUINT64(&MF_MT_FRAME_RATE, pack_frame_size(fps, 1))
         .map_err(|e| DecodeError::Platform(format!("output frame rate: {e}")))?;
@@ -526,13 +558,24 @@ unsafe fn drain_output(
                 return sample
                     .as_ref()
                     .map(|sample| {
-                        if let Some(gpu) = gpu {
-                            device::validate_output_device(sample, gpu)?;
-                        }
                         let stamp = sample.GetSampleTime().map_err(|error| {
                             DecodeError::Platform(format!("MF output submission time: {error}"))
                         })?;
-                        Ok((stamp, sample_to_frame(sample, transform, geometry)?))
+                        let frame = if let Some(gpu) = gpu {
+                            native_output::sample_to_frame(
+                                sample, transform, geometry, gpu, runtime,
+                            )?
+                        } else {
+                            #[cfg(any(test, feature = "test-codecs"))]
+                            {
+                                buffers::sample_to_frame(sample, transform, geometry)?
+                            }
+                            #[cfg(not(any(test, feature = "test-codecs")))]
+                            {
+                                return Err(DecodeError::NotInitialized);
+                            }
+                        };
+                        Ok((stamp, frame))
                     })
                     .transpose()
             }
@@ -635,9 +678,8 @@ mod tests {
             (frame.description().width, frame.description().height),
             (64, 64)
         );
-        let pixels = frame.cpu_nv12_bytes().unwrap();
-        assert_eq!(pixels.len(), 64 * 64 * 3 / 2);
-        assert!(pixels[0] > 16 && pixels[64 * 64 + 1] > pixels[64 * 64]);
+        assert!(frame.native_image().windows().is_some());
+        assert_eq!(frame.description().native_format.visible_rect.width, 64);
         let geometry = decoder.geometry;
         let header = decoder.sequence_header.clone();
         config.width = 1280;

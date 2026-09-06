@@ -1,27 +1,22 @@
 //! Bounded desktop preview preparation — ARCH-PICOO-FRAME-001 / REQ-PICOO-UI-004.
 //!
 //! The source bus remains the decoded-frame authority. A capacity-one worker
-//! prepares the visible preview; macOS uses native Metal images throughout.
+//! prepares the visible preview with platform-native GPU images.
 
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-#[cfg(not(target_os = "macos"))]
-use fast_image_resize::images::{Image, ImageRef};
-#[cfg(not(target_os = "macos"))]
-use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use picoo_receiver::ReceiverFrame as VideoFrame;
-#[cfg(not(target_os = "macos"))]
-use yuv::{yuv_nv12_to_bgra, YuvBiPlanarImage, YuvConversionMode, YuvRange, YuvStandardMatrix};
-
-#[cfg(target_os = "macos")]
-use core_video::pixel_buffer::CVPixelBuffer;
 
 #[cfg(target_os = "macos")]
 mod macos_surface;
+#[cfg(windows)]
+mod windows_surface;
 #[cfg(target_os = "macos")]
 use macos_surface::PlatformPreviewResources;
+#[cfg(windows)]
+use windows_surface::PlatformPreviewResources;
 
 const PREVIEW_MAX_DETAIL_WIDTH: u32 = 1920;
 const PREVIEW_TARGET_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
@@ -38,14 +33,7 @@ struct PreviewRequest {
 #[derive(Debug)]
 pub(crate) struct PreparedPreview {
     pub(crate) sequence: u64,
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) width: u32,
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) height: u32,
-    #[cfg(not(target_os = "macos"))]
-    pub(crate) bgra: Vec<u8>,
-    #[cfg(target_os = "macos")]
-    pub(crate) pixel_buffer: CVPixelBuffer,
+    pub(crate) surface: gpui_kit::SurfaceSource,
 }
 
 // CoreVideo pixel buffers are immutable while crossing this hand-off: the worker
@@ -54,25 +42,8 @@ pub(crate) struct PreparedPreview {
 #[cfg(target_os = "macos")]
 unsafe impl Send for PreparedPreview {}
 
-#[cfg(not(target_os = "macos"))]
-struct PlatformPreviewResources {
-    resizer: Resizer,
-    tight_nv12: Vec<u8>,
-    scaled_nv12: Vec<u8>,
-}
-
-#[cfg(target_os = "macos")]
 fn new_platform_preview_resources() -> PlatformPreviewResources {
     PlatformPreviewResources::default()
-}
-
-#[cfg(not(target_os = "macos"))]
-fn new_platform_preview_resources() -> PlatformPreviewResources {
-    PlatformPreviewResources {
-        resizer: Resizer::new(),
-        tight_nv12: Vec::new(),
-        scaled_nv12: Vec::new(),
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -325,182 +296,11 @@ fn prepare_preview(
 ) -> Option<PreparedPreview> {
     let sequence = request.sequence;
 
-    #[cfg(target_os = "macos")]
-    {
-        let pixel_buffer =
-            platform_resources.prepare_surface(&request.frame, request.target_width)?;
-        Some(PreparedPreview {
-            sequence,
-            pixel_buffer,
-        })
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        let prepared = prepare_bgra(request, platform_resources)?;
-        Some(PreparedPreview {
-            sequence,
-            width: prepared.width,
-            height: prepared.height,
-            bgra: prepared.bgra,
-        })
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-#[derive(Debug)]
-struct PreparedBgra {
-    width: u32,
-    height: u32,
-    bgra: Vec<u8>,
-}
-
-#[cfg(not(target_os = "macos"))]
-fn prepare_bgra(
-    request: PreviewRequest,
-    resources: &mut PlatformPreviewResources,
-) -> Option<PreparedBgra> {
-    let frame = request.frame;
-    if frame.width == 0
-        || frame.height == 0
-        || !frame.width.is_multiple_of(2)
-        || !frame.height.is_multiple_of(2)
-        || frame.stride < frame.width
-    {
-        return None;
-    }
-    let y_len = (frame.stride as usize).checked_mul(frame.height as usize)?;
-    let uv_len = (frame.stride as usize).checked_mul(frame.height as usize / 2)?;
-    let required = y_len.checked_add(uv_len)?;
-    if frame.pixel_data.len() < required {
-        return None;
-    }
-
-    let output_width = request.target_width.min(frame.width) & !1;
-    let output_height = u32::try_from(
-        (u64::from(frame.height) * u64::from(output_width) + u64::from(frame.width) / 2)
-            / u64::from(frame.width),
-    )
-    .ok()?
-    .max(2)
-        & !1;
-
-    let (source_y, source_uv, source_stride) = if output_width < frame.width {
-        resize_nv12_into(
-            resources,
-            &frame.pixel_data[..required],
-            frame.width,
-            frame.height,
-            frame.stride,
-            output_width,
-            output_height,
-        )?;
-        let output_y_len = (output_width as usize).checked_mul(output_height as usize)?;
-        let (y, uv) = resources.scaled_nv12.split_at(output_y_len);
-        (y, uv, output_width)
-    } else {
-        (
-            &frame.pixel_data[..y_len],
-            &frame.pixel_data[y_len..required],
-            frame.stride,
-        )
-    };
-    let source = YuvBiPlanarImage {
-        y_plane: source_y,
-        y_stride: source_stride,
-        uv_plane: source_uv,
-        uv_stride: source_stride,
-        width: output_width,
-        height: output_height,
-    };
-    let bgra_stride = output_width.checked_mul(4)?;
-    let bgra_len = (bgra_stride as usize).checked_mul(output_height as usize)?;
-    let mut bgra = vec![0_u8; bgra_len];
-    yuv_nv12_to_bgra(
-        &source,
-        &mut bgra,
-        bgra_stride,
-        YuvRange::Limited,
-        YuvStandardMatrix::Bt709,
-        YuvConversionMode::Balanced,
-    )
-    .ok()?;
-
-    Some(PreparedBgra {
-        width: output_width,
-        height: output_height,
-        bgra,
+    let surface = platform_resources.prepare_surface(&request.frame, request.target_width)?;
+    Some(PreparedPreview {
+        sequence,
+        surface: surface.into(),
     })
-}
-
-#[cfg(not(target_os = "macos"))]
-fn resize_nv12_into(
-    resources: &mut PlatformPreviewResources,
-    source: &[u8],
-    source_width: u32,
-    source_height: u32,
-    source_stride: u32,
-    output_width: u32,
-    output_height: u32,
-) -> Option<()> {
-    let source_y_len = (source_stride as usize).checked_mul(source_height as usize)?;
-    let tight_source_y_len = (source_width as usize).checked_mul(source_height as usize)?;
-    let tight_source_len = tight_source_y_len.checked_mul(3)?.checked_div(2)?;
-    let source = if source_stride == source_width {
-        &source[..tight_source_len]
-    } else {
-        resources.tight_nv12.resize(tight_source_len, 0);
-        for row in 0..source_height as usize {
-            let source_offset = row * source_stride as usize;
-            let target_offset = row * source_width as usize;
-            resources.tight_nv12[target_offset..target_offset + source_width as usize]
-                .copy_from_slice(&source[source_offset..source_offset + source_width as usize]);
-        }
-        for row in 0..source_height as usize / 2 {
-            let source_offset = source_y_len + row * source_stride as usize;
-            let target_offset = tight_source_y_len + row * source_width as usize;
-            resources.tight_nv12[target_offset..target_offset + source_width as usize]
-                .copy_from_slice(&source[source_offset..source_offset + source_width as usize]);
-        }
-        resources.tight_nv12.as_slice()
-    };
-    let output_y_len = (output_width as usize).checked_mul(output_height as usize)?;
-    let output_len = output_y_len.checked_mul(3)?.checked_div(2)?;
-    resources.scaled_nv12.resize(output_len, 0);
-    let (output_y, output_uv) = resources.scaled_nv12.split_at_mut(output_y_len);
-    let source_y = ImageRef::new(
-        source_width,
-        source_height,
-        &source[..tight_source_y_len],
-        PixelType::U8,
-    )
-    .ok()?;
-    let mut destination_y =
-        Image::from_slice_u8(output_width, output_height, output_y, PixelType::U8).ok()?;
-    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::CatmullRom));
-    resources
-        .resizer
-        .resize(&source_y, &mut destination_y, Some(&options))
-        .ok()?;
-
-    let source_uv = ImageRef::new(
-        source_width / 2,
-        source_height / 2,
-        &source[tight_source_y_len..],
-        PixelType::U8x2,
-    )
-    .ok()?;
-    let mut destination_uv = Image::from_slice_u8(
-        output_width / 2,
-        output_height / 2,
-        output_uv,
-        PixelType::U8x2,
-    )
-    .ok()?;
-    resources
-        .resizer
-        .resize(&source_uv, &mut destination_uv, Some(&options))
-        .ok()
 }
 
 #[cfg(test)]
@@ -526,27 +326,6 @@ mod tests {
         target_width: u32,
         pixels: bytes::Bytes,
     ) -> PreviewRequest {
-        #[cfg(not(target_os = "macos"))]
-        let frame = {
-            let mut frame = VideoFrame::new(
-                1,
-                sequence,
-                sequence * 1_000,
-                sequence * 1_000,
-                sequence * 1_000,
-                sequence * 1_000,
-                Instant::now(),
-                sequence * 1_000,
-                width,
-                height,
-                width,
-                0,
-                pixels,
-            );
-            frame.sequence = sequence;
-            frame
-        };
-        #[cfg(target_os = "macos")]
         let frame = {
             use picoo_frame_hub::*;
             let image = picoo_media_decode::DecodedFrame::fixture_nv12(
@@ -607,13 +386,38 @@ mod tests {
     }
 
     fn prepared(sequence: u64) -> PreparedPreview {
-        let mut resources = new_platform_preview_resources();
-        prepare_preview(request(sequence, 2, 2, 1280), &mut resources).expect("prepare fixture")
+        #[cfg(windows)]
+        {
+            PreparedPreview {
+                sequence,
+                surface: gpui_kit::Direct3DSurface::new(NoDrawFixture).into(),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let mut resources = new_platform_preview_resources();
+            prepare_preview(request(sequence, 2, 2, 1280), &mut resources).expect("prepare fixture")
+        }
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn prepare_bgra_for_test(request: PreviewRequest) -> Option<PreparedBgra> {
-        prepare_bgra(request, &mut new_platform_preview_resources())
+    #[cfg(windows)]
+    #[derive(Debug)]
+    struct NoDrawFixture;
+    // SAFETY: Queue tests never expose a native view or invoke the draw callback.
+    #[cfg(windows)]
+    unsafe impl gpui_kit::Direct3DSurfaceSource for NoDrawFixture {
+        fn size(&self) -> gpui_kit::Size<gpui_kit::DevicePixels> {
+            gpui_kit::size(gpui_kit::DevicePixels(2), gpui_kit::DevicePixels(2))
+        }
+        unsafe fn with_read(
+            &self,
+            _: &windows::Win32::Graphics::Direct3D11::ID3D11Device,
+            _: &mut dyn FnMut(
+                &windows::Win32::Graphics::Direct3D11::ID3D11ShaderResourceView,
+            ) -> anyhow::Result<()>,
+        ) -> anyhow::Result<bool> {
+            Ok(false)
+        }
     }
 
     #[test]
@@ -670,50 +474,5 @@ mod tests {
         assert!(cadence.take_due(start));
         assert!(cadence.take_due(start + Duration::from_secs(5)));
         assert!(!cadence.take_due(start + Duration::from_secs(5) + Duration::from_millis(1)));
-    }
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn keeps_native_720p_detail_and_bt709_black() {
-        let preview = prepare_bgra_for_test(request(7, 1280, 720, 1280)).expect("prepare 720p");
-        assert_eq!((preview.width, preview.height), (1280, 720));
-        assert_eq!(preview.bgra.len(), 1280 * 720 * 4);
-        assert!(preview.bgra[0] <= 16);
-        assert!(preview.bgra[1] <= 16);
-        assert!(preview.bgra[2] <= 16);
-        assert_eq!(preview.bgra[3], 255);
-    }
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn conversion_uses_bt709_limited_bgra_channel_order() {
-        let width = 2;
-        let height = 2;
-        let mut pixels = vec![81_u8; (width * height * 3 / 2) as usize];
-        pixels[(width * height) as usize..].copy_from_slice(&[90, 240]);
-        let preview =
-            prepare_bgra_for_test(request_with_pixels(8, width, height, 1280, pixels.into()))
-                .expect("prepare red fixture");
-
-        assert!(preview.bgra[0] < 32, "blue channel should remain dark");
-        assert!(preview.bgra[1] < 40, "green channel should remain dark");
-        assert!(preview.bgra[2] > 240, "red channel should be dominant");
-        assert_eq!(preview.bgra[3], 255);
-    }
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn filtered_1080p_preview_matches_a_smaller_physical_viewport() {
-        let preview = prepare_bgra_for_test(request(9, 1920, 1080, 1280)).expect("prepare 1080p");
-        assert_eq!((preview.width, preview.height), (1280, 720));
-        assert_eq!(preview.bgra.len(), 1280 * 720 * 4);
-    }
-
-    #[test]
-    #[cfg(not(target_os = "macos"))]
-    fn full_hd_viewport_keeps_native_1080p_detail() {
-        let preview = prepare_bgra_for_test(request(10, 1920, 1080, 1920)).expect("prepare 1080p");
-        assert_eq!((preview.width, preview.height), (1920, 1080));
-        assert_eq!(preview.bgra.len(), 1920 * 1080 * 4);
     }
 }

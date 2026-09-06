@@ -8,8 +8,8 @@ license.workspace = true
 [features]
 default = []
 # Explicit test/diagnostic dependency only; never a production codec fallback.
-test-codecs = ["dep:openh264"]
-windows-mf = ["dep:windows", "dep:picoo-gpu"]
+test-codecs = ["dep:openh264", "picoo-gpu/test-support"]
+windows-mf = ["dep:picoo-gpu"]
 
 [dependencies]
 bytes.workspace = true
@@ -56,7 +56,8 @@ objc2-video-toolbox = { version = "0.3.2", default-features = false, features = 
 
 [target.'cfg(windows)'.dependencies]
 picoo-gpu = { workspace = true, optional = true }
-windows = { version = "0.62.2", optional = true, features = [
+windows = { version = "0.62.2", features = [
+    "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi",
     "Win32_Foundation",
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",
@@ -67,3 +68,6 @@ picoo-testkit.workspace = true
 
 [target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dev-dependencies]
 openh264 = { version = "0.9", default-features = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+picoo-gpu = { workspace = true, features = ["test-support"] }

@@ -3717,7 +3717,6 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
- "rgb",
  "tiff",
  "zune-core 0.5.3",
  "zune-jpeg 0.5.15",
@@ -5549,14 +5548,13 @@ dependencies = [
 name = "picoo-desktop"
 version = "0.1.1"
 dependencies = [
+ "anyhow",
  "bytes",
  "core-foundation 0.10.1",
  "core-video",
  "dispatch2",
- "fast_image_resize",
  "futures-channel",
  "gpui-kit",
- "image",
  "libc",
  "objc2 0.6.4",
  "objc2-core-video",
@@ -5575,12 +5573,10 @@ dependencies = [
  "picoo-transport",
  "serde",
  "serde_json",
- "smallvec",
  "tracing",
  "tracing-subscriber",
  "windows 0.62.2",
  "winresource",
- "yuv",
 ]
 
 [[package]]
@@ -10141,15 +10137,6 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "synstructure",
-]
-
-[[package]]
-name = "yuv"
-version = "0.8.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "220655e1c245693beb13b377d3174b9efcb1645018d1d4ec53903fc211b135ae"
-dependencies = [
- "num-traits",
 ]
 
 [[package]]

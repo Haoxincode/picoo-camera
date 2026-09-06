@@ -8,6 +8,13 @@
 
 #[cfg(all(target_os = "macos", any(test, feature = "test-codecs")))]
 mod native_fixture;
+#[cfg(all(windows, any(test, feature = "test-codecs")))]
+#[path = "native_fixture/windows.rs"]
+mod native_fixture;
+#[cfg(all(windows, any(test, feature = "test-codecs", feature = "windows-mf")))]
+#[path = "mf/runtime.rs"]
+mod windows_runtime;
+
 #[cfg(any(test, feature = "test-codecs"))]
 mod stub;
 
@@ -60,9 +67,11 @@ pub enum DecodeError {
 mod decoded_frame;
 #[cfg(target_os = "macos")]
 mod native_format;
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(target_os = "macos", all(windows, feature = "windows-mf")))]
+mod source_format;
+#[cfg(not(any(target_os = "macos", windows)))]
 pub use decoded_frame::DecodedFrameStorage;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub use decoded_frame::NativeDecodedFormat;
 pub use decoded_frame::{
     DecodeOutcome, DecodedFrame, DecodedFrameDescription, DecodedOutput, VideoColorMatrix,
@@ -199,10 +208,12 @@ mod tests {
             .expect("decode")
             .into_fixture_frame()
             .expect("frame");
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         assert!(!frame.cpu_nv12_bytes().expect("CPU NV12").is_empty());
         #[cfg(target_os = "macos")]
         assert!(frame.native_image().apple().is_some());
+        #[cfg(windows)]
+        assert!(frame.native_image().windows().is_some());
         assert_eq!(frame.description().width, 1280);
         assert_eq!(frame.description().height, 720);
     }
@@ -313,6 +324,6 @@ mod tests {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(test, all(windows, feature = "test-codecs")))]
 #[path = "mf/nv12.rs"]
 mod mf_nv12;

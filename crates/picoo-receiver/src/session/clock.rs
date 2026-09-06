@@ -168,13 +168,13 @@ impl ReceiverSession {
         frame: &crate::ReceiverFrame,
         receiver_now_us: u64,
     ) -> FrameLatencyBreakdown {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let (timeline, source_pts_us, stream_generation) = (
             frame.timeline(),
             frame.source_pts_us(),
             frame.identity().stream_epoch,
         );
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         let (timeline, source_pts_us, stream_generation) = (
             picoo_frame_hub::FrameTimeline {
                 encoded_at_us: frame.encoded_at_us,

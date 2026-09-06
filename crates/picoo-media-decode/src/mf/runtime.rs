@@ -65,6 +65,23 @@ pub(super) struct MfRuntimeGuard {
 }
 
 impl MfRuntimeGuard {
+    /// One bounded diagnostic runtime; each caller still owns its COM apartment.
+    #[cfg(any(test, feature = "test-codecs"))]
+    pub(super) fn diagnostic() -> Result<Self, DecodeError> {
+        static LIFETIME: std::sync::Mutex<Option<Arc<mpsc::Sender<()>>>> =
+            std::sync::Mutex::new(None);
+        let apartment = ComApartment::start()?;
+        let mut shared = LIFETIME.lock().unwrap();
+        if shared.is_none() {
+            *shared = Some(start_lifetime()?.0);
+        }
+        Ok(Self {
+            _lifetime: shared.as_ref().unwrap().clone(),
+            _apartment: apartment,
+        })
+    }
+
+    #[cfg(any(test, feature = "windows-mf"))]
     pub(super) fn start() -> Result<Self, DecodeError> {
         let apartment = ComApartment::start()?;
         let (lifetime, _worker) = start_lifetime()?;

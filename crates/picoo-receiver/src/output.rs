@@ -1,7 +1,7 @@
 //! Dedicated CPU sink preparation from native source frames.
 //! REQ-PICOO-NEXT-029/033/034: Receiver owner never maps or transforms pixels.
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use picoo_media_decode::DecodeFixture as _;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
@@ -13,8 +13,14 @@ use picoo_frame_hub::{
 };
 use picoo_gpu::CpuImage;
 
+#[cfg(target_os = "macos")]
 mod apple;
+#[cfg(target_os = "macos")]
 use apple::{prepare, Resources};
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::{prepare, Resources};
 
 enum Request {
     Frame(Arc<NativeVideoFrame>),
@@ -325,7 +331,7 @@ fn prepare_counted(
     Ok(image)
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use picoo_frame_hub::{

@@ -64,36 +64,7 @@ impl Drop for Runtime {
 }
 
 pub(super) fn diagnostic_context() -> Arc<WindowsGpuContext> {
-    let adapter = warp_adapter();
-    let description = unsafe { adapter.GetDesc1() }.unwrap();
-    let mut device = None;
-    let mut immediate = None;
-    unsafe {
-        D3D11CreateDevice(
-            &adapter,
-            D3D_DRIVER_TYPE_UNKNOWN,
-            HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            Some(&[D3D_FEATURE_LEVEL_11_0]),
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            None,
-            Some(&mut immediate),
-        )
-        .unwrap();
-    }
-    let device = device.unwrap();
-    Arc::new(
-        WindowsGpuContext::bind_device(
-            WindowsAdapterId {
-                low: description.AdapterLuid.LowPart,
-                high: description.AdapterLuid.HighPart,
-            },
-            device.clone(),
-            immediate.unwrap(),
-        )
-        .unwrap(),
-    )
+    Arc::new(WindowsGpuContext::diagnostic().unwrap())
 }
 
 #[test]

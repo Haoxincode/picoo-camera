@@ -5,9 +5,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_frame_hub::VideoFrame;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_media_decode::DecodedFrame;
 
 use super::decoder_worker::{AccessUnitTimeline, DecoderEvent};
@@ -17,11 +17,11 @@ use crate::ReceiverError;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct FrameTimeline {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub(super) connection_generation: u64,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub(super) decoder_generation: u64,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub(super) config_revision: u64,
     pub(super) stream_generation: u64,
     pub(super) frame_id: u64,
@@ -133,11 +133,11 @@ impl ReceiverSession {
             frame.set_rotation(rotation);
             self.publish_decoded_frame(
                 FrameTimeline {
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     connection_generation: timeline.connection_generation,
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     decoder_generation: token.decoder_generation,
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     config_revision: token.config_revision,
                     stream_generation: timeline.stream_generation,
                     frame_id: timeline.frame_id,
@@ -171,7 +171,7 @@ impl ReceiverSession {
         panic!("decoder worker did not complete within test deadline");
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub(super) fn publish_decoded_frame(
         &mut self,
         timeline: FrameTimeline,

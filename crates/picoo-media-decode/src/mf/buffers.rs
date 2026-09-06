@@ -1,5 +1,5 @@
-//! MF CPU output adapter. Layout comes from native metadata, never byte counts.
-//! REQ-PICOO-MEDIA-032; this is not the Next D3D11 native Decoder implementation.
+//! Explicit software-MF diagnostic readback followed by native fixture upload.
+//! REQ-PICOO-MEDIA-032: excluded from the production Decoder feature graph.
 use bytes::Bytes;
 use picoo_bitstream::AvcSpsFacts;
 use windows::core::Interface;
@@ -102,12 +102,12 @@ pub(super) unsafe fn sample_to_frame(
     let source = std::slice::from_raw_parts(start, len as usize);
     let pixels = copy_visible_nv12(source, row_zero, pitch as usize, facts)?;
     drop(guard);
-    Ok(DecodedFrame::cpu_nv12(
+    DecodedFrame::fixture_nv12(
         facts.visible_width,
         facts.visible_height,
         facts.visible_width,
         0,
         now_timestamp_us(),
         Bytes::from(pixels),
-    ))
+    )
 }

@@ -171,6 +171,9 @@ impl WindowsGpuContext {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
+mod diagnostic;
+
 #[cfg(test)]
 mod tests;
 

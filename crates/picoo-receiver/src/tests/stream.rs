@@ -478,7 +478,7 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
     }
 
     let frame = receiver.latest_frame().expect("frame in hub");
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         assert_eq!(frame.width, width);
         assert_eq!(frame.height, height);
@@ -489,7 +489,7 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
             "Y plane must be horizontally mirrored"
         );
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         assert_eq!(super::source_dimensions(frame), (width, height));
         assert!(frame.description().transform.mirror);
@@ -579,11 +579,11 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         receiver.pump().ok();
         sender.pump().ok();
         if receiver.latest_frame().is_some_and(|frame| {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             {
                 super::source_dimensions(frame) == (width, height)
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", windows)))]
             {
                 super::source_dimensions(frame) == (height, width)
             }
@@ -594,14 +594,14 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     }
 
     let frame = receiver.latest_frame().expect("frame");
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         // Pixels are upright; metadata cleared after apply (REQ-PICOO-MEDIA-009).
         assert_eq!(frame.rotation, 0);
         assert_eq!(frame.width, height); // 90° swaps dims
         assert_eq!(frame.height, width);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         assert_eq!(super::source_dimensions(frame), (width, height));
         assert_eq!(

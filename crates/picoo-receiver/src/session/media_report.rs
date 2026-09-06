@@ -56,11 +56,11 @@ impl ReceiverSession {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_micros() as u64)
                     .unwrap_or(0);
-                #[cfg(not(target_os = "macos"))]
+                #[cfg(not(any(target_os = "macos", windows)))]
                 {
                     now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0
                 }
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", windows))]
                 {
                     let _ = now_us;
                     frame.timeline().decoded_at.elapsed().as_secs_f64() * 1000.0

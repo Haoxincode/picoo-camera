@@ -5,22 +5,7 @@ use objc2_core_video::*;
 use picoo_bitstream::AvcSpsFacts;
 use picoo_frame_hub::{ChromaSiting, ImageSize, NativeImage, PixelAspectRatio, VisibleRect};
 
-pub(crate) fn validate_source(facts: &AvcSpsFacts) -> Result<(), DecodeError> {
-    if facts.pixel_aspect_ratio.is_some_and(|(w, h)| w != h)
-        || facts.chroma_location > 1
-        || facts.color.is_some_and(|color| {
-            color.full_range
-                || !matches!(color.primaries, 1 | 2)
-                || !matches!(color.transfer, 1 | 2)
-                || !matches!(color.matrix, 1 | 2)
-        })
-    {
-        return Err(DecodeError::Platform(
-            "unsupported native AVC presentation or color".into(),
-        ));
-    }
-    Ok(())
-}
+pub(crate) use crate::source_format::validate_source;
 
 pub(crate) fn describe(
     facts: &AvcSpsFacts,

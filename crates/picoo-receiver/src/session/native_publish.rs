@@ -1,4 +1,4 @@
-//! Native Mac source publication; no pixel map, transform, or export on owner.
+//! Native source publication; no pixel map, transform, or export on owner.
 
 use super::{media_publish::FrameTimeline, ReceiverSession};
 use crate::ReceiverError;

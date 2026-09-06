@@ -92,22 +92,22 @@ fn pump_pair_for(
 
 /// Source allocation geometry, before output presentation transforms on Mac.
 fn source_dimensions(frame: &crate::ReceiverFrame) -> (u32, u32) {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         (frame.image().width(), frame.image().height())
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         (frame.width, frame.height)
     }
 }
 
 fn source_frame_id(frame: &crate::ReceiverFrame) -> u64 {
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     {
         frame.identity().frame_id
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         frame.frame_id
     }

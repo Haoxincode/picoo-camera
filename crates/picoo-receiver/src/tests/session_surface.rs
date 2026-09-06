@@ -114,7 +114,7 @@ fn placeholder_mode_bars_and_logo_publish_distinct_frames() {
     let logo = read_mode(PlaceholderMode::Logo);
     let black = read_mode(PlaceholderMode::Black);
     let bars = read_mode(PlaceholderMode::Bars);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     assert!(
         receiver.latest_frame().is_none(),
         "output placeholders must not become native source frames"
@@ -213,7 +213,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
     std::thread::sleep(Duration::from_millis(80));
     receiver.pump().expect("finalize hold");
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         let placeholder = receiver.latest_frame().expect("placeholder");
         assert_eq!(placeholder.timestamp_us, 0);
@@ -221,7 +221,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
         let recon = picoo_frame_hub::reconnecting_placeholder();
         assert_eq!(placeholder.pixel_data, recon);
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     assert!(
         receiver.latest_frame().is_none(),
         "expired source lease is cleared"

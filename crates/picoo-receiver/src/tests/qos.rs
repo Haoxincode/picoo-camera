@@ -356,9 +356,9 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     // The preceding 1100ms phase already pumps through a complete stats window.
     // Direct LatestFrameStore age (decode timestamp → now) — PRD §21 recovery bound.
     let frame = receiver.latest_frame().expect("recovered frame");
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     let hub_age_ms = frame.timeline().decoded_at.elapsed().as_secs_f64() * 1000.0;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     let hub_age_ms = frame.decoded_at.elapsed().as_secs_f64() * 1000.0;
     assert!(
         hub_age_ms < 1_000.0,

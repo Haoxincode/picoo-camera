@@ -13,7 +13,7 @@ mod media;
 mod media_ingress;
 mod media_publish;
 mod media_report;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod native_publish;
 mod pairing;
 mod recovery;
@@ -27,14 +27,14 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use crate::output::CpuOutput;
 #[cfg(test)]
 use bytes::Bytes;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use picoo_frame_hub::FrameBus as SourceFrameStore;
 use picoo_frame_hub::PlaceholderMode;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_frame_hub::{
     FrameBufferPool, LatestFrameStore as SourceFrameStore, SharedFrameRingWriter,
 };
@@ -70,7 +70,7 @@ pub struct ReceiverSession {
     transport: QuicReceiverTransport,
     reassembly: ReassemblyMap,
     frames: SourceFrameStore,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     frame_buffer_pool: FrameBufferPool,
     identity: ReceiverIdentity,
     trusted: TrustedDeviceStore,
@@ -86,9 +86,9 @@ pub struct ReceiverSession {
     auto_accept_paired: bool,
     /// Idle placeholder style (PRD §16 / AC-D-SET-01).
     placeholder_mode: picoo_frame_hub::PlaceholderMode,
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     shared_ring: Option<SharedFrameRingWriter>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     shared_ring: Option<CpuOutput>,
     last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
@@ -146,7 +146,7 @@ impl ReceiverSession {
             runtime_wake: runtime_wake.clone(),
             reassembly: ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT),
             frames: SourceFrameStore::new(),
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", windows)))]
             frame_buffer_pool: FrameBufferPool::default(),
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),

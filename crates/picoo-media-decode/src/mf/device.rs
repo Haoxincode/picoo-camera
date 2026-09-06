@@ -1,9 +1,8 @@
 //! REQ-PICOO-MEDIA-034: hardware admission precedes MFT media-type negotiation.
 use picoo_gpu::WindowsGpuContext;
-use windows::core::{IUnknown, Interface};
+use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Device, ID3D11Texture2D, ID3D11VideoDevice, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
-    D3D11_VIDEO_DECODER_DESC,
+    ID3D11Device, ID3D11VideoDevice, D3D11_DECODER_PROFILE_H264_VLD_NOFGT, D3D11_VIDEO_DECODER_DESC,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 use windows::Win32::Graphics::Dxgi::{
@@ -11,8 +10,8 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_ERROR_NOT_FOUND,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFDXGIBuffer, IMFDXGIDeviceManager, IMFSample, IMFTransform, MFCreateDXGIDeviceManager,
-    MFT_MESSAGE_SET_D3D_MANAGER, MF_SA_D3D11_AWARE,
+    IMFDXGIDeviceManager, IMFTransform, MFCreateDXGIDeviceManager, MFT_MESSAGE_SET_D3D_MANAGER,
+    MF_SA_D3D11_AWARE,
 };
 
 use crate::DecodeError;
@@ -93,38 +92,6 @@ fn create_manager(device: &ID3D11Device) -> Result<IMFDXGIDeviceManager, DecodeE
         manager.ResetDevice(device, token).map_err(platform)?;
     }
     Ok(manager)
-}
-
-pub(super) unsafe fn validate_output_device(
-    sample: &IMFSample,
-    gpu: &WindowsGpuContext,
-) -> Result<(), DecodeError> {
-    if sample.GetBufferCount().map_err(platform)? != 1 {
-        return Err(platform("hardware output requires one DXGI allocation"));
-    }
-    let buffer: IMFDXGIBuffer = sample
-        .GetBufferByIndex(0)
-        .map_err(platform)?
-        .cast()
-        .map_err(platform)?;
-    let mut raw = std::ptr::null_mut();
-    buffer
-        .GetResource(&ID3D11Texture2D::IID, &mut raw)
-        .map_err(platform)?;
-    if raw.is_null() {
-        return Err(platform("MFT returned no D3D11 texture"));
-    }
-    let texture = ID3D11Texture2D::from_raw(raw);
-    let actual = texture
-        .GetDevice()
-        .map_err(platform)?
-        .cast::<IUnknown>()
-        .map_err(platform)?;
-    let expected = gpu.device().cast::<IUnknown>().map_err(platform)?;
-    if actual != expected {
-        return Err(platform("MFT returned a different D3D11 device"));
-    }
-    Ok(())
 }
 
 /// Driver profile/format/size evidence complements (never replaces) MFT type admission.

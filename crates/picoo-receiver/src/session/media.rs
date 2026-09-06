@@ -2,13 +2,13 @@
 //!
 //! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009/017/023.
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use bytes::Bytes;
 use picoo_frame_hub::PlaceholderMode;
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_frame_hub::{PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_media_decode::DecodedFrame;
 use picoo_packet::AssembledAccessUnit;
 #[cfg(test)]
@@ -22,7 +22,7 @@ use std::time::Instant;
 #[cfg(test)]
 use super::decoder_worker::{AccessUnitTimeline, DecoderWorker, FrameKind};
 use super::decoder_worker::{DecodeSubmitOutcome, EncodedAccessUnit};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 use super::media_publish::FrameTimeline;
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
@@ -150,9 +150,9 @@ impl ReceiverSession {
                 picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
             )
         };
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let ring = crate::output::CpuOutput::start(factory)?;
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
         self.shared_ring = Some(ring);
         self.last_shared_ring_error = None;
@@ -165,14 +165,14 @@ impl ReceiverSession {
             return;
         };
         while let Some(event) = ring.poll_event() {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             match event {
                 crate::output::OutputEvent::Published => self.last_shared_ring_error = None,
                 crate::output::OutputEvent::Failed(error) => {
                     self.last_shared_ring_error = Some(error)
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", windows)))]
             match event {
                 picoo_frame_hub::SharedRingWriterEvent::Published { .. } => {
                     self.last_shared_ring_error = None;
@@ -185,7 +185,7 @@ impl ReceiverSession {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.waiting_frame();
         self.publish_decoded_frame(
@@ -203,7 +203,7 @@ impl ReceiverSession {
     }
 
     /// Publish reconnect-branded placeholder (REQ-PICOO-FRAME-005).
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.reconnecting_frame();
         self.publish_decoded_frame(
