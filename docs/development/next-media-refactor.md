@@ -329,3 +329,10 @@ REQ-PICOO-VCAM-015 使用官方 CMIOExtensionStreamFormat 的固定 min/max fram
 生产 Swift 时钟的一小时 30/60 每槽边界、提前/重复/回退 tick、晚到跳槽、帧率切换、非法频率与耗尽测试通过。原生 CMIO device/stream 对象的四配置、默认索引、duration 改变及非法属性原子拒绝合同通过；此测试未启动已注册的系统扩展或真实摄像头客户端，不能替代 CMIO 端到端及热稳态帧率验收。
 
 Mac SampleClock 最终验证：完整 cargo xtask test macos、Receiver release 与 Camera Extension 构建、Mac 打包及文档检查通过。61c08d8 的 CI 34037216590 已通过全部平台步骤，包含 Windows Shared Ring/MFT 原生测试、Receiver 编译、MSI 和 package smoke；新的系统池、请求门禁与 SampleClock 提交待下一轮 CI。
+
+
+## Windows 原生解码图像所有权
+
+REQ-PICOO-FRAME-016 新增 D3D11ImageLease，保留原始 MF sample 与 NV12 texture/subresource，不只保留纹理。已完成且不可变的构造契约、平台访问和 GPU 读取寿命均为显式 unsafe 边界；安全 API 只公开尺寸，Clone 共享同一个 sample owner。拒绝 CPU buffer、非 NV12/default storage、多 mip/multisample 或越界 subresource，不提供像素或 map。
+
+Windows 目标 all-targets Clippy 已在 Mac 使用 x86_64-pc-windows-msvc 完成类型检查，包括真实 COM marker 与 WARP 资源测试代码；这不是 Windows 二进制或运行验收。测试检查原始 sample 的 COM marker 必须持续到最后一个跨线程 image clone 释放，及 CPU/BGRA 存储拒绝。现有 cargo xtask test windows 会执行 FrameHub 全套，无新增 workflow 平台逻辑。实际 WARP/MF 对象执行待 Windows CI，硬件 MFT 工厂、GPU 处理和 GPUI surface 接入尚未完成。

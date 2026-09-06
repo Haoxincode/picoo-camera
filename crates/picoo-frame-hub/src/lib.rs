@@ -25,6 +25,8 @@ pub use native_frame::{
 pub use native_image::NativeImage;
 #[cfg(target_os = "macos")]
 pub use native_image::{ApplePixelBufferLease, NativeImageError};
+#[cfg(target_os = "windows")]
+pub use native_image::{D3D11ImageLease, NativeImageError};
 pub use nv12::{
     normalize_rotation_degrees, transform_nv12, transform_nv12_with_pool, Nv12TransformError,
     TransformedNv12,

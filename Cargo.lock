@@ -5643,6 +5643,8 @@ dependencies = [
  "proptest",
  "shared_memory",
  "thiserror 2.0.20",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
  "windows-sys 0.61.2",
 ]
 
