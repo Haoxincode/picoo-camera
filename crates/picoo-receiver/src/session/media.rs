@@ -151,7 +151,7 @@ impl ReceiverSession {
             )
         };
         #[cfg(target_os = "macos")]
-        let ring = crate::output::MacCpuOutput::start(factory)?;
+        let ring = crate::output::CpuOutput::start(factory)?;
         #[cfg(not(target_os = "macos"))]
         let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
         self.shared_ring = Some(ring);

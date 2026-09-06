@@ -28,7 +28,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-use crate::output::MacCpuOutput;
+use crate::output::CpuOutput;
 #[cfg(test)]
 use bytes::Bytes;
 #[cfg(target_os = "macos")]
@@ -89,7 +89,7 @@ pub struct ReceiverSession {
     #[cfg(not(target_os = "macos"))]
     shared_ring: Option<SharedFrameRingWriter>,
     #[cfg(target_os = "macos")]
-    shared_ring: Option<MacCpuOutput>,
+    shared_ring: Option<CpuOutput>,
     last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
     config_revision: u64,

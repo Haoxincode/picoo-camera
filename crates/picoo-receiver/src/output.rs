@@ -11,7 +11,10 @@ use picoo_frame_hub::{
     NativeVideoFrame, PlaceholderMode, RingContentFence, RingPublishOutcome,
     SharedFrameRingProducer, SharedRingError, SharedRingSubmitOutcome,
 };
-use picoo_gpu::{AppleRenderer, CpuExporter, CpuImage, OutputColor, RenderSpec, Rotation};
+use picoo_gpu::CpuImage;
+
+mod apple;
+use apple::{prepare, Resources};
 
 enum Request {
     Frame(Arc<NativeVideoFrame>),
@@ -32,14 +35,14 @@ pub(crate) enum OutputEvent {
     Failed(String),
 }
 
-pub(crate) struct MacCpuOutput {
+pub(crate) struct CpuOutput {
     shared: Arc<(Mutex<State>, Condvar)>,
     events: Arc<Mutex<Option<(u64, OutputEvent)>>>,
     generation: RingContentFence,
     worker: Option<JoinHandle<()>>,
 }
 
-impl MacCpuOutput {
+impl CpuOutput {
     pub(crate) fn start(
         factory: impl FnOnce() -> Result<SharedFrameRingProducer, SharedRingError> + Send + 'static,
     ) -> Result<Self, SharedRingError> {
@@ -286,7 +289,7 @@ impl MacCpuOutput {
     }
 }
 
-impl Drop for MacCpuOutput {
+impl Drop for CpuOutput {
     fn drop(&mut self) {
         {
             let mut state = self.shared.0.lock().unwrap();
@@ -301,11 +304,6 @@ impl Drop for MacCpuOutput {
     }
 }
 
-struct Resources {
-    spec: RenderSpec,
-    renderer: AppleRenderer,
-    exporter: CpuExporter,
-}
 enum Prepared {
     Image(Arc<CpuImage>),
     Placeholder(Vec<u8>),
@@ -327,53 +325,6 @@ fn prepare_counted(
     Ok(image)
 }
 
-fn prepare(
-    resources: &mut Option<Resources>,
-    frame: &NativeVideoFrame,
-) -> Result<Arc<CpuImage>, String> {
-    let description = frame.description();
-    let crop = description.visible_rect;
-    if crop.x != 0
-        || crop.y != 0
-        || crop.width != frame.image().width()
-        || crop.height != frame.image().height()
-        || description.pixel_aspect_ratio.numerator != description.pixel_aspect_ratio.denominator
-    {
-        return Err("unsupported native source crop or pixel aspect".into());
-    }
-    let (mut width, mut height) = (crop.width, crop.height);
-    if matches!(
-        description.transform.rotation,
-        Rotation::Clockwise90 | Rotation::Clockwise270
-    ) {
-        std::mem::swap(&mut width, &mut height);
-    }
-    let spec = RenderSpec {
-        width,
-        height,
-        rotation: description.transform.rotation,
-        mirror: description.transform.mirror,
-        color: OutputColor::Bt709Limited,
-        format: picoo_gpu::OutputFormat::Nv12,
-    };
-    if resources
-        .as_ref()
-        .is_none_or(|current| current.spec != spec)
-    {
-        *resources = Some(Resources {
-            spec,
-            renderer: AppleRenderer::new(spec).map_err(|e| e.to_string())?,
-            exporter: CpuExporter::new(spec).map_err(|e| e.to_string())?,
-        });
-    }
-    let resources = resources.as_mut().unwrap();
-    let image = resources
-        .renderer
-        .render(frame.image())
-        .map_err(|e| e.to_string())?;
-    resources.exporter.export(&image).map_err(|e| e.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +332,7 @@ mod tests {
         FrameBus, FrameDescription, FrameIdentity, FrameTimeline, NativeVideoFrame,
         PresentationTransform, SharedFrameRingConsumer, SourceColor, DEFAULT_MAX_FRAME_BYTES,
     };
+    use picoo_gpu::Rotation;
     use std::time::Instant;
 
     fn wait_until(mut predicate: impl FnMut() -> bool) {
@@ -447,7 +399,7 @@ mod tests {
                 .as_nanos()
         );
         let producer_name = name.clone();
-        let output = MacCpuOutput::start(move || {
+        let output = CpuOutput::start(move || {
             SharedFrameRingProducer::create(&producer_name, DEFAULT_MAX_FRAME_BYTES)
         })
         .unwrap();

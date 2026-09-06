@@ -488,3 +488,9 @@ GPUI 默认特性本机 Windows 跨目标检查在资源嵌入 build script 因�
 无 manifest 的框架类型检查发现并修复 ObjectFit 需要 DevicePixels（不是 Pixels）以及 GPUI glob 导入遮蔽 Rust 内置 test 属性的问题。上游 Windows PlatformWindow 的测试方法要求依赖同步启用 test-support；xtask 原生 shader 测试命令现在显式启用 gpui-pre-windows/test-support，本机继续验证该配置。没有删除原生测试方法来绕过依赖契约。
 
 GPUI Windows 的 standalone --tests --no-default-features --features test-support 跨目标类型检查已通过，包含新 shader 测试。根 workspace 通过桌面直接依赖 gpui-kit/test-support 启用共同 GPUI 测试接口；cargo tree 已确认该测试命令选中本地 gpui-pre-windows 与桌面包。Windows 原生执行仍待提交后的 CI。
+
+## CPU 输出共享 worker 与平台适配
+
+REQ-PICOO-NEXT-029/033/034：将 Apple renderer/exporter 资源与 prepare 移到 output/apple.rs，需求请求、单槽最新帧、缓存、失效世代、IPC 发布和错误回报留在 CpuOutput。删除 MacCpuOutput 名称，不提供旧别名。此次仍只在 Mac 接入；Windows 替换原生源时应复用此 worker，而不是再建一套需求/失效调度。
+
+Receiver all-targets Clippy 通过；实际 VideoToolbox→FrameBus→GPU→CPU 输出测试通过（1 passed），包含无 consumer 不导出、请求触发导出、同帧缓存及内容失效。CI 34052549802 的 Windows 原生测试步骤已通过，显示读取器 busy/重复同图像/失效池回归已实际执行；最终构建打包仍进行中。
