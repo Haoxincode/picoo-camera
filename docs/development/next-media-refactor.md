@@ -166,3 +166,12 @@ Mac 完整生产构建与本机测试包打包通过；Android 构建在 Mac 上
 
 
 Xiaomi 15 解锁后，新 Mac 日志确认真实视频持续进入 VideoToolbox，当前源仍是 30fps；数分钟观测到恢复与丢片，不能把可推流记录当作 60fps/无损质量验收。随后 ADB 显式打开重现两个 MainActivity 共存：旧 ViewModel 继续编码，新页面显示离线。Android MainActivity 改用官方 singleTask 生命周期，通知/重复启动复用原实例，不增加会话全局缓存或旧状态迁移。真机 `SingleSenderActivityTest` 通过，三次系统显式启动保持 Activity 和 ViewModel 身份；ActivityScenario 的同步新实例启动不适用于此复用场景，测试通过 UiAutomation 的真实系统启动路径观察生命周期。
+
+
+## 随机访问恢复候选与旧缺帧门禁
+
+314fa68 的 macOS CI 在 5% 丢包场景失败：完整刷新帧仍被前面的未解决 gap 阻挡。定向回归先证明旧实现保留缺失 frame 2 并阻挡已完整的关键帧 3；修正后在已准入配置内，以完整随机访问候选结束旧预测链等待，先清理再入队，保留 Decoder completion 的身份和 refresh acceptance 门禁。delta、不完整候选和未来配置仍不能绕过门禁；主动放弃旧 gap 不伪造已观测网络丢失统计。
+
+原丢包测试把序号当微秒 PTS、以约 500fps 发送并重复计数缓存帧。测试源改为真实 30fps 节奏、单调微秒 PTS，响应关键帧请求，统计不同帧并以解码进展检测停顿；350ms 检查及恢复后 1s 新鲜度检查保持不变。新的真实节奏用例在修正前稳定于约第 89 帧失败，修正后连续三次通过（同一确定性丢包种子），不将其描述为不同随机种子的覆盖。
+
+Mac `cargo xtask test macos` 完整通过，其中 Receiver 102 passed / 2 ignored、Decoder 11、GPU 9、GPUI Apple 4、Desktop 70；Receiver all-targets Clippy 与 397 项文档链接检查通过。跨平台新提交的 CI 另验，不沿用旧绿灯。

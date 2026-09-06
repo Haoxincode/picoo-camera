@@ -238,36 +238,50 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     let mut frames_seen = 0u64;
-    let mut last_au = receiver.ingress_stats().access_units;
+    let mut last_frame = None;
+    let mut last_decoded = receiver.ingress_stats().decoded_frames;
     let mut stalled_since = Instant::now();
+    let source_clock = Instant::now();
     for frame_id in 1..=400u64 {
-        // Prefer keyframes so a drop does not permanently break the stub decode chain.
-        let is_key = frame_id % 5 == 1;
+        // Model a 30fps source with a real microsecond media clock and honor
+        // refresh requests as a production encoder does. A one-microsecond PTS
+        // increment at 500fps measured synthetic clock drift/overload, not loss.
+        let deadline = Instant::now() + Duration::from_micros(33_333);
+        let requested = sender.take_keyframe_request();
+        let is_key = requested || frame_id % 5 == 1;
         let payload = format!("lossy-au-{frame_id}");
-        let _ =
-            video_send_accepted(sender.ingest_and_flush(payload.as_bytes(), is_key, frame_id, 1));
-        for _ in 0..12 {
+        video_send_accepted(sender.ingest_and_flush(
+            payload.as_bytes(),
+            is_key,
+            source_clock.elapsed().as_micros() as u64,
+            1,
+        ));
+        while Instant::now() < deadline {
             receiver.pump().expect("rx");
-            sender.pump().ok();
+            sender.pump().expect("tx");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        if receiver.latest_frame().is_some() {
-            frames_seen += 1;
+        if let Some(frame) = receiver.latest_frame() {
+            if last_frame
+                .as_ref()
+                .is_none_or(|previous| !std::sync::Arc::ptr_eq(previous, frame))
+            {
+                frames_seen += 1;
+                last_frame = Some(std::sync::Arc::clone(frame));
+            }
         }
-        let au = receiver.ingress_stats().access_units;
-        if au != last_au {
+        let decoded = receiver.ingress_stats().decoded_frames;
+        if decoded != last_decoded {
             stalled_since = Instant::now();
-            last_au = au;
+            last_decoded = decoded;
         }
-        // The production failure deadline is hard-bounded at 300ms. Allow that
-        // deadline plus one source-frame/control-loop margin, but reject a
-        // receiver that remains wedged after its recovery budget.
+        // Preserve the production recovery deadline plus one source-frame margin.
         assert!(
             stalled_since.elapsed() < Duration::from_millis(350),
-            "session stalled under {loss_ratio} loss after frame_id={frame_id} au={au} stats={:?} awaiting_refresh={}",
+            "session stalled under {loss_ratio} loss after frame_id={frame_id} decoded={decoded} stats={:?} awaiting_refresh={}",
             receiver.ingress_stats(),
             receiver.awaiting_decoder_refresh_for_test(),
         );
-        std::thread::sleep(Duration::from_millis(2));
     }
 
     let observed = sender.transport().observed_drop_ratio();
@@ -291,7 +305,12 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     for frame_id in 401..=430u64 {
         let payload = format!("recover-au-{frame_id}");
         sender
-            .ingest_and_flush(payload.as_bytes(), true, frame_id, 1)
+            .ingest_and_flush(
+                payload.as_bytes(),
+                true,
+                source_clock.elapsed().as_micros() as u64,
+                1,
+            )
             .expect("recover ingest");
         for _ in 0..8 {
             receiver.pump().expect("rx");
@@ -310,7 +329,12 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     while t_stats.elapsed() < Duration::from_millis(1100) {
         let payload = format!("recover-au-{recover_id}");
         sender
-            .ingest_and_flush(payload.as_bytes(), true, recover_id, 1)
+            .ingest_and_flush(
+                payload.as_bytes(),
+                true,
+                source_clock.elapsed().as_micros() as u64,
+                1,
+            )
             .expect("recover keep-alive");
         recover_id += 1;
         for _ in 0..6 {

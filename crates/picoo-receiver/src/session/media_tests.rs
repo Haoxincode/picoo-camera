@@ -25,6 +25,61 @@ fn receiver_for_generation(generation: u32) -> ReceiverSession {
     receiver
 }
 
+#[test]
+fn complete_refresh_supersedes_an_older_unresolved_gap() {
+    for already_awaiting in [false, true] {
+        let mut receiver = receiver_for_generation(1);
+        if already_awaiting {
+            receiver
+                .enter_decoder_recovery(RecoveryReason::InitialConfig, true)
+                .unwrap();
+        }
+        receiver.set_permit_unpaired_video(true);
+        receiver
+            .ingest_video_packet(packet(1, 1, true, 0, 1), Instant::now())
+            .unwrap();
+        receiver.jitter.discard_queued();
+        // Frame 2 never arrives. Frame 3 is already a complete random-access candidate.
+        receiver
+            .ingest_video_packet(packet(1, 3, true, 0, 1), Instant::now())
+            .unwrap();
+        assert_eq!(receiver.reassembly.oldest_unresolved_frame_id(), None);
+        assert_eq!(receiver.jitter.front_frame_id(), Some(3));
+        assert!(receiver.awaiting_decoder_refresh_for_test());
+        // The cut is terminal for late old fragments, but does not mean the Decoder
+        // has accepted this candidate. Completion still owns recovery confirmation.
+        receiver
+            .ingest_video_packet(packet(1, 2, false, 0, 1), Instant::now())
+            .unwrap();
+        assert_eq!(receiver.jitter.front_frame_id(), Some(3));
+        assert_eq!(receiver.ingress.decoded_frames, 0);
+    }
+}
+
+#[test]
+fn delta_and_incomplete_refresh_cannot_cut_an_older_gap() {
+    let mut receiver = receiver_for_generation(1);
+    receiver.set_permit_unpaired_video(true);
+    receiver
+        .ingest_video_packet(packet(1, 1, true, 0, 1), Instant::now())
+        .unwrap();
+    receiver.jitter.discard_queued();
+    receiver
+        .ingest_video_packet(packet(1, 3, false, 0, 1), Instant::now())
+        .unwrap();
+    receiver
+        .ingest_video_packet(packet(1, 4, true, 0, 2), Instant::now())
+        .unwrap();
+    assert_eq!(receiver.reassembly.oldest_unresolved_frame_id(), Some(2));
+    assert!(!receiver.awaiting_decoder_refresh_for_test());
+    receiver
+        .ingest_video_packet(packet(1, 4, true, 1, 2), Instant::now())
+        .unwrap();
+    assert_eq!(receiver.reassembly.oldest_unresolved_frame_id(), None);
+    assert_eq!(receiver.jitter.front_frame_id(), Some(4));
+    assert!(receiver.awaiting_decoder_refresh_for_test());
+}
+
 fn access_unit(generation: u64, frame_id: u64) -> EncodedAccessUnit {
     access_unit_with_kind(generation, frame_id, FrameKind::Key)
 }

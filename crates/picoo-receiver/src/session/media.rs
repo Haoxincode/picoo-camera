@@ -52,6 +52,19 @@ impl ReceiverSession {
         &mut self,
         access_unit: AssembledAccessUnit,
     ) -> Result<(), ReceiverError> {
+        if access_unit.keyframe
+            && self
+                .reassembly
+                .oldest_unresolved_frame_id()
+                .is_some_and(|missing| missing < access_unit.frame_id)
+        {
+            // A complete random-access candidate can replace the old prediction
+            // chain. Cut unresolved old media before queuing it, so the recovery
+            // cleanup cannot discard the very candidate that enables recovery.
+            // The wire hint grants no publication: Decoder completion must still
+            // confirm refresh acceptance against the submitted configuration.
+            self.enter_decoder_recovery(RecoveryReason::RandomAccessResync, true)?;
+        }
         let pts_us = access_unit.pts_us;
         let completed_at = Instant::now();
         if access_unit.keyframe {

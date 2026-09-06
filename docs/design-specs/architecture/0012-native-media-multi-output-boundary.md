@@ -12,7 +12,7 @@
 
 - `picoo-bitstream` 拥有 AVC/HEVC 位流解释、参数集、随机访问与平台格式适配；不依赖 packet、协议、GPU、UI 或软件解码器。`picoo-packet` 只拥有分片/FEC/重组，不再导出 AVC helper。消费者直接依赖 bitstream，不设旧 API 转发。
 - Decoder 能力以完整 codec/profile、图像布局、帧率、色彩组合表达；每组合独立记录标准 level 上限和 AU 预算，不能跨条目拼接能力。源码流实际 level 可低于同组合的 Decoder 上限，原生适配器负责提供实际准入证据。
-- Sender/Receiver owner 拥有配置与恢复事务。codec 工作者只报告携带原始 token 和提交时不可变配置快照的事实；完成帧的方向、镜像和色彩不得从 owner 当前配置重建。每 AU 在同一 Decoder generation 最多提交一次。
+- Sender/Receiver owner 拥有配置与恢复事务。codec 工作者只报告携带原始 token 和提交时不可变配置快照的事实；完成帧的方向、镜像和色彩不得从 owner 当前配置重建。每 AU 在同一 Decoder generation 最多提交一次。已准入配置下的完整随机访问候选可终止旧预测链与其缺帧等待，清理必须先于候选入队；这只是恢复尝试，只有对应 Decoder completion 确认后才恢复发布，delta 或未完成候选不能获得相同权限。
 - `picoo-frame-hub` 拥有不可变原生源帧、身份、描述及 FrameBus。native image 不含 CPU 像素变体；资源引用释放与 GPU 完成分别管理。
 - NativeVideoFrame 将连接、stream epoch、Decoder generation、frame ID、source PTS 与提交时的配置描述绑定；描述区分 coded size、原生坐标内剩余 visible crop、pixel aspect、色彩和剩余变换，不虚构 CPU stride。FrameBus 为预览保留 latest，并为唯一处理后录像提供独立发布订阅；订阅不从 preview cache 补旧帧。满队列或超龄必须终止该订阅并明确原因，不能阻塞其他输出或静默恢复成普通成功。
 - Apple 原生图像在 Decoder 完成回调返回前 retain 已完成的 IOSurface-backed CVPixelBuffer；所有别名不得继续写像素或 attachment。GPU 消费者持有图像引用直至任务完成（包括取消/失败），不能将工作提交或 CPU 引用释放解释为 GPU 完成。图像边界不提供安全的可变平台对象或 CPU mapping 接口。
