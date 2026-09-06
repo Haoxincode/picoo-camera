@@ -113,6 +113,7 @@ impl AppleRenderer {
     }
 
     fn render_completed(&mut self, source: &NativeImage) -> Result<RenderedImage, RenderError> {
+        let source_buffer = source.apple().ok_or(RenderError::DeviceUnavailable)?;
         // SAFETY: Read-only metadata access. Unknown interpretation must not be
         // guessed by Core Image or silently fixed by mutating a published source.
         unsafe {
@@ -130,7 +131,9 @@ impl AppleRenderer {
                     kCVImageBufferTransferFunction_ITU_R_709_2,
                 ),
             ] {
-                let actual = source.pixel_buffer().attachment(key, std::ptr::null_mut());
+                let actual = source_buffer
+                    .pixel_buffer()
+                    .attachment(key, std::ptr::null_mut());
                 if actual.as_deref() != Some(value.as_ref()) {
                     return Err(RenderError::UnsupportedSourceColor);
                 }
@@ -165,8 +168,10 @@ impl AppleRenderer {
             let source_space =
                 &*(self.source_color_space.as_ref() as *const CGColorSpace).cast::<AnyObject>();
             let options = NSDictionary::from_slices(&[kCIImageColorSpace], &[source_space]);
-            let image =
-                CIImage::imageWithCVPixelBuffer_options(source.pixel_buffer(), Some(&options));
+            let image = CIImage::imageWithCVPixelBuffer_options(
+                source_buffer.pixel_buffer(),
+                Some(&options),
+            );
             let image = self.transform(&image);
             let destination =
                 CIRenderDestination::initWithPixelBuffer(CIRenderDestination::alloc(), &output);

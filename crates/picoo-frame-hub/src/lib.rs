@@ -1,8 +1,9 @@
 //! LatestFrameStore and Shared Frame Ring — REQ-PICOO-FRAME-001..011.
 
 mod frame_buffer_pool;
+mod frame_bus;
 mod latest_frame_store;
-#[cfg(target_os = "macos")]
+mod native_frame;
 mod native_image;
 mod nv12;
 mod placeholder;
@@ -12,9 +13,18 @@ pub use frame_buffer_pool::{
     FrameBuffer, FrameBufferPool, FrameBufferPoolStats, DEFAULT_FRAME_BUFFER_POOL_BUFFERS,
     DEFAULT_FRAME_BUFFER_POOL_BYTES,
 };
+pub use frame_bus::{
+    FrameBus, NativeFrameSubscription, SubscriptionAlreadyActive, SubscriptionEnd,
+};
 pub use latest_frame_store::{LatestFrameStore, VideoFrame};
+pub use native_frame::{
+    ChromaSiting, FrameDescription, FrameIdentity, FrameTimeline, ImageSize,
+    InvalidFrameDescription, NativeVideoFrame, PixelAspectRatio, PresentationTransform, Rotation,
+    SourceColor, VisibleRect,
+};
+pub use native_image::NativeImage;
 #[cfg(target_os = "macos")]
-pub use native_image::{NativeImage, NativeImageError};
+pub use native_image::{ApplePixelBufferLease, NativeImageError};
 pub use nv12::{
     normalize_rotation_degrees, transform_nv12, transform_nv12_with_pool, Nv12TransformError,
     TransformedNv12,

@@ -68,7 +68,9 @@ fn source_fixture(declare_color: bool, quadrants: bool) -> NativeImage {
             }
         }
         // No mutations after publishing; the native owner outlives this pool.
-        NativeImage::retain_completed(&buffer).unwrap()
+        NativeImage::Apple(
+            picoo_frame_hub::ApplePixelBufferLease::retain_completed(&buffer).unwrap(),
+        )
     }
 }
 

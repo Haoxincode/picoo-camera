@@ -12,13 +12,7 @@ pub enum OutputColor {
     Bt709Limited,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Rotation {
-    None,
-    Clockwise90,
-    Clockwise180,
-    Clockwise270,
-}
+pub use picoo_frame_hub::Rotation;
 
 /// Output geometry uses aspect-preserving contain with opaque black margins.
 /// Rotation precedes the optional horizontal mirror in output coordinates.

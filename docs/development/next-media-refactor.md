@@ -128,3 +128,13 @@ REQ-PICOO-GPU-002：为原生输出接入补齐目的端 CPU 物化边界。CpuE
 M4 完整 GPU 套件九项通过（26.36 秒），新增实际 GPU→CPU 像素、紧密行布局、槽满拒绝、clone 寿命及错误 color contract 零导出测试。最终 unlock 错误传播调整后再跑对应 CPU exporter 测试；all-targets clippy -D warnings 与文档检查通过。当前仍在替换前的原生组件接线准备，Decoder/公共 CPU VideoFrame/旧预览尚未删除，不据此将 NEXT-029/033/034 总需求标为完成。输出协调器负责的 demand、唯一源去重和跨 sink 共享仍待实现。
 
 CPU exporter 最终两项定向测试通过（25.28 秒，包含最终 unlock 错误传播实现）；格式及 diff 检查通过。bc3a30d 与本批保持本地阶段提交，等待前一批 Windows 原生构建结束后推送，避免取消其证据。
+
+REQ-PICOO-FRAME-012：建立 NativeVideoFrame / FrameDescription / FrameIdentity / FrameBus。身份携带 connection、stream epoch、Decoder generation、frame ID，描述携带提交配置 revision、coded geometry、原生坐标中的剩余 visible crop、pixel aspect、明确 NV12 BT.709 limited/chroma siting 与剩余旋转/镜像；不含 CPU stride 或 Bytes。NativeImage 现在为平台所有权枚举，ApplePixelBufferLease 保留原已验证的 CVPixelBuffer 所有权；未接入平台没有 CPU 占位变体。Fake 仅 cfg(test) 编译，不提供生产 feature，不作为软件 codec。GPU 使用明确 Apple lease 入口，Rotation 的唯一领域定义移到 FrameHub。
+
+FrameBus 独立保存 latest 和唯一有序订阅，订阅只接收未来发布。std bounded sync_channel 容量八，try_send 不等待消费；满队列终止订阅并携带被拒绝帧身份，latest 继续。取出帧超过 150ms 时明确 TooOld，清空/发布者退出/取消分别有终止原因，不能成为普通录像成功。取消后的消费者下次 poll 丢弃队列；已经持有引用的 deadline 回收和 commit gate 仍由输出协调器负责，未宣称单靠 FrameBus 可以撤销外部 Arc 或停止卡住的 GPU。
+
+复用判断：使用 Rust std 的 Arc、sync_channel/try_send、OnceLock，不自制并发队列、引用计数或 callback 框架；当前同步平台工作者不需要 Tokio runtime，crossbeam 的额外多消费者功能在唯一录像订阅中没有收益，因此不新增包。现有 latest CPU store 不能提供有序事件且携带 Bytes，不能当作原生 bus 的目标模型。旧公共 VideoFrame/Receiver/Preview 仍待端到端替换，本步不作兼容重导出。
+
+Mac frame-hub 全套 49 passed / 2 ignored，Linux 六项新纯契约测试通过；Linux production cargo check 同时验证没有 Fake variant 时的未实现平台可编译。Linux 1.98.1 容器未安装 Clippy component，未将该失败记作通过；本机两个 crate all-targets Clippy -D warnings 通过。NativeImage 类型变化后，实际 M4 双输出 Metal 颜色回归 1 passed（25.88 秒）。最后取消重查后的六项纯契约再验证见相应日志；四十项总目标继续未完成。
+
+FrameBus 最终六项定向测试、本机两 crate Clippy 及文档/格式检查通过。前一批 07df65a 的 GitHub Actions 34021277005 五个 job 全部成功（包括 Windows）；现将 bc3a30d、2885016 与原生帧总线提交一起推送，当前 GPU/FrameBus 变更的 CI 结果另行验收。
