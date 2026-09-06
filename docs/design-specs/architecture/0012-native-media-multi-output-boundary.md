@@ -91,3 +91,7 @@ MF 输出协商保留枚举类型的原生尺寸与 aperture；编码尺寸不�
 带内参数集的已提交身份检查由 bitstream 配置对象拥有，统一覆盖 AVC SPS/PPS 与 HEVC VPS/SPS/PPS。平台 Decoder 调用这一检查后才修改原生状态；原生 codec 的支持范围仍须独立准入，不能把位流记录解析成功解释为硬件解码已经支持。
 
 VideoSpsFacts/VideoColorFacts 表达与 codec 无关的源几何和色彩事实；AVC 与 HEVC 的语法解析分别由成熟标准库承担。HEVC 源准入限制为单层 progressive Main 8-bit 4:2:0、零重排；扩展、未知非法 PAR、越界裁剪或尾部垃圾明确拒绝。解析器必须在执行算术或依据输入分配前限制取值，不能靠返回结构后的校验弥补解析时的溢出或无界分配。
+
+Apple Decoder 以完整 CodecConfiguration（codec 与所有原始参数集）创建 CoreMedia 格式描述；同一配置复用 session，变更配置先建立可用的新 session，再替换旧 session。参数或原生创建失败不销毁仍有效的旧 session。AVC/HEVC 共用 token 与原生 NV12 输出边界，平台尚未实现的 codec 在提交前明确拒绝。
+
+VideoToolbox 的闭合 HEVC 解码合同仅接纳 IDR 随机访问序列；CRA、RASL、RADL 在原生会话变更前明确拒绝。只有具备 leading-picture 归属与独立验收的恢复策略才能扩展此边界，不把 CRA 自动视为 IDR。

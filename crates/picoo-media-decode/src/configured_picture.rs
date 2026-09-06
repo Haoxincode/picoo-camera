@@ -1,14 +1,18 @@
-//! Committed AVC configuration is authoritative — REQ-PICOO-MEDIA-029.
+//! Committed codec configuration is authoritative — REQ-PICOO-MEDIA-029.
 use crate::DecodeError;
 use picoo_bitstream::{AccessUnit, Codec, NalFormat, NalLengthSize};
 use picoo_protocol::control::{StreamConfig, VideoCodec};
 
 pub(crate) fn validate<'a>(
+    codec: Codec,
     access_unit: &'a [u8],
     config: Option<&StreamConfig>,
 ) -> Result<AccessUnit<'a>, DecodeError> {
+    if config.is_some_and(|config| configured_codec(config).ok() != Some(codec)) {
+        return Err(DecodeError::UnsupportedAccessUnit);
+    }
     let picture = AccessUnit::parse(
-        Codec::Avc,
+        codec,
         NalFormat::LengthPrefixed(NalLengthSize::Four),
         access_unit,
     )
@@ -16,9 +20,6 @@ pub(crate) fn validate<'a>(
     let Some(config) = config else {
         return Ok(picture);
     };
-    if config.codec != VideoCodec::Avc as i32 {
-        return Err(DecodeError::UnsupportedAccessUnit);
-    }
     let configuration = configuration(config)?;
     configuration
         .validate_parameter_sets(&picture)
@@ -26,15 +27,20 @@ pub(crate) fn validate<'a>(
     Ok(picture)
 }
 
+pub(crate) fn configured_codec(config: &StreamConfig) -> Result<Codec, DecodeError> {
+    match VideoCodec::try_from(config.codec) {
+        Ok(VideoCodec::Avc) => Ok(Codec::Avc),
+        Ok(VideoCodec::Hevc) => Ok(Codec::Hevc),
+        _ => Err(DecodeError::UnsupportedAccessUnit),
+    }
+}
+
 /// Standard record interpretation stays in picoo-bitstream, shared by native adapters.
 pub(crate) fn configuration(
     config: &StreamConfig,
 ) -> Result<picoo_bitstream::CodecConfiguration, DecodeError> {
-    if config.codec != VideoCodec::Avc as i32 {
-        return Err(DecodeError::UnsupportedAccessUnit);
-    }
     let configuration = picoo_bitstream::CodecConfiguration::parse(
-        picoo_bitstream::Codec::Avc,
+        configured_codec(config)?,
         config.codec_configuration.clone().into(),
     )
     .map_err(|_| DecodeError::NotInitialized)?;
@@ -52,7 +58,7 @@ pub(crate) fn configuration(
 pub(crate) fn sequence_header(config: &StreamConfig) -> Result<Vec<u8>, DecodeError> {
     let config = configuration(config)?;
     let mut header = Vec::new();
-    for set in config.sps().iter().chain(config.pps()) {
+    for set in config.vps().iter().chain(config.sps()).chain(config.pps()) {
         header.extend_from_slice(&[0, 0, 0, 1]);
         header.extend_from_slice(set);
     }
@@ -85,10 +91,7 @@ mod tests {
             codec_configuration: record,
             ..Default::default()
         };
-        assert!(matches!(
-            configuration(&config),
-            Err(DecodeError::UnsupportedAccessUnit)
-        ));
+        assert!(configuration(&config).is_err());
     }
 
     #[test]
@@ -105,16 +108,18 @@ mod tests {
             ..Default::default()
         };
         assert!(validate(
+            Codec::Avc,
             &annex_b_to_length_prefixed(AVC_64X64_BT709_IDR).unwrap(),
             Some(&config)
         )
         .is_ok());
         assert!(matches!(
-            validate(AVC_64X64_BT709_IDR, Some(&config)),
+            validate(Codec::Avc, AVC_64X64_BT709_IDR, Some(&config)),
             Err(DecodeError::UnsupportedAccessUnit)
         ));
         assert!(matches!(
             validate(
+                Codec::Avc,
                 &annex_b_to_length_prefixed(H264_1280X720_RED_IDR).unwrap(),
                 Some(&config)
             ),
@@ -126,7 +131,11 @@ mod tests {
             let mut au = vec![0, 0, 0, 1, 0x60 | kind, 0xaa, 0x80];
             au.extend_from_slice(AVC_64X64_BT709_IDR);
             assert!(matches!(
-                validate(&annex_b_to_length_prefixed(&au).unwrap(), Some(&config)),
+                validate(
+                    Codec::Avc,
+                    &annex_b_to_length_prefixed(&au).unwrap(),
+                    Some(&config)
+                ),
                 Err(DecodeError::ConfigurationMismatch)
             ));
         }

@@ -105,7 +105,7 @@ impl MfH264Decoder {
         stream_config: Option<&StreamConfig>,
     ) -> Result<Vec<u8>, DecodeError> {
         stream_config
-            .map(crate::configured_avc::sequence_header)
+            .map(crate::configured_picture::sequence_header)
             .transpose()
             .map(Option::unwrap_or_default)
     }
@@ -120,7 +120,7 @@ impl MfH264Decoder {
         }
         let fps = stream_config.map_or(DEFAULT_FPS, |cfg| cfg.fps.max(1));
         let (geometry, sequence_header) = if let Some(config) = stream_config {
-            let record = crate::configured_avc::configuration(config)?;
+            let record = crate::configured_picture::configuration(config)?;
             let geometry = VideoSpsFacts::parse_avc(&record.sps()[0])
                 .map_err(|e| DecodeError::Platform(e.to_string()))?;
             if (config.width, config.height) != (geometry.visible_width, geometry.visible_height) {
@@ -263,7 +263,11 @@ impl AccessUnitDecoder for MfH264Decoder {
         let access_unit = submission.access_unit;
         let stream_config = submission.token.stream_config.as_deref();
 
-        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
+        let picture = crate::configured_picture::validate(
+            picoo_bitstream::Codec::Avc,
+            access_unit,
+            stream_config,
+        )?;
         self.decode_h264_au(picture, stream_config, submission.token.clone())
     }
 

@@ -560,3 +560,9 @@ REQ-PICOO-BITSTREAM-006：AVC/HEVC 共用 VideoSpsFacts/VideoColorFacts，删除
 Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix 引用/系数、SCC palette，使用 checked crop 并验证 RBSP 对齐零位。上游 SPS 测试按概念移入独立模块，源码文件均低于 800 行。46 项位流/Decoder 回归及上游 15 项回归全部通过；包含真实硬件 HEVC SPS、1920×1088→1080 crop、BT.709/PAR、截断、逐位变异和异常字段。相关 Mac all-targets Clippy、Android/iOS/Windows 位流库 check 通过；跨目标库检查不替代完整 Windows 产品 CI。
 
 第一次 60 秒 fuzz 在 512 MiB RSS 限额下退出；报告显示主要存活分配是 libFuzzer 覆盖率/语料统计。保存输入回放 1,000 次成功，36ms，无超限。随后保持 sanitizer 默认行为、将测试进程限额设为 1024 MiB，完成 6,466,923 次/61 秒，峰值 RSS 554 MiB，未崩溃。不能把首次运行记为通过，也不能把有限 fuzz 解释为全部解析安全证明。fuzz 独立 workspace 明确引用同一 Scuffle 补丁。
+
+### 2026-09-07：macOS 原生 HEVC Decoder 接入
+
+- REQ-PICOO-NEXT-003/011/025：配置解析按实际 codec，VideoToolbox 使用原生 HEVC 参数集 API；完整 record 决定会话复用。新原生格式及会话创建成功后才释放旧会话。MF/OpenH264 仍显式拒绝非 AVC，避免公共解析扩展隐式开放未实现后端。
+- M4 本地 Decoder 20 项测试通过：真实 HEVC Main→原生 IOSurface NV12、AVC/HEVC 往返切换及旧图像存活、相同配置复用、冲突配置不改变会话、原始 token 保留。CRA/RASL/RADL 明确拒绝，尚未开放相关恢复合同。
+- 这仅完成 Apple 解码适配器的闭合 IDR 子集。端到端 offers/config 事务、Windows HEVC、移动编码配置、双 VCam、两类录像及全平台验收仍未完成。

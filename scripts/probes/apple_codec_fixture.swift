@@ -1,4 +1,4 @@
-// REQ-PICOO-NEXT-003/025: diagnostic hardware AVC fixtures with explicit source meaning.
+// REQ-PICOO-NEXT-003/025: diagnostic hardware AVC/HEVC fixtures with explicit source meaning.
 import Foundation
 import CoreMedia
 import CoreVideo
@@ -22,11 +22,12 @@ let callback: VTCompressionOutputCallback = { context, _, status, _, sample in
     Unmanaged<Encoded>.fromOpaque(context).takeUnretainedValue().receive(status, sample)
 }
 
-func makeFixture(width: Int, height: Int, directory: URL) throws {
+@MainActor
+func makeFixture(codec: CMVideoCodecType, width: Int, height: Int, directory: URL) throws {
     let results = Encoded()
     var encoder: VTCompressionSession?
     try check(VTCompressionSessionCreate(allocator: nil, width: Int32(width), height: Int32(height),
-        codecType: kCMVideoCodecType_H264,
+        codecType: codec,
         encoderSpecification: [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true] as CFDictionary,
         imageBufferAttributes: nil, compressedDataAllocator: nil, outputCallback: callback,
         refcon: Unmanaged.passUnretained(results).toOpaque(), compressionSessionOut: &encoder), "create hardware encoder")
@@ -36,7 +37,7 @@ func makeFixture(width: Int, height: Int, directory: URL) throws {
     let properties: [(CFString, CFTypeRef)] = [
         (kVTCompressionPropertyKey_RealTime, kCFBooleanTrue!),
         (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse!),
-        (kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel),
+        (kVTCompressionPropertyKey_ProfileLevel, codec == kCMVideoCodecType_HEVC ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel),
         (kVTCompressionPropertyKey_ExpectedFrameRate, 30 as CFNumber),
         (kVTCompressionPropertyKey_ColorPrimaries, kCVImageBufferColorPrimaries_ITU_R_709_2),
         (kVTCompressionPropertyKey_TransferFunction, kCVImageBufferTransferFunction_ITU_R_709_2),
@@ -78,13 +79,28 @@ func makeFixture(width: Int, height: Int, directory: URL) throws {
     guard let sample = results.sample, let format = CMSampleBufferGetFormatDescription(sample),
           let block = CMSampleBufferGetDataBuffer(sample) else { throw FixtureError(message: "no encoded sample") }
     var annex = Data()
-    for index in 0..<2 {
+    let codecName = codec == kCMVideoCodecType_HEVC ? "hevc" : "avc"
+    let rawExtensions = CMFormatDescriptionGetExtensions(format)! as NSDictionary
+    guard let atoms = rawExtensions[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms] as? NSDictionary,
+          let record = atoms[codec == kCMVideoCodecType_HEVC ? "hvcC" : "avcC"] as? Data else {
+        throw FixtureError(message: "no native configuration record")
+    }
+    var parameterCount = 1
+    var index = 0
+    while index < parameterCount {
         var pointer: UnsafePointer<UInt8>?
         var count = 0
-        try check(CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index, parameterSetPointerOut: &pointer,
-            parameterSetSizeOut: &count, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil), "parameter set")
-        guard let pointer else { throw FixtureError(message: "no parameter set") }
+        let status = codec == kCMVideoCodecType_HEVC
+            ? CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format, parameterSetIndex: index,
+                parameterSetPointerOut: &pointer, parameterSetSizeOut: &count, parameterSetCountOut: &parameterCount,
+                nalUnitHeaderLengthOut: nil)
+            : CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index,
+                parameterSetPointerOut: &pointer, parameterSetSizeOut: &count, parameterSetCountOut: &parameterCount,
+                nalUnitHeaderLengthOut: nil)
+        try check(status, "parameter set")
+        guard let pointer, parameterCount > 0 && parameterCount <= 64 else { throw FixtureError(message: "invalid parameter sets") }
         annex.append(contentsOf: [0, 0, 0, 1]); annex.append(pointer, count: count)
+        index += 1
     }
     let encodedLength = CMBlockBufferGetDataLength(block)
     var encoded = Data(count: encodedLength)
@@ -96,12 +112,19 @@ func makeFixture(width: Int, height: Int, directory: URL) throws {
         guard count > 0 && count <= encoded.count - offset else { throw FixtureError(message: "invalid NAL length") }
         annex.append(contentsOf: [0, 0, 0, 1]); annex.append(encoded[offset..<offset+count]); offset += count
     }
-    let name = "avc-\(width)x\(height)-bt709-idr.h264"
+    let prefix = "\(codecName)-\(width)x\(height)-bt709"
+    try record.write(to: directory.appendingPathComponent("\(prefix)-config.bin"))
+    try encoded.write(to: directory.appendingPathComponent("\(prefix)-idr.bin"))
+    let name = "\(prefix)-idr.\(codec == kCMVideoCodecType_HEVC ? "h265" : "h264")"
     try annex.write(to: directory.appendingPathComponent(name))
-    print("\(name): \(annex.count) bytes, hardware AVC High, BT.709 limited, square pixels")
+    print("\(name): \(annex.count) bytes, hardware \(codecName), BT.709 limited, square pixels")
 }
 
 guard CommandLine.arguments.count == 2 else { fatalError("Pass the fixture output directory") }
 let directory = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-for (width, height) in [(64, 64), (1280, 720), (1920, 1080)] { try makeFixture(width: width, height: height, directory: directory) }
+for codec in [kCMVideoCodecType_H264, kCMVideoCodecType_HEVC] {
+    for (width, height) in [(64, 64), (1280, 720), (1920, 1080)] {
+        try makeFixture(codec: codec, width: width, height: height, directory: directory)
+    }
+}

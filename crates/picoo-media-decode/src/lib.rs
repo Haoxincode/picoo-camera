@@ -37,7 +37,7 @@ mod openh264_dec;
     all(windows, feature = "windows-mf"),
     all(not(windows), not(target_vendor = "apple"), feature = "test-codecs")
 ))]
-mod configured_avc;
+mod configured_picture;
 
 #[cfg(any(test, feature = "test-codecs"))]
 mod fixture;

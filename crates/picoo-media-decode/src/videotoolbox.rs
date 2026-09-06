@@ -1,4 +1,4 @@
-//! macOS VideoToolbox H.264 decoder — REQ-PICOO-MEDIA-012.
+//! macOS VideoToolbox AVC/HEVC decoder — REQ-PICOO-MEDIA-012.
 //!
 //! The Apple production path is pure Rust over generated framework bindings:
 //! Annex-B/AVCC access unit → CoreMedia sample → VideoToolbox →
@@ -11,10 +11,7 @@ use std::ptr::{self, NonNull};
 use std::sync::Mutex;
 
 use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
-use objc2_core_media::{
-    CMBlockBuffer, CMFormatDescription, CMSampleBuffer,
-    CMVideoFormatDescriptionCreateFromH264ParameterSets,
-};
+use objc2_core_media::{CMBlockBuffer, CMFormatDescription, CMSampleBuffer};
 use objc2_core_video::{
     kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferMetalCompatibilityKey,
     kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
@@ -24,7 +21,9 @@ use objc2_video_toolbox::{
     kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder, VTDecodeFrameFlags,
     VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSession,
 };
-use picoo_bitstream::{AccessUnit, PictureKind, RandomAccessPoint};
+use picoo_bitstream::{AccessUnit, Codec, CodecConfiguration, PictureKind, RandomAccessPoint};
+
+mod format;
 use picoo_frame_hub::{ApplePixelBufferLease, NativeImage};
 use picoo_protocol::control::StreamConfig;
 
@@ -42,8 +41,7 @@ pub struct VideoToolboxDecoder {
     session: Option<CFRetained<VTDecompressionSession>>,
     format_description: Option<CFRetained<CMFormatDescription>>,
     output: Box<OutputContext>,
-    sps: Vec<u8>,
-    pps: Vec<u8>,
+    configuration: Option<CodecConfiguration>,
 }
 
 impl VideoToolboxDecoder {
@@ -52,8 +50,7 @@ impl VideoToolboxDecoder {
             session: None,
             format_description: None,
             output: Box::default(),
-            sps: Vec::new(),
-            pps: Vec::new(),
+            configuration: None,
         }
     }
 
@@ -69,13 +66,17 @@ impl VideoToolboxDecoder {
         }
     }
 
-    fn ensure_session(&mut self, sps: &[u8], pps: &[u8]) -> Result<(), DecodeError> {
-        if self.session.is_some() && self.sps == sps && self.pps == pps {
+    fn ensure_session(&mut self, configuration: &CodecConfiguration) -> Result<(), DecodeError> {
+        if self.session.is_some()
+            && self.configuration.as_ref().is_some_and(|current| {
+                current.codec() == configuration.codec()
+                    && current.record() == configuration.record()
+            })
+        {
             return Ok(());
         }
 
-        self.reset_session();
-        let format_description = create_h264_format_description(sps, pps)?;
+        let format_description = format::create(configuration)?;
 
         let require_hardware = CFBoolean::new(true);
         let decoder_specification = CFDictionary::from_slices(
@@ -122,8 +123,8 @@ impl VideoToolboxDecoder {
         // SAFETY: A successful create returns ownership of a +1 CF object.
         let session = unsafe { CFRetained::from_raw(raw_session) };
 
-        self.sps = sps.to_vec();
-        self.pps = pps.to_vec();
+        self.reset_session();
+        self.configuration = Some(configuration.clone());
         self.format_description = Some(format_description);
         self.session = Some(session);
         Ok(())
@@ -136,19 +137,29 @@ impl VideoToolboxDecoder {
         stream_config: Option<&StreamConfig>,
         token: std::sync::Arc<crate::DecodeToken>,
     ) -> Result<DecodeOutcome, DecodeError> {
-        let contains_idr =
-            picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
-        let (sps, pps) =
-            parameter_sets(stream_config, &picture).ok_or(DecodeError::NotInitialized)?;
-        let facts = picoo_bitstream::VideoSpsFacts::parse_avc(&sps)
-            .map_err(|error| DecodeError::Platform(error.to_string()))?;
+        // CRA recovery requires explicit leading-picture ownership. This backend
+        // admits closed IDR sequences until that separate contract is verified.
+        if matches!(
+            picture.picture().kind,
+            PictureKind::RandomAccess(RandomAccessPoint::HevcCra)
+                | PictureKind::HevcRasl
+                | PictureKind::HevcRadl
+        ) {
+            return Err(DecodeError::UnsupportedAccessUnit);
+        }
+        let contains_refresh = matches!(
+            picture.picture().kind,
+            PictureKind::RandomAccess(RandomAccessPoint::AvcIdr | RandomAccessPoint::HevcIdr)
+        );
+        let configuration = format::configuration(stream_config, &picture)?;
+        let facts = format::source_facts(&configuration)?;
         crate::native_format::validate_source(&facts)?;
         if stream_config.is_some_and(|config| {
             (config.width, config.height) != (facts.visible_width, facts.visible_height)
         }) {
             return Err(DecodeError::ConfigurationMismatch);
         }
-        self.ensure_session(&sps, &pps)?;
+        self.ensure_session(&configuration)?;
         let sample = create_sample_buffer(access_unit, self.format_description.as_deref())?;
 
         {
@@ -186,7 +197,7 @@ impl VideoToolboxDecoder {
             .take()
             .unwrap_or(Ok(None))?;
         let Some(output) = output else {
-            return Ok(DecodeOutcome::accepted_without_frame(contains_idr));
+            return Ok(DecodeOutcome::accepted_without_frame(contains_refresh));
         };
         let native_format = crate::native_format::describe(&facts, &output)?;
         Ok(DecodeOutcome::frame(
@@ -197,7 +208,7 @@ impl VideoToolboxDecoder {
                 stream_config.map(|config| config.rotation).unwrap_or(0),
                 now_timestamp_us(),
             ),
-            contains_idr,
+            contains_refresh,
         ))
     }
 }
@@ -222,7 +233,11 @@ impl AccessUnitDecoder for VideoToolboxDecoder {
         let access_unit = submission.access_unit;
         let stream_config = submission.token.stream_config.as_deref();
 
-        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
+        let codec = stream_config
+            .map(crate::configured_picture::configured_codec)
+            .transpose()?
+            .unwrap_or(Codec::Avc);
+        let picture = crate::configured_picture::validate(codec, access_unit, stream_config)?;
         self.decode_real_access_unit(
             access_unit,
             picture,
@@ -233,8 +248,7 @@ impl AccessUnitDecoder for VideoToolboxDecoder {
 
     fn reset(&mut self) -> Result<(), DecodeError> {
         self.reset_session();
-        self.sps.clear();
-        self.pps.clear();
+        self.configuration = None;
         Ok(())
     }
 }
@@ -247,74 +261,6 @@ fn check_status(operation: &str, status: i32) -> Result<(), DecodeError> {
             "{operation} failed with OSStatus {status}"
         )))
     }
-}
-
-fn parameter_sets(
-    stream_config: Option<&StreamConfig>,
-    picture: &AccessUnit<'_>,
-) -> Option<(Vec<u8>, Vec<u8>)> {
-    match stream_config {
-        // Validated before native state mutation by configured_avc::validate.
-        Some(config) => {
-            let configuration = crate::configured_avc::configuration(config).ok()?;
-            if configuration.sps().len() != 1 || configuration.pps().len() != 1 {
-                return None;
-            }
-            Some((
-                configuration.sps()[0].to_vec(),
-                configuration.pps()[0].to_vec(),
-            ))
-        }
-        None => Some((
-            picture
-                .nals()
-                .iter()
-                .find(|nal| nal[0] & 0x1f == 7)?
-                .to_vec(),
-            picture
-                .nals()
-                .iter()
-                .find(|nal| nal[0] & 0x1f == 8)?
-                .to_vec(),
-        )),
-    }
-}
-
-fn create_h264_format_description(
-    sps: &[u8],
-    pps: &[u8],
-) -> Result<CFRetained<CMFormatDescription>, DecodeError> {
-    let mut parameter_set_pointers = [
-        NonNull::new(sps.as_ptr().cast_mut())
-            .ok_or_else(|| DecodeError::Platform("empty H.264 SPS".into()))?,
-        NonNull::new(pps.as_ptr().cast_mut())
-            .ok_or_else(|| DecodeError::Platform("empty H.264 PPS".into()))?,
-    ];
-    let mut parameter_set_sizes = [sps.len(), pps.len()];
-    let mut raw_description: *const CMFormatDescription = ptr::null();
-    // SAFETY: The parameter-set pointers and sizes remain valid for the call;
-    // CoreMedia copies them into the returned format description.
-    let status = unsafe {
-        CMVideoFormatDescriptionCreateFromH264ParameterSets(
-            None,
-            parameter_set_pointers.len(),
-            NonNull::new(parameter_set_pointers.as_mut_ptr())
-                .expect("fixed-size pointer array is non-null"),
-            NonNull::new(parameter_set_sizes.as_mut_ptr())
-                .expect("fixed-size size array is non-null"),
-            4,
-            NonNull::from(&mut raw_description),
-        )
-    };
-    check_status(
-        "CMVideoFormatDescriptionCreateFromH264ParameterSets",
-        status,
-    )?;
-    let raw_description = NonNull::new(raw_description.cast_mut()).ok_or_else(|| {
-        DecodeError::Platform("CoreMedia returned a null format description".into())
-    })?;
-    // SAFETY: A successful create returns ownership of a +1 CF object.
-    Ok(unsafe { CFRetained::from_raw(raw_description) })
 }
 
 fn create_sample_buffer(
@@ -412,218 +358,4 @@ unsafe extern "C-unwind" fn decompression_output_callback(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use picoo_bitstream::avc::{extract_sps_pps, split_annex_b_nals};
-
-    use picoo_testkit::{
-        AVC_1280X720_BT709_IDR as H264_1280X720_RED_IDR, AVC_64X64_BT709_IDR as H264_64X64_RED_IDR,
-    };
-
-    fn wire(annex: &[u8]) -> Vec<u8> {
-        picoo_bitstream::canonical_access_unit(
-            picoo_bitstream::Codec::Avc,
-            picoo_bitstream::NalFormat::AnnexB,
-            annex,
-        )
-        .unwrap()
-        .into_owned()
-    }
-
-    fn assert_native_red(frame: &DecodedFrame) {
-        use objc2_core_video::*;
-        // Explicit diagnostic read of one YUV sample, not a Decoder pixel API.
-        unsafe {
-            let buffer = frame.native_image().apple().unwrap().pixel_buffer();
-            assert!(CVPixelBufferGetIOSurface(Some(buffer)).is_some());
-            assert_eq!(
-                CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly),
-                0
-            );
-            let y = *CVPixelBufferGetBaseAddressOfPlane(buffer, 0).cast::<u8>();
-            let uv = CVPixelBufferGetBaseAddressOfPlane(buffer, 1).cast::<u8>();
-            let chroma = [*uv, *uv.add(1)];
-            assert_eq!(
-                CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly),
-                0
-            );
-            assert!(
-                y > 16 && chroma[1] > chroma[0],
-                "expected decoded red fixture"
-            );
-        }
-    }
-
-    #[test]
-    fn conflicting_in_band_configuration_does_not_replace_native_session() {
-        let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).unwrap();
-        let config = StreamConfig {
-            codec: picoo_protocol::control::VideoCodec::Avc as i32,
-            width: 64,
-            height: 64,
-            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
-                &sps, &pps,
-            )
-            .unwrap()
-            .record()
-            .to_vec(),
-            ..Default::default()
-        };
-        let mut decoder = VideoToolboxDecoder::new();
-        decoder
-            .decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config))
-            .unwrap();
-        let session = decoder.session.as_ref().map(CFRetained::as_ptr);
-        assert!(matches!(
-            decoder.decode_fixture(&wire(H264_1280X720_RED_IDR), Some(&config)),
-            Err(DecodeError::ConfigurationMismatch)
-        ));
-        assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
-        let frame = decoder
-            .decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config))
-            .unwrap()
-            .into_fixture_frame()
-            .unwrap();
-        assert_eq!(frame.description().width, 64);
-    }
-
-    #[test]
-    fn declared_geometry_mismatch_does_not_mutate_native_session() {
-        let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).unwrap();
-        let mut config = StreamConfig {
-            codec: picoo_protocol::control::VideoCodec::Avc as i32,
-            width: 64,
-            height: 64,
-            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
-                &sps, &pps,
-            )
-            .unwrap()
-            .record()
-            .to_vec(),
-            ..Default::default()
-        };
-        let mut decoder = VideoToolboxDecoder::new();
-        decoder
-            .decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config))
-            .unwrap();
-        let session = decoder.session.as_ref().map(CFRetained::as_ptr);
-        config.width = 1280;
-        assert!(matches!(
-            decoder.decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config)),
-            Err(DecodeError::ConfigurationMismatch)
-        ));
-        assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
-    }
-
-    #[test]
-    fn unknown_native_color_is_rejected_instead_of_relabelled() {
-        let mut decoder = VideoToolboxDecoder::new();
-        assert!(decoder
-            .decode_fixture(&wire(picoo_testkit::H264_64X64_RED_IDR), None)
-            .is_err());
-    }
-
-    #[test]
-    fn videotoolbox_decodes_canonical_idr_to_native_frame() {
-        let mut decoder = VideoToolboxDecoder::new();
-        let frame = decoder
-            .decode_fixture(&wire(H264_64X64_RED_IDR), None)
-            .expect("VideoToolbox decode")
-            .into_fixture_frame()
-            .expect("decoded frame");
-        assert_eq!(
-            (frame.description().width, frame.description().height),
-            (64, 64)
-        );
-        assert_native_red(&frame);
-    }
-
-    #[test]
-    fn videotoolbox_decodes_avcc_idr_with_stream_config() {
-        let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).expect("parameter sets");
-        let idr = split_annex_b_nals(H264_64X64_RED_IDR)
-            .into_iter()
-            .find(|nal| nal.first().is_some_and(|byte| byte & 0x1f == 5))
-            .expect("IDR");
-        let mut avcc = Vec::with_capacity(idr.len() + 4);
-        avcc.extend_from_slice(&(idr.len() as u32).to_be_bytes());
-        avcc.extend_from_slice(idr);
-        let config = StreamConfig {
-            codec: picoo_protocol::control::VideoCodec::Avc as i32,
-            width: 64,
-            height: 64,
-            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
-                &sps, &pps,
-            )
-            .unwrap()
-            .record()
-            .to_vec(),
-            ..Default::default()
-        };
-
-        let mut decoder = VideoToolboxDecoder::new();
-        let frame = decoder
-            .decode_fixture(&avcc, Some(&config))
-            .expect("VideoToolbox decode")
-            .into_fixture_frame()
-            .expect("decoded frame");
-        assert_eq!(
-            (frame.description().width, frame.description().height),
-            (64, 64)
-        );
-        assert_native_red(&frame);
-    }
-
-    #[test]
-    fn same_parameter_sets_reuse_session_and_reset_discards_it() {
-        let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).expect("parameter sets");
-        let mut decoder = VideoToolboxDecoder::new();
-        decoder.ensure_session(&sps, &pps).expect("first session");
-        let first = decoder.session.as_ref().map(CFRetained::as_ptr);
-        decoder.ensure_session(&sps, &pps).expect("reused session");
-        assert_eq!(first, decoder.session.as_ref().map(CFRetained::as_ptr));
-        decoder.reset().expect("reset");
-        assert!(decoder.session.is_none());
-    }
-
-    #[test]
-    fn malformed_access_unit_is_rejected_without_stub_fallback() {
-        let mut decoder = VideoToolboxDecoder::new();
-        let result = decoder.decode_fixture(b"not-h264", None);
-        assert!(matches!(result, Err(DecodeError::UnsupportedAccessUnit)));
-        assert!(decoder.session.is_none());
-    }
-
-    #[test]
-    fn in_band_parameter_change_recreates_session_and_updates_dimensions() {
-        let mut decoder = VideoToolboxDecoder::new();
-        let first = decoder
-            .decode_fixture(&wire(H264_64X64_RED_IDR), None)
-            .expect("64x64 decode")
-            .into_fixture_frame()
-            .expect("64x64 frame");
-        assert_eq!(
-            (first.description().width, first.description().height),
-            (64, 64)
-        );
-        let first_sps = decoder.sps.clone();
-
-        let second = decoder
-            .decode_fixture(&wire(H264_1280X720_RED_IDR), None)
-            .expect("1280x720 decode")
-            .into_fixture_frame()
-            .expect("1280x720 frame");
-        assert_eq!(
-            (second.description().width, second.description().height),
-            (1280, 720)
-        );
-        assert_native_red(&first);
-        assert_ne!(first_sps, decoder.sps);
-        assert_eq!(
-            decoder.sps,
-            extract_sps_pps(H264_1280X720_RED_IDR)
-                .expect("1280x720 parameter sets")
-                .0
-        );
-    }
-}
+mod tests;

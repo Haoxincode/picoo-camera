@@ -40,7 +40,7 @@ impl OpenH264Decoder {
         if self.param_sets_fed && cfg.codec_configuration == self.last_configuration {
             return Ok(());
         }
-        let annex = crate::configured_avc::sequence_header(cfg)?;
+        let annex = crate::configured_picture::sequence_header(cfg)?;
         // Feed SPS/PPS; picture may not be ready yet.
         let _ = self
             .decoder
@@ -124,7 +124,11 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return self.stub.submit(submission);
         }
 
-        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
+        let picture = crate::configured_picture::validate(
+            picoo_bitstream::Codec::Avc,
+            access_unit,
+            stream_config,
+        )?;
         self.ensure_param_sets(stream_config)?;
 
         let annex = picture
