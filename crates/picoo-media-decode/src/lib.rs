@@ -64,8 +64,11 @@ pub use decoded_frame::{
     VideoPixelFormat,
 };
 
-/// Decode one H.264 access unit into NV12 for LatestFrameStore consumption.
-pub trait AccessUnitDecoder: Send {
+/// Decode on the platform worker that created this instance.
+///
+/// REQ-PICOO-MEDIA-018: transfer the factory into a worker, never an initialized
+/// platform decoder. COM apartments and codec teardown can be thread-affine.
+pub trait AccessUnitDecoder {
     fn decode_access_unit(
         &mut self,
         access_unit: &[u8],

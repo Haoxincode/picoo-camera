@@ -59,3 +59,5 @@ Mac VCam 的固定协商表为 720p/1080p × 30/60，初始 1080p60；同尺寸�
 Windows 解码原生图像的持有单位包含原始 MF sample、NV12 D3D11 texture 与 subresource index，不能只保留纹理 COM 引用而释放 sample 的 allocator lease。原生输出构造时要求已完成且所有别名不可变；各 GPU 消费者仍分别持有原 owner 到读取完成。平台依赖与 GPUI 表面能力核对见 [Windows GPU 研究](../../research/next-windows-gpu.md)。
 
 Windows 原生输出必须验证纹理所属 device 与 Decoder generation 固定的 device 具有相同 COM identity；同一 adapter 上的不同 device 仍属于不同命令与完成域，不得以 adapter LUID 相同替代该检查。拒绝错误 device 的 sample 不消费或修改生产者资源。
+
+Decoder 工作者接收可跨线程的 factory，在工作线程内创建、调用、重建与释放平台 Decoder。Decoder 接口不要求 Send，不用 unsafe Send 绕过 COM apartment 的同线程清理责任；仅显式测试注入的合成 Decoder 需要 Send。源图像/context 的可跨线程资源寿命与 codec runtime 的线程归属分别约束。

@@ -49,9 +49,6 @@ pub struct MfH264Decoder {
     _runtime: MfRuntimeGuard,
 }
 
-// IMFTransform is not automatically Send in windows-rs; receiver owns the decoder on one thread.
-unsafe impl Send for MfH264Decoder {}
-
 struct MfRuntimeGuard {
     owns_com_apartment: bool,
 }

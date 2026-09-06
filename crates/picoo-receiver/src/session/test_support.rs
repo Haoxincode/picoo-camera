@@ -13,7 +13,7 @@ use crate::ReceiverError;
 
 impl ReceiverSession {
     /// Inject a synthetic decoder without adding fallback behavior to builds.
-    pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder>) {
+    pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder + Send>) {
         self.decoder_worker = DecoderWorker::with_decoder(decoder);
     }
 

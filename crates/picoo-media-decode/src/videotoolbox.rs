@@ -44,10 +44,6 @@ pub struct VideoToolboxDecoder {
     pps: Vec<u8>,
 }
 
-// The Receiver owns a decoder on one thread. VideoToolbox may invoke the
-// output callback on an internal thread; OutputContext is synchronized.
-unsafe impl Send for VideoToolboxDecoder {}
-
 impl VideoToolboxDecoder {
     pub fn new() -> Self {
         Self {

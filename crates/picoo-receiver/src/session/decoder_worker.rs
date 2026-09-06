@@ -308,7 +308,7 @@ impl DecoderWorker {
     }
 
     #[cfg(any(test, feature = "loopback-diagnostics"))]
-    pub(super) fn with_decoder(decoder: Box<dyn AccessUnitDecoder>) -> Self {
+    pub(super) fn with_decoder(decoder: Box<dyn AccessUnitDecoder + Send>) -> Self {
         Self::with_decoder_factory(
             move || decoder,
             picoo_transport::TransportEventWake::default(),
@@ -494,6 +494,76 @@ mod tests {
             kind,
             data: Bytes::from_static(b"au"),
         }
+    }
+
+    #[test]
+    fn thread_affine_decoder_is_created_used_and_dropped_on_its_worker() {
+        struct AffineDecoder {
+            owner: thread::ThreadId,
+            // Intentionally !Send: represents apartment-bound native state.
+            _affinity: std::rc::Rc<()>,
+            events: Sender<(&'static str, thread::ThreadId)>,
+        }
+        impl AccessUnitDecoder for AffineDecoder {
+            fn decode_access_unit(
+                &mut self,
+                _: &[u8],
+                _: Option<&StreamConfig>,
+            ) -> Result<DecodeOutcome, DecodeError> {
+                assert_eq!(thread::current().id(), self.owner);
+                self.events.send(("decode", self.owner)).unwrap();
+                Ok(DecodeOutcome {
+                    frame: None,
+                    refresh_accepted: false,
+                })
+            }
+            fn reset(&mut self) -> Result<(), DecodeError> {
+                assert_eq!(thread::current().id(), self.owner);
+                self.events.send(("reset", self.owner)).unwrap();
+                Ok(())
+            }
+        }
+        impl Drop for AffineDecoder {
+            fn drop(&mut self) {
+                assert_eq!(thread::current().id(), self.owner);
+                self.events.send(("drop", self.owner)).unwrap();
+            }
+        }
+        let caller = thread::current().id();
+        let (events, received) = mpsc::channel();
+        let worker = DecoderWorker::with_decoder_factory(
+            move || {
+                let owner = thread::current().id();
+                events.send(("create", owner)).unwrap();
+                Box::new(AffineDecoder {
+                    owner,
+                    _affinity: std::rc::Rc::new(()),
+                    events,
+                })
+            },
+            picoo_transport::TransportEventWake::default(),
+        );
+        let (event, owner) = received.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(event, "create");
+        assert_ne!(owner, caller);
+        assert_eq!(
+            worker.submit(unit(1, FrameKind::Key), None, 0),
+            DecodeSubmitOutcome::Queued
+        );
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(3)).unwrap(),
+            ("decode", owner)
+        );
+        worker.reset();
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(3)).unwrap(),
+            ("reset", owner)
+        );
+        drop(worker);
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(3)).unwrap(),
+            ("drop", owner)
+        );
     }
 
     #[test]

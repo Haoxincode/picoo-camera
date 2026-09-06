@@ -362,3 +362,12 @@ CI 34039825921 的 Windows 原生测试步骤已通过，包含 D3D11 NV12 sampl
 REQ-PICOO-FRAME-016 的原生图像构造现在要求 Decoder 固定 device，并使用官方 ID3D11DeviceChild::GetDevice 与 IUnknown COM identity 检查纹理来源。相同 adapter 的不同 device 不共享完成域，不能接受。复用 windows-rs 已有 API，无新增依赖。实际双 WARP device 回归同时检查错误设备拒绝与原 sample 可继续被正确设备接收；Windows 目标 all-targets Clippy 通过，运行验证待本次 CI。
 
 CI 34039825921 已全部成功，包括 Windows release、MSI、smoke 和首次依赖缓存保存。此前 context 正向合同及本次设备身份检查将由下一轮 Windows CI 执行。当前 ADB 列表为空，无新手机验收证据。
+
+
+## Decoder runtime 的线程归属
+
+REQ-PICOO-MEDIA-018 移除 AccessUnitDecoder 的 Send 超 trait，以及 MF/VideoToolbox 为满足它添加的 unsafe Send。生产 Worker 已经跨线程传递 factory 并在线程内构造、重建与释放 Decoder；接口现在允许平台线程绑定类型，MF 的 CoInitializeEx/CoUninitialize 不可随 Decoder 跨线程转移。仅合成测试 Decoder 的注入入口要求 Send，不增加桥接线程或通用 runtime。
+
+新增刻意含 Rc（不可 Send）的 Decoder 回归，实际检查 create/decode/reset/drop 的 ThreadId 一致且不同于调用方。当前本机 Receiver 104 passed/2 ignored、Decoder 16 passed；Windows windows-mf 库 Clippy 通过。包含测试依赖的 Windows 目标检查受本机 ring C 编译环境缺失限制，交由 Windows CI 验证，不记作平台通过。Mac 测试复制到临时目录执行，与已有 xtask Apple native_tests 的隔离目录方式一致。
+
+CI 34041534379 的 Windows 原生测试已通过，包含 MF manager 正向设备身份、panic 后锁释放及双 device sample 拒绝；发布构建仍在运行。整体 Next 40 项需求未完成，Windows 原生 Decoder/预览生产替换和 GPU completion 等仍待实现。
