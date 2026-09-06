@@ -208,3 +208,12 @@ Mac 完整套件通过：Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、
 ## MF 输出类型重新协商
 
 b5702aa 的 Windows CI 在真实 High/BT.709 小样本上返回 `MF_E_TRANSFORM_STREAM_CHANGE`，此前 Decoder 将其当成普通错误。按微软 [Handling Stream Changes](https://learn.microsoft.com/en-us/windows/win32/medfound/handling-stream-changes) 的原生契约，使用当前 windows 0.62.2 的 GetOutputAvailableType / SetOutputType，接受匹配几何的 NV12 输出后重新 ProcessOutput。保留 MFT 已收到的 AU，不 flush、不重送输入；32 个候选及一次输出重试保证有界。此修正仍需 Windows CI 验证，不代表 D3D11 原生帧、显卡或 GpuNative VCam 验收。
+
+
+## Sender 配置失败不产生控制记录
+
+REQ-PICOO-PROTOCOL-019 将 StreamConfigParams 的记录构造改为 Result，删除解析失败后的空记录与 Unspecified/0 占位身份。发送配置失败返回专门的 CodecConfiguration 错误；匹配 IDR 也不能提交失败配置、推进 epoch、发送控制或占用控制消息序号。有效参数替换后，同一待处理事务仍可完成。完整原生回调的参数校验发生在 generation 绑定和源配置暂存之前。
+
+Sender 71 项测试通过；准入回归按职责位于 `session/tests/configuration_admission.rs`，与原有 epoch 事务测试分开。成功事务与重连测试使用真实 High 参数，不在产品代码保留空参数的测试例外。Android 全 workspace 测试、原生构建及 macOS 最终回归另记录。
+
+Sender 严格准入最终验证：Mac 完整套件通过（Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70），Sender 71 项通过，Sender/Receiver all-targets Clippy 与 Android 完整构建通过。

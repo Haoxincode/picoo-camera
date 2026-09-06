@@ -28,7 +28,7 @@ fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
                 fps: 30,
                 bitrate_bps: 8_000_000,
                 stream_epoch: epoch,
-                ..Default::default()
+                ..super::source_configuration(1080)
             }),
         })
         .expect("complete event");
@@ -57,7 +57,7 @@ fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
                 fps: 30,
                 bitrate_bps: 7_000_000,
                 stream_epoch: epoch,
-                ..Default::default()
+                ..super::source_configuration(1080)
             }),
         })
         .expect("committed generation config update");
@@ -87,7 +87,7 @@ fn rejected_complete_encoder_event_does_not_mutate_staged_configuration() {
                 fps: 30,
                 bitrate_bps: 4_000_000,
                 stream_epoch: stale_epoch,
-                ..Default::default()
+                ..super::source_configuration(720)
             }),
         })
         .expect("rejected facts are a typed outcome");
@@ -110,7 +110,7 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     let committed_epoch = session.current_stream_epoch();
     assert!(session.report_encoder_started(0, 10, committed_epoch, 1080));
@@ -139,7 +139,7 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     session
         .ingest_encoder_access_unit(super::native_au(
@@ -193,7 +193,7 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
@@ -231,7 +231,7 @@ fn committed_encoder_started_fact_is_idempotent() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 10, epoch, 1080));
     assert!(session.report_encoder_started(0, 10, epoch, 1080));
@@ -292,8 +292,7 @@ fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        sps: vec![1, 2, 3],
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
@@ -307,7 +306,7 @@ fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
         .expect("matching IDR");
     let config = session.pending_stream_config().expect("staged config");
     assert_eq!(config.stream_epoch, pending);
-    assert_eq!(config.sps, vec![1, 2, 3]);
+    assert_eq!(config.sps, super::source_configuration(720).sps);
     assert!(!session.media_blocked_for_stream_config);
 }
 
@@ -325,7 +324,7 @@ fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
@@ -404,7 +403,7 @@ fn matching_first_idr_commits_generation_and_enters_packetization() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 10, INITIAL_STREAM_EPOCH, 1080));
 
@@ -414,7 +413,7 @@ fn matching_first_idr_commits_generation_and_enters_packetization() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert!(session.report_encoder_started(transaction_id, 11, candidate_epoch, 720));
     assert!(matches!(
@@ -462,7 +461,7 @@ fn rejected_commit_idr_does_not_commit_encoder_transaction() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 10, INITIAL_STREAM_EPOCH, 1080));
 
@@ -471,7 +470,7 @@ fn rejected_commit_idr_does_not_commit_encoder_transaction() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert!(session.report_encoder_started(transaction_id, 11, candidate_epoch, 720));
 
@@ -514,7 +513,7 @@ fn encoder_failure_policy_is_owned_by_rust() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 20, INITIAL_STREAM_EPOCH, 1080));
 
@@ -544,7 +543,7 @@ fn encoder_failure_policy_is_owned_by_rust() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(
         recovery.id,
@@ -582,7 +581,7 @@ fn committed_encoder_runtime_failure_requests_rust_owned_recovery() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert!(session.report_encoder_started(0, 20, INITIAL_STREAM_EPOCH, 720));
 
@@ -616,7 +615,7 @@ fn recovery_failure_disconnects_instead_of_recursing() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 30, INITIAL_STREAM_EPOCH, 1080));
     let failed_epoch = session.begin_stream_reconfiguration(720);

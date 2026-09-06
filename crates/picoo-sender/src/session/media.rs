@@ -268,6 +268,10 @@ impl<T: PicooTransport> SenderSession<T> {
             }
         }
 
+        if let Some(config) = &stream_config {
+            config.to_proto().map_err(SenderError::CodecConfiguration)?;
+        }
+
         let mut config_staged = false;
         // A complete first callback can atomically establish its own shape;
         // all rejection checks still happen before pending config is mutated.

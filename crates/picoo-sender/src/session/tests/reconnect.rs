@@ -367,9 +367,7 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
         bitrate_bps: 6_000_000,
         stream_epoch: 2,
         mirrored: true,
-        sps: vec![0x67, 0x42],
-        pps: vec![0x68, 0xce],
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
 
     authenticate_trusted_receiver(&mut session, &receiver);
@@ -401,7 +399,8 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     assert_eq!(cfg.width, 1920);
     assert_eq!(cfg.height, 1080);
     assert!(cfg.mirrored);
-    assert_eq!(cfg.sps, vec![0x67, 0x42]);
-    assert_eq!(cfg.pps, vec![0x68, 0xce]);
+    let expected = super::source_configuration(1080);
+    assert_eq!(cfg.sps, expected.sps);
+    assert_eq!(cfg.pps, expected.pps);
     assert!(session.take_keyframe_request());
 }

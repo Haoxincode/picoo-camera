@@ -38,6 +38,7 @@ fn native_au(
 }
 
 mod abr;
+mod configuration_admission;
 mod epoch;
 mod pairing;
 mod reconnect;
@@ -290,5 +291,21 @@ impl PicooTransport for RejectConnectTransport {
 
     fn channel_binding(&self, _session: SessionId) -> Result<ChannelBinding, TransportError> {
         Err(TransportError::ChannelBindingUnavailable)
+    }
+}
+
+fn source_configuration(height: u32) -> StreamConfigParams {
+    let (width, fixture): (u32, &[u8]) = match height {
+        720 => (1280, picoo_testkit::AVC_1280X720_BT709_IDR),
+        1080 => (1920, picoo_testkit::AVC_1920X1080_BT709_IDR),
+        _ => panic!("unsupported test source height"),
+    };
+    let (sps, pps) = picoo_bitstream::avc::extract_sps_pps(fixture).unwrap();
+    StreamConfigParams {
+        width,
+        height,
+        sps,
+        pps,
+        ..Default::default()
     }
 }

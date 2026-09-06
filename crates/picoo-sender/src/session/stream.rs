@@ -226,7 +226,11 @@ impl<T: PicooTransport> SenderSession<T> {
         wire_config.stream_epoch = stream_epoch;
         self.send_control_payload(
             session,
-            ControlPayload::StreamConfig(wire_config.to_proto()),
+            ControlPayload::StreamConfig(
+                wire_config
+                    .to_proto()
+                    .map_err(SenderError::CodecConfiguration)?,
+            ),
         )
     }
 
