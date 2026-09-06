@@ -95,3 +95,5 @@ VideoSpsFacts/VideoColorFacts 表达与 codec 无关的源几何和色彩事实�
 Apple Decoder 以完整 CodecConfiguration（codec 与所有原始参数集）创建 CoreMedia 格式描述；同一配置复用 session，变更配置先建立可用的新 session，再替换旧 session。参数或原生创建失败不销毁仍有效的旧 session。AVC/HEVC 共用 token 与原生 NV12 输出边界，平台尚未实现的 codec 在提交前明确拒绝。
 
 VideoToolbox 的闭合 HEVC 解码合同仅接纳 IDR 随机访问序列；CRA、RASL、RADL 在原生会话变更前明确拒绝。只有具备 leading-picture 归属与独立验收的恢复策略才能扩展此边界，不把 CRA 自动视为 IDR。
+
+Windows Decoder 的 AVC/HEVC 配置切换通过新的同步原生 MFT 准备和提交，保留源 D3D11 设备身份；禁止在已工作的 transform 上试探另一 codec 后再回滚。HEVC 组件必须来自系统枚举并提供同设备原生 NV12 输出；组件缺失或 DXVA 准入失败使该配置不可用。同步驱动不接纳需要事件循环的异步 MFT。

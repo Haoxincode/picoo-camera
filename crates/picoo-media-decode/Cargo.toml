@@ -1,6 +1,6 @@
 [package]
 name = "picoo-media-decode"
-description = "H.264 access-unit decoder abstraction — ARCH-PICOO-MEDIA-001"
+description = "Native AVC/HEVC access-unit decoder — ARCH-PICOO-MEDIA-002"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

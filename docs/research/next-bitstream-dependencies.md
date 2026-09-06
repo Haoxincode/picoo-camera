@@ -70,3 +70,9 @@ REQ-PICOO-BITSTREAM-002 / NEXT-025：HEVC SPS 复用前，先修补既有 scuffl
 ### Scuffle HEVC SPS 边界修补范围
 
 继续复用 scuffle-h265 0.2.2 的 SpsNALUnit 标准解释。采用本地发布包补丁，在进入算术/分配前检查编码块、变换块、PCM 与 scaling-list 的标准范围，以 checked 算术检查 conformance/default display window，并限制 SCC palette/predictor 的标准容量。产品仍独立准入 Main 8-bit 4:2:0；不调用未经验证的派生尺寸方法，也不实现软件解码器。原 SPS 文件超过 800 行，按解析实现与测试边界分离上游测试模块，保留其内容和模块名。
+
+## Windows HEVC 原生适配（2026-09-07）
+
+REQ-PICOO-NEXT-003/009/024：核对 Microsoft Learn 的 [H.265 / HEVC Video Decoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-265---hevc-video-decoder) 与现有 windows 0.62.2 生成绑定。官方 MFT 通过 MFTEnumEx 枚举，MFVideoFormat_HEVC 接受含 start code、每 sample 一图像的 Annex B；HEVC_ES 可含部分/多图像，不适用产品 AU 合同。输出 NV12/P010；当前仅 Main 8-bit/NV12。最低 Windows 10；运行机必须实际安装可用 HEVC decoder，枚举失败应报告 codec 不可用，不能增加软件后备。系统组件无新增分发体积或第三方 codec 许可证依赖；windows crate 维持现有 MIT/Apache-2.0 与项目 Rust/Windows 基线。
+
+复用同步 IMFTransform 驱动、D3D11 manager 和原始 IMFSample lease，枚举仅接纳同步 MFT；异步硬件 MFT 需要独立事件驱动合同，不能塞入同步 ProcessInput/Output 循环。系统同步 MFT 是否真的使用 DXVA 由同一设备 HEVC Main/NV12 profile、尺寸准入及原生 DXGI 输出共同约束；枚举同步 MFT 本身不是硬件证据。官方说明 HEVC 类型不可动态互换，因此配置替换创建新 transform，并在绑定原设备、输入/输出协商成功后提交替换。软件诊断接口仅供测试，不能成为生产 fallback。吞吐和 Windows 实机支持仍须实测，不以文档支持替代验收。

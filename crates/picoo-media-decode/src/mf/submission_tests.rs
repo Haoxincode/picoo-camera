@@ -54,7 +54,7 @@ fn token(frame_id: u64, mut config: StreamConfig) -> Arc<DecodeToken> {
     })
 }
 
-fn finish(decoder: &mut MfH264Decoder) -> Vec<DecodedOutput> {
+fn finish(decoder: &mut MfVideoDecoder) -> Vec<DecodedOutput> {
     unsafe {
         decoder
             .transform
@@ -72,7 +72,7 @@ fn finish(decoder: &mut MfH264Decoder) -> Vec<DecodedOutput> {
 fn native_sample_times_resolve_original_tokens_even_with_duplicate_source_pts() {
     let (wire, config) = fixture();
     let tokens = [token(1, config.clone()), token(2, config)];
-    let mut decoder = MfH264Decoder::software_diagnostic().unwrap();
+    let mut decoder = MfVideoDecoder::software_diagnostic().unwrap();
     let mut frames = Vec::new();
     for token in &tokens {
         frames.extend(
@@ -108,7 +108,7 @@ fn reset_releases_pending_tokens_and_never_reuses_submission_times() {
     let (wire, config) = fixture();
     let first = token(1, config.clone());
     let retained = Arc::downgrade(&first);
-    let mut decoder = MfH264Decoder::software_diagnostic().unwrap();
+    let mut decoder = MfVideoDecoder::software_diagnostic().unwrap();
     drop(
         decoder
             .submit(DecodeSubmission {

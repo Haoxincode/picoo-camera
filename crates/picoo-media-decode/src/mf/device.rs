@@ -2,7 +2,8 @@
 use picoo_gpu::WindowsGpuContext;
 use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Device, ID3D11VideoDevice, D3D11_DECODER_PROFILE_H264_VLD_NOFGT, D3D11_VIDEO_DECODER_DESC,
+    ID3D11Device, ID3D11VideoDevice, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
+    D3D11_DECODER_PROFILE_HEVC_VLD_MAIN, D3D11_VIDEO_DECODER_DESC,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 use windows::Win32::Graphics::Dxgi::{
@@ -97,6 +98,7 @@ fn create_manager(device: &ID3D11Device) -> Result<IMFDXGIDeviceManager, DecodeE
 /// Driver profile/format/size evidence complements (never replaces) MFT type admission.
 pub(super) fn validate_configuration(
     gpu: &WindowsGpuContext,
+    codec: picoo_bitstream::Codec,
     geometry: &picoo_bitstream::VideoSpsFacts,
     fps: u32,
 ) -> Result<(), DecodeError> {
@@ -109,13 +111,16 @@ pub(super) fn validate_configuration(
     }
     unsafe {
         let video: ID3D11VideoDevice = gpu.device().cast().map_err(platform)?;
-        let profile = D3D11_DECODER_PROFILE_H264_VLD_NOFGT;
+        let profile = match codec {
+            picoo_bitstream::Codec::Avc => D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
+            picoo_bitstream::Codec::Hevc => D3D11_DECODER_PROFILE_HEVC_VLD_MAIN,
+        };
         if !video
             .CheckVideoDecoderFormat(&profile, DXGI_FORMAT_NV12)
             .map_err(platform)?
             .as_bool()
         {
-            return Err(platform("adapter cannot decode H.264 to NV12"));
+            return Err(platform("adapter cannot decode selected codec to NV12"));
         }
         let description = D3D11_VIDEO_DECODER_DESC {
             Guid: profile,

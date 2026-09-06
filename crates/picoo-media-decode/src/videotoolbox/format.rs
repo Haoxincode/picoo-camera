@@ -5,7 +5,7 @@ use objc2_core_media::{
     CMFormatDescription, CMVideoFormatDescriptionCreateFromH264ParameterSets,
     CMVideoFormatDescriptionCreateFromHEVCParameterSets,
 };
-use picoo_bitstream::{AccessUnit, VideoSpsFacts};
+use picoo_bitstream::AccessUnit;
 use picoo_protocol::control::StreamConfig;
 use std::ptr::{self, NonNull};
 
@@ -31,24 +31,6 @@ pub(super) fn configuration(
     };
     CodecConfiguration::from_avc_parameter_sets(find(7)?, find(8)?)
         .map_err(|error| DecodeError::Platform(error.to_string()))
-}
-
-pub(super) fn source_facts(
-    configuration: &CodecConfiguration,
-) -> Result<VideoSpsFacts, DecodeError> {
-    let parse = match configuration.codec() {
-        Codec::Avc => VideoSpsFacts::parse_avc,
-        Codec::Hevc => VideoSpsFacts::parse_hevc,
-    };
-    let mut facts = None;
-    for sps in configuration.sps() {
-        let current = parse(sps).map_err(|error| DecodeError::Platform(error.to_string()))?;
-        if facts.is_some_and(|previous| previous != current) {
-            return Err(DecodeError::ConfigurationMismatch);
-        }
-        facts = Some(current);
-    }
-    facts.ok_or(DecodeError::NotInitialized)
 }
 
 pub(super) fn create(

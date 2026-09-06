@@ -50,6 +50,25 @@ pub(crate) fn configuration(
     Ok(configuration)
 }
 
+#[cfg(any(target_os = "macos", all(windows, feature = "windows-mf")))]
+pub(crate) fn source_facts(
+    configuration: &picoo_bitstream::CodecConfiguration,
+) -> Result<picoo_bitstream::VideoSpsFacts, DecodeError> {
+    let parse = match configuration.codec() {
+        Codec::Avc => picoo_bitstream::VideoSpsFacts::parse_avc,
+        Codec::Hevc => picoo_bitstream::VideoSpsFacts::parse_hevc,
+    };
+    let mut facts = None;
+    for sps in configuration.sps() {
+        let current = parse(sps).map_err(|error| DecodeError::Platform(error.to_string()))?;
+        if facts.is_some_and(|previous| previous != current) {
+            return Err(DecodeError::ConfigurationMismatch);
+        }
+        facts = Some(current);
+    }
+    facts.ok_or(DecodeError::NotInitialized)
+}
+
 /// Native decoders that accept an Annex B sequence header receive every declared set.
 #[cfg(any(
     windows,

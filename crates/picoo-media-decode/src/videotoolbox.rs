@@ -152,7 +152,7 @@ impl VideoToolboxDecoder {
             PictureKind::RandomAccess(RandomAccessPoint::AvcIdr | RandomAccessPoint::HevcIdr)
         );
         let configuration = format::configuration(stream_config, &picture)?;
-        let facts = format::source_facts(&configuration)?;
+        let facts = crate::configured_picture::source_facts(&configuration)?;
         crate::native_format::validate_source(&facts)?;
         if stream_config.is_some_and(|config| {
             (config.width, config.height) != (facts.visible_width, facts.visible_height)

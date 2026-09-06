@@ -566,3 +566,9 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - REQ-PICOO-NEXT-003/011/025：配置解析按实际 codec，VideoToolbox 使用原生 HEVC 参数集 API；完整 record 决定会话复用。新原生格式及会话创建成功后才释放旧会话。MF/OpenH264 仍显式拒绝非 AVC，避免公共解析扩展隐式开放未实现后端。
 - M4 本地 Decoder 20 项测试通过：真实 HEVC Main→原生 IOSurface NV12、AVC/HEVC 往返切换及旧图像存活、相同配置复用、冲突配置不改变会话、原始 token 保留。CRA/RASL/RADL 明确拒绝，尚未开放相关恢复合同。
 - 这仅完成 Apple 解码适配器的闭合 IDR 子集。端到端 offers/config 事务、Windows HEVC、移动编码配置、双 VCam、两类录像及全平台验收仍未完成。
+
+### 2026-09-07：Windows HEVC 原生配置准备
+
+- REQ-PICOO-NEXT-003/009/024：MF Decoder 按 codec 创建系统同步 MFT，HEVC 使用官方枚举和 Main profile；D3D11 准入按 AVC/HEVC profile，公共源事实验证覆盖全部 SPS。配置变更先在同设备新 transform 完成协商，成功后才替换。类型改名 MfVideoDecoder，无旧名称别名；原生类型协商、工厂和测试按职责分离。
+- macOS 上 Windows Decoder library 的 GNU target check/Clippy 通过；未跨编译完整 Receiver。尝试 all-targets 检查被测试依赖 ring 所需的 MinGW C 编译器缺失阻断，不能记录为通过，Windows 测试交由原生 CI。
+- 补充配置几何不匹配在 HEVC 原生激活前拒绝的常规测试。真实系统 HEVC 解码诊断测试明确标记 requires installed Windows system HEVC decoder，默认忽略；安装该组件的 Windows 主机必须显式执行，不以跳过代表成功。尚无 Windows HEVC 原生解码/硬件性能验收证据。

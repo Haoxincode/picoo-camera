@@ -106,7 +106,7 @@ fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
 
 #[cfg(all(windows, feature = "windows-mf"))]
 fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
-    match mf::MfH264Decoder::new() {
+    match mf::MfVideoDecoder::new() {
         Ok(decoder) => {
             tracing::info!("Using Media Foundation H.264 decoder");
             Box::new(decoder)
@@ -158,7 +158,7 @@ pub fn create_test_decoder() -> Result<Box<dyn AccessUnitDecoder>, DecodeError> 
 /// Explicit Windows software fixture; never selected by the product factory.
 #[cfg(all(windows, feature = "windows-mf", any(test, feature = "test-codecs")))]
 pub fn create_test_decoder() -> Result<Box<dyn AccessUnitDecoder>, DecodeError> {
-    Ok(Box::new(mf::MfH264Decoder::software_diagnostic()?))
+    Ok(Box::new(mf::MfVideoDecoder::software_diagnostic()?))
 }
 
 pub fn now_timestamp_us() -> u64 {
