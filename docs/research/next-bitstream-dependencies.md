@@ -47,3 +47,18 @@ M4 原生 1080p AVC fixture 的编码尺寸为 1920×1088、可见尺寸为 1920
 ## 已提交参数集身份
 
 REQ-PICOO-BITSTREAM-005 不新增标准解析器或依赖。沿用 Scuffle 已解析的参数集合和现有 AccessUnit 的显式 codec/header 解释；Picoo 只比较带内 VPS/SPS/PPS 与已提交集合的完整字节身份。这是配置事务的产品约束，不尝试解释 slice 引用或替代平台 HEVC Decoder 准入。
+
+## HEVC SPS 候选补充审查（2026-09-07）
+
+为 NEXT-003/025 原生 HEVC 接入核对实际公开 API，当前不新增依赖：
+
+| 候选 | 版本、维护、许可与基线 | API、体积和适用性 |
+| --- | --- | --- |
+| hevc_parser | 0.6.12，2026-08-29 发布；仓库未归档、当日 push；MIT，Rust 1.85 | SPSNAL::parse 接受 bitvec_helpers 的 BsIoVecReader；纯 Rust，源码包 18,178 bytes。nb_st_rps 直接用于 resize_with，未在分配前限制至标准上限；编码块移位与尺寸算术未检查。不能直接用于网络配置准入。默认不启用 hevc_io，但仍带 anyhow、nom、bitvec_helpers。未做跨目标构建或性能验收。 |
+| revelo-parsers-video | 0.5.5，2026-07-18 发布；仓库未归档，2026-08-29 push；BSD-2-Clause，Rust 1.88 | parse_hevc_sps 返回媒体分析摘要；纯 Rust，源码包 55,324 bytes，依赖 revelo-core/util。VUI 解析失败使用默认摘要，不满足失败明确拒绝和源格式事实契约；不引入。未做跨目标构建或性能验收。 |
+| 现有 scuffle-h265 | 0.2.2，许可/平台基线同上 | 公开 SpsNALUnit::parse 提供完整 SPS/VUI 结构，但编码块尺寸加减存在未检查路径；SCC palette initializer 依据输入计数分配，未限制标准容量。现有 hvcC 解析使用不变；扩展到 SPS 前必须解决这些边界，不能仅检查输入总长度或事后校验结构。 |
+| Apple CoreMedia | 系统 SDK，macOS/iOS 原生，不新增第三方或软件 codec | CMVideoFormatDescriptionCreateFromHEVCParameterSets 从 raw VPS/SPS/PPS 构建格式描述。真实八组合 probe 成功；CMVideoFormatDescriptionGetDimensions 报告的可能是可见尺寸（1080p AVC 报告 1080），不能替代原始 coded size。适合原生 session 格式创建，不足以取代共享位流事实。 |
+
+来源：<https://crates.io/crates/hevc_parser/0.6.12>、<https://github.com/quietvoid/hevc_parser>、<https://crates.io/crates/revelo-parsers-video/0.5.5>、<https://github.com/vbasky/revelo>。上述源码判断来自这些精确发布包，不表示上游未来版本也有同一限制。
+
+执行 `swift -swift-version 6 scripts/probes/apple_native_media.swift`，在 M4/macOS 26.6.2 上重新从 Encoder 的原始参数集创建 AVC/HEVC 格式描述，未传入补充几何或颜色。720p/1080p × 30/60 的八组合成功，随后各三帧硬件解码与原生 Metal blit 完成；结果保存在 [原生参数描述证据](../../verification/native-media/apple-parameter-description.json)。生成器未请求显式 BT.709，因此返回缺失颜色字段属于未知，不作为 SDR 色彩准入证据，也不是生产 Decoder、端到端或持续帧率验收。

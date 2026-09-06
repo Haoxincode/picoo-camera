@@ -524,3 +524,7 @@ REQ-PICOO-BITSTREAM-005：CodecConfiguration 对已解析 AU 校验 codec 和逐
 硬件 AVC/HEVC fixture 新增两项回归，逐个参数覆盖原值接受、改变 payload 后拒绝、跨 codec 拒绝和拒绝后配置保持不变。Mac Decoder 16 项测试全部通过，包含真实 VideoToolbox 及拒绝冲突后旧 session 保持有效。bitstream/Decoder all-targets Clippy、Windows MF 库 Clippy、文档检查通过。完整 HEVC 原生解码与正式配置事务仍未完成。
 
 28e2adf 的 CI 34055695761 已通过 Windows 原生测试步骤与 macOS 原生测试；Android、iOS、Rust/docs job 成功，Windows/macOS 最终产物仍在构建。该运行不包含随后提交的裁剪协商修复及共同参数校验。
+
+CI 34055695761（28e2adf）全部成功。Windows Decoder 19 项、桌面 70 项、GPUI shader 1 项和 Receiver AVCC 1 项均执行通过；日志明确包含 native aperture 与缺失裁剪/色彩拒绝两项。该证据不覆盖真实显卡 Video Processor 画质、VCam 系统交接或四组合端到端。
+
+HEVC SPS 候选与 CoreMedia API 的实证见 next-bitstream-dependencies 研究：新增 raw parameter description probe 从原始 VPS/SPS/PPS 重建平台格式，不补充尺寸或颜色，M4 八种 codec/size/fps 组合执行成功。CoreMedia 返回的尺寸不能替代原始 coded size，继续保留共享位流事实要求；尚未将未经有界审查的 SPS 解析器接入产品。

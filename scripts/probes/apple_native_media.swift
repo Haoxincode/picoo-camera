@@ -143,6 +143,64 @@ func verifyCpuContainer(_ image: CVPixelBuffer, width: Int, height: Int) throws 
     try check(CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: target, formatDescription: format!, sampleTiming: &timing, sampleBufferOut: &sample), "CPU container sample")
     try require(sample != nil && CVPixelBufferGetIOSurface(target) != nil, "CPU native container")
 }
+// REQ-PICOO-NEXT-025: test the official raw-parameter API independently of
+// the encoder's retained description. No manually supplied geometry or color.
+func parameterDescription(_ source: CMVideoFormatDescription, codec: CMVideoCodecType) throws -> [String: Any] {
+    var count = 0
+    var headerLength: Int32 = 0
+    func parameter(_ index: Int, pointer: inout UnsafePointer<UInt8>?, size: inout Int) throws {
+        let status: OSStatus
+        if codec == kCMVideoCodecType_HEVC {
+            status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(source, parameterSetIndex: index,
+                parameterSetPointerOut: &pointer, parameterSetSizeOut: &size,
+                parameterSetCountOut: &count, nalUnitHeaderLengthOut: &headerLength)
+        } else {
+            status = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(source, parameterSetIndex: index,
+                parameterSetPointerOut: &pointer, parameterSetSizeOut: &size,
+                parameterSetCountOut: &count, nalUnitHeaderLengthOut: &headerLength)
+        }
+        try check(status, "get raw parameter")
+    }
+    var first: UnsafePointer<UInt8>?
+    var firstSize = 0
+    try parameter(0, pointer: &first, size: &firstSize)
+    try require(count > 0 && count <= 64 && headerLength == 4, "parameter bounds")
+    var pointers: [UnsafePointer<UInt8>] = []
+    var sizes: [Int] = []
+    for index in 0..<count {
+        var pointer: UnsafePointer<UInt8>?
+        var size = 0
+        try parameter(index, pointer: &pointer, size: &size)
+        guard let pointer, size > 0 && size <= 65536 else { throw ProbeError("invalid raw parameter") }
+        pointers.append(pointer); sizes.append(size)
+    }
+    var reconstructed: CMFormatDescription?
+    let status: OSStatus = pointers.withUnsafeBufferPointer { pointers in
+        sizes.withUnsafeBufferPointer { sizes in
+            if codec == kCMVideoCodecType_HEVC {
+                return CMVideoFormatDescriptionCreateFromHEVCParameterSets(allocator: nil,
+                    parameterSetCount: pointers.count, parameterSetPointers: pointers.baseAddress!,
+                    parameterSetSizes: sizes.baseAddress!, nalUnitHeaderLength: 4,
+                    extensions: nil, formatDescriptionOut: &reconstructed)
+            }
+            return CMVideoFormatDescriptionCreateFromH264ParameterSets(allocator: nil,
+                parameterSetCount: pointers.count, parameterSetPointers: pointers.baseAddress!,
+                parameterSetSizes: sizes.baseAddress!, nalUnitHeaderLength: 4,
+                formatDescriptionOut: &reconstructed)
+        }
+    }
+    try check(status, "reconstruct raw parameter description")
+    guard let reconstructed else { throw ProbeError("missing reconstructed description") }
+    let dimensions = CMVideoFormatDescriptionGetDimensions(reconstructed)
+    let clean = CMVideoFormatDescriptionGetCleanAperture(reconstructed, originIsAtTopLeft: true)
+    let original = CMVideoFormatDescriptionGetDimensions(source)
+    try require(dimensions.width == original.width && dimensions.height == original.height,
+                "raw parameters changed format dimensions")
+    return ["width": dimensions.width, "height": dimensions.height,
+            "clean_x": clean.origin.x, "clean_y": clean.origin.y,
+            "clean_width": clean.width, "clean_height": clean.height,
+            "extensions": String(describing: CMFormatDescriptionGetExtensions(reconstructed))]
+}
 @MainActor
 func runProbe(codec: CMVideoCodecType, name: String, width: Int, height: Int, fps: Int, device: MTLDevice) throws -> [String: Any] {
     let encoded = SampleResults()
@@ -186,6 +244,7 @@ func runProbe(codec: CMVideoCodecType, name: String, width: Int, height: Int, fp
         try record.write(to: directory.appendingPathComponent("\(name)-720p-config.bin"))
         try au.write(to: directory.appendingPathComponent("\(name)-720p-idr.bin"))
     }
+    let rawDescription = try parameterDescription(format, codec: codec)
     let decoded = SampleResults()
     var decoder: VTDecompressionSession?
     var callback = VTDecompressionOutputCallbackRecord(decompressionOutputCallback: decodeCallback, decompressionOutputRefCon: Unmanaged.passUnretained(decoded).toOpaque())
@@ -205,6 +264,7 @@ func runProbe(codec: CMVideoCodecType, name: String, width: Int, height: Int, fp
     try verifyCpuContainer(images[0], width: width, height: height)
     return ["codec": name, "width": width, "height": height, "requested_fps": fps,
             "encoded_samples": samples.count, "decoded_images": images.count,
+            "raw_parameter_description": rawDescription,
             "hardware_encoder": true, "hardware_decoder": true, "iosurface_metal_planes": true,
             "gpu_blit_completed": true, "cpu_container_plane_copy": true,
             "cmio_delivery": "not_tested", "steady_state_fps": "not_measured"]
