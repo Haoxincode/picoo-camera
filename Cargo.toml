@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor/gpui-apple", "vendor/gpui", "vendor/gpui-windows", "vendor/scuffle-expgolomb"]
+exclude = ["vendor/gpui-apple", "vendor/gpui", "vendor/gpui-windows", "vendor/scuffle-expgolomb", "vendor/scuffle-h265"]
 members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
@@ -90,3 +90,4 @@ gpui-pre-windows = { path = "vendor/gpui-windows" }
 gpui-pre-apple = { path = "vendor/gpui-apple" }
 
 scuffle-expgolomb = { path = "vendor/scuffle-expgolomb" }
+scuffle-h265 = { path = "vendor/scuffle-h265" }

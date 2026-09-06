@@ -1,8 +1,8 @@
 //! Shared admitted native AVC presentation; platforms verify their actual output.
 use crate::DecodeError;
-use picoo_bitstream::AvcSpsFacts;
+use picoo_bitstream::VideoSpsFacts;
 
-pub(crate) fn validate_source(facts: &AvcSpsFacts) -> Result<(), DecodeError> {
+pub(crate) fn validate_source(facts: &VideoSpsFacts) -> Result<(), DecodeError> {
     if facts.pixel_aspect_ratio.is_some_and(|(w, h)| w != h)
         || facts.chroma_location > 1
         || facts.color.is_some_and(|color| {

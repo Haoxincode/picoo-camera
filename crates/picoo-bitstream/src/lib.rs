@@ -3,7 +3,9 @@
 
 pub mod avc;
 mod avc_facts;
-pub use avc_facts::{AvcColorFacts, AvcSpsFacts};
+mod hevc_facts;
+mod sps_facts;
+pub use sps_facts::{VideoColorFacts, VideoSpsFacts};
 
 mod access_unit;
 mod configuration;

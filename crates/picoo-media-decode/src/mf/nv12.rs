@@ -2,13 +2,13 @@
 //! REQ-PICOO-MEDIA-032.
 
 use crate::DecodeError;
-use picoo_bitstream::AvcSpsFacts;
+use picoo_bitstream::VideoSpsFacts;
 
 pub(crate) fn copy_visible_nv12(
     source: &[u8],
     row_zero: usize,
     stride: usize,
-    facts: &AvcSpsFacts,
+    facts: &VideoSpsFacts,
 ) -> Result<Vec<u8>, DecodeError> {
     let invalid = || DecodeError::Platform("invalid native NV12 allocation/crop".into());
     let (coded_width, coded_height) = (facts.coded_width as usize, facts.coded_height as usize);
@@ -66,8 +66,8 @@ mod tests {
         y: u32,
         visible_width: u32,
         visible_height: u32,
-    ) -> AvcSpsFacts {
-        AvcSpsFacts {
+    ) -> VideoSpsFacts {
+        VideoSpsFacts {
             coded_width: width,
             coded_height: height,
             visible_x: x,
@@ -109,7 +109,7 @@ mod tests {
     fn native_fixture_has_distinct_coded_and_visible_geometry() {
         let (sps, _) =
             picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_64X64_BT709_IDR).unwrap();
-        let facts = AvcSpsFacts::parse(&sps).unwrap();
+        let facts = VideoSpsFacts::parse_avc(&sps).unwrap();
         assert_eq!((facts.coded_width, facts.coded_height), (192, 96));
         assert_eq!((facts.visible_width, facts.visible_height), (64, 64));
         let source = vec![17; 192 * 96 * 3 / 2];

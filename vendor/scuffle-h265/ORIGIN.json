@@ -1,0 +1,12 @@
+{
+  "crate": "scuffle-h265",
+  "version": "0.2.2",
+  "registry": "https://crates.io/crates/scuffle-h265/0.2.2",
+  "sha256": "b04b276c2f79846b7968abe6f87cedf951e06fd2a2b72d99c457e85d7e40f3fb",
+  "license": "MIT OR Apache-2.0",
+  "upstream_repository": "https://github.com/scufflecloud/scuffle",
+  "local_changes": [
+    "Validate SPS arithmetic and allocation bounds before use",
+    "Separate SPS tests by conceptual boundary"
+  ]
+}

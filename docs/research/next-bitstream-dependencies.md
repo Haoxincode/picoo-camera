@@ -66,3 +66,7 @@ REQ-PICOO-BITSTREAM-005 不新增标准解析器或依赖。沿用 Scuffle 已�
 ### Scuffle Exp-Golomb 边界修补
 
 REQ-PICOO-BITSTREAM-002 / NEXT-025：HEVC SPS 复用前，先修补既有 scuffle-expgolomb 0.1.5 的整数边界。发布实现按任意长度前导零逐位左移到 u64，未报告编码值溢出；signed 解码的最大正值分支也可能溢出。采用保持上游 API 的本地补丁，拒绝超出 u64/i64 的值，保留 u64 最大可表示值。此补丁不增加生产依赖，也不实现 Picoo 私有 Exp-Golomb codec；原发布包、校验和与局部差异保存在 vendor/scuffle-expgolomb。
+
+### Scuffle HEVC SPS 边界修补范围
+
+继续复用 scuffle-h265 0.2.2 的 SpsNALUnit 标准解释。采用本地发布包补丁，在进入算术/分配前检查编码块、变换块、PCM 与 scaling-list 的标准范围，以 checked 算术检查 conformance/default display window，并限制 SCC palette/predictor 的标准容量。产品仍独立准入 Main 8-bit 4:2:0；不调用未经验证的派生尺寸方法，也不实现软件解码器。原 SPS 文件超过 800 行，按解析实现与测试边界分离上游测试模块，保留其内容和模块名。

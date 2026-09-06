@@ -97,7 +97,7 @@ fn create_manager(device: &ID3D11Device) -> Result<IMFDXGIDeviceManager, DecodeE
 /// Driver profile/format/size evidence complements (never replaces) MFT type admission.
 pub(super) fn validate_configuration(
     gpu: &WindowsGpuContext,
-    geometry: &picoo_bitstream::AvcSpsFacts,
+    geometry: &picoo_bitstream::VideoSpsFacts,
     fps: u32,
 ) -> Result<(), DecodeError> {
     if !matches!(

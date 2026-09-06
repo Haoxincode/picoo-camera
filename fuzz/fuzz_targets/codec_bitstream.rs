@@ -1,9 +1,10 @@
 #![no_main]
 use libfuzzer_sys::fuzz_target;
-use picoo_bitstream::{AccessUnit, AvcSpsFacts, Codec, CodecConfiguration, NalFormat, NalLengthSize};
+use picoo_bitstream::{AccessUnit, VideoSpsFacts, Codec, CodecConfiguration, NalFormat, NalLengthSize};
 
 fuzz_target!(|data: &[u8]| {
-    let _ = AvcSpsFacts::parse(data);
+    let _ = VideoSpsFacts::parse_avc(data);
+    let _ = VideoSpsFacts::parse_hevc(data);
     if data.len() >= 2 {
         let split = usize::from(u16::from_be_bytes([data[0], data[1]])).min(data.len() - 2);
         let (sps, pps) = data[2..].split_at(split);

@@ -4,6 +4,21 @@
 
 产品原文：[Next v2](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)；目标：[ARCH-PICOO-MEDIA-002](../design-specs/architecture/0012-native-media-multi-output-boundary.md)；[稳定需求](../design-specs/requirements/next-media.md)。
 
+## 当前交付状态（2026-09-07）
+
+整体仍未过半，40 项 Next 总需求尚未逐项验收闭环。基础契约的 implemented/verified 不等于整个产品完成；下面的初次实施记录属于历史，不表示当前还未执行平台探针。
+
+| 交付范围 | 当前状态 | 主要剩余 |
+| --- | --- | --- |
+| 架构、无版本协议、旧路径删除 | 主要边界已调整 | 各功能替换时继续删除剩余旧实现 |
+| Windows/macOS 原生帧、GPU 预览、按需 CPU 输出 | 已接线，相关原生 CI 成功 | 真实显卡画质、全局预算、完整多 sink 验收 |
+| AVC/HEVC 与四种正式配置 | 部分完成，HEVC 位流事实在验证 | 原生 HEVC Decoder、配置事务、真实 1080p60 链路 |
+| 两平台 VCam 双后端 | 尚未完成 | GpuNative/CpuBridge、SampleClock、切换和真实系统 sample |
+| 两种录像 | 主要工作尚未完成 | 原码流/处理后录像、分段、失败语义与独立时间线 |
+| 四组合发布验收 | 尚未完成 | 真机矩阵、画质、延迟、热稳态、设备丢失及隐私期限 |
+
+## 初次实施记录（历史）
+
 ## 已落实
 
 - 原附件移入 product，保留提案内容和原始证据成熟度说明；旧 PRD/context 明确新旧目标优先级。
@@ -536,3 +551,12 @@ REQ-PICOO-BITSTREAM-002 / NEXT-025：在准确发布包副本上复现 scuffle-e
 修补后 bitstream 26 项、Mac Decoder 16 项共 42 项全部通过，包括真实 VideoToolbox 与 AVC/HEVC fixture；bitstream/Decoder all-targets Clippy 通过，文档检查零错误。该修补不等同 HEVC SPS 解析准入完成，SPS 块尺寸和扩展分配边界仍待处理。
 
 位流库 aarch64 Android、aarch64 iOS、x86_64 Windows MSVC 三目标 cargo check 通过；不是这些平台的完整产品二进制或硬件解码验收。
+
+
+## HEVC 源事实与 SPS 边界
+
+REQ-PICOO-BITSTREAM-006：AVC/HEVC 共用 VideoSpsFacts/VideoColorFacts，删除旧 AVC 专用类型名和调用。HEVC 通过 Scuffle SPS 获取 coded/visible/PAR/色彩/chroma，准入单层 progressive Main 8-bit 4:2:0、零重排；拒绝扩展与尾部垃圾。原生 Decoder 暂仍显式走 parse_avc，不把这次事实解析当作 HEVC 产品链路完成。
+
+Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix 引用/系数、SCC palette，使用 checked crop 并验证 RBSP 对齐零位。上游 SPS 测试按概念移入独立模块，源码文件均低于 800 行。46 项位流/Decoder 回归及上游 15 项回归全部通过；包含真实硬件 HEVC SPS、1920×1088→1080 crop、BT.709/PAR、截断、逐位变异和异常字段。相关 Mac all-targets Clippy、Android/iOS/Windows 位流库 check 通过；跨目标库检查不替代完整 Windows 产品 CI。
+
+第一次 60 秒 fuzz 在 512 MiB RSS 限额下退出；报告显示主要存活分配是 libFuzzer 覆盖率/语料统计。保存输入回放 1,000 次成功，36ms，无超限。随后保持 sanitizer 默认行为、将测试进程限额设为 1024 MiB，完成 6,466,923 次/61 秒，峰值 RSS 554 MiB，未崩溃。不能把首次运行记为通过，也不能把有限 fuzz 解释为全部解析安全证明。fuzz 独立 workspace 明确引用同一 Scuffle 补丁。

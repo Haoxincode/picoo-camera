@@ -1,7 +1,7 @@
 //! Explicit software-MF diagnostic readback followed by native fixture upload.
 //! REQ-PICOO-MEDIA-032: excluded from the production Decoder feature graph.
 use bytes::Bytes;
-use picoo_bitstream::AvcSpsFacts;
+use picoo_bitstream::VideoSpsFacts;
 use windows::core::Interface;
 use windows::Win32::Foundation::E_NOINTERFACE;
 use windows::Win32::Media::MediaFoundation::{
@@ -39,7 +39,7 @@ impl Drop for BufferLock<'_> {
 pub(super) unsafe fn sample_to_frame(
     sample: &IMFSample,
     transform: &IMFTransform,
-    facts: &AvcSpsFacts,
+    facts: &VideoSpsFacts,
 ) -> Result<DecodedFrame, DecodeError> {
     let media_type = transform.GetOutputCurrentType(0).map_err(platform)?;
     let size = media_type.GetUINT64(&MF_MT_FRAME_SIZE).map_err(platform)?;

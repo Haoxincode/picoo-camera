@@ -140,7 +140,7 @@ impl VideoToolboxDecoder {
             picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
         let (sps, pps) =
             parameter_sets(stream_config, &picture).ok_or(DecodeError::NotInitialized)?;
-        let facts = picoo_bitstream::AvcSpsFacts::parse(&sps)
+        let facts = picoo_bitstream::VideoSpsFacts::parse_avc(&sps)
             .map_err(|error| DecodeError::Platform(error.to_string()))?;
         crate::native_format::validate_source(&facts)?;
         if stream_config.is_some_and(|config| {

@@ -89,3 +89,5 @@ Windows 显示资源提供者采用 UI 的实际 device，持有每图像的导�
 MF 输出协商保留枚举类型的原生尺寸与 aperture；编码尺寸不是原生 allocation 必须相等的约束。完成图像的显示范围必须位于实际 allocation 内且与已提交源的可见尺寸一致；Decoder 已裁剪的图像只保留剩余裁剪，不能重复应用 SPS crop。
 
 带内参数集的已提交身份检查由 bitstream 配置对象拥有，统一覆盖 AVC SPS/PPS 与 HEVC VPS/SPS/PPS。平台 Decoder 调用这一检查后才修改原生状态；原生 codec 的支持范围仍须独立准入，不能把位流记录解析成功解释为硬件解码已经支持。
+
+VideoSpsFacts/VideoColorFacts 表达与 codec 无关的源几何和色彩事实；AVC 与 HEVC 的语法解析分别由成熟标准库承担。HEVC 源准入限制为单层 progressive Main 8-bit 4:2:0、零重排；扩展、未知非法 PAR、越界裁剪或尾部垃圾明确拒绝。解析器必须在执行算术或依据输入分配前限制取值，不能靠返回结构后的校验弥补解析时的溢出或无界分配。

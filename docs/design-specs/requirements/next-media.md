@@ -94,3 +94,7 @@
 | ID | 状态 | 来源 | 契约 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-BITSTREAM-005 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、022、027 | bitstream 按已提交配置的 codec 逐个校验 AU 中 VPS/SPS/PPS 的字节身份；孤立参数更新同样不能覆盖配置，拒绝不修改已提交记录 | 硬件 AVC/HEVC fixture 的匹配、逐参数冲突、跨 codec 拒绝及 AVC Decoder 既有配置回归；不替代完整 slice/SPS 准入与 HEVC 原生解码 |
+
+| ID | 状态 | 来源 | 契约 | 验收 |
+| --- | --- | --- | --- | --- |
+| REQ-PICOO-BITSTREAM-006 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | AVC/HEVC 共享 VideoSpsFacts/VideoColorFacts 源描述；HEVC 复用有界 Scuffle SPS 解析，准入单层 progressive Main 8-bit 4:2:0 与零重排，保留 coded/visible/PAR/色彩/chroma 事实；缺失不猜测，算术/分配前校验，拒绝尾部垃圾 | 硬件 HEVC fixture、逐字节截断、逐位变异、裁剪/块尺寸/预测 scaling matrix/palette/重排异常回归；fuzz 包使用同一补丁；平台 Decoder 与完整配置事务另验 |

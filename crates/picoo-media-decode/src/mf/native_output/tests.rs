@@ -1,7 +1,7 @@
 use super::*;
 
-fn facts() -> AvcSpsFacts {
-    AvcSpsFacts {
+fn facts() -> VideoSpsFacts {
+    VideoSpsFacts {
         coded_width: 192,
         coded_height: 96,
         visible_x: 0,

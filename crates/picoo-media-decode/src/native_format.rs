@@ -2,13 +2,13 @@
 //! REQ-PICOO-NEXT-011/025: metadata reads only; never map a source plane.
 use crate::{DecodeError, NativeDecodedFormat};
 use objc2_core_video::*;
-use picoo_bitstream::AvcSpsFacts;
+use picoo_bitstream::VideoSpsFacts;
 use picoo_frame_hub::{ChromaSiting, ImageSize, NativeImage, PixelAspectRatio, VisibleRect};
 
 pub(crate) use crate::source_format::validate_source;
 
 pub(crate) fn describe(
-    facts: &AvcSpsFacts,
+    facts: &VideoSpsFacts,
     image: &NativeImage,
 ) -> Result<NativeDecodedFormat, DecodeError> {
     let lease = image

@@ -7,32 +7,10 @@ use h264_reader::nal::{
     Nal, RefNal,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AvcColorFacts {
-    pub full_range: bool,
-    pub primaries: u8,
-    pub transfer: u8,
-    pub matrix: u8,
-}
+use crate::{VideoColorFacts, VideoSpsFacts};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AvcSpsFacts {
-    pub coded_width: u32,
-    pub coded_height: u32,
-    pub visible_x: u32,
-    pub visible_y: u32,
-    pub visible_width: u32,
-    pub visible_height: u32,
-    /// None means unspecified, never implicitly square.
-    pub pixel_aspect_ratio: Option<(u32, u32)>,
-    /// Unspecified CICP values remain unspecified (2).
-    pub color: Option<AvcColorFacts>,
-    /// AVC E.2.1 infers type 0 when chroma_loc_info_present_flag is absent.
-    pub chroma_location: u8,
-}
-
-impl AvcSpsFacts {
-    pub fn parse(nal: &[u8]) -> Result<Self, BitstreamError> {
+impl VideoSpsFacts {
+    pub fn parse_avc(nal: &[u8]) -> Result<Self, BitstreamError> {
         if nal.len() > 64 * 1024 {
             return Err(BitstreamError::Limit);
         }
@@ -116,7 +94,7 @@ impl AvcSpsFacts {
             pixel_aspect_ratio,
             color: vui
                 .and_then(|v| v.video_signal_type.as_ref())
-                .map(|c| AvcColorFacts {
+                .map(|c| VideoColorFacts {
                     full_range: c.video_full_range_flag,
                     primaries: c
                         .colour_description
@@ -171,14 +149,14 @@ mod tests {
             ),
         ] {
             let (sps, _) = crate::avc::extract_sps_pps(au).unwrap();
-            let facts = AvcSpsFacts::parse(&sps).unwrap();
+            let facts = VideoSpsFacts::parse_avc(&sps).unwrap();
             assert_eq!((facts.visible_width, facts.visible_height), (width, height));
             // VideoToolbox omits square SAR from the elementary SPS even when the
             // compression session explicitly commits it; wire/native metadata must carry it.
             assert_eq!(facts.pixel_aspect_ratio, None);
             assert_eq!(
                 facts.color,
-                Some(AvcColorFacts {
+                Some(VideoColorFacts {
                     full_range: false,
                     primaries: 1,
                     transfer: 1,
@@ -189,7 +167,7 @@ mod tests {
     }
     #[test]
     fn native_avc_full_hd_preserves_coded_padding_and_visible_crop() {
-        let facts = AvcSpsFacts::parse(&full_hd_sps()).unwrap();
+        let facts = VideoSpsFacts::parse_avc(&full_hd_sps()).unwrap();
         assert_eq!((facts.coded_width, facts.coded_height), (1920, 1088));
         assert_eq!((facts.visible_width, facts.visible_height), (1920, 1080));
         assert_eq!((facts.visible_x, facts.visible_y), (0, 0));
@@ -199,34 +177,34 @@ mod tests {
         let mut sps = parse_sps(full_hd_sps().as_slice()).unwrap();
         sps.pic_width_in_mbs_minus1 = u32::MAX;
         assert!(matches!(
-            AvcSpsFacts::from_sps(sps),
+            VideoSpsFacts::from_sps(sps),
             Err(BitstreamError::Limit)
         ));
         let mut sps = parse_sps(full_hd_sps().as_slice()).unwrap();
         sps.frame_cropping.as_mut().unwrap().bottom_offset = 544;
-        assert!(AvcSpsFacts::from_sps(sps).is_err());
+        assert!(VideoSpsFacts::from_sps(sps).is_err());
     }
     #[test]
     fn unspecified_color_and_aspect_are_not_invented() {
         let mut sps = parse_sps(full_hd_sps().as_slice()).unwrap();
         sps.vui_parameters = None;
-        let facts = AvcSpsFacts::from_sps(sps).unwrap();
+        let facts = VideoSpsFacts::from_sps(sps).unwrap();
         assert_eq!(facts.color, None);
         assert_eq!(facts.pixel_aspect_ratio, None);
         assert_eq!(facts.chroma_location, 0);
     }
     #[test]
     fn oversized_exp_golomb_returns_error_instead_of_panicking() {
-        assert!(AvcSpsFacts::parse(include_bytes!(
+        assert!(VideoSpsFacts::parse_avc(include_bytes!(
             "../tests/fixtures/sps-exp-golomb-overflow.bin"
         ))
         .is_err());
     }
     #[test]
     fn truncated_and_oversized_sps_are_rejected() {
-        assert!(AvcSpsFacts::parse(&[0x67]).is_err());
+        assert!(VideoSpsFacts::parse_avc(&[0x67]).is_err());
         assert!(matches!(
-            AvcSpsFacts::parse(&vec![0x67; 65537]),
+            VideoSpsFacts::parse_avc(&vec![0x67; 65537]),
             Err(BitstreamError::Limit)
         ));
     }

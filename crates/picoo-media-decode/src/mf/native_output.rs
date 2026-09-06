@@ -2,7 +2,7 @@
 //! REQ-PICOO-NEXT-011/025: never Lock, Map, transform, or export a source image.
 use super::runtime::MfRuntimeGuard;
 use crate::{DecodeError, DecodedFrame, NativeDecodedFormat};
-use picoo_bitstream::AvcSpsFacts;
+use picoo_bitstream::VideoSpsFacts;
 use picoo_frame_hub::{
     ChromaSiting, D3D11ImageLease, ImageSize, NativeImage, PixelAspectRatio, VisibleRect,
 };
@@ -16,7 +16,7 @@ fn platform(error: windows::core::Error) -> DecodeError {
 pub(super) unsafe fn sample_to_frame(
     sample: &IMFSample,
     transform: &IMFTransform,
-    facts: &AvcSpsFacts,
+    facts: &VideoSpsFacts,
     gpu: &WindowsGpuContext,
     runtime: &MfRuntimeGuard,
 ) -> Result<DecodedFrame, DecodeError> {
@@ -36,7 +36,7 @@ pub(super) unsafe fn sample_to_frame(
 
 unsafe fn describe(
     media: &IMFMediaType,
-    facts: &AvcSpsFacts,
+    facts: &VideoSpsFacts,
     image: &NativeImage,
 ) -> Result<NativeDecodedFormat, DecodeError> {
     if media.GetGUID(&MF_MT_SUBTYPE).map_err(platform)? != MFVideoFormat_NV12 {

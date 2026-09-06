@@ -7,7 +7,7 @@
 
 #[cfg(test)]
 use crate::DecodeFixture as _;
-use picoo_bitstream::{AccessUnit, AvcSpsFacts, PictureKind, RandomAccessPoint};
+use picoo_bitstream::{AccessUnit, PictureKind, RandomAccessPoint, VideoSpsFacts};
 use picoo_protocol::control::StreamConfig;
 use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::{
@@ -51,7 +51,7 @@ const MF_MT_MPEG_SEQUENCE_HEADER: GUID = GUID::from_u128(0x05f4_6766_f1a9_44e5_b
 pub struct MfH264Decoder {
     transform: IMFTransform,
     configured: bool,
-    geometry: Option<AvcSpsFacts>,
+    geometry: Option<VideoSpsFacts>,
     fps: u32,
     next_sample_time_100ns: i64,
     pending: BTreeMap<i64, Arc<crate::DecodeToken>>,
@@ -121,7 +121,7 @@ impl MfH264Decoder {
         let fps = stream_config.map_or(DEFAULT_FPS, |cfg| cfg.fps.max(1));
         let (geometry, sequence_header) = if let Some(config) = stream_config {
             let record = crate::configured_avc::configuration(config)?;
-            let geometry = AvcSpsFacts::parse(&record.sps()[0])
+            let geometry = VideoSpsFacts::parse_avc(&record.sps()[0])
                 .map_err(|e| DecodeError::Platform(e.to_string()))?;
             if (config.width, config.height) != (geometry.visible_width, geometry.visible_height) {
                 return Err(DecodeError::ConfigurationMismatch);
@@ -134,7 +134,7 @@ impl MfH264Decoder {
                 .find(|nal| nal[0] & 0x1f == 7)
                 .ok_or(DecodeError::NotInitialized)?;
             let geometry =
-                AvcSpsFacts::parse(sps).map_err(|e| DecodeError::Platform(e.to_string()))?;
+                VideoSpsFacts::parse_avc(sps).map_err(|e| DecodeError::Platform(e.to_string()))?;
             let mut header = Vec::new();
             for nal in picture
                 .nals()
@@ -543,7 +543,7 @@ unsafe fn renegotiate_output(
 
 unsafe fn drain_output(
     transform: &IMFTransform,
-    geometry: &AvcSpsFacts,
+    geometry: &VideoSpsFacts,
     gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
     runtime: &MfRuntimeGuard,
 ) -> Result<Option<(i64, DecodedFrame)>, DecodeError> {
