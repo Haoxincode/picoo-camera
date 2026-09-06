@@ -69,6 +69,20 @@ Foundation Frame Server 的专用 Windows 11 client runner。脚本要求 runner
 - **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
 
+### Windows 依赖缓存
+
+Windows job 在工具链安装后使用固定 SHA 的 Swatinem/rust-cache 2.9.2，仅缓存 Cargo
+依赖构建；不缓存 workspace crate，cache 命中也完整执行 xtask test/build/package 与 MSI
+smoke。缓存键包含 job、rustc release/host/hash、Cargo 配置/锁文件及编译环境，分支隔离
+遵循 GitHub Actions cache 服务。仅 push 保存，PR 只读取；失败时也允许保存已经构建的
+依赖。缓存是可丢弃的加速层，冷缓存仍按相同命令生成完整产物。
+
+候选采用成熟 Rust 缓存 Action，而非手工维护 target 内部文件清理和 Cargo fingerprint。
+已核对 [v2.9.2](https://github.com/Swatinem/rust-cache/tree/6323deb102c322ba6fcbdcafc7e3dddab59af2b6)（2026-08-06 发布）的 action.yml/README，仓库未归档，2026-08-31 仍有更新；
+LGPL-3.0 代码只在 CI 的 Node 24 环境执行，不链接或分发进产品。当前 windows-latest 支持
+Node 24。缓存可能占用仓库 Actions 存储配额并被自动淘汰，实际缓存体积和暖缓存耗时由 CI
+日志记录，不以假定加速比例作为验收结果。
+
 ### 示例 Workflow 结构
 
 实现 monorepo 后，`.github/workflows/ci.yml` 应近似遵循以下结构（具体步骤随 xtask 落地而调整）：

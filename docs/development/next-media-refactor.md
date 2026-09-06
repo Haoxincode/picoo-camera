@@ -343,3 +343,10 @@ Windows 目标 all-targets Clippy 已在 Mac 使用 x86_64-pc-windows-msvc 完�
 REQ-PICOO-GPU-004 新增 WindowsGpuContext::for_adapter，显式使用同一硬件 adapter 创建 D3D11 video/BGRA device 与 immediate context，先启用并读取确认 ID3D11Multithread 保护，再初始化固定的 MF DXGI device manager。只在对象初始化时 ResetDevice，重建应创建新 context；原生对象借用和批量 immediate context 访问为受约束 unsafe API，批量调用的 Enter/Leave 在 panic 时也会释放。平台 codec 工作者持有 MF/COM runtime 责任，可跨线程 context 不承担 CoUninitialize。
 
 生产入口按实际 DXGI descriptor 拒绝 software adapter；诊断测试通过官方 EnumWarpAdapter 获取真实 WARP 对象并检查拒绝。Windows all-targets Clippy、13 项 xtask 测试及文档检查通过；Windows GPU crate 已纳入 xtask test windows 的 Clippy 和原生测试列表。实际硬件成功路径、codec 准入、资源代际与 GPUI 互操作保持待完成，不以构建设备替代 H.264/HEVC 硬解证明。
+
+
+## Windows CI 依赖缓存
+
+连续平台原生测试后 Windows release 仍需完整重编依赖，当前 CI 未配置 Cargo cache。按 REQ-PICOO-STACK-004/005 复用已核对并固定 SHA 的 Swatinem/rust-cache v2.9.2，只为 Windows job 添加依赖缓存；workspace crate、平台测试、产物构建和打包门禁仍每轮执行。缓存不影响任务完成判断，首次冷/暖缓存结果待 CI；选型、许可证和生命周期边界见 ci-and-build.md。
+
+39899fe 的 CI 34038336004 全部通过，包含 Windows 原生测试、release 构建、MSI 和 smoke。缓存 workflow 的 actionlint 与文档检查通过；本次新 Windows 图像/context 的运行测试将在新提交的 CI 中执行。
