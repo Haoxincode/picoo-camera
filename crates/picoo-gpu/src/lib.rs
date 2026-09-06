@@ -9,8 +9,8 @@ pub use apple::{AppleRenderer, CpuExporter, CpuImage, RenderedImage};
 mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::{
-    WindowsAdapterId, WindowsCompletionError, WindowsDeviceError, WindowsGpuCompletion,
-    WindowsGpuContext,
+    RenderedImage, WindowsAdapterId, WindowsCompletionError, WindowsDeviceError,
+    WindowsGpuCompletion, WindowsGpuContext, WindowsRenderer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub enum RenderError {
     InvalidDimensions,
     #[error("native output pool is full")]
     PoolFull,
-    #[error("Metal device is unavailable")]
+    #[error("native GPU device is unavailable")]
     DeviceUnavailable,
     #[error("native source must declare BT.709 matrix, primaries and transfer")]
     UnsupportedSourceColor,

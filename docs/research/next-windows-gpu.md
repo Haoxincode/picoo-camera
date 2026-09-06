@@ -34,3 +34,7 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 复用当前 windows-rs 的 [ID3D11DeviceContext3::Flush1](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_3/nf-d3d11_3-id3d11devicecontext3-flush1) 与 D3D11_CONTEXT_TYPE_ALL：官方支持传入 Win32 event 建立异步完成查询，返回 void，不需要应用自行维护 Signal 值。Windows 11 产品基线满足 D3D11.3/4；接口查询在提交前失败则明确拒绝，不回退轮询。每工作独立事件，避免复用 fence/event 时的世代混淆。
 
 [RegisterDeviceRemovedEvent](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_4/nf-d3d11_4-id3d11device4-registerdeviceremovedevent) 可使用同一事件，已移除设备会立即置位；回调检查 GetDeviceRemovedReason，不能把移除误认作成功完成。事件注销先于句柄释放。复用官方 CreateThreadpoolWait/SetThreadpoolWait；wait 为一次性，不重新 arm，CloseThreadpoolWait 可在自己的完成回调内异步清理，不在回调中等待自身结束。泛型 owner 的析构或通知异常不能穿越系统 callback ABI。
+
+## 原生几何与颜色处理
+
+复用 ID3D11VideoDevice/VideoContext1、VideoProcessorEnumerator1 的格式转换查询。官方 [VideoProcessorSetStreamMirror](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_1/nf-d3d11_1-id3d11videocontext1-videoprocessorsetstreammirror) 规定 rotation、mirror、source clipping 的顺序；不能把未经转换的 SPS/native crop 直接放入旋转后的 source rect。成熟平台接口覆盖缩放、旋转、镜像和颜色，不引入自研 YUV shader 或另一套 GPU runtime。Windows 输出先采用可精确表达的 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709，不把 Apple 现有混合标签的 Bt601Full 直接映射成 DXGI P601 并宣称等价。驱动缺少正式颜色或变换能力时明确拒绝。

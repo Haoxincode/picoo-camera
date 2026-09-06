@@ -393,3 +393,16 @@ REQ-PICOO-GPU-005 采用官方 ID3D11DeviceContext3::Flush1(D3D11_CONTEXT_TYPE_A
 MfH264Decoder 使用 Arc 固定 GPU context，输出前预留 completion，再在同一 Decoder worker 调用 ProcessOutput；MftOutput 立即保存返回的原始 sample，包括错误路径。MFT 调用不持有外部 immediate-context lock；完成查询单独串行提交，工作者等待结果后才检查和读取源。旧 CPU 输出读取仍待原生帧/预览替换，但源样本完成与保留不再依赖 Lock2DSize 的隐式同步。
 
 新增实际 OS wait 取消保留、未消费结果容量、panic 清理、跨 context 全局上限和 WARP GPU CopyResource→完成事件→诊断 Map 校验。GPU all-targets 与生产 MF 库的 Windows 目标 Clippy 通过；实际测试执行待下一轮 Windows CI。上一轮 CI 34042514875 已全部通过，包括硬件生产工厂 feature 编译及显式软件 MF 核心回归，不代表真实硬件解码验收。
+
+
+## Windows Video Processor 原生输出
+
+REQ-PICOO-GPU-006 新增 WindowsRenderer，显式接收源 GPU context 和固定 RenderSpec。源必须是同 device 的已完成 native NV12 BT.709 limited/left-chroma、方形像素；输出仅接受可精确声明的 BT.709 limited，不猜测 Apple Bt601Full 混合颜色合同的 DXGI 等价物。官方 VideoProcessorEnumerator1 验证 NV12 双向支持、精确色彩组合、rotation/mirror feature 与无 past/future frame 依赖的 rate capability，明确失败，无 CPU 处理分支。
+
+三槽目标池首次 render 才分配，held Arc/Weak 阻止写入复用；原生 input/output view、原 MF sample 的 source lease 与目标 lease 均交给已有 completion，Blt 的失败/panic 同样保留到 GPU 完成。禁用自动画质处理，设置不透明黑边并执行 contain；输入 allocation/crop 根据官方 rotation→mirror→clip 顺序处理，不能在 90° 后把底部补齐行当成可见左边。
+
+Windows 目标 GPU all-targets Clippy 通过。新增八种几何组合、1920×1088 的 1080 可见区旋转/镜像、越界拒绝及真实 NV12 输出纹理池三槽/保留/复用测试，待 Windows CI 实际执行。完整 Video Processor 颜色/缩放对照需要真实显卡，不能由几何单测或 WARP 池分配替代。此 renderer 尚未接入 Windows FrameBus/GPUI；生产 Decoder 的旧 CPU 输出读取仍待对应端到端替换。
+
+CI 34043657175 Windows 原生步骤已通过，包括 Flush1 真实 GPU copy、threadpool 取消保留、未消费完成容量与 panic 清理；Windows release 正在构建，其余平台按运行状态继续等待。
+
+WindowsRenderer 最终静态验证：Windows GPU all-targets Clippy 与 Mac GPU all-targets Clippy 均通过，文档/格式检查通过。CI 34043657175 现已全部通过，包含 Windows release、MSI 与 smoke；本次 renderer/pool/geometry 回归待下一轮 CI。

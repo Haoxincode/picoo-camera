@@ -168,3 +168,6 @@ mod tests;
 
 mod completion;
 pub use completion::{WindowsCompletionError, WindowsGpuCompletion};
+
+mod render;
+pub use render::{RenderedImage, WindowsRenderer};

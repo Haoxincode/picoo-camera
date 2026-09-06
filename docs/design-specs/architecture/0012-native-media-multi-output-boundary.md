@@ -67,3 +67,5 @@ Windows MFT 生产工厂只接受硬件 DXGI adapter；创建固定 D3D11 video 
 Windows GPU 完成通知使用官方 Flush1 的事件查询和一次性 threadpool wait，避免 CPU 轮询或自行维护跨提交 fence 序号。容量、系统 event、device-removed 注册和 wait 对象在新命令提交前准备；完成通知只在提交函数退出后启用，原生事件提前到达也不能释放提交函数仍在使用的 owner。提交失败或 panic 仍在同一队列后放置完成查询，取消接收者不取消资源保留。设备移除事件只能交付失败，不发布成功图像。每 context 最多三个未消费完成对象，全进程最多十二个；未消费结果仍占容量，context 重建不能绕过全局上限。该计数不替代图像字节总预算。
 
 MFT 调用不在外部 ID3D11Multithread Enter/Leave 锁内执行，以免等待 MFT 内部线程时造成跨线程死锁；实际 GPU 命令组才使用 context 保护。Flush1 在提交函数返回后有序发出，覆盖该函数已提交命令；提交函数不得把尚未提交的 GPU 工作交给游离线程。UI/Receiver owner 不等待完成，允许专用 codec/输出工作者等待系统通知。
+
+Windows RenderSpec 使用固定 GPU context 和原生 Video Processor；输入为已完成 NV12 BT.709 limited/left-chroma、方形像素的原生帧，输出为 NV12 BT.709 limited，几何与颜色能力均查询驱动。RenderSpec 表示调用方已合并的剩余变换，不再次叠加 FrameDescription 的变换。微软接口按 rotation→mirror→source clipping 应用，因此原生 visible crop 必须先映射到变换后的完整纹理坐标，再设置 source rect；contain 按裁剪后比例计算，黑边不透明。禁用自动画质处理，选择不依赖过去/未来帧的 progressive processor，不为独立 sink 引入隐藏时间队列。
