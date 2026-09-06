@@ -9,4 +9,4 @@ license.workspace = true
 bytes.workspace = true
 
 [dev-dependencies]
-proptest = "=1.6.0"
+proptest.workspace = true
