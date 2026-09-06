@@ -57,3 +57,5 @@ CPU 消费租期只证明客户端活跃，不授予连续物化权限。每个 
 Mac VCam 的固定协商表为 720p/1080p × 30/60，初始 1080p60；同尺寸的帧率变体共享一个布局池。SampleClock 以 host uptime 为锚、以有理数频率推导每个绝对输出槽，禁止累加截断后的纳秒周期；定时器只调度下一槽，不补历史队列。格式属性索引与 duration 一起验证后原子提交，切换频率保留已发时间线；源帧重复或 latest 降采样不等于系统 sample 丢失。后端状态与 source identity 不拥有时钟重置权限。
 
 Windows 解码原生图像的持有单位包含原始 MF sample、NV12 D3D11 texture 与 subresource index，不能只保留纹理 COM 引用而释放 sample 的 allocator lease。原生输出构造时要求已完成且所有别名不可变；各 GPU 消费者仍分别持有原 owner 到读取完成。平台依赖与 GPUI 表面能力核对见 [Windows GPU 研究](../../research/next-windows-gpu.md)。
+
+Windows 原生输出必须验证纹理所属 device 与 Decoder generation 固定的 device 具有相同 COM identity；同一 adapter 上的不同 device 仍属于不同命令与完成域，不得以 adapter LUID 相同替代该检查。拒绝错误 device 的 sample 不消费或修改生产者资源。

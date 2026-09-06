@@ -4,13 +4,15 @@ use std::sync::Arc;
 use thiserror::Error;
 use windows::core::Interface;
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Texture2D, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    ID3D11Device, ID3D11Texture2D, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
 use windows::Win32::Media::MediaFoundation::{IMFDXGIBuffer, IMFSample};
 
 #[derive(Debug, Error)]
 pub enum NativeImageError {
+    #[error("native source belongs to a different D3D11 device")]
+    WrongDevice,
     #[error("native source requires a single default-usage NV12 D3D11 surface")]
     UnsupportedStorage,
     #[error("native source has invalid dimensions or subresource")]
@@ -47,13 +49,17 @@ impl std::fmt::Debug for D3D11ImageLease {
 
 impl D3D11ImageLease {
     /// REQ-PICOO-FRAME-016: retain the allocator's sample lease before returning output.
+    /// The expected device must be the Decoder generation's fixed device.
     ///
     /// # Safety
     /// The sample must be free-threaded. All image writes must have completed and
     /// all aliases must remain immutable until the final clone is released. The
     /// producer must honor the retained sample's allocator lease rather than
     /// manually overwrite the texture or recycle its array slice.
-    pub unsafe fn retain_completed(sample: &IMFSample) -> Result<Self, NativeImageError> {
+    pub unsafe fn retain_completed(
+        sample: &IMFSample,
+        expected_device: &ID3D11Device,
+    ) -> Result<Self, NativeImageError> {
         if sample.GetBufferCount()? != 1 {
             return Err(NativeImageError::UnsupportedStorage);
         }
@@ -65,6 +71,14 @@ impl D3D11ImageLease {
         }
         // GetResource returns an owned interface reference on success.
         let texture = ID3D11Texture2D::from_raw(raw);
+        // COM identity, not adapter identity: two devices on one adapter have
+        // distinct command queues and completion domains.
+        let actual_device = texture.GetDevice()?;
+        if actual_device.cast::<windows::core::IUnknown>()?
+            != expected_device.cast::<windows::core::IUnknown>()?
+        {
+            return Err(NativeImageError::WrongDevice);
+        }
         let subresource = surface.GetSubresourceIndex()?;
         let mut description = D3D11_TEXTURE2D_DESC::default();
         texture.GetDesc(&mut description);

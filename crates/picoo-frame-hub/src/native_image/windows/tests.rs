@@ -109,7 +109,7 @@ fn image_retains_the_mf_sample_until_last_cross_thread_clone() {
     }
     drop(marker);
     // No writes have been submitted and this test never mutates retained storage.
-    let image = unsafe { D3D11ImageLease::retain_completed(&sample) }.unwrap();
+    let image = unsafe { D3D11ImageLease::retain_completed(&sample, &device) }.unwrap();
     let retained = image.clone();
     drop(sample);
     drop(image);
@@ -135,14 +135,29 @@ fn cpu_buffers_and_non_nv12_surfaces_are_not_native_sources() {
     let device = diagnostic_device();
     let wrong_format = sample(&device, DXGI_FORMAT_B8G8R8A8_UNORM);
     assert!(matches!(
-        unsafe { D3D11ImageLease::retain_completed(&wrong_format) },
+        unsafe { D3D11ImageLease::retain_completed(&wrong_format, &device) },
         Err(NativeImageError::UnsupportedStorage)
     ));
     unsafe {
         let cpu = MFCreateSample().unwrap();
-        assert!(D3D11ImageLease::retain_completed(&cpu).is_err());
+        assert!(D3D11ImageLease::retain_completed(&cpu, &device).is_err());
         cpu.AddBuffer(&MFCreateMemoryBuffer(64 * 64 * 3 / 2).unwrap())
             .unwrap();
-        assert!(D3D11ImageLease::retain_completed(&cpu).is_err());
+        assert!(D3D11ImageLease::retain_completed(&cpu, &device).is_err());
     }
+}
+
+#[test]
+fn another_device_on_the_same_adapter_is_rejected() {
+    let _runtime = Runtime::start();
+    let device = diagnostic_device();
+    let other_device = diagnostic_device();
+    let output = sample(&device, DXGI_FORMAT_NV12);
+    assert!(matches!(
+        unsafe { D3D11ImageLease::retain_completed(&output, &other_device) },
+        Err(NativeImageError::WrongDevice)
+    ));
+    // Rejection must not consume or modify the producer's sample.
+    let image = unsafe { D3D11ImageLease::retain_completed(&output, &device) }.unwrap();
+    assert_eq!((image.width(), image.height()), (64, 64));
 }

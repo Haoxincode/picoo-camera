@@ -355,3 +355,10 @@ REQ-PICOO-GPU-004 新增 WindowsGpuContext::for_adapter，显式使用同一硬�
 CI 34039825921 的 Windows 原生测试步骤已通过，包含 D3D11 NV12 sample 保留/跨线程最终释放、CPU/BGRA 拒绝及生产 GPU context 对真实 WARP adapter 的拒绝；Windows release 构建仍运行。Rust/docs、Android、iOS、macOS 已通过。FRAME-016 仅按这一资源 owner 合同标为 implemented，不代表 Windows Native Decoder 或硬件矩阵完成。
 
 补充 GPU context 正向平台合同：复用生产内部 device/manager 绑定逻辑，在仅测试可达的 WARP 资源上检查 GetVideoService 返回同一设备，并在命令组 panic 后由另一线程取得原生锁。没有公开软件设备构造器，生产入口仍先拒绝软件 adapter。Windows all-targets Clippy 通过，新增正向合同待下一轮 Windows CI。
+
+
+## Windows 输出设备身份准入
+
+REQ-PICOO-FRAME-016 的原生图像构造现在要求 Decoder 固定 device，并使用官方 ID3D11DeviceChild::GetDevice 与 IUnknown COM identity 检查纹理来源。相同 adapter 的不同 device 不共享完成域，不能接受。复用 windows-rs 已有 API，无新增依赖。实际双 WARP device 回归同时检查错误设备拒绝与原 sample 可继续被正确设备接收；Windows 目标 all-targets Clippy 通过，运行验证待本次 CI。
+
+CI 34039825921 已全部成功，包括 Windows release、MSI、smoke 和首次依赖缓存保存。此前 context 正向合同及本次设备身份检查将由下一轮 Windows CI 执行。当前 ADB 列表为空，无新手机验收证据。
