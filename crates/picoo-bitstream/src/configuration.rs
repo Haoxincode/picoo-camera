@@ -153,6 +153,37 @@ impl CodecConfiguration {
         Self::parse(Codec::Avc, record.into())
     }
 
+    /// Admit MediaCodec AVC codec-config bytes with explicit Annex B framing.
+    /// REQ-PICOO-MEDIA-033: raw parameters leave this platform adaptation boundary.
+    pub fn from_avc_annex_b(data: &[u8]) -> Result<Self, BitstreamError> {
+        if data.len() > MAX_CONFIG_BYTES {
+            return Err(BitstreamError::Limit);
+        }
+        let mut sps = None;
+        let mut pps = None;
+        for nal in crate::split_nals(crate::NalFormat::AnnexB, data)? {
+            let target = match nal_type(Codec::Avc, nal)? {
+                7 => &mut sps,
+                8 => &mut pps,
+                _ => {
+                    return Err(BitstreamError::Malformed(
+                        "AVC codec-config contains a non-parameter NAL",
+                    ))
+                }
+            };
+            if target.is_some_and(|previous| previous != nal) {
+                return Err(BitstreamError::Unsupported(
+                    "multiple distinct native AVC parameter sets",
+                ));
+            }
+            *target = Some(nal);
+        }
+        Self::from_avc_parameter_sets(
+            sps.ok_or(BitstreamError::Malformed("missing AVC SPS"))?,
+            pps.ok_or(BitstreamError::Malformed("missing AVC PPS"))?,
+        )
+    }
+
     pub fn profile_idc(&self) -> u8 {
         self.profile_idc
     }

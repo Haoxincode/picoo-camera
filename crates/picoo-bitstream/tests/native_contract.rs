@@ -192,3 +192,37 @@ fn native_avc_parameter_sets_roundtrip_through_standard_record_builder() {
         assert!(CodecConfiguration::from_avc_parameter_sets(&sps, &pps).is_err());
     }
 }
+
+#[test]
+fn mediacodec_csd_requires_explicit_complete_annex_b_parameters() {
+    // REQ-PICOO-MEDIA-033: Android CSD buffers carry start codes, Core receives raw NALs.
+    let config = CodecConfiguration::parse(
+        Codec::Avc,
+        Bytes::from_static(include_bytes!("fixtures/avc-720p-config.bin")),
+    )
+    .unwrap();
+    let wrap = |nal: &[u8]| [&[0, 0, 0, 1][..], nal].concat();
+    let sps = wrap(&config.sps()[0]);
+    let pps = wrap(&config.pps()[0]);
+    let combined = [&sps[..], &pps[..]].concat();
+    for input in [combined.clone(), [&combined[..], &combined[..]].concat()] {
+        let parsed = CodecConfiguration::from_avc_annex_b(&input).unwrap();
+        assert_eq!(parsed.sps(), config.sps());
+        assert_eq!(parsed.pps(), config.pps());
+        assert_eq!(parsed.nal_length_size(), NalLengthSize::Four);
+    }
+    let mut different = config.pps()[0].to_vec();
+    different[1] ^= 1;
+    for input in [
+        vec![],
+        sps,
+        pps,
+        config.sps()[0].to_vec(),
+        config.record().to_vec(),
+        [&combined[..], &wrap(&[0x65, 0x80])[..]].concat(),
+        [&combined[..], &wrap(&different)[..]].concat(),
+        vec![0; 65537],
+    ] {
+        assert!(CodecConfiguration::from_avc_annex_b(&input).is_err());
+    }
+}

@@ -204,10 +204,10 @@ object PicooNative {
     external fun setThermalHold(handle: Long, hold: Boolean): Int
 
     /**
-     * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
+     * Validate MediaCodec AVC Annex B codec-config and return raw SPS/PPS.
      * @return `[sps, pps]` or null when extraction fails.
      */
-    external fun extractSpsPps(data: ByteArray): Array<ByteArray>?
+    external fun parseAvcCodecConfig(data: ByteArray): Array<ByteArray>?
 
     /** Canonical Rust validation for Android NSD TXT bytes. */
     external fun parseDiscoveryTxt(keys: Array<String>, values: Array<ByteArray>): Array<String>?

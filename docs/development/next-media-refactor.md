@@ -287,3 +287,16 @@ Mac CPU 工作者无需求时只保留最新待处理 Arc，不做 GPU render/ex
 39ab1d1 的 CI 34035360507 已通过 Windows Shared Ring/MFT/Receiver AVCC 原生测试以及 macOS Clippy/原生媒体与共享区测试；两端产物构建仍在运行。MF coded/visible 和 EOS drain 至此有 Windows 原生回归证据，仍不等于 D3D11 硬件链路或实际显卡矩阵验收。
 
 CPU demand 最终验证通过：Mac FrameHub 53 passed / 2 ignored、Rust→Swift/C 请求续期/显式停止与共享区合同、Decoder 16、GPU 9、Receiver 103 passed / 2 ignored、GPUI Apple 4、Desktop 70；Receiver release 与 Camera Extension 完整构建、Clippy 和 400 项文档链接检查通过。250ms 是异常退出的有限租期，不是摄像头样本时钟；source60→output30 的完整协商与采样节奏仍由输出协调器验收，当前实现不宣称完成此项。
+
+
+## Android 原生 AVC CSD 准入
+
+REQ-PICOO-MEDIA-033 按 Android 官方 [MediaCodec codec-specific data](https://developer.android.com/reference/android/media/MediaCodec) 的 Annex B 起始码契约，将 csd-0/csd-1 与 BUFFER_FLAG_CODEC_CONFIG 统一送到显式 Rust 适配入口。复用现有有界 NAL 拆分与 Scuffle 标准 avcC builder，无格式猜测或新依赖。仅接收完整 SPS/PPS；相同重复参数允许，冲突参数与非参数 NAL 拒绝。JNI 返回裸 NAL，避免把起始码送入严格 raw 参数构造器。
+
+使用真实 VideoToolbox High 参数 fixture 的组合、重复、缺参、冲突与错误封装测试通过。Android 硬件测试增加对实际 AVC CSD 的生产 JNI 准入检查；构建和小米 15 实测结果待记录。
+
+
+小米 15（24129PN74C，Android 16）NativeCodecContractTest 通过：QTI AVC/HEVC 硬件编码器在 720p/1080p × 30/60 的 8 组配置各产出 3 个独立 AU；4 组 AVC 实际 CSD 通过生产 JNI 并返回裸 SPS/PPS。此项不验证持续帧率或 HEVC 生产推流。测试 APK 与应用 APK 构建成功，bitstream/FFI 单元及集成测试通过。测试结束后的常规应用安装被系统拒绝 INSTALL_FAILED_USER_RESTRICTED；Mac 新包 GUI 已启动，但 4433 尚未监听且 SecurityAgent 出现，实际发现/推流验证尚未完成。
+
+
+最终 `cargo xtask build android` 完整工作区原生测试、doc tests 与 Android 构建通过；bitstream/FFI Clippy、401 项文档链接检查通过。删除 JNI setStreamConfig 中缺 PPS 时猜测整段 SPS 输入格式的旧分支；配置参数只遵循当前裸 NAL 契约，原生 CSD 只在显式适配入口转换。

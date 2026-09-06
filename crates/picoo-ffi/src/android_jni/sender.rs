@@ -5,7 +5,6 @@ use std::time::Duration;
 use jni::objects::{JByteArray, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jobjectArray, jstring, JNI_TRUE};
 use jni::JNIEnv;
-use picoo_bitstream::avc::extract_sps_pps;
 use picoo_rate_control::BitrateLadder;
 use picoo_sender::{EncoderFailureOutcome, SenderError, SenderSession, StreamConfigParams};
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
@@ -513,11 +512,6 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
             Err(_) => return -1,
         }
     };
-    let (sps, pps) = if pps.is_empty() {
-        extract_sps_pps(&sps).unwrap_or((sps, pps))
-    } else {
-        (sps, pps)
-    };
     with_sender(handle, |inner| {
         let Ok(mut session) = inner.session.lock() else {
             return -1;
@@ -672,7 +666,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setThermalHold(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_extractSpsPps(
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseAvcCodecConfig(
     mut env: JNIEnv<'_>,
     _this: JObject<'_>,
     data: JByteArray<'_>,
@@ -680,9 +674,10 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_extractSpsPps(
     let Ok(data) = env.convert_byte_array(data) else {
         return ptr::null_mut();
     };
-    let Some((sps, pps)) = extract_sps_pps(&data) else {
+    let Ok(configuration) = picoo_bitstream::CodecConfiguration::from_avc_annex_b(&data) else {
         return ptr::null_mut();
     };
+    let (sps, pps) = (&configuration.sps()[0], &configuration.pps()[0]);
     let Ok(byte_array_class) = env.find_class("[B") else {
         return ptr::null_mut();
     };
@@ -690,8 +685,8 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_extractSpsPps(
         return ptr::null_mut();
     };
     let (Ok(sps), Ok(pps)) = (
-        env.byte_array_from_slice(&sps),
-        env.byte_array_from_slice(&pps),
+        env.byte_array_from_slice(sps),
+        env.byte_array_from_slice(pps),
     ) else {
         return ptr::null_mut();
     };

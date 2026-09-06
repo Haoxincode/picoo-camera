@@ -195,7 +195,7 @@ internal class MediaCodecH264Encoder(
             runCatching { codec.releaseOutputBuffer(index, false) }.getOrElse { return }
 
             if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                handleCodecConfig(data)
+                formatAccepted = handleCodecConfig(data)
                 return
             }
 
@@ -242,10 +242,11 @@ internal class MediaCodecH264Encoder(
                 csd1.mark()
                 csd1.get(pps)
                 csd1.reset()
-                // csd-0 is often AVCC or raw SPS; csd-1 raw PPS.
-                publishParameterSets(copy, pps)
+                // MediaCodec CSD buffers include Annex B start codes. Normalize
+                // both through the same Rust boundary as BUFFER_FLAG_CODEC_CONFIG.
+                formatAccepted = handleCodecConfig(copy + pps)
             } else {
-                handleCodecConfig(copy)
+                formatAccepted = handleCodecConfig(copy)
             }
         }
     }
@@ -271,14 +272,17 @@ internal class MediaCodecH264Encoder(
         )
     }
 
-    private fun handleCodecConfig(data: ByteArray) {
+    private fun handleCodecConfig(data: ByteArray): Boolean {
         // H.264 parameter-set parsing is protocol behavior and has one Rust implementation.
         val extracted = runCatching {
-            com.picoo.camera.jni.PicooNative.extractSpsPps(data)
+            com.picoo.camera.jni.PicooNative.parseAvcCodecConfig(data)
         }.getOrNull()
         if (extracted != null && extracted.size == 2) {
             publishParameterSets(extracted[0], extracted[1])
+            return true
         }
+        encoder.fail("Native AVC codec configuration rejected")
+        return false
     }
 
     private fun publishParameterSets(sps: ByteArray, pps: ByteArray) {
