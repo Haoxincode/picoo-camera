@@ -75,6 +75,8 @@ pub(crate) enum TestSuite {
     Ios,
     /// VideoToolbox, Shared Frame Ring, and Apple product dependency boundaries.
     Macos,
+    /// Synthetic AVC/HEVC hardware, IOSurface/Metal, and CPU container contracts.
+    AppleNativeMedia,
     /// Windows Shared Frame Ring and Media Foundation source boundaries.
     Windows,
     Protocol,

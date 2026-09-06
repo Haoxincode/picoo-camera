@@ -10,6 +10,18 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
     match suite {
         TestSuite::Ios => crate::apple::ios::test_ios(&sh)?,
         TestSuite::Macos => crate::apple::macos::test_macos(&sh)?,
+        TestSuite::AppleNativeMedia => {
+            if !cfg!(target_os = "macos") {
+                bail!("Apple native media probe requires a macOS host");
+            }
+            let output = crate::apple::cargo_target_dir(&sh)?.join("apple/native-media-probe");
+            std::fs::create_dir_all(&output)?;
+            let binary = output.join("apple-native-media");
+            cmd!(sh, "xcrun swiftc -swift-version 6 -warnings-as-errors scripts/probes/apple_native_media.swift -o {binary}").run()?;
+            let report = cmd!(sh, "{binary}").read()?;
+            std::fs::write(output.join("report.json"), &report)?;
+            println!("{report}");
+        }
         TestSuite::Windows => {
             if !cfg!(target_os = "windows") {
                 bail!("Windows tests must run on a Windows host");
