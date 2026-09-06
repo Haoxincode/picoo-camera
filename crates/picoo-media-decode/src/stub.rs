@@ -31,11 +31,13 @@ impl Default for StubDecoder {
 }
 
 impl AccessUnitDecoder for StubDecoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
+        submission: crate::DecodeSubmission<'_>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        let access_unit = submission.access_unit;
+        let stream_config = submission.token.stream_config.as_deref();
+
         let (width, height) = Self::dimensions(stream_config);
 
         let nv12 = if picoo_frame_hub::nv12_byte_size(width, height) == access_unit.len() {
@@ -52,6 +54,7 @@ impl AccessUnitDecoder for StubDecoder {
         };
 
         Ok(DecodeOutcome::frame(
+            submission.token.clone(),
             DecodedFrame::fixture_nv12(
                 width,
                 height,

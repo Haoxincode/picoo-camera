@@ -438,3 +438,13 @@ CI 34045983650 已全部通过：Windows NV12 readback/Weak/容量/拒绝回归�
 REQ-PICOO-NEXT-011 / FRAME-016 将 MFStartup/Shutdown 移到最多 16 个 cohort 的标准线程。codec worker 的 COM guard 保持线程亲和性；最后 runtime 引用仅关闭 channel，不在消费者或 MF callback 上执行 Shutdown。D3D11ImageLease 增加不透明 producer lifetime，字段释放顺序为 sample、texture、runtime；旧构造签名直接删除。尚未将 MF 输出发布到 FrameBus，完整原始 token 对应和原生描述迁移仍待完成。
 
 新增 Windows 测试覆盖 codec apartment 退出后的 runtime 保留、异线程最后释放与 Shutdown worker 退出，以及 sample 先于 producer lifetime 销毁。Windows MF 库 Clippy 与 FrameHub all-targets Clippy 通过，原生执行待 CI；不据此宣称原生主链路已完成。
+
+## Decoder 原始 token 与零到多输出
+
+REQ-PICOO-NEXT-011 / MEDIA-025 直接替换仅含字节/配置的 Decoder 方法为 submit(DecodeSubmission)。不可变 token 保留提交时身份、PTS、时间及配置；压缩字节只借用，不随输出滞留。DecodeOutcome 返回分别携带原 token 的多张输出，refresh acceptance 仍指本次输入。删除未使用的 live flush API，reset 只丢弃旧状态；测试 EOS drain 保持在 MF 原生诊断内。
+
+MF 对 ProcessInput 成功的 AU 登记单调 sample time，最多 16 个 pending token；每次取完当前可用输出，GetSampleTime 精确消费原登记。reset 不复用内部时间，未知/重复输出拒绝。Receiver 不再把当前 job 的配置贴到返回图像，逐图像检查 Decoder/连接/stream 身份，再按原配置发布。暂时无输出的成功提交不再被统计成 Decoder drop。Windows CPU 源存储仍待原生端到端替换，本提交不宣称 NEXT-011 或整个主链路完成。
+
+Mac Decoder 16 项原生/配置回归通过；Receiver 媒体 18 项（含延迟双帧与三个旧身份门禁）、Decoder/loopback 7 项、实际 VideoToolbox→FrameBus→GPU→CPU 输出 1 项通过。新测试首次因诊断占位图不能容纳 64×32 布局而触发 panic，已改为直接提供合法 NV12 fixture 并要求 codec 无错误，避免旧输出拒绝测试错误地因 codec 崩溃而通过。Mac all-targets 与 Windows MF 库 Clippy 通过；新增两项实际 MF token/reset 测试待 Windows CI。MEDIA-025 因扩大到真实平台延迟输出，暂回到 implemented，不沿用旧较窄 verified 状态。
+
+前一批 CI 34047409630 全部通过；MF runtime lease 提交 7cb7701 已推送，CI 34048304540 的 Windows 原生测试通过，最终产物仍在构建。该运行完成前不推送下一提交，以免取消有效验证。

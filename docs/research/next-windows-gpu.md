@@ -52,3 +52,7 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 ## MF 运行时线程与样本寿命
 
 微软 [MFShutdown](https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mfshutdown) 要求与每次 MFStartup 配对，且禁止从 work queue thread 调用。复用 std::thread、mpsc 与 Arc 实现最小运行时 owner，不引入另一套执行器；最后引用关闭 channel，专用线程才 Shutdown。全进程 16 个 cohort 许可在创建线程前保留并直到退出才释放。COM apartment 用非 Send guard 单独维持，不能随跨线程 sample owner 移动。FrameHub 只接收不透明 Send + Sync 生命周期引用，不依赖 Decoder 或 GPU crate。
+
+## 完整 AU 的输出时间关联
+
+微软 [Time Stamps and Durations](https://learn.microsoft.com/en-us/windows/win32/medfound/time-stamps-and-durations) 要求 MFT 尽可能保留输入时间；含完整单张画面的输入不需要应用猜测输出属于哪次 ProcessInput。Picoo 使用官方 SetSampleTime/GetSampleTime，每个提交具有不同的内部时间键；duration 按正式 fps 转为 100ns 并截断，源 PTS 独立保留，不用重复源 PTS 当唯一键。缺失、插值成未知值或重复返回的键明确拒绝。此原生适配用标准 BTreeMap，容量 16，不新增第三方关联表、回调调度器或无界历史。真实 MF 回归必须证明所用 H.264 MFT 的时间对应；其他 codec 的映射不能从本测试推断。

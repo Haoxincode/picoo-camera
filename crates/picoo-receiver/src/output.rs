@@ -1,6 +1,8 @@
 //! Dedicated CPU sink preparation from native source frames.
 //! REQ-PICOO-NEXT-029/033/034: Receiver owner never maps or transforms pixels.
 
+#[cfg(test)]
+use picoo_media_decode::DecodeFixture as _;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -395,12 +397,12 @@ mod tests {
     fn hardware_decode_bus_gpu_and_cpu_sink_preserve_bt709_pixels() {
         // REQ-PICOO-NEXT-011/016/029: source stays native up to the output exporter.
         let decoded = picoo_media_decode::create_platform_decoder()
-            .decode_access_unit(
+            .decode_fixture(
                 &crate::tests::wire_avc(picoo_testkit::AVC_64X64_BT709_IDR),
                 None,
             )
             .unwrap()
-            .frame
+            .into_fixture_frame()
             .unwrap();
         let description = decoded.description().native_format;
         let mut bus = FrameBus::new();

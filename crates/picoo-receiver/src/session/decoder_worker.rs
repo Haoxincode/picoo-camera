@@ -15,22 +15,7 @@ use crate::media_scheduler::DecoderAdmission;
 
 const MAX_PENDING_DECODE_JOBS: usize = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum FrameKind {
-    Key,
-    ReferenceDelta,
-    DiscardableDelta,
-}
-
-impl FrameKind {
-    pub(super) fn is_keyframe(self) -> bool {
-        self == Self::Key
-    }
-
-    fn requires_refresh_when_dropped(self) -> bool {
-        self != Self::DiscardableDelta
-    }
-}
+pub(super) use picoo_media_decode::{AccessUnitTimeline, FrameKind};
 
 #[derive(Debug)]
 pub(super) struct EncodedAccessUnit {
@@ -43,18 +28,6 @@ pub(super) struct EncodedAccessUnit {
     pub(super) decode_submitted_at_us: u64,
     pub(super) kind: FrameKind,
     pub(super) data: Bytes,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(super) struct AccessUnitTimeline {
-    pub(super) connection_generation: u64,
-    pub(super) stream_generation: u64,
-    pub(super) frame_id: u64,
-    pub(super) source_pts_us: u64,
-    pub(super) encoded_at_us: u64,
-    pub(super) received_at_us: u64,
-    pub(super) decode_submitted_at_us: u64,
-    pub(super) kind: FrameKind,
 }
 
 impl EncodedAccessUnit {
@@ -262,9 +235,7 @@ pub(super) enum DecodeSubmitOutcome {
 pub(super) enum DecoderEvent {
     Started,
     Completed {
-        config_revision: u64,
         timeline: AccessUnitTimeline,
-        stream_config: Option<Arc<StreamConfig>>,
         decoder_generation: u64,
         decoded_at: Instant,
         decode_time_us: u64,
@@ -404,7 +375,15 @@ fn process_work_item(
             }
             let started = Instant::now();
             let decode = catch_unwind(AssertUnwindSafe(|| {
-                decoder.decode_access_unit(&job.access_unit.data, job.stream_config.as_deref())
+                decoder.submit(picoo_media_decode::DecodeSubmission {
+                    access_unit: &job.access_unit.data,
+                    token: Arc::new(picoo_media_decode::DecodeToken {
+                        timeline,
+                        config_revision: job.config_revision,
+                        decoder_generation: job.decoder_generation,
+                        stream_config: job.stream_config.clone(),
+                    }),
+                })
             }));
             let result = match decode {
                 Ok(result) => result,
@@ -420,9 +399,7 @@ fn process_work_item(
                 events,
                 event_wake,
                 DecoderEvent::Completed {
-                    config_revision: job.config_revision,
                     timeline,
-                    stream_config: job.stream_config,
                     decoder_generation: job.decoder_generation,
                     decoded_at,
                     decode_time_us: started.elapsed().as_micros() as u64,
@@ -473,11 +450,13 @@ mod tests {
     }
 
     impl AccessUnitDecoder for BlockingDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<DecodeOutcome, DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.started.store(true, Ordering::Release);
             while !self.release.load(Ordering::Acquire) {
                 thread::sleep(Duration::from_millis(1));
@@ -513,15 +492,14 @@ mod tests {
             events: Sender<(&'static str, thread::ThreadId)>,
         }
         impl AccessUnitDecoder for AffineDecoder {
-            fn decode_access_unit(
+            fn submit(
                 &mut self,
-                _: &[u8],
-                _: Option<&StreamConfig>,
+                _submission: picoo_media_decode::DecodeSubmission<'_>,
             ) -> Result<DecodeOutcome, DecodeError> {
                 assert_eq!(thread::current().id(), self.owner);
                 self.events.send(("decode", self.owner)).unwrap();
                 Ok(DecodeOutcome {
-                    frame: None,
+                    frames: Vec::new(),
                     refresh_accepted: false,
                 })
             }

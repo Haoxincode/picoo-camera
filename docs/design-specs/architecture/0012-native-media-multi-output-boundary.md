@@ -75,3 +75,7 @@ Windows CpuExporter 只接受相同 RenderSpec、相同 device 的已完成 Rend
 WindowsGpuContext 只拥有 D3D11 device、immediate context 保护与完成通知预算。MF DXGI manager 的创建、固定 ResetDevice 和保留属于 Decoder；创建 renderer/exporter 不初始化 MF，也不创建 manager。输出工作者可从原生图像/目标图像采用其现有 device，必须保持相同 COM identity；这种 wrapper 创建不代表新的 source device generation。已有设备同样检查 software adapter 与 SINGLETHREADED 标志，禁止通过导入入口绕过生产准入。MF/COM 的线程归属仍由 Decoder 管理，GPU wrapper 不承担其关闭责任。
 
 MF runtime 与 codec COM apartment 分开持有。COM 初始化和反初始化属于同一个 codec worker；运行时引用随 sample lease 保留，先释放 sample/texture，再释放生产者运行时。最后一个跨线程引用仅关闭标准 channel，由应用创建的专用线程配对执行 MFStartup/MFShutdown，禁止在 MF 工作队列或任意消费者析构里直接关闭。存活与清理中的运行时 cohort 合计最多 16 个，容量不足明确拒绝新 Decoder；挂起的清理仍占容量。此数量上限不代替图像字节预算与隐私期限。
+
+Decoder 输入由借用的压缩 AU 与不可变 DecodeToken 组成。Token 保留原 connection/stream/decoder generation、frame_id、source PTS、各提交时间、配置 revision 与配置快照，不持有压缩字节。输出是零到多张分别携带原 token 的图像；当前 AU 的 refresh acceptance 与返回图像的归属分开，暂时没有图像不等于丢帧。Receiver 必须逐图像验证原身份，再使用原配置发布，不能用触发本次输出的输入身份或当前 owner 状态替换。
+
+MF 复用 IMFSample 的 100ns sample time 关联完整 AU 与输出。内部时间键单调、checked advance，reset 不归零；相同源 PTS 不冲突，因为源时间只保留在 token 内。只有 ProcessInput 成功才登记对应 token；最多 16 个待输出提交，容量不足明确失败，不额外扩队列。每次取得所有可用输出并消费各自登记项，未知、缺失或重复时间键拒绝；reset 清空登记和原生预测状态。GetSampleTime 与标准有界映射足够表达此适配，不用当前 AU 猜测归属，也不为补图重投原 AU。

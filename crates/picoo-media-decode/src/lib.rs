@@ -1,6 +1,6 @@
 //! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006/012/023.
 //!
-//! Receiver decodes once; output NV12 feeds LatestFrameStore and Shared Frame Ring.
+//! Each submission carries an immutable token; delayed outputs return their original token.
 //! - Windows: Media Foundation (`windows-mf`)
 //! - macOS: VideoToolbox through pure Rust Apple framework bindings
 //! - Unsupported product targets: explicit unavailable error
@@ -32,7 +32,12 @@ mod openh264_dec;
 ))]
 mod configured_avc;
 
-use picoo_protocol::control::StreamConfig;
+#[cfg(any(test, feature = "test-codecs"))]
+mod fixture;
+mod submission;
+#[cfg(any(test, feature = "test-codecs"))]
+pub use fixture::DecodeFixture;
+pub use submission::{AccessUnitTimeline, DecodeSubmission, DecodeToken, FrameKind};
 use thiserror::Error;
 
 #[cfg(any(test, feature = "test-codecs"))]
@@ -60,8 +65,8 @@ pub use decoded_frame::DecodedFrameStorage;
 #[cfg(target_os = "macos")]
 pub use decoded_frame::NativeDecodedFormat;
 pub use decoded_frame::{
-    DecodeOutcome, DecodedFrame, DecodedFrameDescription, VideoColorMatrix, VideoColorRange,
-    VideoPixelFormat,
+    DecodeOutcome, DecodedFrame, DecodedFrameDescription, DecodedOutput, VideoColorMatrix,
+    VideoColorRange, VideoPixelFormat,
 };
 
 /// Decode on the platform worker that created this instance.
@@ -69,19 +74,11 @@ pub use decoded_frame::{
 /// REQ-PICOO-MEDIA-018: transfer the factory into a worker, never an initialized
 /// platform decoder. COM apartments and codec teardown can be thread-affine.
 pub trait AccessUnitDecoder {
-    fn decode_access_unit(
-        &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
-    ) -> Result<DecodeOutcome, DecodeError>;
-
-    fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
-        Ok(None)
-    }
+    fn submit(&mut self, submission: DecodeSubmission<'_>) -> Result<DecodeOutcome, DecodeError>;
 
     /// Discard all queued output and prediction/reference state.
     ///
-    /// Unlike [`Self::flush`], reset must not publish delayed frames. The next
+    /// Reset must not publish delayed frames. The next
     /// accepted access unit is expected to establish a fresh decode chain
     /// (normally an IDR with the active StreamConfig parameter sets).
     fn reset(&mut self) -> Result<(), DecodeError>;
@@ -119,11 +116,7 @@ struct UnavailableDecoder(String);
 
 #[cfg(any(test, not(target_os = "macos")))]
 impl AccessUnitDecoder for UnavailableDecoder {
-    fn decode_access_unit(
-        &mut self,
-        _access_unit: &[u8],
-        _stream_config: Option<&StreamConfig>,
-    ) -> Result<DecodeOutcome, DecodeError> {
+    fn submit(&mut self, _submission: DecodeSubmission<'_>) -> Result<DecodeOutcome, DecodeError> {
         Err(DecodeError::Platform(self.0.clone()))
     }
 
@@ -187,13 +180,13 @@ mod tests {
 
     fn assert_unavailable_after_reset(mut decoder: Box<dyn AccessUnitDecoder>) {
         assert!(matches!(
-            decoder.decode_access_unit(b"test-au", None),
+            decoder.decode_fixture(b"test-au", None),
             Err(DecodeError::Platform(_))
         ));
         // Reset discards state; an unavailable backend has no state to discard.
         decoder.reset().expect("empty reset");
         assert!(matches!(
-            decoder.decode_access_unit(b"test-au", None),
+            decoder.decode_fixture(b"test-au", None),
             Err(DecodeError::Platform(_))
         ));
     }
@@ -202,9 +195,9 @@ mod tests {
     fn stub_decodes_loopback_access_unit() {
         let mut decoder = StubDecoder::new();
         let frame = decoder
-            .decode_access_unit(b"test-au", None)
+            .decode_fixture(b"test-au", None)
             .expect("decode")
-            .frame
+            .into_fixture_frame()
             .expect("frame");
         #[cfg(not(target_os = "macos"))]
         assert!(!frame.cpu_nv12_bytes().expect("CPU NV12").is_empty());
@@ -243,7 +236,7 @@ mod tests {
 
         let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
-            .decode_access_unit(
+            .decode_fixture(
                 &picoo_bitstream::canonical_access_unit(
                     picoo_bitstream::Codec::Avc,
                     picoo_bitstream::NalFormat::AnnexB,
@@ -253,7 +246,7 @@ mod tests {
                 None,
             )
             .expect("decode")
-            .frame
+            .into_fixture_frame()
             .expect("picture");
         let description = frame.description();
         let nv12 = frame.cpu_nv12_bytes().expect("CPU NV12");
@@ -272,9 +265,9 @@ mod tests {
     fn openh264_falls_back_to_stub_for_tiny_fixture() {
         let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
-            .decode_access_unit(b"test-au", None)
+            .decode_fixture(b"test-au", None)
             .expect("decode")
-            .frame
+            .into_fixture_frame()
             .expect("frame");
         assert_eq!(frame.description().width, 1280);
         assert_eq!(frame.description().height, 720);
@@ -311,9 +304,9 @@ mod tests {
 
         let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
-            .decode_access_unit(&length_prefixed, None)
+            .decode_fixture(&length_prefixed, None)
             .expect("decode")
-            .frame
+            .into_fixture_frame()
             .expect("picture");
         assert_eq!(frame.description().width, width as u32);
         assert_eq!(frame.description().height, height as u32);

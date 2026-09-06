@@ -5,6 +5,8 @@
 //! `MF_MT_MPEG_SEQUENCE_HEADER` and injected ahead of the first AU after
 //! (re)configure — REQ-PICOO-PROTOCOL-005 / REQ-PICOO-SESSION-004.
 
+#[cfg(test)]
+use crate::DecodeFixture as _;
 use picoo_bitstream::{AccessUnit, AvcSpsFacts, PictureKind, RandomAccessPoint};
 use picoo_protocol::control::StreamConfig;
 use windows::core::GUID;
@@ -22,7 +24,9 @@ use windows::Win32::Media::MediaFoundation::{
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 
-use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
+use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame, DecodedOutput};
+use std::collections::BTreeMap;
+use std::sync::Arc;
 
 mod buffers;
 mod device;
@@ -38,6 +42,7 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize};
 use windows::{core::HRESULT, Win32::Foundation::RPC_E_CHANGED_MODE};
 
 const DEFAULT_FPS: u32 = 30;
+const MAX_PENDING_SUBMISSIONS: usize = 16;
 /// MF_MT_MPEG_SEQUENCE_HEADER — H.264 SPS/PPS with Annex-B start codes.
 const MF_MT_MPEG_SEQUENCE_HEADER: GUID = GUID::from_u128(0x05f4_6766_f1a9_44e5_b82a_e4df_c2ea_2873);
 
@@ -47,6 +52,7 @@ pub struct MfH264Decoder {
     geometry: Option<AvcSpsFacts>,
     fps: u32,
     next_sample_time_100ns: i64,
+    pending: BTreeMap<i64, Arc<crate::DecodeToken>>,
     sequence_header: Vec<u8>,
     inject_sequence_header: bool,
     device: device::DecoderDevice,
@@ -85,6 +91,7 @@ impl MfH264Decoder {
             geometry: None,
             fps: DEFAULT_FPS,
             next_sample_time_100ns: 0,
+            pending: BTreeMap::new(),
             sequence_header: Vec::new(),
             inject_sequence_header: false,
             device,
@@ -160,7 +167,7 @@ impl MfH264Decoder {
         self.configured = true;
         self.geometry = Some(geometry);
         self.fps = fps;
-        self.next_sample_time_100ns = 0;
+        self.pending.clear();
         self.inject_sequence_header = !sequence_header.is_empty();
         self.sequence_header = sequence_header;
         Ok(())
@@ -170,9 +177,15 @@ impl MfH264Decoder {
         &mut self,
         picture: AccessUnit<'_>,
         stream_config: Option<&StreamConfig>,
+        token: Arc<crate::DecodeToken>,
     ) -> Result<DecodeOutcome, DecodeError> {
         self.ensure_configured(stream_config, &picture)?;
-        let geometry = self.geometry.as_ref().ok_or(DecodeError::NotInitialized)?;
+        let mut frames = self.drain_frames()?;
+        if self.pending.len() >= MAX_PENDING_SUBMISSIONS {
+            return Err(DecodeError::Platform(
+                "MF pending submission limit reached".into(),
+            ));
+        }
         let annex = picture
             .to_annex_b()
             .map_err(|_| DecodeError::UnsupportedAccessUnit)?;
@@ -181,7 +194,6 @@ impl MfH264Decoder {
             picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
         let owned;
         let payload = if self.inject_sequence_header && !self.sequence_header.is_empty() {
-            self.inject_sequence_header = false;
             let mut combined = Vec::with_capacity(self.sequence_header.len() + access_unit.len());
             combined.extend_from_slice(&self.sequence_header);
             combined.extend_from_slice(access_unit);
@@ -192,43 +204,71 @@ impl MfH264Decoder {
         };
         unsafe {
             let duration_100ns = 10_000_000i64 / i64::from(self.fps.max(1));
-            let pending = feed_access_unit(
-                &self.transform,
-                payload,
-                self.next_sample_time_100ns,
-                duration_100ns,
-                geometry,
-                self.device.gpu(),
-                &self._runtime,
-            )?;
-            self.next_sample_time_100ns += duration_100ns;
-            let frame = match pending {
-                Some(frame) => Some(frame),
-                None => drain_output(&self.transform, geometry, self.device.gpu(), &self._runtime)?,
-            };
+            let stamp = self.next_sample_time_100ns;
+            self.next_sample_time_100ns = stamp
+                .checked_add(duration_100ns)
+                .ok_or_else(|| DecodeError::Platform("MF submission clock exhausted".into()))?;
+            let sample = create_input_sample(payload, stamp, duration_100ns)?;
+            match self.transform.ProcessInput(0, &sample, 0) {
+                Ok(()) => {}
+                Err(error) if error.code() == MF_E_NOTACCEPTING => {
+                    frames.extend(self.drain_frames()?);
+                    self.transform
+                        .ProcessInput(0, &sample, 0)
+                        .map_err(|error| {
+                            DecodeError::Platform(format!("ProcessInput retry: {error}"))
+                        })?;
+                }
+                Err(error) => return Err(DecodeError::Platform(format!("ProcessInput: {error}"))),
+            }
+            // Only accepted submissions can be matched by GetSampleTime.
+            self.pending.insert(stamp, token);
+            self.inject_sequence_header = false;
+            frames.extend(self.drain_frames()?);
             Ok(DecodeOutcome {
-                frame,
+                frames,
                 refresh_accepted,
             })
         }
     }
+    fn drain_frames(&mut self) -> Result<Vec<DecodedOutput>, DecodeError> {
+        let geometry = self.geometry.as_ref().ok_or(DecodeError::NotInitialized)?;
+        let mut frames = Vec::new();
+        for _ in 0..=MAX_PENDING_SUBMISSIONS {
+            let output = unsafe {
+                drain_output(&self.transform, geometry, self.device.gpu(), &self._runtime)?
+            };
+            let Some((stamp, frame)) = output else {
+                return Ok(frames);
+            };
+            let token = self.pending.remove(&stamp).ok_or_else(|| {
+                DecodeError::Platform("MF output has unknown or duplicate submission time".into())
+            })?;
+            frames.push(DecodedOutput { token, frame });
+        }
+        Err(DecodeError::Platform(
+            "MF output drain limit exceeded".into(),
+        ))
+    }
 }
 
 impl AccessUnitDecoder for MfH264Decoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
+        submission: crate::DecodeSubmission<'_>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        let access_unit = submission.access_unit;
+        let stream_config = submission.token.stream_config.as_deref();
+
         let picture = crate::configured_avc::validate(access_unit, stream_config)?;
-        self.decode_h264_au(picture, stream_config)
+        self.decode_h264_au(picture, stream_config, submission.token.clone())
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {
         if self.configured {
             unsafe { reset_transform(&self.transform)? };
         }
-        self.next_sample_time_100ns = 0;
+        self.pending.clear();
         self.inject_sequence_header = !self.sequence_header.is_empty();
         Ok(())
     }
@@ -381,31 +421,6 @@ unsafe fn create_input_sample(
     Ok(sample)
 }
 
-unsafe fn feed_access_unit(
-    transform: &IMFTransform,
-    access_unit: &[u8],
-    sample_time_100ns: i64,
-    duration_100ns: i64,
-    geometry: &AvcSpsFacts,
-    gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
-    runtime: &MfRuntimeGuard,
-) -> Result<Option<DecodedFrame>, DecodeError> {
-    let sample = create_input_sample(access_unit, sample_time_100ns, duration_100ns)?;
-
-    match transform.ProcessInput(0, &sample, 0) {
-        Ok(()) => Ok(None),
-        Err(e) if e.code() == MF_E_NOTACCEPTING => {
-            // Drain pending output then retry once.
-            let pending = drain_output(transform, geometry, gpu, runtime)?;
-            transform
-                .ProcessInput(0, &sample, 0)
-                .map_err(|e| DecodeError::Platform(format!("ProcessInput retry: {e}")))?;
-            Ok(pending)
-        }
-        Err(e) => Err(DecodeError::Platform(format!("ProcessInput: {e}"))),
-    }
-}
-
 unsafe fn output_sample_for_transform(
     transform: &IMFTransform,
     require_dxgi: bool,
@@ -498,7 +513,7 @@ unsafe fn drain_output(
     geometry: &AvcSpsFacts,
     gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
     runtime: &MfRuntimeGuard,
-) -> Result<Option<DecodedFrame>, DecodeError> {
+) -> Result<Option<(i64, DecodedFrame)>, DecodeError> {
     // One format-change retry is enough to consume the newly negotiated
     // output. Repeated stream changes fail explicitly instead of spinning.
     for attempt in 0..2 {
@@ -514,7 +529,10 @@ unsafe fn drain_output(
                         if let Some(gpu) = gpu {
                             device::validate_output_device(sample, gpu)?;
                         }
-                        sample_to_frame(sample, transform, geometry)
+                        let stamp = sample.GetSampleTime().map_err(|error| {
+                            DecodeError::Platform(format!("MF output submission time: {error}"))
+                        })?;
+                        Ok((stamp, sample_to_frame(sample, transform, geometry)?))
                     })
                     .transpose()
             }
@@ -586,9 +604,9 @@ mod tests {
             ..Default::default()
         };
         let mut decoder = MfH264Decoder::software_diagnostic().unwrap();
-        let submitted = decoder.decode_access_unit(&wire, Some(&config)).unwrap();
-        let frame = if let Some(frame) = submitted.frame {
-            frame
+        let submitted = decoder.decode_fixture(&wire, Some(&config)).unwrap();
+        let frame = if let Some(frame) = submitted.frames.into_iter().next() {
+            frame.frame
         } else {
             // A synchronous MFT can retain its last picture until EOS. Drain
             // the accepted input; never submit the same AU again to force output.
@@ -604,14 +622,13 @@ mod tests {
                     .transform
                     .ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)
                     .unwrap();
-                drain_output(
-                    &decoder.transform,
-                    decoder.geometry.as_ref().unwrap(),
-                    None,
-                    &decoder._runtime,
-                )
-                .unwrap()
-                .expect("EOS drain releases the accepted picture")
+                decoder
+                    .drain_frames()
+                    .unwrap()
+                    .into_iter()
+                    .next()
+                    .expect("EOS drain releases the accepted picture")
+                    .frame
             }
         };
         assert_eq!(
@@ -625,7 +642,7 @@ mod tests {
         let header = decoder.sequence_header.clone();
         config.width = 1280;
         assert!(matches!(
-            decoder.decode_access_unit(&wire, Some(&config)),
+            decoder.decode_fixture(&wire, Some(&config)),
             Err(DecodeError::ConfigurationMismatch)
         ));
         assert_eq!(decoder.geometry, geometry);
@@ -649,3 +666,6 @@ mod tests {
         unsafe { CoUninitialize() };
     }
 }
+
+#[cfg(test)]
+mod submission_tests;

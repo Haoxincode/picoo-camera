@@ -4,6 +4,8 @@
 //! Annex-B/AVCC access unit → CoreMedia sample → VideoToolbox →
 //! retained native NV12 for FrameBus. OpenH264 is intentionally not linked on Apple targets.
 
+#[cfg(test)]
+use crate::DecodeFixture as _;
 use std::ffi::c_void;
 use std::ptr::{self, NonNull};
 use std::sync::Mutex;
@@ -132,6 +134,7 @@ impl VideoToolboxDecoder {
         access_unit: &[u8],
         picture: AccessUnit<'_>,
         stream_config: Option<&StreamConfig>,
+        token: std::sync::Arc<crate::DecodeToken>,
     ) -> Result<DecodeOutcome, DecodeError> {
         let contains_idr =
             picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
@@ -187,6 +190,7 @@ impl VideoToolboxDecoder {
         };
         let native_format = crate::native_format::describe(&facts, &output)?;
         Ok(DecodeOutcome::frame(
+            token,
             DecodedFrame::native(
                 output,
                 native_format,
@@ -211,18 +215,20 @@ impl Drop for VideoToolboxDecoder {
 }
 
 impl AccessUnitDecoder for VideoToolboxDecoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
+        submission: crate::DecodeSubmission<'_>,
     ) -> Result<DecodeOutcome, DecodeError> {
-        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
-        self.decode_real_access_unit(access_unit, picture, stream_config)
-    }
+        let access_unit = submission.access_unit;
+        let stream_config = submission.token.stream_config.as_deref();
 
-    fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
-        self.reset()?;
-        Ok(None)
+        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
+        self.decode_real_access_unit(
+            access_unit,
+            picture,
+            stream_config,
+            submission.token.clone(),
+        )
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {
@@ -465,18 +471,18 @@ mod tests {
         };
         let mut decoder = VideoToolboxDecoder::new();
         decoder
-            .decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config))
+            .decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config))
             .unwrap();
         let session = decoder.session.as_ref().map(CFRetained::as_ptr);
         assert!(matches!(
-            decoder.decode_access_unit(&wire(H264_1280X720_RED_IDR), Some(&config)),
+            decoder.decode_fixture(&wire(H264_1280X720_RED_IDR), Some(&config)),
             Err(DecodeError::ConfigurationMismatch)
         ));
         assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
         let frame = decoder
-            .decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config))
+            .decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config))
             .unwrap()
-            .frame
+            .into_fixture_frame()
             .unwrap();
         assert_eq!(frame.description().width, 64);
     }
@@ -498,12 +504,12 @@ mod tests {
         };
         let mut decoder = VideoToolboxDecoder::new();
         decoder
-            .decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config))
+            .decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config))
             .unwrap();
         let session = decoder.session.as_ref().map(CFRetained::as_ptr);
         config.width = 1280;
         assert!(matches!(
-            decoder.decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config)),
+            decoder.decode_fixture(&wire(H264_64X64_RED_IDR), Some(&config)),
             Err(DecodeError::ConfigurationMismatch)
         ));
         assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
@@ -513,7 +519,7 @@ mod tests {
     fn unknown_native_color_is_rejected_instead_of_relabelled() {
         let mut decoder = VideoToolboxDecoder::new();
         assert!(decoder
-            .decode_access_unit(&wire(picoo_testkit::H264_64X64_RED_IDR), None)
+            .decode_fixture(&wire(picoo_testkit::H264_64X64_RED_IDR), None)
             .is_err());
     }
 
@@ -521,9 +527,9 @@ mod tests {
     fn videotoolbox_decodes_canonical_idr_to_native_frame() {
         let mut decoder = VideoToolboxDecoder::new();
         let frame = decoder
-            .decode_access_unit(&wire(H264_64X64_RED_IDR), None)
+            .decode_fixture(&wire(H264_64X64_RED_IDR), None)
             .expect("VideoToolbox decode")
-            .frame
+            .into_fixture_frame()
             .expect("decoded frame");
         assert_eq!(
             (frame.description().width, frame.description().height),
@@ -557,9 +563,9 @@ mod tests {
 
         let mut decoder = VideoToolboxDecoder::new();
         let frame = decoder
-            .decode_access_unit(&avcc, Some(&config))
+            .decode_fixture(&avcc, Some(&config))
             .expect("VideoToolbox decode")
-            .frame
+            .into_fixture_frame()
             .expect("decoded frame");
         assert_eq!(
             (frame.description().width, frame.description().height),
@@ -569,21 +575,21 @@ mod tests {
     }
 
     #[test]
-    fn same_parameter_sets_reuse_session_and_flush_resets_it() {
+    fn same_parameter_sets_reuse_session_and_reset_discards_it() {
         let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).expect("parameter sets");
         let mut decoder = VideoToolboxDecoder::new();
         decoder.ensure_session(&sps, &pps).expect("first session");
         let first = decoder.session.as_ref().map(CFRetained::as_ptr);
         decoder.ensure_session(&sps, &pps).expect("reused session");
         assert_eq!(first, decoder.session.as_ref().map(CFRetained::as_ptr));
-        decoder.flush().expect("flush");
+        decoder.reset().expect("reset");
         assert!(decoder.session.is_none());
     }
 
     #[test]
     fn malformed_access_unit_is_rejected_without_stub_fallback() {
         let mut decoder = VideoToolboxDecoder::new();
-        let result = decoder.decode_access_unit(b"not-h264", None);
+        let result = decoder.decode_fixture(b"not-h264", None);
         assert!(matches!(result, Err(DecodeError::UnsupportedAccessUnit)));
         assert!(decoder.session.is_none());
     }
@@ -592,9 +598,9 @@ mod tests {
     fn in_band_parameter_change_recreates_session_and_updates_dimensions() {
         let mut decoder = VideoToolboxDecoder::new();
         let first = decoder
-            .decode_access_unit(&wire(H264_64X64_RED_IDR), None)
+            .decode_fixture(&wire(H264_64X64_RED_IDR), None)
             .expect("64x64 decode")
-            .frame
+            .into_fixture_frame()
             .expect("64x64 frame");
         assert_eq!(
             (first.description().width, first.description().height),
@@ -603,9 +609,9 @@ mod tests {
         let first_sps = decoder.sps.clone();
 
         let second = decoder
-            .decode_access_unit(&wire(H264_1280X720_RED_IDR), None)
+            .decode_fixture(&wire(H264_1280X720_RED_IDR), None)
             .expect("1280x720 decode")
-            .frame
+            .into_fixture_frame()
             .expect("1280x720 frame");
         assert_eq!(
             (second.description().width, second.description().height),

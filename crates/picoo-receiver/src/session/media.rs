@@ -228,7 +228,7 @@ impl ReceiverSession {
         self.placeholder_mode
     }
 
-    /// Decode one typed H.264 access unit into one shared VideoFrame.
+    /// Submit one typed AU; the Decoder may return zero or several original-token outputs.
     pub(super) fn publish_timeline_access_unit(
         &mut self,
         access_unit: EncodedAccessUnit,

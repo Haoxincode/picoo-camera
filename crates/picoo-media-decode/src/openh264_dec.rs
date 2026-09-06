@@ -112,14 +112,16 @@ impl OpenH264Decoder {
 }
 
 impl AccessUnitDecoder for OpenH264Decoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
+        submission: crate::DecodeSubmission<'_>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        let access_unit = submission.access_unit;
+        let stream_config = submission.token.stream_config.as_deref();
+
         // Preserve stub semantics for unit/loopback fixtures that are not real H.264.
         if Self::looks_like_loopback_stub(access_unit, stream_config) {
-            return self.stub.decode_access_unit(access_unit, stream_config);
+            return self.stub.submit(submission);
         }
 
         let picture = crate::configured_avc::validate(access_unit, stream_config)?;
@@ -160,6 +162,7 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return Ok(DecodeOutcome::accepted_without_frame(false));
         };
         Ok(DecodeOutcome::frame(
+            submission.token.clone(),
             DecodedFrame::cpu_nv12(
                 width,
                 height,
@@ -170,25 +173,6 @@ impl AccessUnitDecoder for OpenH264Decoder {
             ),
             contains_idr,
         ))
-    }
-
-    fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
-        let frames = self
-            .decoder
-            .flush_remaining()
-            .map_err(|e| DecodeError::Platform(e.to_string()))?;
-        let Some(yuv) = frames.last() else {
-            return Ok(None);
-        };
-        let (width, height, stride, nv12) = Self::i420_to_nv12(yuv)?;
-        Ok(Some(DecodedFrame::cpu_nv12(
-            width,
-            height,
-            stride,
-            0,
-            now_timestamp_us(),
-            Bytes::from(nv12),
-        )))
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {

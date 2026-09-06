@@ -15,11 +15,13 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
     struct ResetCounter(Arc<AtomicUsize>);
 
     impl picoo_media_decode::AccessUnitDecoder for ResetCounter {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
                 false,
             ))
@@ -82,11 +84,13 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     struct DropsRefresh;
 
     impl picoo_media_decode::AccessUnitDecoder for AlwaysFails {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             Err(picoo_media_decode::DecodeError::Platform(
                 "fixture failure".into(),
             ))
@@ -98,11 +102,13 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     }
 
     impl picoo_media_decode::AccessUnitDecoder for DropsRefresh {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
                 false,
             ))
@@ -161,11 +167,13 @@ fn slow_decoder_never_blocks_session_close() {
     struct SlowDecoder(Arc<AtomicBool>);
 
     impl picoo_media_decode::AccessUnitDecoder for SlowDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.0.store(true, Ordering::Release);
             std::thread::sleep(Duration::from_millis(250));
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
@@ -209,11 +217,13 @@ fn slow_decoder_never_blocks_session_drop() {
     struct SlowDecoder(Arc<AtomicBool>);
 
     impl picoo_media_decode::AccessUnitDecoder for SlowDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.0.store(true, Ordering::Release);
             std::thread::sleep(Duration::from_millis(250));
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(

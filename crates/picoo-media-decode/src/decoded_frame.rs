@@ -197,24 +197,44 @@ impl DecodedFrame {
 /// Result of submitting one access unit to a platform decoder.
 #[derive(Debug, Clone)]
 pub struct DecodeOutcome {
-    pub frame: Option<DecodedFrame>,
+    pub frames: Vec<DecodedOutput>,
     /// True only when this AU contained an IDR and the platform accepted it
     /// without reporting a drop. Receiver uses this to leave AwaitingRefresh.
     pub refresh_accepted: bool,
 }
 
 impl DecodeOutcome {
-    pub fn frame(frame: DecodedFrame, refresh_accepted: bool) -> Self {
+    #[cfg(any(test, feature = "test-codecs"))]
+    pub fn into_fixture_frame(self) -> Option<DecodedFrame> {
+        assert!(
+            self.frames.len() <= 1,
+            "fixture expected at most one output"
+        );
+        self.frames.into_iter().next().map(|output| output.frame)
+    }
+
+    pub fn frame(
+        token: std::sync::Arc<crate::DecodeToken>,
+        frame: DecodedFrame,
+        refresh_accepted: bool,
+    ) -> Self {
         Self {
-            frame: Some(frame),
+            frames: vec![DecodedOutput { token, frame }],
             refresh_accepted,
         }
     }
 
     pub fn accepted_without_frame(refresh_accepted: bool) -> Self {
         Self {
-            frame: None,
+            frames: Vec::new(),
             refresh_accepted,
         }
     }
+}
+
+/// A decoded picture belongs to its original submission, even when returned later.
+#[derive(Debug, Clone)]
+pub struct DecodedOutput {
+    pub token: std::sync::Arc<crate::DecodeToken>,
+    pub frame: DecodedFrame,
 }

@@ -41,9 +41,7 @@ impl ReceiverSession {
                         self.ingress.decode_invocations.saturating_add(1);
                 }
                 DecoderEvent::Completed {
-                    config_revision,
                     timeline,
-                    stream_config,
                     decoder_generation,
                     decoded_at,
                     decode_time_us,
@@ -61,14 +59,7 @@ impl ReceiverSession {
                     if !self.decoder_recovery.accepts_completion(timeline) {
                         continue;
                     }
-                    self.handle_decoder_result(
-                        timeline,
-                        decoder_generation,
-                        config_revision,
-                        decoded_at,
-                        stream_config.as_deref(),
-                        result,
-                    )?;
+                    self.handle_decoder_result(timeline, decoded_at, result)?;
                 }
                 DecoderEvent::ResetFailed(error) => {
                     tracing::warn!(%error, "decoder reset failed; worker rebuilt platform decoder");
@@ -101,14 +92,9 @@ impl ReceiverSession {
     fn handle_decoder_result(
         &mut self,
         timeline: AccessUnitTimeline,
-        decoder_generation: u64,
-        config_revision: u64,
         decoded_at: Instant,
-        stream_config: Option<&picoo_protocol::control::StreamConfig>,
         result: Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError>,
     ) -> Result<(), ReceiverError> {
-        #[cfg(not(target_os = "macos"))]
-        let _ = (decoder_generation, config_revision);
         let outcome = match result {
             Ok(decoded) => decoded,
             Err(error) => {
@@ -127,37 +113,46 @@ impl ReceiverSession {
                 return Ok(());
             }
         }
-        match outcome.frame {
-            Some(mut frame) => {
-                // REQ-PICOO-MEDIA-025: presentation belongs to the submitted AU.
-                let rotation = stream_config
-                    .map(|config| config.rotation)
-                    .unwrap_or(frame.description().rotation);
-                frame.set_rotation(rotation);
-                self.publish_decoded_frame(
-                    FrameTimeline {
-                        #[cfg(target_os = "macos")]
-                        connection_generation: timeline.connection_generation,
-                        #[cfg(target_os = "macos")]
-                        decoder_generation,
-                        #[cfg(target_os = "macos")]
-                        config_revision,
-                        stream_generation: timeline.stream_generation,
-                        frame_id: timeline.frame_id,
-                        source_pts_us: timeline.source_pts_us,
-                        encoded_at_us: timeline.encoded_at_us,
-                        received_at_us: timeline.received_at_us,
-                        decode_submitted_at_us: timeline.decode_submitted_at_us,
-                        decoded_at: Some(decoded_at),
-                    },
-                    frame,
-                    stream_config.is_some_and(|config| config.mirrored),
-                )?;
-                self.ingress.decoded_frames += 1;
-                self.stats_reporter.record_decoded_frame();
-                self.last_media_error = None;
+        for output in outcome.frames {
+            let token = output.token;
+            let timeline = token.timeline;
+            if !self
+                .decoder_worker
+                .is_current_generation(token.decoder_generation)
+                || !self.decoder_timeline_is_current(timeline)
+                || !self.decoder_recovery.accepts_completion(timeline)
+            {
+                continue;
             }
-            None => self.stats_reporter.record_decoder_drop(),
+            let stream_config = token.stream_config.as_deref();
+            let mut frame = output.frame;
+            // REQ-PICOO-MEDIA-025: presentation belongs to the submitted AU.
+            let rotation = stream_config
+                .map(|config| config.rotation)
+                .unwrap_or(frame.description().rotation);
+            frame.set_rotation(rotation);
+            self.publish_decoded_frame(
+                FrameTimeline {
+                    #[cfg(target_os = "macos")]
+                    connection_generation: timeline.connection_generation,
+                    #[cfg(target_os = "macos")]
+                    decoder_generation: token.decoder_generation,
+                    #[cfg(target_os = "macos")]
+                    config_revision: token.config_revision,
+                    stream_generation: timeline.stream_generation,
+                    frame_id: timeline.frame_id,
+                    source_pts_us: timeline.source_pts_us,
+                    encoded_at_us: timeline.encoded_at_us,
+                    received_at_us: timeline.received_at_us,
+                    decode_submitted_at_us: timeline.decode_submitted_at_us,
+                    decoded_at: Some(decoded_at),
+                },
+                frame,
+                stream_config.is_some_and(|config| config.mirrored),
+            )?;
+            self.ingress.decoded_frames += 1;
+            self.stats_reporter.record_decoded_frame();
+            self.last_media_error = None;
         }
         Ok(())
     }
@@ -246,3 +241,6 @@ impl ReceiverSession {
         self.frames.latest()
     }
 }
+
+#[cfg(test)]
+mod tests;

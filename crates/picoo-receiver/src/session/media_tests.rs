@@ -105,11 +105,13 @@ struct RecoveryBlockingDecoder {
 }
 
 impl picoo_media_decode::AccessUnitDecoder for RecoveryBlockingDecoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        submission: picoo_media_decode::DecodeSubmission<'_>,
     ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+        let access_unit = submission.access_unit;
+        let _stream_config = submission.token.stream_config.as_deref();
+
         let marker = access_unit.first().copied().unwrap_or(0);
         self.submitted
             .lock()
@@ -228,11 +230,13 @@ fn ready_reference_waits_in_jitter_until_decoder_capacity_is_available() {
     }
 
     impl picoo_media_decode::AccessUnitDecoder for BlockingDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.started.store(true, Ordering::Release);
             while !self.release.load(Ordering::Acquire) {
                 std::thread::sleep(std::time::Duration::from_millis(1));
