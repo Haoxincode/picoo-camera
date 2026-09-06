@@ -8,6 +8,8 @@ use lock::KernelLockGuard;
 use thiserror::Error;
 
 mod consumer;
+mod content_fence;
+pub use content_fence::RingContentFence;
 mod layout;
 mod lock;
 mod mapping;
@@ -55,6 +57,8 @@ pub enum SharedRingError {
     InvalidLayout,
     #[error("frame too large: {0} > max {1}")]
     FrameTooLarge(usize, usize),
+    #[error("shared ring content was invalidated")]
+    ContentInvalidated,
     #[error("invalid ring header")]
     InvalidHeader,
 }

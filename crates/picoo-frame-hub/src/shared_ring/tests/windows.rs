@@ -247,7 +247,8 @@ fn windows_open_or_create_replaces_an_invalid_persisted_generation() {
     unsafe {
         (&mut *meta_at(invalid.mapping.as_ptr())).magic = 0;
     }
-    let ProducerMapping::Shared(mapping) = &mut invalid.mapping else {
+    let ProducerMapping::Shared(mapping) = std::sync::Arc::get_mut(&mut invalid.mapping).unwrap()
+    else {
         panic!("named test ring must use shared mapping");
     };
     mapping.mapping.set_owner(false);

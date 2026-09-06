@@ -70,6 +70,10 @@ final class SharedRingReader: @unchecked Sendable {
         Darwin.close(descriptor)
     }
 
+    var contentGeneration: UInt64 {
+        picoo_ring_content_generation(base, mappedLength)
+    }
+
     func acquireLatestFrame() -> SharedRingFrame? {
         var lease = PicooRingFrameLease()
         let acquired = fileURL.path.withCString {
@@ -107,6 +111,7 @@ final class VImageScaleWorkspace {
 
 final class SharedRingFrame: @unchecked Sendable {
     let sequence: UInt64
+    let contentGeneration: UInt64
     let timestampMicroseconds: UInt64
     let width: Int
     let height: Int
@@ -120,6 +125,7 @@ final class SharedRingFrame: @unchecked Sendable {
         self.reader = reader
         self.lease = lease
         sequence = lease.sequence
+        contentGeneration = lease.content_generation
         timestampMicroseconds = lease.timestamp_us
         width = Int(lease.width)
         height = Int(lease.height)
@@ -131,7 +137,12 @@ final class SharedRingFrame: @unchecked Sendable {
         picoo_ring_release(reader.base, &lease)
     }
 
+    var isCurrent: Bool {
+        contentGeneration != 0 && contentGeneration == reader.contentGeneration
+    }
+
     func copyNV12(to pixelBuffer: CVPixelBuffer, workspace: VImageScaleWorkspace) -> Bool {
+        guard isCurrent else { return false }
         let (yBytes, yOverflow) = stride.multipliedReportingOverflow(by: height)
         let (uvBytes, uvOverflow) = stride.multipliedReportingOverflow(by: height / 2)
         let (requiredBytes, totalOverflow) = yBytes.addingReportingOverflow(uvBytes)
@@ -192,7 +203,7 @@ final class SharedRingFrame: @unchecked Sendable {
                     width
                 )
             }
-            return true
+            return isCurrent
         }
 
         memset(yDestination, 16, yDestinationStride * targetHeight)
@@ -253,7 +264,7 @@ final class SharedRingFrame: @unchecked Sendable {
                     &destinationCbCr,
                     temporary,
                     flags
-                ) == kvImageNoError
+                ) == kvImageNoError && isCurrent
         }
     }
 }

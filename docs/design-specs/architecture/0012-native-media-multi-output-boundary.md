@@ -45,3 +45,5 @@ Apple 图像、硬件 codec 与 GPU 分别复用 CoreVideo/IOSurface、VideoTool
 源配置入口只接受精确的正式尺寸组合（1280×720 / 1920×1080），无 480p 或任意高度归档。用户请求不按 Receiver 最大高度静默替换；不能满足的组合必须明确拒绝。码率策略查询对未知高度返回错误，C/JNI 数值接口以 0 表示不支持，不将其当作可用目标码率（REQ-PICOO-MEDIA-028）。
 
 源配置使用与能力声明相同的 codec/profile/色彩枚举和标准 level_idc，不使用可随意拼写的字符串，也不在缺参数时猜测 profile 或 level。已提交参数集属于 Decoder job 的不可变配置快照；带内参数集只有逐个匹配时才可随 AU 进入平台 Decoder，不能绕过配置事务改写 source format。Sender 在原生编码器提供参数前没有源配置，不在会话创建时合成配置。参数解释失败直接返回错误，不能生成空记录或占位身份；完整原生回调必须先验证配置，再绑定 generation 或暂存源状态。Receiver 在替换已提交配置、推进 revision、使输出失效或释放未来 epoch 媒体之前校验记录与声明身份；校验失败必须保持原状态。StreamConfig 的 `codec_configuration` 承载标准 avcC/hvcC 记录，不再单独传输 SPS/PPS；原生 API 提供的参数集仅在平台输入适配边界保留。标准记录中的 configurationVersion 是外部标准语法，不是 Picoo 协议版本。标准 avcC/hvcC 解释与生成由位流依赖负责，领域层只执行有界准入和一致性校验。
+
+CPU IPC 内容失效由独立原子代际表达，与文件/映射的进程世代分开。每次准备携带内容代际，槽位提交保留该原始值；Consumer 获得读 lease 后再次检查槽位值与当前值相等，不能把复制后的最新代际贴到旧内容上。Owner 只推进标量，不等待复制或 GPU 任务，也不覆盖消费者仍持有的像素。此门禁使迟到旧发布不可重新获得 lease；已交付系统 sample、缓存与持有引用的隐私期限仍由各 sink 的清理合同负责。代际耗尽永久关闭该映射，不能归零后重新启用。

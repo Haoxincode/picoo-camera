@@ -25,19 +25,11 @@
 | REQ-PICOO-MEDIA-021 | implemented | ARCH-PICOO-RUNTIME-001 | Android MediaCodec output callback 只复制有效 AU、释放 codec buffer 并提交有界 GOP-aware handoff；单一 Sender media worker 执行 generation/transaction 校验、可选 StreamConfig、分包、flush、pump 与 IDR 消费，一帧只通过一次原子 JNI 并只取得一次 Session mutex；不得让 MediaCodec 借用指针越过 `releaseOutputBuffer`；JNI 负错误码必须先进入 typed failure，禁止作为成功副作用位标志解释 | `EncodedAccessUnitBuffer` 同时限制 12 AU、16 MiB 与 250 ms 帧龄，溢出或超龄后等待 keyframe；`EncoderSubmitOutcomeTest` 覆盖 -1/-2/0/合法组合，失败不记录 accepted、不请求 IDR 且恢复 config dirty；JVM buffer/generation/关闭测试、Android NDK 构建；codec callback p95/p99 与真机 CPU/GC 仍待 profile |
 | REQ-PICOO-MEDIA-022 | implemented | ARCH-PICOO-RUNTIME-001 | Android JNI 与 iOS C ABI 为每个原生编码 AU 提供一个完整事件入口；Core 在一次 Session 独占中统一处理 transaction/generation、可选参数集、StreamConfig 控制先行、packetization、flush/pump 与 IDR 请求，FFI 不编排业务调用顺序；平台必须分别消费 `encoder_accepted`、`stream_configured` 与 `keyframe_requested`，FFI 调用成功不得冒充 Core 已接纳编码事实 | `complete_native_encoder_event_is_core_ordered_and_directly_testable` 验证第一个视频 batch 前已有可靠配置；Android typed bit flags；iOS `rejectedEncoderOutcomeRemainsRejected` 与类型化 `EncoderSubmitResult`；平台编译由 CI 验证 |
 | REQ-PICOO-MEDIA-023 | implemented | ARCH-PICOO-RUNTIME-001 | Decoder 输出将不可变帧描述与 backing storage 分离；当前只启用 `CpuNv12(Bytes)`，帧契约显式携带格式、BT.709 limited range、stride、旋转和时间戳；未来原生 surface 必须具有安全可转移 owner，不得给裸平台指针添加宽泛 `Send` | 全平台 decoder 构造/Receiver 消费迁移；`picoo-media-decode` 回归；CPU NV12 accessor/ownership 测试；原生 surface 仍属后续 profile 驱动范围 |
-
 | REQ-PICOO-MEDIA-024 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、024 | 生产 Decoder 工厂只创建当前平台原生后端；缺后端明确 unavailable，绝不创建 Stub/OpenH264；软件 codec 与替身仅在显式 test-codecs/测试图中使用 | 默认 Android/Linux/Apple/Windows feature 图、无后端错误、显式测试工厂及 Receiver 回归 |
-
 | REQ-PICOO-MEDIA-025 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011 | Decoder 完成事件携带提交时不可变配置快照，帧方向/镜像不从 owner 当前状态重建；占位画面不继承源镜像 | 在同 epoch 中切换当前配置后，迟到完成仍保持提交时方向/镜像；占位回归 |
-
 | REQ-PICOO-MEDIA-026 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、009、024 | Android 使用显式硬件 MediaCodec 名称与完整尺寸/帧率/profile 准入；AVC 请求 High、HEVC 请求 Main；实际格式通过校验后放行 AU；iOS AVC 请求 High 且检查硬件属性、不回退 Baseline | Xiaomi 15 通过生产配置工厂执行八种 Surface 编码组合；Apple 编译及硬件属性验证；真实 no-B-frame/长时质量仍按 NEXT 独立验收 |
-
 | REQ-PICOO-MEDIA-027 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、025 | 网络拥塞与恢复只在当前已提交配置的码率边界内调整，不创建分辨率事务或推进 epoch；源配置变更由显式配置事务完成 | 长时间拥塞/恢复保持尺寸与 epoch、无自动 Encoder directive；显式配置事务与失败恢复回归；Android 热策略及 Xiaomi 15 StreamingScreen 6 项 UI 测试通过 |
-
 | REQ-PICOO-MEDIA-028 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-004、005 | 源高度及码率策略仅接受精确 720/1080；拒绝 480 与任意高度，不静默归档或按 Receiver 最大高度替换请求 | Core 事务/码率/FFI 非法参数回归与手机入口验证 |
-
 | REQ-PICOO-MEDIA-029 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、022、027 | 传入 Decoder 的已提交 AVC 参数集为权威事实；逐个检查带内 SPS/PPS，不允许绕过事务覆盖配置；冲突在平台状态变化前拒绝 | 匹配/孤立参数更新/不同表示回归，VideoToolbox 旧 session 和旧配置继续可用；MF 同一校验入口 |
-
 | REQ-PICOO-MEDIA-031 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、025 | MF 输出类型变化通过原生枚举与 SetOutputType 协商，保留已提交 AU；只接受匹配几何的 NV12，最多一次输出重试 | Windows AVCC 实际解码回归；原生 D3D11 帧路径另验 |
-
 | REQ-PICOO-MEDIA-032 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-025 | MF 以 SPS coded size 协商原生分配，先校验声明可见尺寸；CPU 适配器用原生 pitch 和明确 crop 复制，不按字节长度猜测布局 | 192×96→64×64 真实样本、1088→1080、带偏移 crop/pitch、越界/溢出；Windows 原生回归及拒绝配置不改状态；不代表 Next D3D11 原生链路完成 |

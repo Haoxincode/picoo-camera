@@ -187,6 +187,13 @@ unsafe fn read_view<'a>(
         slot.reader_count.fetch_sub(1, Ordering::SeqCst);
         return None;
     }
+    let active = (&*const_meta_at(base))
+        .content_generation
+        .load(Ordering::SeqCst);
+    if active == 0 || slot.content_generation.load(Ordering::SeqCst) != active {
+        slot.reader_count.fetch_sub(1, Ordering::SeqCst);
+        return None;
+    }
     let len = slot.data_length as usize;
     if len > max_frame_bytes || slot.pixel_format != PIXEL_FORMAT_NV12 {
         slot.reader_count.fetch_sub(1, Ordering::SeqCst);

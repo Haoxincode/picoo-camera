@@ -1,14 +1,13 @@
 //! Dedicated CPU sink preparation from native source frames.
 //! REQ-PICOO-NEXT-029/033/034: Receiver owner never maps or transforms pixels.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use picoo_frame_hub::{
-    NativeVideoFrame, PlaceholderMode, RingPublishOutcome, SharedFrameRingProducer,
-    SharedRingError, SharedRingSubmitOutcome,
+    NativeVideoFrame, PlaceholderMode, RingContentFence, RingPublishOutcome,
+    SharedFrameRingProducer, SharedRingError, SharedRingSubmitOutcome,
 };
 use picoo_gpu::{AppleRenderer, CpuExporter, CpuImage, OutputColor, RenderSpec, Rotation};
 
@@ -32,7 +31,7 @@ pub(crate) enum OutputEvent {
 pub(crate) struct MacCpuOutput {
     shared: Arc<(Mutex<State>, Condvar)>,
     events: Arc<Mutex<Option<(u64, OutputEvent)>>>,
-    generation: Arc<AtomicU64>,
+    generation: RingContentFence,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -44,22 +43,20 @@ impl MacCpuOutput {
         let worker_shared = Arc::clone(&shared);
         let events = Arc::new(Mutex::new(None));
         let worker_events = Arc::clone(&events);
-        let generation = Arc::new(AtomicU64::new(0));
-        let worker_generation = Arc::clone(&generation);
         let (started, startup) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
             .name("picoo-cpu-output".into())
             .spawn(move || {
                 let mut producer = match factory() {
-                    Ok(producer) => {
-                        let _ = started.send(Ok(()));
-                        producer
-                    }
+                    Ok(producer) => producer,
                     Err(error) => {
                         let _ = started.send(Err(error));
                         return;
                     }
                 };
+                let worker_generation = producer.content_fence();
+                worker_shared.0.lock().unwrap().generation = worker_generation.invalidate();
+                let _ = started.send(Ok(worker_generation.clone()));
                 let mut resources: Option<Resources> = None;
                 loop {
                     let (generation, request) = {
@@ -86,7 +83,7 @@ impl MacCpuOutput {
                             }))
                         }
                     };
-                    if worker_generation.load(Ordering::Acquire) != generation {
+                    if worker_generation.current() != generation {
                         continue;
                     }
                     let prepared = match prepared {
@@ -106,15 +103,16 @@ impl MacCpuOutput {
                         if state.generation != generation {
                             break;
                         }
-                        // No queue mutex is held across output memory copies. The
-                        // checked generation excludes already-invalidated work. The
-                        // ring still needs a generation-aware publication fence.
+                        // No queue mutex is held across copies. The IPC slot keeps
+                        // this request's generation; concurrent invalidation also
+                        // prevents cross-process readers acquiring a stale result.
                         drop(state);
-                        if worker_generation.load(Ordering::Acquire) != generation {
+                        if worker_generation.current() != generation {
                             break;
                         }
                         let result = match &prepared {
-                            Prepared::Image(image) => producer.publish_nv12(
+                            Prepared::Image(image) => producer.publish_nv12_in_generation(
+                                generation,
                                 image.spec().width,
                                 image.spec().height,
                                 image.stride(),
@@ -122,7 +120,8 @@ impl MacCpuOutput {
                                 picoo_media_decode::now_timestamp_us(),
                                 image.pixels(),
                             ),
-                            Prepared::Placeholder(pixels) => producer.publish_nv12(
+                            Prepared::Placeholder(pixels) => producer.publish_nv12_in_generation(
+                                generation,
                                 picoo_frame_hub::PLACEHOLDER_WIDTH,
                                 picoo_frame_hub::PLACEHOLDER_HEIGHT,
                                 picoo_frame_hub::PLACEHOLDER_WIDTH,
@@ -158,18 +157,18 @@ impl MacCpuOutput {
                 }
             })
             .map_err(|error| SharedRingError::Shmem(error.to_string()))?;
-        match startup.recv_timeout(Duration::from_secs(2)) {
-            Ok(Ok(())) => {}
+        let generation = match startup.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(fence)) => fence,
             result => {
                 shared.0.lock().unwrap().stopped = true;
                 shared.1.notify_one();
                 return Err(match result {
                     Ok(Err(error)) => error,
                     Err(error) => SharedRingError::Shmem(format!("CPU output startup: {error}")),
-                    Ok(Ok(())) => unreachable!(),
+                    Ok(Ok(_)) => unreachable!(),
                 });
             }
-        }
+        };
         Ok(Self {
             shared,
             events,
@@ -210,20 +209,16 @@ impl MacCpuOutput {
         }
     }
     fn advance_generation(&self, state: &mut State) {
-        match state.generation.checked_add(1) {
-            Some(next) => {
-                state.generation = next;
-                self.generation.store(next, Ordering::Release);
-            }
-            None => {
-                state.stopped = true;
-                state.pending = None;
-            }
+        state.generation = self.generation.invalidate();
+        if state.generation == 0 {
+            state.stopped = true;
+            state.pending = None;
         }
     }
+
     pub(crate) fn poll_event(&self) -> Option<OutputEvent> {
         let (generation, event) = self.events.lock().unwrap().take()?;
-        (generation == self.generation.load(Ordering::Acquire)).then_some(event)
+        (generation == self.generation.current()).then_some(event)
     }
 }
 
@@ -391,5 +386,10 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(1));
         }
+        output.invalidate();
+        assert!(
+            consumer.latest_frame().is_none(),
+            "owner invalidation fences IPC immediately"
+        );
     }
 }

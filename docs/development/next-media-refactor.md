@@ -263,3 +263,14 @@ MF 显式布局 4 项本机测试通过，包含实际样本 SPS 的 192×96 编
 CI 34034219152 的 Rust/docs、Android 和 iOS 通过。Windows 成功编译并进入原生测试，没有继续出现 coded/visible 协商错误；新增单图测试却错误地假设首个 ProcessInput 必须同步给出图像，实际返回成功但 frame=None。测试按 MFT 的 END_OF_STREAM/COMMAND_DRAIN 契约取得已接受图像，不重复提交 AU；新 Windows 回归待验证。
 
 macOS 时钟回归通过；丢包测试最后的帧龄为 1129ms。检查发现持续恢复源之后还存在 20 次停止供帧的固定 sleep/pump，实际调度时间不受 200ms 名义和约束。删除这段无媒体的等待，直接在已经跨过完整统计窗口的持续恢复阶段测量，保留 1s 断言，并在失败信息中记录实际窗口时间、已发送序号与统计。此次本机完整 Mac 套件通过；不能据删除 idle 阶段推断所有 CI 抖动原因或宣称恢复性能已经跨平台验收。
+
+
+## CPU IPC 内容失效门禁
+
+REQ-PICOO-FRAME-013 复用现有 mmap、Rust/C11 原子和内核槽锁，在 ring/slot 中增加内容代际。Producer 的准备 token 随槽位提交，消费者取得 lease 后检查当前代际；Owner 通过只暴露原子的独立 handle 立即失效，不等待像素复制。映射由引用计数保留到最后一个 handle，完整 mapping 仍不开放跨线程访问。零为永久关闭，计数耗尽不回绕；旧布局的零填充头不被接受，无版本字段与迁移器。
+
+Mac CPU 工作者在入队时捕获代际，placeholder、配置失效与退出同步推进共享门禁。Camera Extension 让准备缓存身份包含内容代际，旧 lease 不能继续复制，复制期间失效返回失败；系统 sample 入队前再次检查，不修改已经共享的缓存像素。这不承诺撤回此前已交给系统的 sample，也不把 Windows 尚未接入的 Owner 当作完成。
+
+3 项原子失效/迟到提交/耗尽测试和 2 项 Loom 模型通过；生产 Rust→Swift/C 跨进程门禁通过，新增持有 lease 跨进程失效后拒绝复制的验收正在运行。Mac 完整套件与 frame-hub/Receiver Clippy 已通过前一轮，新增 Extension 缓存合同需要本轮最终验证。
+
+CPU IPC 最终验证：Mac FrameHub 52 passed / 2 ignored，生产 Rust→Swift/C 跨进程合同（包含持有 lease 的失效复制拒绝）通过；Decoder 16、GPU 9、Receiver 103 passed / 2 ignored、GPUI Apple 4、Desktop 70 通过。完整 macOS Receiver release 与 Camera Extension 构建成功；Clippy 和 400 项文档链接检查通过。未运行手机或签名扩展真实客户端验收，Windows Owner 和系统 sample 隐私期限保持待验证。

@@ -23,7 +23,8 @@ pub(super) struct RingMeta {
     pub(super) max_frame_bytes: u32,
     pub(super) write_index: AtomicU32,
     pub(super) latest_sequence: AtomicU64,
-    pub(super) _pad: [u8; 40],
+    pub(super) content_generation: AtomicU64,
+    pub(super) _pad: [u8; 32],
 }
 
 #[repr(C)]
@@ -38,7 +39,8 @@ pub(super) struct SlotMeta {
     pub(super) data_length: u32,
     pub(super) ready_state: AtomicU32,
     pub(super) reader_count: AtomicU32,
-    pub(super) _pad: [u8; 16],
+    pub(super) content_generation: AtomicU64,
+    pub(super) _pad: [u8; 8],
 }
 
 pub(super) fn layout_size(max_frame_bytes: usize) -> usize {
@@ -86,7 +88,13 @@ pub(super) fn validate_ring_header(
     // SAFETY: Every caller has already opened a mapping large enough for the
     // requested ring layout.
     let meta = unsafe { &*const_meta_at(base) };
-    if meta.magic != RING_MAGIC || meta.slot_count != RING_SLOT_COUNT as u32 {
+    if meta.magic != RING_MAGIC
+        || meta.slot_count != RING_SLOT_COUNT as u32
+        || meta
+            .content_generation
+            .load(std::sync::atomic::Ordering::SeqCst)
+            == 0
+    {
         return Err(SharedRingError::InvalidHeader);
     }
     if meta.max_frame_bytes as usize != max_frame_bytes {

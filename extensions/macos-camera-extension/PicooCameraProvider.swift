@@ -10,6 +10,7 @@ private let ringIdentityProbeIntervalNanoseconds: UInt64 = NSEC_PER_SEC
 
 private struct PreparedFrameKey: Equatable {
     let ringGeneration: UInt64
+    let contentGeneration: UInt64
     let sequence: UInt64
     let formatIndex: Int
 }
@@ -141,7 +142,9 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
                 lastRingIdentityProbeAt = now
             }
         }
-        let frame = ringReader?.acquireLatestFrame()
+        let acquired = ringReader?.acquireLatestFrame()
+        let frame = acquired?.isCurrent == true ? acquired : nil
+        let contentGeneration = ringReader?.contentGeneration ?? 0
         if frame == nil, ringReader?.stillMapsCurrentFile() == false {
             resetRingReader()
         }
@@ -149,6 +152,7 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
         let key = frame.map {
             PreparedFrameKey(
                 ringGeneration: ringGeneration,
+                contentGeneration: $0.contentGeneration,
                 sequence: $0.sequence,
                 formatIndex: formatIndex
             )
@@ -157,6 +161,8 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
         if key != nil, key == preparedFrameKey, let cached = preparedPixelBuffer {
             pixelBuffer = cached
         } else if frame == nil,
+                  contentGeneration != 0,
+                  preparedFrameKey?.contentGeneration == contentGeneration,
                   preparedFrameKey?.ringGeneration == ringGeneration,
                   preparedFrameKey?.formatIndex == formatIndex,
                   let cached = preparedPixelBuffer
@@ -181,6 +187,16 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             pixelBuffer = allocated
             preparedFrameKey = key
             preparedPixelBuffer = allocated
+        }
+
+        // A content invalidation during preparation cannot enter the system
+        // sample queue. Never mutate an already-shared cached pixel buffer.
+        if let preparedFrameKey,
+           preparedFrameKey.contentGeneration != ringReader?.contentGeneration
+        {
+            self.preparedFrameKey = nil
+            preparedPixelBuffer = nil
+            return
         }
 
         let presentationTime = CMClockGetTime(CMClockGetHostTimeClock())

@@ -70,7 +70,7 @@ impl SharedFrameRingProducer {
         let producer_lock = acquire_file_producer_lock(path)?;
         let mapping = create_file_mapping(path, max_frame_bytes)?;
         let mut producer = Self {
-            mapping: ProducerMapping::File(mapping),
+            mapping: ProducerMapping::File(mapping).retained(),
             max_frame_bytes,
             _producer_lock: Some(producer_lock),
         };
@@ -90,7 +90,7 @@ impl SharedFrameRingProducer {
         match create_file_mapping(path, max_frame_bytes) {
             Ok(mapping) => {
                 let mut producer = Self {
-                    mapping: ProducerMapping::File(mapping),
+                    mapping: ProducerMapping::File(mapping).retained(),
                     max_frame_bytes,
                     _producer_lock: Some(producer_lock),
                 };
@@ -101,7 +101,7 @@ impl SharedFrameRingProducer {
                 match open_file_mapping(path, max_frame_bytes) {
                     Ok(mapping) => {
                         let producer = Self {
-                            mapping: ProducerMapping::File(mapping),
+                            mapping: ProducerMapping::File(mapping).retained(),
                             max_frame_bytes,
                             _producer_lock: Some(producer_lock),
                         };
@@ -126,7 +126,7 @@ impl SharedFrameRingProducer {
         let producer_lock = acquire_file_producer_lock(path)?;
         let mapping = open_file_mapping(path, max_frame_bytes)?;
         let producer = Self {
-            mapping: ProducerMapping::File(mapping),
+            mapping: ProducerMapping::File(mapping).retained(),
             max_frame_bytes,
             _producer_lock: Some(producer_lock),
         };
@@ -151,7 +151,7 @@ fn replace_invalid_file_mapping(
     let mapping = replace_windows_file_mapping(path, max_frame_bytes)?;
 
     let mut producer = SharedFrameRingProducer {
-        mapping: ProducerMapping::File(mapping),
+        mapping: ProducerMapping::File(mapping).retained(),
         max_frame_bytes,
         _producer_lock: Some(producer_lock),
     };

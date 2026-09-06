@@ -125,6 +125,7 @@ fn macos_rust_swift_cross_process_ring_contract() {
 
     let harness = macos_reader_harness();
     let max = macos_cross_process_frame_bytes();
+    assert_swift_content_fence(&harness, max);
 
     // Rust Writer and the production Swift/C Reader run concurrently in
     // separate processes. Every copied plane must match its timestamp,
@@ -540,5 +541,86 @@ fn file_lock_recovers_writer_lease_after_producer_termination() {
     );
 
     drop(consumer);
+    cleanup_file_ring(&path);
+}
+
+// REQ-PICOO-FRAME-013: exercise the production C atomic reader in another process.
+fn assert_swift_content_fence(harness: &Path, max: usize) {
+    use std::process::Command;
+    let path = std::env::temp_dir().join(format!("{}.ring", test_ring_name()));
+    let mut producer = SharedFrameRingProducer::open_or_create_file(&path, max).unwrap();
+    producer
+        .publish_nv12(
+            MACOS_CROSS_PROCESS_WIDTH,
+            MACOS_CROSS_PROCESS_HEIGHT,
+            MACOS_CROSS_PROCESS_STRIDE,
+            0,
+            1,
+            &patterned_nv12(1, max),
+        )
+        .unwrap();
+    let ready_path = path.with_extension("content-ready");
+    let mut holder = Command::new(harness)
+        .args([
+            "hold-until-invalidated",
+            path.to_str().unwrap(),
+            ready_path.to_str().unwrap(),
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while !ready_path.is_file() {
+        assert!(
+            holder.try_wait().unwrap().is_none(),
+            "Swift retained reader exited before readiness"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Swift retained reader not ready"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let fence = producer.content_fence();
+    let old = fence.current();
+    fence.invalidate();
+    assert_process_success(
+        holder.wait_with_output().unwrap(),
+        "Swift retained lease invalidation",
+    );
+    let _ = std::fs::remove_file(ready_path);
+    // A worker that passed its final check just before invalidation can still
+    // commit the slot afterwards. Its original generation must stay attached.
+    unsafe {
+        let slot = &*slot_meta_at(producer.mapping.as_ptr(), max, 0);
+        slot.content_generation.store(old, Ordering::SeqCst);
+        slot.ready_state.store(RING_READY_DONE, Ordering::Release);
+    }
+    assert_process_success(
+        Command::new(harness)
+            .args(["expect-empty", path.to_str().unwrap()])
+            .output()
+            .unwrap(),
+        "Swift/C invalidated publication",
+    );
+    producer
+        .publish_nv12(
+            MACOS_CROSS_PROCESS_WIDTH,
+            MACOS_CROSS_PROCESS_HEIGHT,
+            MACOS_CROSS_PROCESS_STRIDE,
+            0,
+            2,
+            &patterned_nv12(2, max),
+        )
+        .unwrap();
+    assert_process_success(
+        Command::new(harness)
+            .args(["read-once", path.to_str().unwrap(), "2"])
+            .output()
+            .unwrap(),
+        "Swift/C current publication",
+    );
+    drop((producer, fence));
     cleanup_file_ring(&path);
 }

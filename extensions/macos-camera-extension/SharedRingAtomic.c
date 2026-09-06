@@ -24,7 +24,8 @@ typedef struct PicooRingMeta {
     uint32_t max_frame_bytes;
     _Atomic uint32_t write_index;
     _Atomic uint64_t latest_sequence;
-    uint8_t padding[40];
+    _Atomic uint64_t content_generation;
+    uint8_t padding[32];
 } PicooRingMeta;
 
 typedef struct PicooSlotMeta {
@@ -38,7 +39,8 @@ typedef struct PicooSlotMeta {
     uint32_t data_length;
     _Atomic uint32_t ready_state;
     _Atomic uint32_t reader_count;
-    uint8_t padding[16];
+    _Atomic uint64_t content_generation;
+    uint8_t padding[8];
 } PicooSlotMeta;
 
 _Static_assert(sizeof(PicooRingMeta) == PICOO_RING_META_SIZE,
@@ -51,6 +53,9 @@ _Static_assert(offsetof(PicooSlotMeta, ready_state) == 40,
                "Picoo SlotMeta ready offset drifted");
 _Static_assert(offsetof(PicooSlotMeta, reader_count) == 44,
                "Picoo SlotMeta lease offset drifted");
+
+_Static_assert(offsetof(PicooRingMeta, content_generation) == 24, "content generation offset drifted");
+_Static_assert(offsetof(PicooSlotMeta, content_generation) == 48, "slot generation offset drifted");
 
 static PicooSlotMeta *picoo_slot(void *base, uint32_t max_frame_bytes,
                                  uint32_t index) {
@@ -111,7 +116,8 @@ bool picoo_ring_validate_layout(void *base, size_t mapped_length) {
 
     PicooRingMeta *ring = (PicooRingMeta *)base;
     if (ring->magic != PICOO_RING_MAGIC ||
-        ring->slot_count != PICOO_RING_SLOT_COUNT || ring->max_frame_bytes == 0) {
+        ring->slot_count != PICOO_RING_SLOT_COUNT || ring->max_frame_bytes == 0 ||
+        atomic_load_explicit(&ring->content_generation, memory_order_seq_cst) == 0) {
         return false;
     }
     size_t required_length = PICOO_RING_META_SIZE +
@@ -121,6 +127,11 @@ bool picoo_ring_validate_layout(void *base, size_t mapped_length) {
         return false;
     }
     return true;
+}
+
+uint64_t picoo_ring_content_generation(void *base, size_t mapped_length) {
+    if (!picoo_ring_validate_layout(base, mapped_length)) return 0;
+    return atomic_load_explicit(&((PicooRingMeta *)base)->content_generation, memory_order_seq_cst);
 }
 
 bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_length,
@@ -187,6 +198,13 @@ bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_
             continue;
         }
 
+        uint64_t active = atomic_load_explicit(&ring->content_generation, memory_order_seq_cst);
+        if (active == 0 || atomic_load_explicit(&slot->content_generation, memory_order_seq_cst) != active) {
+            atomic_fetch_sub_explicit(&slot->reader_count, 1, memory_order_seq_cst);
+            picoo_unlock_slot(lock_descriptor);
+            continue;
+        }
+
         size_t pixel_offset = PICOO_RING_META_SIZE +
                               (size_t)best_index *
                                   (PICOO_RING_SLOT_META_SIZE + ring->max_frame_bytes) +
@@ -200,6 +218,7 @@ bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_
         }
 
         lease->sequence = best_sequence;
+        lease->content_generation = active;
         lease->timestamp_us = slot->timestamp_us;
         lease->pixel_offset = pixel_offset;
         lease->slot_index = best_index;

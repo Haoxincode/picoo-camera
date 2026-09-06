@@ -7,6 +7,7 @@
 
 typedef struct PicooRingFrameLease {
     uint64_t sequence;
+    uint64_t content_generation;
     uint64_t timestamp_us;
     uint64_t pixel_offset;
     uint32_t slot_index;
@@ -18,6 +19,7 @@ typedef struct PicooRingFrameLease {
     int32_t lock_descriptor;
 } PicooRingFrameLease;
 
+uint64_t picoo_ring_content_generation(void *base, size_t mapped_length);
 bool picoo_ring_validate_layout(void *base, size_t mapped_length);
 bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_length,
                                PicooRingFrameLease *lease);

@@ -35,6 +35,7 @@ fn cleanup(name: &str) {
     }
 }
 
+mod content_fence;
 #[cfg(target_os = "macos")]
 mod macos;
 mod protocol;

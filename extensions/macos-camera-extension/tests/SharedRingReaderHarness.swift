@@ -48,6 +48,30 @@ private enum SharedRingReaderHarness {
             }
             try validate(frame: frame, expectedTimestamp: timestamp)
 
+        case "hold-until-invalidated":
+            guard arguments.count == 3 else { throw HarnessError.usage }
+            let reader = try SharedRingReader(fileURL: URL(fileURLWithPath: arguments[1]))
+            guard let frame = reader.acquireLatestFrame(), frame.isCurrent else { throw HarnessError.noFrame }
+            try validate(frame: frame, expectedTimestamp: 1)
+            try Data().write(to: URL(fileURLWithPath: arguments[2]), options: .atomic)
+            let deadline = ProcessInfo.processInfo.systemUptime + 8
+            while frame.isCurrent && ProcessInfo.processInfo.systemUptime < deadline { usleep(100) }
+            guard !frame.isCurrent else { throw HarnessError.invalidFrame("retained lease stayed current") }
+            var buffer: CVPixelBuffer?
+            guard CVPixelBufferCreate(kCFAllocatorDefault, frame.width, frame.height,
+                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &buffer) == kCVReturnSuccess,
+                let buffer else { throw HarnessError.invalidFrame("buffer allocation") }
+            guard !frame.copyNV12(to: buffer, workspace: VImageScaleWorkspace()) else {
+                throw HarnessError.invalidFrame("invalidated lease copied into a new system buffer")
+            }
+
+        case "expect-empty":
+            guard arguments.count == 2 else { throw HarnessError.usage }
+            let reader = try SharedRingReader(fileURL: URL(fileURLWithPath: arguments[1]))
+            guard reader.acquireLatestFrame() == nil else {
+                throw HarnessError.invalidFrame("invalidated content acquired a new lease")
+            }
+
         case "stress":
             guard arguments.count == 5,
                   let finalTimestamp = UInt64(arguments[3]),

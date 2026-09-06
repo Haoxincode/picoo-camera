@@ -14,19 +14,12 @@
 | REQ-PICOO-PROTOCOL-011 | implemented | ARCH-PICOO-PROTOCOL-001 | 每个可靠控制帧只解码一次 ControlEnvelope；oneof 明确消息类型，`message_id` 非零且连接内单调，`connection_generation` 非零且匹配当前连接，裸 payload、重复/越序 ID 和旧 generation 直接拒绝 | Envelope roundtrip/缺字段/裸消息/重复 ID/旧 generation 测试；生产路径无逐类型 `decode` |
 | REQ-PICOO-PROTOCOL-012 | implemented | ARCH-PICOO-PROTOCOL-001 / ARCH-PICOO-RUNTIME-001 | Trust/Stream 状态机按 payload 白名单做阶段门禁；未知 Receiver 不得以 `pairing_required=false` 绕过配对，认证前不得执行相机、编码器、统计、能力或流配置等特权控制；配对超时关闭该连接；状态篡改与未配对媒体注入能力只存在于默认关闭的测试/诊断 feature | `unknown_receiver_cannot_disable_pairing`；`privileged_control_is_rejected_until_receiver_is_authenticated`；Receiver 配对阶段拒绝 StreamConfig；未认证媒体门禁负向测试；普通产品 feature 图不启用 `picoo-sender/test-support` 或 `picoo-receiver/loopback-diagnostics` |
 | REQ-PICOO-PROTOCOL-013 | implemented | ARCH-PICOO-PROTOCOL-001 | ControlEnvelope、pairing transcript 与 reassembly/FEC 状态可 fuzz，随机输入不得 panic、越界分配或跨状态授权 | 独立 `fuzz/` workspace 的四个 cargo-fuzz target；文本可审查的固定 regression corpus；Receiver 生产路径复用纯 phase whitelist；nightly 有界 campaign 与 crash artifact |
-
 | REQ-PICOO-PROTOCOL-014 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-026、027 | ALPN 固定为 picoocam，无版本字段或版本协商；配对摘要绑定协议标识和 Ed25519 算法，拒绝重复发现字段 | 真实 QUIC 不相关 ALPN 握手拒绝、重复 TXT 门禁、跨协议签名不可复用；旧 schema 语义拒绝在各接口变更中单独验收 |
-
 | REQ-PICOO-PROTOCOL-015 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025 | Decoder 能力由有界完整格式组合表达，显式 codec/profile/level、尺寸/可见区域、有理帧率、8-bit 420 SDR 色彩和 AU 上限；未知/缺失/重复组合拒绝，不拼接独立列表 | Protobuf roundtrip、非法字段边界、跨 codec/fps 不产生虚假支持、Sender/Receiver 配对回归；真实能力探测按 NEXT-004 单独验收 |
-
 | REQ-PICOO-PROTOCOL-016 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、026 | StreamConfig 复用 typed codec/profile/range 与标准数值 level_idc，删除字符串标签和缺参数时的 Baseline/3.1 猜测；当前 AVC adapter 在改变配置前拒绝未知/未接入 codec | Protobuf roundtrip、旧 wire 类型拒绝、参数事实与 Receiver 配置不变回归；完整格式/SPS 准入另验 |
-
 | REQ-PICOO-PROTOCOL-017 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、026 | StreamConfig 用标准 codec_configuration（AVC avcC / HEVC hvcC）替代独立 SPS/PPS；平台参数只在原生适配边界转换，记录解析复用 picoo-bitstream 的 Scuffle 实现与有界检查，不保留旧 wire 分支 | 标准记录往返、截断/codec 不匹配拒绝、多平台配置与解码回归；HEVC 原生接入及提交前完整格式验证另验 |
-
 | REQ-PICOO-PROTOCOL-018 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025、026 | Sender 未获得原生参数前不预置源配置；Receiver 提交配置前解析标准记录并验证 codec/profile/level 一致性；拒绝不得改变当前配置、revision、恢复门禁或输出 | 空/截断/非法记录和身份冲突的状态不变回归；完整几何、色彩及平台配置事务另验 |
-
 | REQ-PICOO-PROTOCOL-019 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | Sender 构造标准记录失败时返回明确错误，不生成空记录或占位身份；首个完整回调的校验先于 generation 绑定，发送失败不得提交原生编码器事务 | 空/非法参数不能生成控制消息，匹配 IDR 不得越过失败配置提交；有效参数与事务回归 |
-
 | REQ-PICOO-PROTOCOL-020 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、023、026 | AU 在线路上统一为四字节大端 NAL 长度；原生输入适配器显式声明格式，拒绝空/截断/无图像输入，接收解码路径不猜测 Annex B | AVC/HEVC 标准表示往返与借用检查、FFI 输入门禁、严格 Decoder 与真实平台回归；HEVC 生产接入另验 |
 
 REQ-PICOO-PROTOCOL-020 的平台入口契约：C ABI/VideoToolbox 使用四字节长度前缀，JNI/MediaCodec 使用显式 Annex B 输入并在进入 Core 前转换；其他长度前缀只可通过显式适配器转换，Decoder 不猜测格式。复用 picoo-bitstream 已有有界 NAL/AU 解析及标准序列化，不引入另一套分割器。规范输入验证后可借用原字节；MF/OpenH264 仅在平台 API 边界转换成 Annex B。Android 多厂商输出约定和 HEVC 生产链路仍需独立验收；Rust 原生事件的完整强类型边界由 Next 格式事务另行约束。
