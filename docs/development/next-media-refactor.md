@@ -247,3 +247,12 @@ REQ-PICOO-PROTOCOL-020 统一线路图像为四字节大端 NAL 长度。显式�
 c89ce6f 的 CI 34032626796 给出直接证据：Mac 实时视频正常、帧龄 54ms，但 mapper 的 12 个样本只有一个落在最低不确定度加 2ms 的筛选带内，stable=false。不是继续等待或刷新媒体就能保证可用映射。保持生产估计器的三样本和跨度门槛，新增确定性回归重放这组不确定度，确认总时间映射保持未知；新低延迟样本到达后可恢复。
 
 网络统计集成测试验证实际收到至少三个已接受交换、完整统计窗口、本地分段指标以及总延迟与不确定度的依赖，不再把真实宿主调度当作稳定映射保证。精确 affine offset/drift 与总延迟数值仍由生产 ReceiverClockSync 的确定性时序测试验收，没有扩大生产筛选范围或延长测试超时。7 项 clock_sync 和 Mac 完整套件通过；Windows/macOS 新 CI 继续验收。
+
+
+## MF 编码分配与可见区域
+
+c89ce6f 的 Windows CI 明确列出 NV12 等所有输出候选为 192×96，而声明可见图像为 64×64。复用 picoo-bitstream 的 h264-reader SPS 事实区分 coded size 与 visible crop，提交平台配置前验证声明尺寸。MFT 输入/输出协商使用 coded size，CPU 适配器按原生行距复制正确的可见 Y/UV 行，删除从缓冲区长度推断 stride/高度的实现。
+
+遵循微软 [Lock2DSize](https://learn.microsoft.com/en-us/windows/win32/api/mfobjects/nf-mfobjects-imf2dbuffer2-lock2dsize) 的原生内存边界与只读锁契约；核对现有 windows 0.62.2 API。优先使用 IMF2DBuffer2 的 scanline/pitch/allocation bounds；线性 IMFMediaBuffer 使用输出类型 default stride 或官方 MFGetStrideForBitmapInfoHeader，无自研对齐猜测。RAII 在所有退出路径释放一次锁；不引入新依赖。布局复制测试在本机运行，实际 MFT 解码与编译以 Windows CI 为准。这是现存 CPU Decoder 的正确性修复，不是新架构要求的硬件 D3D11 输出验收。
+
+MF 显式布局 4 项本机测试通过，包含实际样本 SPS 的 192×96 编码分配与 64×64 可见尺寸；Windows 平台代码及真实 MFT 验收待 CI。

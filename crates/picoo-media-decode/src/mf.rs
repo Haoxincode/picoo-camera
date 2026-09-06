@@ -7,18 +7,16 @@
 
 use std::mem::ManuallyDrop;
 
-use bytes::Bytes;
-use picoo_bitstream::{AccessUnit, PictureKind, RandomAccessPoint};
+use picoo_bitstream::{AccessUnit, AvcSpsFacts, PictureKind, RandomAccessPoint};
 use picoo_protocol::control::StreamConfig;
 use windows::core::{GUID, HRESULT};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::Media::MediaFoundation::{
-    CMSH264DecoderMFT, IMFMediaBuffer, IMFSample, IMFTransform, MFCreateAlignedMemoryBuffer,
-    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video,
-    MFNominalRange_16_235, MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
-    MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
-    MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
-    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
+    CMSH264DecoderMFT, IMFSample, IMFTransform, MFCreateAlignedMemoryBuffer, MFCreateMediaType,
+    MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFNominalRange_16_235,
+    MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFVideoPrimaries_BT709,
+    MFVideoTransFunc_709, MFVideoTransferMatrix_BT709, MFT_MESSAGE_COMMAND_FLUSH,
+    MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
     MF_E_ATTRIBUTENOTFOUND, MF_E_NOTACCEPTING, MF_E_NO_MORE_TYPES, MF_E_TRANSFORM_NEED_MORE_INPUT,
     MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
@@ -30,15 +28,11 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
 
-use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
+use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
-mod nv12;
-#[cfg(test)]
-use nv12::normalize_contiguous_nv12;
-use nv12::normalize_contiguous_nv12_slice;
+mod buffers;
+use buffers::sample_to_frame;
 
-const DEFAULT_WIDTH: u32 = 1280;
-const DEFAULT_HEIGHT: u32 = 720;
 const DEFAULT_FPS: u32 = 30;
 /// MF_MT_MPEG_SEQUENCE_HEADER — H.264 SPS/PPS with Annex-B start codes.
 const MF_MT_MPEG_SEQUENCE_HEADER: GUID = GUID::from_u128(0x05f4_6766_f1a9_44e5_b82a_e4df_c2ea_2873);
@@ -46,8 +40,7 @@ const MF_MT_MPEG_SEQUENCE_HEADER: GUID = GUID::from_u128(0x05f4_6766_f1a9_44e5_b
 pub struct MfH264Decoder {
     transform: IMFTransform,
     configured: bool,
-    width: u32,
-    height: u32,
+    geometry: Option<AvcSpsFacts>,
     fps: u32,
     next_sample_time_100ns: i64,
     sequence_header: Vec<u8>,
@@ -140,22 +133,13 @@ impl MfH264Decoder {
         Ok(Self {
             transform,
             configured: false,
-            width: DEFAULT_WIDTH,
-            height: DEFAULT_HEIGHT,
+            geometry: None,
             fps: DEFAULT_FPS,
             next_sample_time_100ns: 0,
             sequence_header: Vec::new(),
             inject_sequence_header: false,
             _runtime: runtime,
         })
-    }
-
-    fn stream_shape(stream_config: Option<&StreamConfig>) -> (u32, u32, u32) {
-        stream_config
-            .map(|cfg| (cfg.width, cfg.height, cfg.fps))
-            .filter(|(w, h, _)| *w > 0 && *h > 0)
-            .map(|(w, h, fps)| (w, h, fps.max(1)))
-            .unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS))
     }
 
     fn sequence_header_from_config(
@@ -170,12 +154,38 @@ impl MfH264Decoder {
     fn ensure_configured(
         &mut self,
         stream_config: Option<&StreamConfig>,
+        picture: &AccessUnit<'_>,
     ) -> Result<(), DecodeError> {
-        let (width, height, fps) = Self::stream_shape(stream_config);
-        let sequence_header = Self::sequence_header_from_config(stream_config)?;
+        let fps = stream_config.map_or(DEFAULT_FPS, |cfg| cfg.fps.max(1));
+        let (geometry, sequence_header) = if let Some(config) = stream_config {
+            let record = crate::configured_avc::configuration(config)?;
+            let geometry = AvcSpsFacts::parse(&record.sps()[0])
+                .map_err(|e| DecodeError::Platform(e.to_string()))?;
+            if (config.width, config.height) != (geometry.visible_width, geometry.visible_height) {
+                return Err(DecodeError::ConfigurationMismatch);
+            }
+            (geometry, Self::sequence_header_from_config(stream_config)?)
+        } else {
+            let sps = picture
+                .nals()
+                .iter()
+                .find(|nal| nal[0] & 0x1f == 7)
+                .ok_or(DecodeError::NotInitialized)?;
+            let geometry =
+                AvcSpsFacts::parse(sps).map_err(|e| DecodeError::Platform(e.to_string()))?;
+            let mut header = Vec::new();
+            for nal in picture
+                .nals()
+                .iter()
+                .filter(|nal| matches!(nal[0] & 0x1f, 7 | 8))
+            {
+                header.extend_from_slice(&[0, 0, 0, 1]);
+                header.extend_from_slice(nal);
+            }
+            (geometry, header)
+        };
         if self.configured
-            && self.width == width
-            && self.height == height
+            && self.geometry == Some(geometry)
             && self.fps == fps
             && self.sequence_header == sequence_header
         {
@@ -185,15 +195,14 @@ impl MfH264Decoder {
         unsafe {
             configure_transform(
                 &self.transform,
-                width,
-                height,
+                geometry.coded_width,
+                geometry.coded_height,
                 fps,
                 sequence_header.as_slice(),
             )?;
         }
         self.configured = true;
-        self.width = width;
-        self.height = height;
+        self.geometry = Some(geometry);
         self.fps = fps;
         self.next_sample_time_100ns = 0;
         self.inject_sequence_header = !sequence_header.is_empty();
@@ -206,7 +215,8 @@ impl MfH264Decoder {
         picture: AccessUnit<'_>,
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
-        self.ensure_configured(stream_config)?;
+        self.ensure_configured(stream_config, &picture)?;
+        let geometry = self.geometry.as_ref().ok_or(DecodeError::NotInitialized)?;
         let annex = picture
             .to_annex_b()
             .map_err(|_| DecodeError::UnsupportedAccessUnit)?;
@@ -231,13 +241,12 @@ impl MfH264Decoder {
                 payload,
                 self.next_sample_time_100ns,
                 duration_100ns,
-                self.width,
-                self.height,
+                geometry,
             )?;
             self.next_sample_time_100ns += duration_100ns;
             let frame = match pending {
                 Some(frame) => Some(frame),
-                None => drain_output(&self.transform, self.width, self.height)?,
+                None => drain_output(&self.transform, geometry)?,
             };
             Ok(DecodeOutcome {
                 frame,
@@ -406,8 +415,7 @@ unsafe fn feed_access_unit(
     access_unit: &[u8],
     sample_time_100ns: i64,
     duration_100ns: i64,
-    width: u32,
-    height: u32,
+    geometry: &AvcSpsFacts,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     let sample = create_input_sample(access_unit, sample_time_100ns, duration_100ns)?;
 
@@ -415,7 +423,7 @@ unsafe fn feed_access_unit(
         Ok(()) => Ok(None),
         Err(e) if e.code() == MF_E_NOTACCEPTING => {
             // Drain pending output then retry once.
-            let pending = drain_output(transform, width, height)?;
+            let pending = drain_output(transform, geometry)?;
             transform
                 .ProcessInput(0, &sample, 0)
                 .map_err(|e| DecodeError::Platform(format!("ProcessInput retry: {e}")))?;
@@ -450,78 +458,6 @@ unsafe fn output_sample_for_transform(
         .AddBuffer(&buffer)
         .map_err(|e| DecodeError::Platform(format!("Add output buffer: {e}")))?;
     Ok(Some(sample))
-}
-
-struct LockedMediaBuffer<'a> {
-    buffer: &'a IMFMediaBuffer,
-    data: *mut u8,
-    len: usize,
-    locked: bool,
-}
-
-impl<'a> LockedMediaBuffer<'a> {
-    unsafe fn new(buffer: &'a IMFMediaBuffer) -> Result<Self, DecodeError> {
-        let mut data: *mut u8 = std::ptr::null_mut();
-        let mut max_len = 0u32;
-        let mut current_len = 0u32;
-        buffer
-            .Lock(&mut data, Some(&mut max_len), Some(&mut current_len))
-            .map_err(|e| DecodeError::Platform(format!("output lock: {e}")))?;
-        if data.is_null() {
-            let _ = buffer.Unlock();
-            return Err(DecodeError::Platform("null output buffer".into()));
-        }
-        Ok(Self {
-            buffer,
-            data,
-            len: current_len as usize,
-            locked: true,
-        })
-    }
-
-    unsafe fn bytes(&self) -> &[u8] {
-        std::slice::from_raw_parts(self.data, self.len)
-    }
-
-    unsafe fn unlock(mut self) -> Result<(), DecodeError> {
-        let result = self.buffer.Unlock();
-        // Unlock was attempted exactly once. A failing COM call must not make
-        // Drop issue a second Unlock against the same MF buffer.
-        self.locked = false;
-        result.map_err(|e| DecodeError::Platform(format!("output unlock: {e}")))
-    }
-}
-
-impl Drop for LockedMediaBuffer<'_> {
-    fn drop(&mut self) {
-        if self.locked {
-            unsafe {
-                let _ = self.buffer.Unlock();
-            }
-        }
-    }
-}
-
-unsafe fn sample_to_frame(
-    sample: &IMFSample,
-    width: u32,
-    height: u32,
-) -> Result<DecodedFrame, DecodeError> {
-    let buffer = sample
-        .ConvertToContiguousBuffer()
-        .map_err(|e| DecodeError::Platform(format!("ConvertToContiguousBuffer: {e}")))?;
-    let locked = LockedMediaBuffer::new(&buffer)?;
-    let nv12 = normalize_contiguous_nv12_slice(locked.bytes(), width, height)?;
-    locked.unlock()?;
-
-    Ok(DecodedFrame::cpu_nv12(
-        width,
-        height,
-        width,
-        0,
-        now_timestamp_us(),
-        Bytes::from(nv12),
-    ))
 }
 
 /// REQ-PICOO-MEDIA-031: renegotiate the native output without flushing or
@@ -580,8 +516,7 @@ unsafe fn renegotiate_output(
 
 unsafe fn drain_output(
     transform: &IMFTransform,
-    width: u32,
-    height: u32,
+    geometry: &AvcSpsFacts,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     // One format-change retry is enough to consume the newly negotiated
     // output. Repeated stream changes fail explicitly instead of spinning.
@@ -602,14 +537,14 @@ unsafe fn drain_output(
             Ok(()) => {
                 return sample
                     .as_ref()
-                    .map(|sample| sample_to_frame(sample, width, height))
+                    .map(|sample| sample_to_frame(sample, transform, geometry))
                     .transpose()
             }
             Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
             Err(error) if error.code() == MF_E_TRANSFORM_STREAM_CHANGE && attempt == 0 => {
                 drop(sample);
                 drop(events);
-                renegotiate_output(transform, width, height)?;
+                renegotiate_output(transform, geometry.coded_width, geometry.coded_height)?;
             }
             Err(error) => return Err(DecodeError::Platform(format!("ProcessOutput: {error}"))),
         }
@@ -650,6 +585,54 @@ mod tests {
     }
 
     #[test]
+    fn native_coded_allocation_preserves_visible_geometry_and_rejects_conflicting_config() {
+        // REQ-PICOO-MEDIA-032: the real fixture has coded 192x96, visible 64x64.
+        let annex = picoo_testkit::AVC_64X64_BT709_IDR;
+        let (sps, pps) = picoo_bitstream::avc::extract_sps_pps(annex).unwrap();
+        let wire = picoo_bitstream::canonical_access_unit(
+            picoo_bitstream::Codec::Avc,
+            picoo_bitstream::NalFormat::AnnexB,
+            annex,
+        )
+        .unwrap();
+        let mut config = StreamConfig {
+            codec: picoo_protocol::control::VideoCodec::Avc as i32,
+            width: 64,
+            height: 64,
+            fps: 30,
+            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+                &sps, &pps,
+            )
+            .unwrap()
+            .record()
+            .to_vec(),
+            ..Default::default()
+        };
+        let mut decoder = MfH264Decoder::new().unwrap();
+        let frame = decoder
+            .decode_access_unit(&wire, Some(&config))
+            .unwrap()
+            .frame
+            .unwrap();
+        assert_eq!(
+            (frame.description().width, frame.description().height),
+            (64, 64)
+        );
+        let pixels = frame.cpu_nv12_bytes().unwrap();
+        assert_eq!(pixels.len(), 64 * 64 * 3 / 2);
+        assert!(pixels[0] > 16 && pixels[64 * 64 + 1] > pixels[64 * 64]);
+        let geometry = decoder.geometry;
+        let header = decoder.sequence_header.clone();
+        config.width = 1280;
+        assert!(matches!(
+            decoder.decode_access_unit(&wire, Some(&config)),
+            Err(DecodeError::ConfigurationMismatch)
+        ));
+        assert_eq!(decoder.geometry, geometry);
+        assert_eq!(decoder.sequence_header, header);
+    }
+
+    #[test]
     fn existing_sta_apartment_is_borrowed_not_replaced() {
         assert!(!com_initialization_ownership(RPC_E_CHANGED_MODE).expect("borrow STA"));
         assert!(com_initialization_ownership(HRESULT(0)).expect("own successful init"));
@@ -663,74 +646,5 @@ mod tests {
         let decoder = MfH264Decoder::new().expect("create MF decoder inside GPUI-like STA");
         drop(decoder);
         unsafe { CoUninitialize() };
-    }
-
-    #[test]
-    fn normalizes_macroblock_aligned_1088_allocation_to_visible_1080() {
-        let width = 1920usize;
-        let visible_height = 1080usize;
-        let allocated_height = 1088usize;
-        let mut source = vec![0_u8; width * allocated_height * 3 / 2];
-        source[width * allocated_height] = 23;
-        source[width * allocated_height + 1] = 211;
-
-        let tight = normalize_contiguous_nv12(source, width as u32, visible_height as u32)
-            .expect("normalize vertically aligned NV12");
-
-        assert_eq!(tight.len(), width * visible_height * 3 / 2);
-        assert_eq!(
-            &tight[width * visible_height..width * visible_height + 2],
-            &[23, 211]
-        );
-    }
-
-    #[test]
-    fn normalizes_ambiguous_720p_vertical_allocation_without_row_pitch_distortion() {
-        let width = 1280usize;
-        let visible_height = 720usize;
-        let allocated_height = 736usize;
-        let mut source = vec![0_u8; width * allocated_height * 3 / 2];
-        source[width] = 17;
-        source[width * allocated_height] = 23;
-        source[width * allocated_height + 1] = 211;
-
-        let tight = normalize_contiguous_nv12(source, width as u32, visible_height as u32)
-            .expect("normalize ambiguous 720p NV12 allocation");
-
-        assert_eq!(tight.len(), width * visible_height * 3 / 2);
-        assert_eq!(
-            tight[width], 17,
-            "second Y row must retain the 1280-byte pitch"
-        );
-        assert_eq!(
-            &tight[width * visible_height..width * visible_height + 2],
-            &[23, 211],
-            "UV must start after the 736 allocated Y rows"
-        );
-    }
-
-    #[test]
-    fn normalizes_row_pitched_nv12_to_tight_visible_rows() {
-        let width = 4usize;
-        let height = 2usize;
-        let stride = 8usize;
-        let mut source = vec![0_u8; stride * height * 3 / 2];
-        source[0..4].copy_from_slice(&[1, 2, 3, 4]);
-        source[8..12].copy_from_slice(&[5, 6, 7, 8]);
-        source[16..20].copy_from_slice(&[9, 10, 11, 12]);
-
-        let tight = normalize_contiguous_nv12(source, width as u32, height as u32)
-            .expect("normalize pitched NV12");
-        assert_eq!(tight, vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    }
-
-    #[test]
-    fn tight_nv12_normalization_reuses_the_input_allocation() {
-        let source = vec![7_u8; 4 * 2 * 3 / 2];
-        let source_ptr = source.as_ptr();
-
-        let tight = normalize_contiguous_nv12(source, 4, 2).expect("normalize tight NV12");
-
-        assert_eq!(tight.as_ptr(), source_ptr);
     }
 }

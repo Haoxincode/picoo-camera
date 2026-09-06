@@ -1,146 +1,137 @@
-//! Media Foundation NV12 allocation-layout normalization.
+//! Explicit native allocation and SPS crop; never infer layout from byte length.
+//! REQ-PICOO-MEDIA-032.
 
 use crate::DecodeError;
+use picoo_bitstream::AvcSpsFacts;
 
-/// Media Foundation may expose a contiguous NV12 buffer whose allocation height
-/// is macroblock-aligned (for example 1920x1088 for a visible 1920x1080 frame).
-/// The UV plane then starts after the allocated Y rows, not after the visible
-/// rows. Normalize both vertically aligned and row-pitched storage to a tight
-/// visible frame so downstream consumers have one unambiguous layout.
-#[cfg(test)]
-pub(super) fn normalize_contiguous_nv12(
-    source: Vec<u8>,
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, DecodeError> {
-    let (width, height, tight_len) = validate_dimensions(source.len(), width, height)?;
-    if source.len() == tight_len {
-        return Ok(source);
-    }
-
-    let (stride, allocated_height) = contiguous_nv12_layout(source.len(), width, height)?;
-    copy_visible_nv12(&source, width, height, stride, allocated_height)
-}
-
-/// Copy directly from a locked MF allocation into the one final tight buffer.
-/// Unlike the owned test helper, padded layouts never materialize the full
-/// padded allocation first.
-pub(super) fn normalize_contiguous_nv12_slice(
+pub(crate) fn copy_visible_nv12(
     source: &[u8],
-    width: u32,
-    height: u32,
+    row_zero: usize,
+    stride: usize,
+    facts: &AvcSpsFacts,
 ) -> Result<Vec<u8>, DecodeError> {
-    let (width, height, tight_len) = validate_dimensions(source.len(), width, height)?;
-    if source.len() == tight_len {
-        return Ok(source.to_vec());
+    let invalid = || DecodeError::Platform("invalid native NV12 allocation/crop".into());
+    let (coded_width, coded_height) = (facts.coded_width as usize, facts.coded_height as usize);
+    let (x, y) = (facts.visible_x as usize, facts.visible_y as usize);
+    let (width, height) = (facts.visible_width as usize, facts.visible_height as usize);
+    if [coded_width, coded_height, width, height].contains(&0)
+        || [coded_width, coded_height, x, y, width, height]
+            .iter()
+            .any(|v| v % 2 != 0)
+        || stride < coded_width
+        || x.checked_add(width).is_none_or(|end| end > coded_width)
+        || y.checked_add(height).is_none_or(|end| end > coded_height)
+    {
+        return Err(invalid());
     }
-
-    let (stride, allocated_height) = contiguous_nv12_layout(source.len(), width, height)?;
-    copy_visible_nv12(source, width, height, stride, allocated_height)
-}
-
-fn validate_dimensions(
-    source_len: usize,
-    width: u32,
-    height: u32,
-) -> Result<(usize, usize, usize), DecodeError> {
-    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
-        return Err(DecodeError::Platform(format!(
-            "invalid NV12 dimensions: {width}x{height}"
-        )));
-    }
-
-    let width = width as usize;
-    let height = height as usize;
-    let tight_len = width
+    let uv_base = stride
+        .checked_mul(coded_height)
+        .and_then(|n| row_zero.checked_add(n))
+        .ok_or_else(invalid)?;
+    let output_len = width
         .checked_mul(height)
-        .and_then(|value| value.checked_mul(3))
-        .map(|value| value / 2)
-        .ok_or_else(|| DecodeError::Platform("NV12 dimensions overflow".into()))?;
-    if source_len < tight_len {
-        return Err(DecodeError::Platform(format!(
-            "short NV12 output: {source_len} bytes, need {tight_len}"
-        )));
+        .and_then(|n| n.checked_mul(3))
+        .map(|n| n / 2)
+        .ok_or_else(invalid)?;
+    // Check the entire declared allocation before allocating or reading rows.
+    let allocation_end = stride
+        .checked_mul(coded_height / 2)
+        .and_then(|n| uv_base.checked_add(n))
+        .ok_or_else(invalid)?;
+    if allocation_end > source.len() {
+        return Err(invalid());
     }
-    Ok((width, height, tight_len))
+    let mut output = vec![0; output_len];
+    for row in 0..height {
+        let start = row_zero + (y + row) * stride + x;
+        output[row * width..(row + 1) * width].copy_from_slice(&source[start..start + width]);
+    }
+    let output_uv = width * height;
+    for row in 0..height / 2 {
+        let start = uv_base + (y / 2 + row) * stride + x;
+        let target = output_uv + row * width;
+        output[target..target + width].copy_from_slice(&source[start..start + width]);
+    }
+    Ok(output)
 }
 
-fn contiguous_nv12_layout(
-    source_len: usize,
-    width: usize,
-    height: usize,
-) -> Result<(usize, usize), DecodeError> {
-    // The byte length alone can describe both a row-pitched buffer and a
-    // vertically aligned buffer. 1280x720 allocated as 1280x736 is the
-    // important ambiguous case: interpreting it as 1308-byte rows shears and
-    // vertically stretches the preview. Prefer the macroblock-aligned vertical
-    // interpretation when the competing row pitch is not macroblock aligned.
-    let visible_rows_x2 = height * 3;
-    let doubled_len = source_len.saturating_mul(2);
-    let row_pitch = if doubled_len.is_multiple_of(visible_rows_x2) {
-        let stride = doubled_len / visible_rows_x2;
-        (stride >= width).then_some(stride)
-    } else {
-        None
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let width_x3 = width * 3;
-    let allocated_height = if doubled_len.is_multiple_of(width_x3) {
-        let allocated_height = doubled_len / width_x3;
-        (allocated_height >= height).then_some(allocated_height)
-    } else {
-        None
-    };
-
-    if let Some(allocated_height) = allocated_height {
-        let vertical_is_unambiguous = row_pitch.is_none();
-        let vertical_matches_macroblocks = allocated_height.is_multiple_of(16)
-            && row_pitch.is_some_and(|stride| !stride.is_multiple_of(16));
-        if vertical_is_unambiguous || vertical_matches_macroblocks {
-            return Ok((width, allocated_height));
+    fn facts(
+        width: u32,
+        height: u32,
+        x: u32,
+        y: u32,
+        visible_width: u32,
+        visible_height: u32,
+    ) -> AvcSpsFacts {
+        AvcSpsFacts {
+            coded_width: width,
+            coded_height: height,
+            visible_x: x,
+            visible_y: y,
+            visible_width,
+            visible_height,
+            pixel_aspect_ratio: None,
+            color: None,
+            chroma_location: 0,
         }
     }
 
-    if let Some(stride) = row_pitch {
-        return Ok((stride, height));
+    #[test]
+    fn copies_offset_crop_from_pitched_allocation_without_reading_padding() {
+        let facts = facts(8, 6, 2, 2, 4, 2);
+        let stride = 12;
+        let row_zero = 3;
+        let mut source = vec![255; row_zero + stride * 9];
+        source[row_zero + 2 * stride + 2..row_zero + 2 * stride + 6].copy_from_slice(&[1, 2, 3, 4]);
+        source[row_zero + 3 * stride + 2..row_zero + 3 * stride + 6].copy_from_slice(&[5, 6, 7, 8]);
+        source[row_zero + 7 * stride + 2..row_zero + 7 * stride + 6]
+            .copy_from_slice(&[21, 31, 22, 32]);
+        assert_eq!(
+            copy_visible_nv12(&source, row_zero, stride, &facts).unwrap(),
+            [1, 2, 3, 4, 5, 6, 7, 8, 21, 31, 22, 32]
+        );
     }
 
-    Err(DecodeError::Platform(format!(
-        "unsupported NV12 allocation: {source_len} bytes for visible {width}x{height}",
-    )))
-}
-
-fn copy_visible_nv12(
-    source: &[u8],
-    width: usize,
-    height: usize,
-    stride: usize,
-    allocated_height: usize,
-) -> Result<Vec<u8>, DecodeError> {
-    let uv_offset = stride
-        .checked_mul(allocated_height)
-        .ok_or_else(|| DecodeError::Platform("NV12 UV offset overflow".into()))?;
-    let required = uv_offset
-        .checked_add(stride * (height / 2))
-        .ok_or_else(|| DecodeError::Platform("NV12 allocation overflow".into()))?;
-    if source.len() < required {
-        return Err(DecodeError::Platform(format!(
-            "short NV12 planes: {} bytes, need {required}",
-            source.len()
-        )));
+    #[test]
+    fn coded_height_sets_uv_origin_for_1080p() {
+        let facts = facts(1920, 1088, 0, 0, 1920, 1080);
+        let mut source = vec![0; 1920 * 1088 * 3 / 2];
+        source[1920 * 1088..1920 * 1088 + 2].copy_from_slice(&[23, 211]);
+        let output = copy_visible_nv12(&source, 0, 1920, &facts).unwrap();
+        assert_eq!(&output[1920 * 1080..1920 * 1080 + 2], &[23, 211]);
     }
 
-    let mut tight = vec![0_u8; width * height * 3 / 2];
-    for row in 0..height {
-        let src = row * stride;
-        let dst = row * width;
-        tight[dst..dst + width].copy_from_slice(&source[src..src + width]);
+    #[test]
+    fn native_fixture_has_distinct_coded_and_visible_geometry() {
+        let (sps, _) =
+            picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_64X64_BT709_IDR).unwrap();
+        let facts = AvcSpsFacts::parse(&sps).unwrap();
+        assert_eq!((facts.coded_width, facts.coded_height), (192, 96));
+        assert_eq!((facts.visible_width, facts.visible_height), (64, 64));
+        let source = vec![17; 192 * 96 * 3 / 2];
+        assert_eq!(
+            copy_visible_nv12(&source, 0, 192, &facts).unwrap(),
+            vec![17; 64 * 64 * 3 / 2]
+        );
     }
-    let tight_uv_offset = width * height;
-    for row in 0..height / 2 {
-        let src = uv_offset + row * stride;
-        let dst = tight_uv_offset + row * width;
-        tight[dst..dst + width].copy_from_slice(&source[src..src + width]);
+
+    #[test]
+    fn invalid_bounds_and_layout_are_rejected() {
+        let valid = facts(8, 6, 0, 0, 8, 6);
+        assert!(copy_visible_nv12(&[0; 71], 0, 8, &valid).is_err());
+        assert!(copy_visible_nv12(&[0; 72], 0, 7, &valid).is_err());
+        assert!(copy_visible_nv12(&[0; 72], usize::MAX, 8, &valid).is_err());
+        assert!(copy_visible_nv12(&[0; 72], 0, usize::MAX, &valid).is_err());
+        for crop in [
+            facts(8, 6, 1, 0, 4, 2),
+            facts(8, 6, 6, 0, 4, 2),
+            facts(8, 6, 0, 4, 4, 4),
+        ] {
+            assert!(copy_visible_nv12(&[0; 72], 0, 8, &crop).is_err());
+        }
     }
-    Ok(tight)
 }

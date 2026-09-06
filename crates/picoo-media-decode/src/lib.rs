@@ -310,3 +310,7 @@ mod tests {
         assert_eq!(frame.description().height, height as u32);
     }
 }
+
+#[cfg(any(windows, test))]
+#[path = "mf/nv12.rs"]
+mod mf_nv12;

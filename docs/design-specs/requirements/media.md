@@ -39,3 +39,5 @@
 | REQ-PICOO-MEDIA-029 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、022、027 | 传入 Decoder 的已提交 AVC 参数集为权威事实；逐个检查带内 SPS/PPS，不允许绕过事务覆盖配置；冲突在平台状态变化前拒绝 | 匹配/孤立参数更新/不同表示回归，VideoToolbox 旧 session 和旧配置继续可用；MF 同一校验入口 |
 
 | REQ-PICOO-MEDIA-031 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、025 | MF 输出类型变化通过原生枚举与 SetOutputType 协商，保留已提交 AU；只接受匹配几何的 NV12，最多一次输出重试 | Windows AVCC 实际解码回归；原生 D3D11 帧路径另验 |
+
+| REQ-PICOO-MEDIA-032 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-025 | MF 以 SPS coded size 协商原生分配，先校验声明可见尺寸；CPU 适配器用原生 pitch 和明确 crop 复制，不按字节长度猜测布局 | 192×96→64×64 真实样本、1088→1080、带偏移 crop/pitch、越界/溢出；Windows 原生回归及拒绝配置不改状态；不代表 Next D3D11 原生链路完成 |
