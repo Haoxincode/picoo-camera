@@ -318,3 +318,14 @@ REQ-PICOO-FRAME-015 使用现有 ring 的一个 AtomicU64 记录实际读取序�
 复用现有跨进程原子、单调时钟和 Condvar 工作者，无额外协议库、计时线程或通用调度器。当前一个 ring 是一个 sink 的聚合消费面；本条不替代多种 RenderSpec 共享物化、30/60 协商 SampleClock 或 Windows 新 GPU Owner 的接入。
 
 请求门禁最终验证：真实 GPU 导出回归证明已消费请求后连续 8 个新源不再导出，下次读取才导出最新工作；同源去重、租期过期、晚到请求和内容失效继续通过。FrameHub 54 passed/2 ignored、生产 Swift/C 序号合同、Decoder 16、GPU 9、Receiver 103 passed/2 ignored、GPUI Apple 4、Desktop 70；Clippy、文档检查与完整 Mac 构建通过。
+
+
+## Mac 摄像头固定格式与独立 SampleClock
+
+REQ-PICOO-VCAM-015 使用官方 CMIOExtensionStreamFormat 的固定 min/max frame duration 和 streamActiveFormatIndex/streamFrameDuration 属性，不引入第三方定时器。当前 Xcode SDK CMIOExtensionProperties.h 与 CMIOExtensionStream.h 已核对 API，Swift 6 严格并发编译通过；复用 Foundation DispatchSourceTimer 的单次绝对 uptime 调度和 CoreMedia 精确 duration。Picoo 自有部分只负责固定配置准入、槽选择与溢出边界，不自行实现平台线程或时钟源。
+
+协商表改为 720p/1080p × 30/60，默认 1080p60，无旧 480p 配置。属性设置在同一锁内先验证索引和 duration 再提交，非法事务保持原配置。同尺寸两个帧率复用同一三槽系统图像池。SampleClock 按 host uptime 跳过过期槽，不累积整数纳秒周期的舍入误差；帧率改变从上次输出后重新确定边界，不能回退。源图像 latest 跳过不再误报 sampleDropped；实际时钟跳槽或准备失败才标记系统样本不连续。
+
+生产 Swift 时钟的一小时 30/60 每槽边界、提前/重复/回退 tick、晚到跳槽、帧率切换、非法频率与耗尽测试通过。原生 CMIO device/stream 对象的四配置、默认索引、duration 改变及非法属性原子拒绝合同通过；此测试未启动已注册的系统扩展或真实摄像头客户端，不能替代 CMIO 端到端及热稳态帧率验收。
+
+Mac SampleClock 最终验证：完整 cargo xtask test macos、Receiver release 与 Camera Extension 构建、Mac 打包及文档检查通过。61c08d8 的 CI 34037216590 已通过全部平台步骤，包含 Windows Shared Ring/MFT 原生测试、Receiver 编译、MSI 和 package smoke；新的系统池、请求门禁与 SampleClock 提交待下一轮 CI。

@@ -17,3 +17,5 @@
 | REQ-PICOO-VCAM-013 | implemented | ARCH-PICOO-RUNTIME-001 | macOS Camera Extension 按 `(ring generation, source sequence, output format)` 缓存不可变已准备 CVPixelBuffer；相同源帧仍生成新 sample timestamp，但不重复复制/缩放；格式不同时在 NV12 双平面等比 letterbox，不输出黑帧；ring 文件身份检查正常路径限频，读取失败立即重检 | Accelerate `vImageScale_Planar8` 与 `vImageScale_CbCr8` 保持交错 UV，背景 16/128；先查询两平面 temp buffer size 并由 `VImageScaleWorkspace` 按最大需求只扩容复用；格式切换与 ring reopen 使缓存失效；正常身份探测最多每秒一次；Swift 6 Camera Extension 构建及 480p/720p/1080p、竖屏、重复 sequence、generation 切换测试；签名真机会议软件验证仍待 |
 
 | REQ-PICOO-VCAM-014 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-015、034 | Camera Extension 每个固定输出布局池最多三张系统图像；慢客户端占满时跳过当前准备，不扩池、不修改已交付像素，释放后恢复；格式切换复用固定池，不随切换创建无界旧池 | 生产 CoreVideo 池持有三张及系统 sample 后拒绝第四张；释放 sample 后恢复；Extension 构建，真实 CMIO 客户端另验 |
+
+| REQ-PICOO-VCAM-015 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-014、028 | Mac VCam 提供 720p/1080p × 30/60 固定格式，默认 1080p60；独立有理数 SampleClock 按 host time 跳过过期槽，不随源回调变化，不积累整数周期舍入误差；格式事务保留时间单调性，后端操作不重置时间线 | 长期时钟、提前/回退/晚到 tick、30↔60、耗尽、属性非法值拒绝；Swift 生产代码 harness 与 Extension 编译；CMIO 实际客户端另验 |

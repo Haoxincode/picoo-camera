@@ -38,6 +38,9 @@ private enum SharedRingReaderHarness {
             throw HarnessError.usage
         }
         switch mode {
+        case "output-clock":
+            try verifyOutputSampleClock()
+            try verifyOutputFormatProperties()
         case "output-pool":
             try verifyOutputPixelBufferPool()
         case "read-once":

@@ -194,6 +194,7 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
     let reader_harness = build_macos_shared_ring_reader_harness(sh)?;
     cmd!(sh, "{reader_harness} output-pool").run()?;
+    cmd!(sh, "{reader_harness} output-clock").run()?;
     let _reader_harness = sh.push_env("PICOO_MACOS_RING_READER_HARNESS", &reader_harness);
     test_macos_system_identity_store(sh)?;
     super::native_tests::run(sh, &["-p", "picoo-frame-hub", "--lib"], &[])?;
@@ -323,6 +324,9 @@ fn build_macos_shared_ring_reader_harness(sh: &Shell) -> Result<PathBuf> {
     let harness_source = source_dir.join("tests/SharedRingReaderHarness.swift");
     let pool_source = source_dir.join("OutputPixelBufferPool.swift");
     let pool_tests = source_dir.join("tests/OutputPixelBufferPoolTests.swift");
+    let clock_source = source_dir.join("OutputSampleClock.swift");
+    let clock_tests = source_dir.join("tests/OutputSampleClockTests.swift");
+    let provider_source = source_dir.join("PicooCameraProvider.swift");
     for source in [
         &atomic_source,
         &atomic_header,
@@ -330,6 +334,9 @@ fn build_macos_shared_ring_reader_harness(sh: &Shell) -> Result<PathBuf> {
         &harness_source,
         &pool_source,
         &pool_tests,
+        &clock_source,
+        &clock_tests,
+        &provider_source,
     ] {
         if !source.is_file() {
             bail!(
@@ -350,7 +357,7 @@ fn build_macos_shared_ring_reader_harness(sh: &Shell) -> Result<PathBuf> {
     .run()?;
     cmd!(
         sh,
-        "xcrun --sdk macosx swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macos15.0 -import-objc-header {atomic_header} {reader_source} {pool_source} {pool_tests} {harness_source} {atomic_object} -framework CoreVideo -framework CoreMedia -o {harness}"
+        "xcrun --sdk macosx swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macos15.0 -import-objc-header {atomic_header} {reader_source} {pool_source} {pool_tests} {clock_source} {clock_tests} {provider_source} {harness_source} {atomic_object} -framework CoreVideo -framework CoreMedia -framework CoreMediaIO -framework IOKit -o {harness}"
     )
     .run()?;
     if !harness.is_file() {
