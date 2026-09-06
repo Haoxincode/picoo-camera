@@ -7,6 +7,8 @@ use windows::Win32::Graphics::Dxgi::{
 use windows::Win32::Media::MediaFoundation::{MFShutdown, MFStartup, MFSTARTUP_FULL, MF_VERSION};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
+pub(super) static GPU_WORK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn warp_adapter() -> IDXGIAdapter1 {
     let factory: IDXGIFactory4 =
         unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.unwrap();

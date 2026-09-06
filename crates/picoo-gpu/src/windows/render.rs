@@ -39,6 +39,17 @@ impl RenderedImage {
     }
 }
 
+#[cfg(test)]
+pub(super) unsafe fn completed_fixture(
+    texture: ID3D11Texture2D,
+    spec: RenderSpec,
+) -> RenderedImage {
+    RenderedImage {
+        surface: Arc::new(Surface(texture)),
+        spec,
+    }
+}
+
 struct RenderOwners {
     _source: NativeImage,
     target: Arc<Surface>,

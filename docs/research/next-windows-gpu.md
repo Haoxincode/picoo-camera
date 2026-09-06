@@ -38,3 +38,9 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 ## 原生几何与颜色处理
 
 复用 ID3D11VideoDevice/VideoContext1、VideoProcessorEnumerator1 的格式转换查询。官方 [VideoProcessorSetStreamMirror](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_1/nf-d3d11_1-id3d11videocontext1-videoprocessorsetstreammirror) 规定 rotation、mirror、source clipping 的顺序；不能把未经转换的 SPS/native crop 直接放入旋转后的 source rect。成熟平台接口覆盖缩放、旋转、镜像和颜色，不引入自研 YUV shader 或另一套 GPU runtime。Windows 输出先采用可精确表达的 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709，不把 Apple 现有混合标签的 Bt601Full 直接映射成 DXGI P601 并宣称等价。驱动缺少正式颜色或变换能力时明确拒绝。
+
+## 输出专用 CPU 导出
+
+复用 D3D11 CopyResource、staging texture 与 Map/Unmap，使用现有完成事件。官方 [DXGI_FORMAT_NV12](https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format) 规定 staging/initData 的长度为 rowPitch × (height + height/2)，Y 平面为前 rowPitch × height，UV 为余下行；两者行 pitch 一致，宽高必须为偶数。导出只复制目标有效 width，不把 padding 当像素。
+
+官方 [D3D11_MAP_FLAG_DO_NOT_WAIT](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ne-d3d11-d3d11_map_flag) 使仍被 GPU 占用的资源返回 DXGI_ERROR_WAS_STILL_DRAWING；READ mapping 支持该标志。使用前已等待完成事件，若它仍报告 busy 则明确失败，不增加轮询或隐藏等待。三槽 CPU 输出池直接提取自现有 Apple 实现并由两端复用，无新增通用池库、像素转换库或源 CPU 接口。

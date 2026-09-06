@@ -1,6 +1,6 @@
 mod cpu_export;
 mod pool;
-pub use cpu_export::{CpuExporter, CpuImage};
+pub use cpu_export::CpuExporter;
 #[cfg(test)]
 mod tests;
 

@@ -3,13 +3,18 @@
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]
-pub use apple::{AppleRenderer, CpuExporter, CpuImage, RenderedImage};
+pub use apple::{AppleRenderer, CpuExporter, RenderedImage};
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod cpu_image;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub use cpu_image::CpuImage;
 
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::{
-    RenderedImage, WindowsAdapterId, WindowsCompletionError, WindowsDeviceError,
+    CpuExporter, RenderedImage, WindowsAdapterId, WindowsCompletionError, WindowsDeviceError,
     WindowsGpuCompletion, WindowsGpuContext, WindowsRenderer,
 };
 

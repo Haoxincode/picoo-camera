@@ -406,3 +406,14 @@ Windows 目标 GPU all-targets Clippy 通过。新增八种几何组合、1920×
 CI 34043657175 Windows 原生步骤已通过，包括 Flush1 真实 GPU copy、threadpool 取消保留、未消费完成容量与 panic 清理；Windows release 正在构建，其余平台按运行状态继续等待。
 
 WindowsRenderer 最终静态验证：Windows GPU all-targets Clippy 与 Mac GPU all-targets Clippy 均通过，文档/格式检查通过。CI 34043657175 现已全部通过，包含 Windows release、MSI 与 smoke；本次 renderer/pool/geometry 回归待下一轮 CI。
+
+
+## Windows 目标图像 CpuExporter
+
+REQ-PICOO-GPU-007 新增只接收 RenderedImage 的 Windows CpuExporter。相同 RenderSpec/device 的校验先于容量、staging 与 readback；首次实际导出才创建一个 staging texture，先从三槽 CPU 池取得可写输出。CopyResource 的目标图像与 staging owner 随 completion 保留，工作者收到成功后以 DO_NOT_WAIT Map 读取 RowPitch，复制 Y/UV 有效行并排除 padding。CPU 行复制不持有 immediate-context Enter/Leave，Map/Unmap 仍受原生保护。输出不再次裁剪、镜像、变换颜色，不接收 source NativeImage。
+
+CpuImage 与三槽 pool 从已有 Apple exporter 提取为内部公共实现，保留强引用/Weak 排他写入和失败不发布语义，Mac API 不变。Windows 新增显式诊断 NV12 texture 初始数据（含 padding、不同 Y/UV 行内容）→GPU 完成→实际 exporter 的回归，检查字节、三槽占满、Weak 阻止覆盖、同 staging 复用与错误 device/spec 在 readback 前拒绝。GPU native 测试共享测试锁，避免全进程 completion 容量极限测试与其他 GPU fixture 互相干扰；产品容量不改。
+
+Windows GPU all-targets Clippy、Mac GPU/Receiver all-targets Clippy 通过；Mac GPU/CPU export 9 项实际原生回归全部通过。Windows 新回归待下一轮 CI。前一轮 CI 34044898768 的 Windows 全部通过，包含 Renderer 几何与 NV12 target pool、release、MSI 和 smoke；这不是实际 Video Processor 画质或整个 CpuBridge 已完成的证明。
+
+CI 34044898768 已全部通过，包含 Mac 最终打包。当前 CpuExporter 提交的 Windows 实际导出测试将由下一轮 CI 执行；整体 Next 与 Windows 主链路迁移仍未完成。

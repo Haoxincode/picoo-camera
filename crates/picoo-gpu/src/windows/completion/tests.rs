@@ -1,6 +1,5 @@
 use super::*;
-use crate::windows::tests::{diagnostic_context, Runtime};
-use std::sync::Mutex;
+use crate::windows::tests::{diagnostic_context, Runtime, GPU_WORK_TEST_LOCK};
 use std::time::Duration;
 use windows::Win32::Foundation::{DuplicateHandle, DUPLICATE_SAME_ACCESS};
 use windows::Win32::Graphics::Direct3D11::{
@@ -8,8 +7,6 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_MAP_READ, D3D11_SUBRESOURCE_DATA, D3D11_USAGE_DEFAULT, D3D11_USAGE_STAGING,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, SetEvent};
-
-static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct Owner(mpsc::SyncSender<()>);
 impl Drop for Owner {
@@ -35,7 +32,7 @@ unsafe fn duplicate_event(event: HANDLE) -> Event {
 
 #[test]
 fn cancelled_receiver_retains_owner_until_the_native_event() {
-    let _serial = TEST_LOCK.lock().unwrap();
+    let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
     let _runtime = Runtime::start();
     let gpu = diagnostic_context();
     let (released, observed) = mpsc::sync_channel(1);
@@ -70,7 +67,7 @@ fn cancelled_receiver_retains_owner_until_the_native_event() {
 
 #[test]
 fn completed_but_unconsumed_results_keep_the_capacity_reservation() {
-    let _serial = TEST_LOCK.lock().unwrap();
+    let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
     let _runtime = Runtime::start();
     let gpu = diagnostic_context();
     let mut completions = Vec::new();
@@ -103,7 +100,7 @@ fn completed_but_unconsumed_results_keep_the_capacity_reservation() {
 
 #[test]
 fn panicking_submission_still_finishes_and_releases_its_owner() {
-    let _serial = TEST_LOCK.lock().unwrap();
+    let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
     let _runtime = Runtime::start();
     let gpu = diagnostic_context();
     let (released, observed) = mpsc::sync_channel(1);
@@ -124,7 +121,7 @@ fn panicking_submission_still_finishes_and_releases_its_owner() {
 
 #[test]
 fn rebuilding_contexts_cannot_bypass_the_process_limit() {
-    let _serial = TEST_LOCK.lock().unwrap();
+    let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
     let contexts: Vec<_> = (0..5).map(|_| Arc::new(AtomicUsize::new(0))).collect();
     let mut retained = Vec::new();
     for context in &contexts[..4] {
@@ -152,7 +149,7 @@ unsafe impl Send for CopyBuffers {}
 
 #[test]
 fn flush_event_completes_actual_gpu_copy_before_delivery() {
-    let _serial = TEST_LOCK.lock().unwrap();
+    let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
     let _runtime = Runtime::start();
     let gpu = diagnostic_context();
     let expected = [0x29_u8; 256];

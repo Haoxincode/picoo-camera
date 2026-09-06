@@ -9,26 +9,7 @@ use objc2_core_video::{
     CVPixelBufferUnlockBaseAddress,
 };
 
-use crate::{RenderError, RenderSpec, RenderedImage};
-
-/// Immutable, tightly packed NV12 for an explicit CPU output consumer.
-/// This is an output artifact, never a source frame or preview input.
-pub struct CpuImage {
-    spec: RenderSpec,
-    pixels: Vec<u8>,
-}
-
-impl CpuImage {
-    pub fn spec(&self) -> RenderSpec {
-        self.spec
-    }
-    pub fn stride(&self) -> u32 {
-        self.spec.width
-    }
-    pub fn pixels(&self) -> &[u8] {
-        &self.pixels
-    }
-}
+use crate::{cpu_image::CpuImagePool, CpuImage, RenderError, RenderSpec, RenderedImage};
 
 /// A fixed-layout, three-slot CPU exporter owned by one output worker.
 ///
@@ -38,16 +19,15 @@ impl CpuImage {
 /// of causing new allocations or waiting for consumer release.
 pub struct CpuExporter {
     spec: RenderSpec,
-    slots: Vec<Arc<CpuImage>>,
+    pool: CpuImagePool,
     exports: u64,
 }
 
 impl CpuExporter {
     pub fn new(spec: RenderSpec) -> Result<Self, RenderError> {
-        spec.validate()?;
         Ok(Self {
             spec,
-            slots: Vec::with_capacity(3),
+            pool: CpuImagePool::new(spec)?,
             exports: 0,
         })
     }
@@ -62,34 +42,13 @@ impl CpuExporter {
         if image.spec() != self.spec {
             return Err(RenderError::OutputLayoutMismatch);
         }
-        let mut available = None;
-        for (ix, slot) in self.slots.iter_mut().enumerate() {
-            // get_mut also excludes outstanding Weak handles, so a concurrent
-            // Weak::upgrade cannot race the writable lease.
-            if Arc::get_mut(slot).is_some() {
-                available = Some(ix);
-                break;
-            }
-        }
-        let ix = match available {
-            Some(ix) => ix,
-            None if self.slots.len() < 3 => {
-                let length = self.spec.width as usize * self.spec.height as usize * 3 / 2;
-                self.slots.push(Arc::new(CpuImage {
-                    spec: self.spec,
-                    pixels: vec![0; length],
-                }));
-                self.slots.len() - 1
-            }
-            None => return Err(RenderError::PoolFull),
-        };
-        let output = Arc::get_mut(&mut self.slots[ix]).ok_or(RenderError::PoolFull)?;
-        // SAFETY: Read-only access, completed GPU writes, and `image` stays live
-        // for the complete synchronous mapping interval. No native alias escapes.
-        let buffer = unsafe { image.pixel_buffer() };
-        copy_nv12(buffer, self.spec, &mut output.pixels)?;
+        let output = self.pool.materialize(|pixels| {
+            // SAFETY: The completed target remains retained throughout mapping.
+            let buffer = unsafe { image.pixel_buffer() };
+            copy_nv12(buffer, self.spec, pixels)
+        })?;
         self.exports = self.exports.saturating_add(1);
-        Ok(Arc::clone(&self.slots[ix]))
+        Ok(output)
     }
 }
 

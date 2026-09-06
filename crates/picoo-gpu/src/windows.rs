@@ -171,3 +171,6 @@ pub use completion::{WindowsCompletionError, WindowsGpuCompletion};
 
 mod render;
 pub use render::{RenderedImage, WindowsRenderer};
+
+mod cpu_export;
+pub use cpu_export::CpuExporter;

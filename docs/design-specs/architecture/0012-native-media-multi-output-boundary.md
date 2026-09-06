@@ -69,3 +69,5 @@ Windows GPU 完成通知使用官方 Flush1 的事件查询和一次性 threadpo
 MFT 调用不在外部 ID3D11Multithread Enter/Leave 锁内执行，以免等待 MFT 内部线程时造成跨线程死锁；实际 GPU 命令组才使用 context 保护。Flush1 在提交函数返回后有序发出，覆盖该函数已提交命令；提交函数不得把尚未提交的 GPU 工作交给游离线程。UI/Receiver owner 不等待完成，允许专用 codec/输出工作者等待系统通知。
 
 Windows RenderSpec 使用固定 GPU context 和原生 Video Processor；输入为已完成 NV12 BT.709 limited/left-chroma、方形像素的原生帧，输出为 NV12 BT.709 limited，几何与颜色能力均查询驱动。RenderSpec 表示调用方已合并的剩余变换，不再次叠加 FrameDescription 的变换。微软接口按 rotation→mirror→source clipping 应用，因此原生 visible crop 必须先映射到变换后的完整纹理坐标，再设置 source rect；contain 按裁剪后比例计算，黑边不透明。禁用自动画质处理，选择不依赖过去/未来帧的 progressive processor，不为独立 sink 引入隐藏时间队列。
+
+Windows CpuExporter 只接受相同 RenderSpec、相同 device 的已完成 RenderedImage。无需求调用时不创建 staging，不映射图像；一次导出先取得三槽 CPU 池的可写槽，再将目标图像 GPU-copy 到唯一复用的 NV12 staging。完成事件保留图像与 staging，随后使用 DO_NOT_WAIT 读取映射；若 GPU 仍阻止访问则明确失败，不把 Map 当作完成等待。按平台 RowPitch 分别覆盖完整 Y/UV 有效行，丢弃 padding，不做几何或颜色转换。Map/Unmap 的 context 调用串行化，但 CPU 行复制不持有 context 锁。Mac/Windows 共用同一个 CPU 输出槽位实现，包含 Weak reader 的不可覆盖约束。
