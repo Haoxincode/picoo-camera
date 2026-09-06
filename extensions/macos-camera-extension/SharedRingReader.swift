@@ -13,7 +13,7 @@ enum SharedRingReaderError: Error {
 
 final class SharedRingReader: @unchecked Sendable {
     static let appGroupInfoKey = "PicooAppGroupIdentifier"
-    static let ringFileName = "picoo-camera-v1.ring"
+    static let ringFileName = "picoo-camera.ring"
 
     fileprivate let base: UnsafeMutableRawPointer
     fileprivate let descriptor: Int32

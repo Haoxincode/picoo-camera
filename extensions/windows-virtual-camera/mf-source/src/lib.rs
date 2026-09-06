@@ -23,7 +23,7 @@ pub use format::{
 };
 pub use sample_copy::{copy_prepared_frame, SampleCopyError};
 
-pub const DEFAULT_RING_NAME: &str = "picoo-camera-v1";
+pub const DEFAULT_RING_NAME: &str = "picoo-camera";
 pub const FRIENDLY_NAME: &str = "Picoo Camera";
 
 #[cfg(windows)]

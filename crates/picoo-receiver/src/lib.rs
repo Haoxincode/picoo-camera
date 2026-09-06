@@ -19,7 +19,7 @@ use thiserror::Error;
 pub use session::{run_loopback_access_unit, run_paired_loopback_access_unit};
 pub use session::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
 
-pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera-v1";
+pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera";
 
 /// Pairing short-code / challenge lifetime (matches Android PairingScreen TTL).
 pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);

@@ -3,8 +3,10 @@
 //! Receiver decodes once; output NV12 feeds LatestFrameStore and Shared Frame Ring.
 //! - Windows: Media Foundation (`windows-mf`)
 //! - macOS: VideoToolbox through pure Rust Apple framework bindings
-//! - Linux/CI: Cisco OpenH264 soft decode, with StubDecoder fallback for fixtures
+//! - Unsupported product targets: explicit unavailable error
+//! - Software codec/fixtures: only `test-codecs` or this crate's unit tests
 
+#[cfg(any(test, feature = "test-codecs"))]
 mod stub;
 
 #[cfg(all(windows, feature = "windows-mf"))]
@@ -13,13 +15,18 @@ mod mf;
 #[cfg(target_os = "macos")]
 mod videotoolbox;
 
-#[cfg(all(not(windows), not(target_vendor = "apple")))]
+#[cfg(all(
+    not(windows),
+    not(target_vendor = "apple"),
+    any(test, feature = "test-codecs")
+))]
 mod openh264_dec;
 
 use bytes::Bytes;
 use picoo_protocol::control::StreamConfig;
 use thiserror::Error;
 
+#[cfg(any(test, feature = "test-codecs"))]
 pub use stub::StubDecoder;
 
 #[derive(Debug, Error)]
@@ -205,10 +212,10 @@ fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
     }
 }
 
-#[cfg(all(windows, feature = "windows-mf"))]
+#[cfg(not(target_os = "macos"))]
 struct UnavailableDecoder(String);
 
-#[cfg(all(windows, feature = "windows-mf"))]
+#[cfg(not(target_os = "macos"))]
 impl AccessUnitDecoder for UnavailableDecoder {
     fn decode_access_unit(
         &mut self,
@@ -223,29 +230,25 @@ impl AccessUnitDecoder for UnavailableDecoder {
     }
 }
 
-#[cfg(all(windows, not(feature = "windows-mf")))]
+#[cfg(any(
+    all(windows, not(feature = "windows-mf")),
+    all(not(windows), not(target_os = "macos")),
+))]
 fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
-    Box::new(StubDecoder::new())
+    Box::new(UnavailableDecoder(
+        "No native Receiver decoder for this product target/build".into(),
+    ))
 }
 
-#[cfg(all(target_vendor = "apple", not(target_os = "macos")))]
-fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
-    // Sender-only Apple targets do not own a Receiver decoder.
-    Box::new(StubDecoder::new())
-}
-
-#[cfg(all(not(windows), not(target_vendor = "apple")))]
-fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
-    match openh264_dec::OpenH264Decoder::new() {
-        Ok(decoder) => {
-            tracing::info!("Using OpenH264 software H.264 decoder");
-            Box::new(decoder)
-        }
-        Err(err) => {
-            tracing::warn!("OpenH264 unavailable, falling back to stub: {err}");
-            Box::new(StubDecoder::new())
-        }
-    }
+/// Explicit software decoder for core regression tests; the production factory
+/// never calls this, even when the test-codecs feature is enabled.
+#[cfg(all(
+    not(windows),
+    not(target_vendor = "apple"),
+    any(test, feature = "test-codecs")
+))]
+pub fn create_test_decoder() -> Result<Box<dyn AccessUnitDecoder>, DecodeError> {
+    Ok(Box::new(openh264_dec::OpenH264Decoder::new()?))
 }
 
 pub fn now_timestamp_us() -> u64 {
@@ -258,6 +261,21 @@ pub fn now_timestamp_us() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(any(
+        all(windows, not(feature = "windows-mf")),
+        all(not(windows), not(target_os = "macos")),
+    ))]
+    fn production_factory_never_uses_enabled_test_codecs() {
+        // REQ-PICOO-MEDIA-024: even a build containing test codecs must fail closed.
+        let mut decoder = create_platform_decoder();
+        assert!(matches!(
+            decoder.decode_access_unit(b"test-au", None),
+            Err(DecodeError::Platform(_))
+        ));
+        assert!(decoder.reset().is_err());
+    }
 
     #[test]
     fn stub_decodes_loopback_access_unit() {
@@ -299,7 +317,7 @@ mod tests {
             "encoded AU must be Annex-B"
         );
 
-        let mut decoder = create_platform_decoder();
+        let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
             .decode_access_unit(&annex, None)
             .expect("decode")
@@ -320,7 +338,7 @@ mod tests {
     #[test]
     #[cfg(all(not(windows), not(target_vendor = "apple")))]
     fn openh264_falls_back_to_stub_for_tiny_fixture() {
-        let mut decoder = create_platform_decoder();
+        let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
             .decode_access_unit(b"test-au", None)
             .expect("decode")
@@ -359,7 +377,7 @@ mod tests {
             "fixture must look like AVCC AU"
         );
 
-        let mut decoder = create_platform_decoder();
+        let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
             .decode_access_unit(&length_prefixed, None)
             .expect("decode")

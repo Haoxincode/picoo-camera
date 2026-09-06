@@ -7,6 +7,8 @@ license.workspace = true
 
 [features]
 default = []
+# Explicit test/diagnostic dependency only; never a production codec fallback.
+test-codecs = ["dep:openh264"]
 windows-mf = ["dep:windows"]
 
 [dependencies]
@@ -18,7 +20,7 @@ thiserror.workspace = true
 tracing = "0.1"
 
 [target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dependencies]
-openh264 = { version = "0.9", default-features = true }
+openh264 = { version = "0.9", default-features = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
