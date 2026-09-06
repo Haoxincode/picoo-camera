@@ -19,11 +19,12 @@ use windows::Win32::Media::MediaFoundation::{
     MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
     MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
-    MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MF_E_NOTACCEPTING,
-    MF_E_NO_MORE_TYPES, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
-    MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE,
-    MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE,
-    MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX, MF_SA_D3D11_AWARE,
+    MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
+    MF_E_ATTRIBUTENOTFOUND, MF_E_NOTACCEPTING, MF_E_NO_MORE_TYPES, MF_E_TRANSFORM_NEED_MORE_INPUT,
+    MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
+    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
+    MF_SA_D3D11_AWARE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -528,6 +529,7 @@ unsafe fn renegotiate_output(
     width: u32,
     height: u32,
 ) -> Result<(), DecodeError> {
+    let mut offered = Vec::new();
     for index in 0..32 {
         let candidate = match transform.GetOutputAvailableType(0, index) {
             Ok(candidate) => candidate,
@@ -538,18 +540,40 @@ unsafe fn renegotiate_output(
                 )))
             }
         };
-        if candidate.GetGUID(&MF_MT_SUBTYPE).ok() != Some(MFVideoFormat_NV12)
-            || candidate.GetUINT64(&MF_MT_FRAME_SIZE).ok() != Some(pack_frame_size(width, height))
-        {
+        let subtype = candidate.GetGUID(&MF_MT_SUBTYPE).ok();
+        let frame_size = candidate.GetUINT64(&MF_MT_FRAME_SIZE);
+        offered.push((
+            subtype,
+            frame_size
+                .as_ref()
+                .ok()
+                .map(|size| ((size >> 32) as u32, *size as u32)),
+        ));
+        if subtype != Some(MFVideoFormat_NV12) {
             continue;
+        }
+        match frame_size {
+            Ok(size) if size != pack_frame_size(width, height) => continue,
+            Ok(_) => {}
+            // IMFTransform explicitly permits partial output media types.
+            // Complete the requested output constraint; SetOutputType remains
+            // the native acceptance gate, and known differing sizes are rejected.
+            Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => {
+                candidate
+                    .SetUINT64(&MF_MT_FRAME_SIZE, pack_frame_size(width, height))
+                    .map_err(|error| {
+                        DecodeError::Platform(format!("complete output frame size: {error}"))
+                    })?;
+            }
+            Err(error) => return Err(DecodeError::Platform(format!("output frame size: {error}"))),
         }
         return transform
             .SetOutputType(0, &candidate, 0)
             .map_err(|error| DecodeError::Platform(format!("renegotiate output: {error}")));
     }
-    Err(DecodeError::Platform(
-        "stream change offers no matching NV12 output".into(),
-    ))
+    Err(DecodeError::Platform(format!(
+        "stream change offers no matching NV12 output for {width}x{height}; offered={offered:?}"
+    )))
 }
 
 unsafe fn drain_output(
