@@ -13,3 +13,14 @@
 Windows CI 的 WARP 只可用于标准资源对象、COM 保留和边界拒绝的诊断测试，不作为硬件解码、显卡矩阵、吞吐或生产设备工厂验收。生产链路仍必须拒绝软件 codec/GPU。
 
 GPU context 采用官方 DXGI adapter、D3D11CreateDevice、ID3D11Multithread 和 MFCreateDXGIDeviceManager/ResetDevice。创建时固定关联一个 device，只在初始化时 ResetDevice；对外原生访问不得重新绑定 manager。MF/COM runtime 由平台 codec 工作者管理，不在可跨线程图像/context 的 Drop 中 CoUninitialize。context 不是某 codec 的硬件能力证明，生产设备入口先拒绝 DXGI_ADAPTER_FLAG_SOFTWARE；WARP 明确排除。公开 for_adapter 接口允许后续平台预览与解码选择同一 adapter，不用新增 sink 触发整个源 device 重建。
+
+
+## MFT 硬件模式准入
+
+微软 [AVDecVideoAcceleration_H264](https://learn.microsoft.com/en-us/windows/win32/codecapi/avdecvideoacceleration-h264-property) 明确说明该属性在 Media Foundation/IMFTransform 路径无效，不能通过 SetValue(true) 声明已开启硬解。
+
+官方 [D3D11 MF 解码接入](https://learn.microsoft.com/en-us/windows/win32/medfound/supporting-direct3d-11-video-decoding-in-media-foundation) 要求先检查 MF_SA_D3D11_AWARE，再通过 MFT_MESSAGE_SET_D3D_MANAGER 传入 DXGI manager。驱动 profile、NV12 output format 与完整 decoder configuration 由 D3D11 VideoDevice 查询；输入/输出类型必须在 manager 已绑定时协商。
+
+文档规定不支持硬件组合时 SetInputType/SetOutputType 返回 MF_E_UNSUPPORTED_D3D_TYPE。标准 Topology Loader 的软件回退是发送 SET_D3D_MANAGER(NULL)，然后重新协商。Picoo 直接管理 MFT，因此必须把此错误作为明确准入失败，禁止清空 manager 后重试。完成帧还必须是同一设备的合法 IMFDXGIBuffer；普通 IMFMediaBuffer 不能进入原生源。MFT 的包装器是否被称作 software decoder 或是否注册为异步 hardware MFT，不足以代替这些实际契约；不能只凭 factory 标签宣称或否定 DXVA。
+
+参考微软 [H.264 Decoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-decoder)：DXVA 支持 Main-compatible Baseline/Main/High，1920×1088 为其说明的保证尺寸上限。Picoo 仍按当前 codec/profile/实际 coded size/驱动能力验证，不能将该文档替代所有显卡与 HEVC 的验收。
