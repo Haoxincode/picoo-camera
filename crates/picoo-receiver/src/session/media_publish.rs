@@ -5,7 +5,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(not(target_os = "macos"))]
 use picoo_frame_hub::VideoFrame;
+#[cfg(not(target_os = "macos"))]
 use picoo_media_decode::DecodedFrame;
 
 use super::decoder_worker::{AccessUnitTimeline, DecoderEvent};
@@ -15,6 +17,12 @@ use crate::ReceiverError;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct FrameTimeline {
+    #[cfg(target_os = "macos")]
+    pub(super) connection_generation: u64,
+    #[cfg(target_os = "macos")]
+    pub(super) decoder_generation: u64,
+    #[cfg(target_os = "macos")]
+    pub(super) config_revision: u64,
     pub(super) stream_generation: u64,
     pub(super) frame_id: u64,
     pub(super) source_pts_us: u64,
@@ -33,6 +41,7 @@ impl ReceiverSession {
                         self.ingress.decode_invocations.saturating_add(1);
                 }
                 DecoderEvent::Completed {
+                    config_revision,
                     timeline,
                     stream_config,
                     decoder_generation,
@@ -54,6 +63,8 @@ impl ReceiverSession {
                     }
                     self.handle_decoder_result(
                         timeline,
+                        decoder_generation,
+                        config_revision,
                         decoded_at,
                         stream_config.as_deref(),
                         result,
@@ -90,10 +101,14 @@ impl ReceiverSession {
     fn handle_decoder_result(
         &mut self,
         timeline: AccessUnitTimeline,
+        decoder_generation: u64,
+        config_revision: u64,
         decoded_at: Instant,
         stream_config: Option<&picoo_protocol::control::StreamConfig>,
         result: Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError>,
     ) -> Result<(), ReceiverError> {
+        #[cfg(not(target_os = "macos"))]
+        let _ = (decoder_generation, config_revision);
         let outcome = match result {
             Ok(decoded) => decoded,
             Err(error) => {
@@ -121,6 +136,12 @@ impl ReceiverSession {
                 frame.set_rotation(rotation);
                 self.publish_decoded_frame(
                     FrameTimeline {
+                        #[cfg(target_os = "macos")]
+                        connection_generation: timeline.connection_generation,
+                        #[cfg(target_os = "macos")]
+                        decoder_generation,
+                        #[cfg(target_os = "macos")]
+                        config_revision,
                         stream_generation: timeline.stream_generation,
                         frame_id: timeline.frame_id,
                         source_pts_us: timeline.source_pts_us,
@@ -155,6 +176,7 @@ impl ReceiverSession {
         panic!("decoder worker did not complete within test deadline");
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub(super) fn publish_decoded_frame(
         &mut self,
         timeline: FrameTimeline,
@@ -197,7 +219,7 @@ impl ReceiverSession {
                 self.ingress.orientation_transform_max_us.max(elapsed_us);
         }
 
-        let published = self.latest_frame_store.publish(VideoFrame::new(
+        let published = self.frames.publish(VideoFrame::new(
             timeline.stream_generation,
             timeline.frame_id,
             timeline.source_pts_us,
@@ -220,7 +242,7 @@ impl ReceiverSession {
         Ok(())
     }
 
-    pub fn latest_frame(&self) -> Option<&Arc<VideoFrame>> {
-        self.latest_frame_store.latest()
+    pub fn latest_frame(&self) -> Option<&Arc<crate::ReceiverFrame>> {
+        self.frames.latest()
     }
 }

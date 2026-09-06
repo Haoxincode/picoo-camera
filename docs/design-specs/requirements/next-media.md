@@ -73,3 +73,10 @@
 | ID | 状态 | 来源 | 契约 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-FRAME-012 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、012、015、020 | 原生帧身份与配置描述不可变，无 CPU 像素或 stride；latest 与未来发布的有序订阅分开；唯一录像订阅八帧上限，取出时拒绝超过 150ms 的工作，终止原因显式 | 共享原对象、身份快照、订阅顺序/容量/年龄、取消/清空/停止、几何边界；Decoder/输出接线和隐私期限对持有引用的回收另验 |
+
+## Mac 原生主链路分解
+
+| ID | 状态 | 来源 | 契约 | 验收 |
+| --- | --- | --- | --- | --- |
+| REQ-PICOO-MEDIA-030 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、011、016、029 | Mac Decoder 直接交付已完成原生 NV12；FrameBus 持有原始身份、编码尺寸和剩余可见区域；预览 GPU 处理，CPU 输出仅在独立 sink 工作者物化；placeholder 不作为原生源 | 实际 VideoToolbox 颜色/几何拒绝、1088/1080 元数据、Receiver 原生快照、GPU→CPU 像素、占位输出；完整配置 wire、sink demand、SampleClock 与全局预算另验 |
+| REQ-PICOO-GPU-003 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-016 | GPUI surface 的 CVPixelBuffer 与 CVMetalTexture 由 Metal 完成回调持有至读取结束，Scene 释放不能提前让池复用 allocation | M4 实际阻塞 Metal 队列：读取未完成时单槽池拒绝分配，完成后复用；移除修补的负向版本必须失败 |

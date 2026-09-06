@@ -171,10 +171,12 @@ impl PicooDesktopApp {
                 .update(cx, |this, cx| {
                     let preview_visible = this.page == DesktopPage::Live
                         && this.section == DesktopSection::Connect;
+                    let latest_frame = this.runtime.latest_frame();
+                    if latest_frame.is_none() && this.preview_pipeline.clear() { this.video_surface.clear(cx); cx.notify(); }
                     if preview_visible {
                         if let Some(width) = this.preview_viewport.target_physical_width() {
                             this.preview_pipeline.set_viewport_physical_width(width);
-                            if let Some(slot) = this.runtime.latest_frame() {
+                            if let Some(slot) = latest_frame {
                                 this.preview_pipeline.submit_latest(&slot);
                             }
                         }

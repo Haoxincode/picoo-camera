@@ -152,6 +152,42 @@ mod tests {
         .0
     }
     #[test]
+    fn generated_hardware_sources_declare_bt709_without_inventing_missing_aspect() {
+        for (au, width, height) in [
+            (
+                &include_bytes!("../../picoo-testkit/fixtures/avc-64x64-bt709-idr.h264")[..],
+                64,
+                64,
+            ),
+            (
+                &include_bytes!("../../picoo-testkit/fixtures/avc-1280x720-bt709-idr.h264")[..],
+                1280,
+                720,
+            ),
+            (
+                &include_bytes!("../../picoo-testkit/fixtures/avc-1920x1080-bt709-idr.h264")[..],
+                1920,
+                1080,
+            ),
+        ] {
+            let (sps, _) = crate::avc::extract_sps_pps(au).unwrap();
+            let facts = AvcSpsFacts::parse(&sps).unwrap();
+            assert_eq!((facts.visible_width, facts.visible_height), (width, height));
+            // VideoToolbox omits square SAR from the elementary SPS even when the
+            // compression session explicitly commits it; wire/native metadata must carry it.
+            assert_eq!(facts.pixel_aspect_ratio, None);
+            assert_eq!(
+                facts.color,
+                Some(AvcColorFacts {
+                    full_range: false,
+                    primaries: 1,
+                    transfer: 1,
+                    matrix: 1
+                })
+            );
+        }
+    }
+    #[test]
     fn native_avc_full_hd_preserves_coded_padding_and_visible_crop() {
         let facts = AvcSpsFacts::parse(&full_hd_sps()).unwrap();
         assert_eq!((facts.coded_width, facts.coded_height), (1920, 1088));

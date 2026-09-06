@@ -70,13 +70,18 @@ fn receiver_sends_stats_to_paired_sender() {
     for _ in 0..100 {
         receiver.pump().expect("receiver pump");
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0) {
+        if receiver
+            .latest_frame()
+            .is_some_and(|f| super::source_frame_id(f) > 0)
+        {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(
-        receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0),
+        receiver
+            .latest_frame()
+            .is_some_and(|f| super::source_frame_id(f) > 0),
         "expected decoded frame before stats interval"
     );
 
@@ -426,7 +431,7 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
         sender.pump().ok();
         if receiver
             .latest_frame()
-            .is_some_and(|frame| frame.width == width && frame.height == height)
+            .is_some_and(|frame| super::source_dimensions(frame) == (width, height))
         {
             break;
         }
@@ -434,14 +439,23 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
     }
 
     let frame = receiver.latest_frame().expect("frame in hub");
-    assert_eq!(frame.width, width);
-    assert_eq!(frame.height, height);
-    let y = &frame.pixel_data.as_ref()[..4];
-    assert_eq!(
-        y,
-        &[40, 30, 20, 10],
-        "Y plane must be horizontally mirrored"
-    );
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert_eq!(frame.width, width);
+        assert_eq!(frame.height, height);
+        let y = &frame.pixel_data.as_ref()[..4];
+        assert_eq!(
+            y,
+            &[40, 30, 20, 10],
+            "Y plane must be horizontally mirrored"
+        );
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(super::source_dimensions(frame), (width, height));
+        assert!(frame.description().transform.mirror);
+        assert_eq!(receiver.ingress_stats().orientation_transform_frames, 0);
+    }
 }
 
 #[test]
@@ -525,18 +539,36 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     for _ in 0..100 {
         receiver.pump().ok();
         sender.pump().ok();
-        if receiver
-            .latest_frame()
-            .is_some_and(|frame| frame.width == height && frame.height == width)
-        {
+        if receiver.latest_frame().is_some_and(|frame| {
+            #[cfg(target_os = "macos")]
+            {
+                super::source_dimensions(frame) == (width, height)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                super::source_dimensions(frame) == (height, width)
+            }
+        }) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
 
     let frame = receiver.latest_frame().expect("frame");
-    // Pixels are upright; metadata cleared after apply (REQ-PICOO-MEDIA-009).
-    assert_eq!(frame.rotation, 0);
-    assert_eq!(frame.width, height); // 90° swaps dims
-    assert_eq!(frame.height, width);
+    #[cfg(not(target_os = "macos"))]
+    {
+        // Pixels are upright; metadata cleared after apply (REQ-PICOO-MEDIA-009).
+        assert_eq!(frame.rotation, 0);
+        assert_eq!(frame.width, height); // 90° swaps dims
+        assert_eq!(frame.height, width);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(super::source_dimensions(frame), (width, height));
+        assert_eq!(
+            frame.description().transform.rotation,
+            picoo_frame_hub::Rotation::Clockwise90
+        );
+        assert_eq!(receiver.ingress_stats().orientation_transform_frames, 0);
+    }
 }

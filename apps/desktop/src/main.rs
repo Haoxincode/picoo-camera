@@ -331,11 +331,8 @@ fn run_export_diagnostics(out_path: Option<&str>) {
 #[cfg(feature = "loopback-diagnostics")]
 fn run_loopback_demo() {
     match picoo_receiver::run_paired_loopback_access_unit(b"desktop-loopback-au") {
-        Ok(frame) => {
-            println!(
-                "Paired loopback OK — LatestFrameStore received {} bytes (pairing path, no unpaired bypass)",
-                frame.len()
-            );
+        Ok(_frame) => {
+            println!("Paired loopback OK — source frame published after pairing");
         }
         Err(err) => {
             eprintln!("Paired loopback demo failed: {err}");

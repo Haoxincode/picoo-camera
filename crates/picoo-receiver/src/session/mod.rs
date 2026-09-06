@@ -12,6 +12,9 @@ mod loopback;
 mod media;
 mod media_ingress;
 mod media_publish;
+mod media_report;
+#[cfg(target_os = "macos")]
+mod native_publish;
 mod pairing;
 mod recovery;
 mod reducer;
@@ -24,16 +27,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "macos")]
+use crate::output::MacCpuOutput;
 #[cfg(test)]
 use bytes::Bytes;
-use picoo_frame_hub::{FrameBufferPool, LatestFrameStore, PlaceholderMode, SharedFrameRingWriter};
+#[cfg(target_os = "macos")]
+use picoo_frame_hub::FrameBus as SourceFrameStore;
+use picoo_frame_hub::PlaceholderMode;
+#[cfg(not(target_os = "macos"))]
+use picoo_frame_hub::{
+    FrameBufferPool, LatestFrameStore as SourceFrameStore, SharedFrameRingWriter,
+};
+
 use picoo_jitter::JitterBuffer;
 use picoo_packet::{AssembledAccessUnit, ReassemblyMap};
 use picoo_pairing::TrustedDeviceStore;
-use picoo_protocol::control::{
-    control_envelope::Payload as ControlPayload, ReceiverStats as ReceiverStatsMsg,
-    SenderStats as SenderStatsMsg, StreamConfig,
-};
+use picoo_protocol::control::{SenderStats as SenderStatsMsg, StreamConfig};
 use picoo_protocol::MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT;
 use picoo_session::{
     ConnectionState, NetworkHealthTracker, OutputState, SessionRuntimeState, StreamState,
@@ -50,10 +59,7 @@ use pairing::{ActiveSender, PendingPairing};
 use recovery::DecoderRecovery;
 use recovery::RecoveryReason;
 use reducer::{ReceiverCloseReason, ReceiverEvent, ReceiverReducerState};
-use stats::{
-    media_deadline_from_observations, observed_fragment_loss_ratio, InterarrivalJitter,
-    StatsReporter,
-};
+use stats::{media_deadline_from_observations, InterarrivalJitter, StatsReporter};
 
 #[cfg(any(test, feature = "loopback-diagnostics"))]
 pub use loopback::{run_loopback_access_unit, run_paired_loopback_access_unit};
@@ -63,7 +69,8 @@ pub struct ReceiverSession {
     runtime_wake: picoo_transport::TransportEventWake,
     transport: QuicReceiverTransport,
     reassembly: ReassemblyMap,
-    latest_frame_store: LatestFrameStore,
+    frames: SourceFrameStore,
+    #[cfg(not(target_os = "macos"))]
     frame_buffer_pool: FrameBufferPool,
     identity: ReceiverIdentity,
     trusted: TrustedDeviceStore,
@@ -79,9 +86,13 @@ pub struct ReceiverSession {
     auto_accept_paired: bool,
     /// Idle placeholder style (PRD §16 / AC-D-SET-01).
     placeholder_mode: picoo_frame_hub::PlaceholderMode,
+    #[cfg(not(target_os = "macos"))]
     shared_ring: Option<SharedFrameRingWriter>,
+    #[cfg(target_os = "macos")]
+    shared_ring: Option<MacCpuOutput>,
     last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
+    config_revision: u64,
     /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
     waiting_for_stream_config_epoch: Option<u32>,
     /// At most one complete future-generation IDR is retained until its
@@ -134,7 +145,8 @@ impl ReceiverSession {
             transport: QuicReceiverTransport::with_event_wake(runtime_wake.clone()),
             runtime_wake: runtime_wake.clone(),
             reassembly: ReassemblyMap::new(8, MAX_VIDEO_FRAGMENTS_PER_ACCESS_UNIT),
-            latest_frame_store: LatestFrameStore::new(),
+            frames: SourceFrameStore::new(),
+            #[cfg(not(target_os = "macos"))]
             frame_buffer_pool: FrameBufferPool::default(),
             identity: ReceiverIdentity::default(),
             trusted: TrustedDeviceStore::new(),
@@ -151,6 +163,7 @@ impl ReceiverSession {
             shared_ring: None,
             last_shared_ring_error: None,
             current_stream_config: None,
+            config_revision: 0,
             waiting_for_stream_config_epoch: None,
             pending_stream_config_idr: None,
             receiver_capabilities_sent: None,
@@ -281,8 +294,8 @@ impl ReceiverSession {
         self.transport.is_connected()
     }
 
-    pub fn latest_frame_store(&self) -> &LatestFrameStore {
-        &self.latest_frame_store
+    pub fn frames(&self) -> &SourceFrameStore {
+        &self.frames
     }
 
     pub fn bind_addr(&self) -> Option<std::net::SocketAddr> {
@@ -485,169 +498,6 @@ impl ReceiverSession {
         )
     }
 
-    fn maybe_send_receiver_stats(&mut self) -> Result<(), ReceiverError> {
-        if !self.lifecycle.runtime.stream().is_streaming() {
-            return Ok(());
-        }
-        if !self.stats_reporter.due() {
-            return Ok(());
-        }
-
-        let session = self
-            .transport
-            .active_session()
-            .ok_or(ReceiverError::NotListening)?;
-
-        let elapsed = self
-            .stats_reporter
-            .last_sent
-            .elapsed()
-            .as_secs_f64()
-            .max(0.001);
-        let receive_bitrate = ((self.stats_reporter.window_bytes as f64 * 8.0) / elapsed) as u32;
-        self.last_decoded_fps =
-            (self.stats_reporter.window_decoded_frames as f64 / elapsed).round() as u32;
-        let reassembly_drop = self
-            .reassembly
-            .drop_count()
-            .saturating_sub(self.stats_reporter.last_reassembly_drops);
-        let missing_fragments = self
-            .reassembly
-            .missing_fragment_count()
-            .saturating_sub(self.stats_reporter.last_missing_fragments);
-        let resolved_fragments = self
-            .reassembly
-            .resolved_fragment_count()
-            .saturating_sub(self.stats_reporter.last_resolved_fragments);
-        let fec_recovered_fragments = self
-            .reassembly
-            .fec_recovered_fragment_count()
-            .saturating_sub(self.stats_reporter.last_fec_recovered_fragments);
-
-        let receiver_now_us = self.timing_origin.elapsed().as_micros() as u64;
-        let frame_age_ms = self
-            .latest_frame_store
-            .latest()
-            .map(|frame| {
-                let now_us = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_micros() as u64)
-                    .unwrap_or(0);
-                now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0
-            })
-            .unwrap_or(0.0);
-        let latency = self
-            .latest_frame_store
-            .latest()
-            .map(|frame| self.frame_latency_breakdown(frame, receiver_now_us))
-            .unwrap_or_default();
-
-        // REQ-PICOO-PROTOCOL-006: real RTT from Quinn path stats (via transport facade).
-        let link = self.transport.link_stats().unwrap_or_default();
-        // Quinn's `lost_packets / sent_packets` describes packets sent by this
-        // endpoint. On Receiver those are control-stream packets, not incoming
-        // Android video datagrams, so feeding that ratio into Sender ABR causes
-        // false quality drops. Compare missing and received video fragments in
-        // the same unit instead (REQ-PICOO-PROTOCOL-009).
-        let packet_loss = observed_fragment_loss_ratio(resolved_fragments, missing_fragments);
-        let pre_fec_packet_loss = observed_fragment_loss_ratio(
-            resolved_fragments,
-            missing_fragments.saturating_add(fec_recovered_fragments),
-        );
-
-        let jitter_timing = self.jitter.take_timing_stats();
-        let stats = ReceiverStatsMsg {
-            rtt_ms: link.rtt_ms,
-            packet_loss,
-            jitter_ms: self.interarrival_jitter.milliseconds(),
-            reassembly_drop,
-            decoder_drop: self.stats_reporter.window_decoder_drops,
-            frame_age_ms,
-            receive_bitrate,
-            jitter_buffer_target_ms: jitter_timing.target_delay_ms,
-            jitter_buffer_actual_delay_ms: jitter_timing.actual_delay_ms,
-            jitter_buffer_occupancy_ms: jitter_timing.occupancy_ms,
-            pre_fec_packet_loss,
-            capture_to_encode_ms: latency.capture_to_encode_ms,
-            encode_to_arrival_ms: latency.encode_to_arrival_ms,
-            jitter_residence_ms: latency.jitter_residence_ms,
-            decode_ms: latency.decode_ms,
-            frame_publish_age_ms: latency.frame_publish_age_ms,
-            end_to_end_latency_ms: latency.end_to_end_latency_ms,
-            clock_uncertainty_ms: latency.clock_uncertainty_ms,
-            receive_queue_age_ms: self.stats_reporter.window_max_receive_queue_age_ms,
-        };
-
-        let sender_stats = self.last_sender_stats.as_ref();
-        self.last_stats = Some(picoo_metrics::ReceiverStats {
-            rtt_ms: stats.rtt_ms,
-            packet_loss: stats.packet_loss,
-            jitter_ms: stats.jitter_ms,
-            reassembly_drop: stats.reassembly_drop,
-            decoder_drop: stats.decoder_drop,
-            frame_age_ms: stats.frame_age_ms,
-            receive_bitrate: stats.receive_bitrate,
-            jitter_buffer_target_ms: stats.jitter_buffer_target_ms,
-            jitter_buffer_actual_delay_ms: stats.jitter_buffer_actual_delay_ms,
-            jitter_buffer_occupancy_ms: stats.jitter_buffer_occupancy_ms,
-            capture_to_encode_ms: stats.capture_to_encode_ms,
-            encode_to_arrival_ms: stats.encode_to_arrival_ms,
-            jitter_residence_ms: stats.jitter_residence_ms,
-            decode_ms: stats.decode_ms,
-            frame_publish_age_ms: stats.frame_publish_age_ms,
-            end_to_end_latency_ms: stats.end_to_end_latency_ms,
-            clock_uncertainty_ms: stats.clock_uncertainty_ms,
-            receive_queue_age_ms: stats.receive_queue_age_ms,
-            sender_queue_age_ms: sender_stats.map_or(0.0, |stats| stats.video_queue_age_ms),
-            sender_queue_dropped_access_units: sender_stats
-                .map_or(0, |stats| stats.video_dropped_access_units),
-            sender_quic_lost_packets: sender_stats.map_or(0, |stats| stats.quic_lost_packets),
-            sender_quic_sent_packets: sender_stats.map_or(0, |stats| stats.quic_sent_packets),
-            sender_video_buffered_bytes: sender_stats.map_or(0, |stats| stats.video_buffered_bytes),
-        });
-        self.last_stats_revision = self.last_stats_revision.saturating_add(1);
-
-        tracing::info!(
-            stats_revision = self.last_stats_revision,
-            access_units = self.ingress.access_units,
-            decoded_frames = self.ingress.decoded_frames,
-            decoder_resets = self.ingress.decoder_resets,
-            partial_access_unit_drops = self.ingress.reassembly_partial_access_unit_drops,
-            whole_access_unit_gap_drops = self.ingress.reassembly_whole_access_unit_gap_drops,
-            jitter_capacity_recoveries = self.ingress.recovery_jitter_capacity,
-            arrived_after_playout_recoveries = self.ingress.recovery_arrived_after_playout,
-            jitter_expired_recoveries = self.ingress.recovery_jitter_expired,
-            fec_recovered_fragments = self.ingress.fec_recovered_fragments,
-            packet_loss,
-            pre_fec_packet_loss,
-            rtt_ms = stats.rtt_ms,
-            jitter_ms = stats.jitter_ms,
-            target_ms = stats.jitter_buffer_target_ms,
-            actual_delay_ms = stats.jitter_buffer_actual_delay_ms,
-            occupancy_ms = stats.jitter_buffer_occupancy_ms,
-            "receiver media window"
-        );
-
-        self.send_control_payload(session, ControlPayload::ReceiverStats(stats))?;
-
-        // REQ-PICOO-SESSION-013: UI health uses slow episode hysteresis while
-        // Sender ABR receives this raw window immediately above.
-        self.observe_network_packet_loss(packet_loss);
-
-        self.stats_reporter.last_sent = Instant::now();
-        self.stats_reporter.window_bytes = 0;
-        self.stats_reporter.window_decoder_drops = 0;
-        self.stats_reporter.window_decoded_frames = 0;
-        self.stats_reporter.window_max_receive_queue_age_ms = 0.0;
-        self.stats_reporter.last_reassembly_drops = self.reassembly.drop_count();
-        self.stats_reporter.last_missing_fragments = self.reassembly.missing_fragment_count();
-        self.stats_reporter.last_resolved_fragments = self.reassembly.resolved_fragment_count();
-        self.stats_reporter.last_fec_recovered_fragments =
-            self.reassembly.fec_recovered_fragment_count();
-
-        Ok(())
-    }
-
     pub(crate) fn video_allowed(&self) -> bool {
         if self.permit_unpaired_video {
             return true;
@@ -737,7 +587,7 @@ impl ReceiverSession {
     #[cfg(test)]
     pub fn inject_peer_disconnect_for_test(&mut self) -> Result<(), ReceiverError> {
         let retain_frame = self.lifecycle.runtime.stream().is_streaming()
-            && self.latest_frame_store.latest().is_some()
+            && self.frames.latest().is_some()
             && !self.last_frame_hold.is_zero();
         let generation = self
             .transport

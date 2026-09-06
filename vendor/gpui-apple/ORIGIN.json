@@ -1,0 +1,22 @@
+{
+  "crate": "gpui-pre-apple",
+  "version": "0.3.3",
+  "registry": "https://crates.io/crates/gpui-pre-apple/0.3.3",
+  "sha256": "38e027ea436bb876a8da6962862ffdbf9708c6b8352415325647c4fc2a48467d",
+  "upstream_repository": "https://github.com/zed-industries/zed",
+  "upstream_revision": "5b055fa789a8b8d38ac951a6e0cde272f66b4495",
+  "license": "Apache-2.0",
+  "local_changes": [
+    "Keep CVPixelBuffer and CVMetalTexture owners until Metal command completion",
+    "Separate primitive drawing and instance buffer ownership from renderer lifecycle",
+    "Add a real Metal stalled-read/pool-reuse regression",
+    "Gate GPUI headless trait implementation on the dependency features that expose that trait"
+  ],
+  "excluded_release_files": [
+    "Cargo.lock",
+    "Cargo.toml.orig",
+    ".cargo-ok",
+    ".cargo_vcs_info.json",
+    ".cargo-checksum.json"
+  ]
+}

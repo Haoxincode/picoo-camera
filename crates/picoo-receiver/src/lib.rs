@@ -6,6 +6,12 @@
 
 pub mod media_scheduler;
 pub mod runtime;
+#[cfg(target_os = "macos")]
+pub use picoo_frame_hub::NativeVideoFrame as ReceiverFrame;
+#[cfg(not(target_os = "macos"))]
+pub use picoo_frame_hub::VideoFrame as ReceiverFrame;
+#[cfg(target_os = "macos")]
+mod output;
 mod session;
 
 use std::time::Duration;

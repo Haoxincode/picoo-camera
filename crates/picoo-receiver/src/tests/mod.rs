@@ -89,3 +89,26 @@ fn pump_pair_for(
         std::thread::sleep(Duration::from_millis(2));
     }
 }
+
+/// Source allocation geometry, before output presentation transforms on Mac.
+fn source_dimensions(frame: &crate::ReceiverFrame) -> (u32, u32) {
+    #[cfg(target_os = "macos")]
+    {
+        (frame.image().width(), frame.image().height())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        (frame.width, frame.height)
+    }
+}
+
+fn source_frame_id(frame: &crate::ReceiverFrame) -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        frame.identity().frame_id
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        frame.frame_id
+    }
+}

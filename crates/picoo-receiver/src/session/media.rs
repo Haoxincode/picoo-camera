@@ -2,9 +2,13 @@
 //!
 //! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009/017/023.
 
+#[cfg(not(target_os = "macos"))]
 use bytes::Bytes;
-use picoo_frame_hub::{PlaceholderMode, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
+use picoo_frame_hub::PlaceholderMode;
+#[cfg(not(target_os = "macos"))]
+use picoo_frame_hub::{PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
+#[cfg(not(target_os = "macos"))]
 use picoo_media_decode::DecodedFrame;
 use picoo_packet::AssembledAccessUnit;
 #[cfg(test)]
@@ -18,6 +22,7 @@ use std::time::Instant;
 #[cfg(test)]
 use super::decoder_worker::{AccessUnitTimeline, DecoderWorker, FrameKind};
 use super::decoder_worker::{DecodeSubmitOutcome, EncodedAccessUnit};
+#[cfg(not(target_os = "macos"))]
 use super::media_publish::FrameTimeline;
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
@@ -109,7 +114,7 @@ impl ReceiverSession {
     pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
         let name = name.to_owned();
         let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
-        let ring = picoo_frame_hub::SharedFrameRingWriter::start(move || {
+        let factory = move || {
             #[cfg(target_os = "windows")]
             if use_platform_ring {
                 return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
@@ -131,7 +136,11 @@ impl ReceiverSession {
                 &name,
                 picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
             )
-        })?;
+        };
+        #[cfg(target_os = "macos")]
+        let ring = crate::output::MacCpuOutput::start(factory)?;
+        #[cfg(not(target_os = "macos"))]
+        let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
         self.shared_ring = Some(ring);
         self.last_shared_ring_error = None;
         self.publish_waiting_placeholder()?;
@@ -143,6 +152,14 @@ impl ReceiverSession {
             return;
         };
         while let Some(event) = ring.poll_event() {
+            #[cfg(target_os = "macos")]
+            match event {
+                crate::output::OutputEvent::Published => self.last_shared_ring_error = None,
+                crate::output::OutputEvent::Failed(error) => {
+                    self.last_shared_ring_error = Some(error)
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
             match event {
                 picoo_frame_hub::SharedRingWriterEvent::Published { .. } => {
                     self.last_shared_ring_error = None;
@@ -155,6 +172,7 @@ impl ReceiverSession {
         }
     }
 
+    #[cfg(not(target_os = "macos"))]
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.waiting_frame();
         self.publish_decoded_frame(
@@ -172,6 +190,7 @@ impl ReceiverSession {
     }
 
     /// Publish reconnect-branded placeholder (REQ-PICOO-FRAME-005).
+    #[cfg(not(target_os = "macos"))]
     pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.reconnecting_frame();
         self.publish_decoded_frame(
@@ -212,10 +231,11 @@ impl ReceiverSession {
             return Ok(());
         }
         let timeline = access_unit.timeline();
-        match self
-            .decoder_worker
-            .submit(access_unit, self.current_stream_config.clone())
-        {
+        match self.decoder_worker.submit(
+            access_unit,
+            self.current_stream_config.clone(),
+            self.config_revision,
+        ) {
             DecodeSubmitOutcome::Queued => {
                 self.decoder_recovery.note_refresh_submitted(timeline);
             }

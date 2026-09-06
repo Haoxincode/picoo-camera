@@ -34,3 +34,13 @@
 实际灰阶测试发现，CVPixelBuffer 的 matrix/primaries/transfer attachments 不足以让 Core Image 自动推断出与指定目标完全相同的传递曲线：原 Y=40 被改变为 52。生产适配现明确传入 `kCIImageColorSpace = CGColorSpaceITUR_709`，并分别指定 BT.709 输出或 GPUI sRGB 输出色彩空间。BT.709 源 attachment 缺失或不匹配时拒绝，不修改共享源对象、不猜测。修改后灰阶、四方向 × 镜像、contain 黑边和两种颜色输出测试通过。
 
 当前验证是合成原生 NV12 经真实 Metal/Core Image 的图像和资源测试；Decoder、FrameBus、预览 UI 尚未改用它。GPUI 后续 GPU 读取的 CVMetalTexture/CVPixelBuffer 保留与完成交接仍需单独审查，不能用本 renderer 已完成写入代替下游 GPU 读取完成。固定布局池的局部上限也不代替跨输出、重建和资源代际的总预算。
+
+## GPUI 下游读取寿命
+
+2026-09-06 核对 crates.io：gpui-pre-apple 当前发布仍为 0.3.3（2026-09-03），Apache-2.0，与现有 gpui-pre / GPUI Kit 锁定组合一致，edition 2024，按项目 stable 构建（不能只凭 edition 推断完整 MSRV）。其 draw_surfaces 在 draw 编码后释放 CVMetalTexture，render_frame 的完成回调只保留 instance buffer。`vendor/gpui-apple` 保存相同发布包和来源 checksum，局部修补为在 command buffer 完成回调释放源 PixelBuffer 和两个 plane 的 CVMetalTexture；没有新包或平台运行时依赖，只增加每个已绘制 surface 的三个原生 retain。源码按 renderer 生命周期、primitive/pipeline 和 instance buffer 分开，修改文件均低于 800 行；更新方法见 vendor 内 README.picoo.md。
+
+M4 实测：同一 Metal queue 先等待未触发的 SharedEvent，再提交真实 GPUI surface draw；Scene 释放、texture cache flush 后，单槽 CVPixelBufferPool 必须返回 WouldExceedAllocationThreshold。触发事件并等待 command buffer 完成后，池可再次分配。修补版本通过；临时移除保留逻辑的负向版本在“pending GPU reads must prevent pool reuse”处失败；已恢复修补并通过该依赖全部四项单元测试。不以 CPU 引用计数推测 GPU 完成。
+
+## Decoder 输出事实
+
+Mac Decoder 不再复制源 NV12 plane。原生 adapter 从有界 SPS 提取真实编码尺寸，校验 StreamConfig 可见尺寸，再检查完成输出的 CoreVideo clean aperture、nominal display size 和 BT.709 attachments。VideoToolbox 对显式 PAR 1:1 请求会省略 SPS SAR 字段；解析保留 None，原生输出比例来自平台实际报告，不回写或篡改 SPS。未知色彩的旧 fixture 会被拒绝，新的合成硬件 BT.709 fixtures 用于完整解码→FrameBus→GPU→CPU 输出回归。

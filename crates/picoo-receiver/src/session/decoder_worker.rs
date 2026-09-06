@@ -73,6 +73,7 @@ impl EncodedAccessUnit {
 }
 
 struct DecodeJob {
+    config_revision: u64,
     access_unit: EncodedAccessUnit,
     stream_config: Option<Arc<StreamConfig>>,
     decoder_generation: u64,
@@ -261,6 +262,7 @@ pub(super) enum DecodeSubmitOutcome {
 pub(super) enum DecoderEvent {
     Started,
     Completed {
+        config_revision: u64,
         timeline: AccessUnitTimeline,
         stream_config: Option<Arc<StreamConfig>>,
         decoder_generation: u64,
@@ -317,8 +319,10 @@ impl DecoderWorker {
         &self,
         access_unit: EncodedAccessUnit,
         stream_config: Option<Arc<StreamConfig>>,
+        config_revision: u64,
     ) -> DecodeSubmitOutcome {
         self.queue.submit(DecodeJob {
+            config_revision,
             access_unit,
             stream_config,
             decoder_generation: 0,
@@ -408,6 +412,7 @@ fn process_work_item(
                 events,
                 event_wake,
                 DecoderEvent::Completed {
+                    config_revision: job.config_revision,
                     timeline,
                     stream_config: job.stream_config,
                     decoder_generation: job.decoder_generation,
@@ -500,7 +505,7 @@ mod tests {
             release: Arc::clone(&release),
         }));
         assert_eq!(
-            worker.submit(unit(1, FrameKind::Key), None),
+            worker.submit(unit(1, FrameKind::Key), None, 0),
             DecodeSubmitOutcome::Queued
         );
         let deadline = Instant::now() + Duration::from_secs(1);
@@ -509,11 +514,11 @@ mod tests {
         }
         assert!(started.load(Ordering::Acquire), "decoder did not start");
         assert_eq!(
-            worker.submit(unit(2, FrameKind::DiscardableDelta), None),
+            worker.submit(unit(2, FrameKind::DiscardableDelta), None, 0),
             DecodeSubmitOutcome::Queued
         );
         assert_eq!(
-            worker.submit(unit(3, FrameKind::ReferenceDelta), None),
+            worker.submit(unit(3, FrameKind::ReferenceDelta), None, 0),
             DecodeSubmitOutcome::Queued
         );
         assert_eq!(
@@ -522,7 +527,7 @@ mod tests {
             "queued discardable AU remains replaceable"
         );
         assert_eq!(
-            worker.submit(unit(4, FrameKind::ReferenceDelta), None),
+            worker.submit(unit(4, FrameKind::ReferenceDelta), None, 0),
             DecodeSubmitOutcome::Queued,
             "reference AU replaces the queued discardable AU"
         );
@@ -536,13 +541,13 @@ mod tests {
         );
         assert_eq!(worker.admission(FrameKind::Key), DecoderAdmission::Ready);
         assert_eq!(
-            worker.submit(unit(5, FrameKind::DiscardableDelta), None),
+            worker.submit(unit(5, FrameKind::DiscardableDelta), None, 0),
             DecodeSubmitOutcome::Dropped {
                 requires_refresh: false
             }
         );
         assert_eq!(
-            worker.submit(unit(6, FrameKind::ReferenceDelta), None),
+            worker.submit(unit(6, FrameKind::ReferenceDelta), None, 0),
             DecodeSubmitOutcome::Dropped {
                 requires_refresh: true
             }
@@ -559,7 +564,7 @@ mod tests {
             release: Arc::clone(&release),
         }));
         assert_eq!(
-            worker.submit(unit(1, FrameKind::Key), None),
+            worker.submit(unit(1, FrameKind::Key), None, 0),
             DecodeSubmitOutcome::Queued
         );
         let deadline = Instant::now() + Duration::from_secs(1);

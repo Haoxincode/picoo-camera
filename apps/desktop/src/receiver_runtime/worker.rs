@@ -107,7 +107,7 @@ impl ReceiverRuntimeHandle {
         self.inner.snapshot()
     }
 
-    pub fn latest_frame(&self) -> Option<Arc<picoo_frame_hub::VideoFrame>> {
+    pub fn latest_frame(&self) -> Option<Arc<picoo_receiver::ReceiverFrame>> {
         self.inner.latest_frame()
     }
 
@@ -293,7 +293,7 @@ impl ReceiverRuntimeAdapter for ReceiverRuntime {
         ReceiverRuntime::snapshot(self)
     }
 
-    fn latest_frame(&self) -> Option<Arc<picoo_frame_hub::VideoFrame>> {
+    fn latest_frame(&self) -> Option<Arc<picoo_receiver::ReceiverFrame>> {
         self.receiver().latest_frame().cloned()
     }
 }
@@ -346,7 +346,7 @@ mod tests {
             0
         }
 
-        fn latest_frame(&self) -> Option<Arc<picoo_frame_hub::VideoFrame>> {
+        fn latest_frame(&self) -> Option<Arc<picoo_receiver::ReceiverFrame>> {
             None
         }
     }

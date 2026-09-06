@@ -17,6 +17,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
     use picoo_bitstream::avc::extract_sps_pps;
+    #[cfg(not(target_os = "macos"))]
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
@@ -116,7 +117,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         receiver.pump().expect("rx");
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == width as u32 && frame.height == height as u32 {
+            if super::source_dimensions(frame) == (width as u32, height as u32) {
                 assert_eq!(
                     frame.pixel_data.len(),
                     nv12_byte_size(frame.width, frame.height)
@@ -147,10 +148,14 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     use picoo_bitstream::avc::{
         annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
     };
+    #[cfg(not(target_os = "macos"))]
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
+    #[cfg(target_os = "macos")]
+    use picoo_testkit::AVC_64X64_BT709_IDR as H264_64X64_RED_IDR;
+    #[cfg(not(target_os = "macos"))]
     use picoo_testkit::H264_64X64_RED_IDR;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
@@ -233,12 +238,17 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
-                if frame.width == width as u32 && frame.height == height as u32 {
-                    assert_eq!(
-                        frame.pixel_data.len(),
-                        nv12_byte_size(frame.width, frame.height)
-                    );
-                    assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
+                if super::source_dimensions(frame) == (width as u32, height as u32) {
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        assert_eq!(
+                            frame.pixel_data.len(),
+                            nv12_byte_size(frame.width, frame.height)
+                        );
+                        assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
+                    }
+                    #[cfg(target_os = "macos")]
+                    assert_eq!(frame.description().visible_rect.width, width as u32);
                     return;
                 }
             }
@@ -258,10 +268,14 @@ fn macos_videotoolbox_explicit_source_configuration() {
     // REQ-PICOO-MEDIA-027/028: explicit epoch changes flow through QUIC and
     // rebuild VideoToolbox with the dimensions advertised by StreamConfig.
     use picoo_bitstream::avc::extract_sps_pps;
+    #[cfg(not(target_os = "macos"))]
     use picoo_frame_hub::nv12_byte_size;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;
-    use picoo_testkit::{H264_1280X720_RED_IDR, H264_1920X1080_RED_IDR};
+    use picoo_testkit::{
+        AVC_1280X720_BT709_IDR as H264_1280X720_RED_IDR,
+        AVC_1920X1080_BT709_IDR as H264_1920X1080_RED_IDR,
+    };
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -374,7 +388,7 @@ fn macos_videotoolbox_explicit_source_configuration() {
         sender.pump().ok();
         if receiver
             .latest_frame()
-            .is_some_and(|frame| (frame.width, frame.height) == (1280, 720))
+            .is_some_and(|frame| super::source_dimensions(frame) == (1280, 720))
         {
             break;
         }
@@ -394,9 +408,9 @@ fn macos_videotoolbox_explicit_source_configuration() {
             receiver.last_media_error(),
         )
     });
-    assert_eq!((frame_720.width, frame_720.height), (1280, 720));
-    assert_eq!(frame_720.pixel_data.len(), nv12_byte_size(1280, 720));
-    let sequence_720 = frame_720.sequence;
+    assert_eq!(super::source_dimensions(frame_720), (1280, 720));
+    assert_eq!(frame_720.identity().stream_epoch, 2);
+    let revision_720 = frame_720.description().config_revision;
 
     check_congestion(&mut sender);
     let epoch_1080 = sender.begin_stream_reconfiguration(1080);
@@ -443,16 +457,19 @@ fn macos_videotoolbox_explicit_source_configuration() {
         receiver.pump().expect("receiver 1080p frame");
         sender.pump().ok();
         if receiver.latest_frame().is_some_and(|frame| {
-            frame.sequence > sequence_720 && (frame.width, frame.height) == (1920, 1080)
+            frame.description().config_revision > revision_720
+                && super::source_dimensions(frame) == (1920, 1080)
         }) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
     let frame_1080 = receiver.latest_frame().expect("1080p frame");
-    assert!(frame_1080.sequence > sequence_720);
-    assert_eq!((frame_1080.width, frame_1080.height), (1920, 1080));
-    assert_eq!(frame_1080.pixel_data.len(), nv12_byte_size(1920, 1080));
+    assert!(frame_1080.description().config_revision > revision_720);
+    assert_eq!(super::source_dimensions(frame_1080), (1920, 1080));
+    assert_eq!(frame_1080.identity().stream_epoch, 3);
+    assert_eq!(frame_1080.description().coded_size.height, 1088);
+    assert_eq!(frame_1080.description().visible_rect.height, 1080);
 }
 
 #[cfg(not(windows))]

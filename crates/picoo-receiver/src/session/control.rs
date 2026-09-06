@@ -180,7 +180,14 @@ impl ReceiverSession {
         }
         let config_epoch = config.stream_epoch;
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
+        self.config_revision = self.config_revision.checked_add(1).ok_or_else(|| {
+            ReceiverError::Protocol("source configuration revision exhausted".into())
+        })?;
         self.current_stream_config = Some(std::sync::Arc::new(config));
+        #[cfg(target_os = "macos")]
+        if let Some(output) = &self.shared_ring {
+            output.invalidate();
+        }
         if previous_epoch != Some(config_epoch) {
             self.reset_clock_sync(config_epoch);
         }

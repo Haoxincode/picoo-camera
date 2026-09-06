@@ -326,11 +326,10 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     }
     // Direct LatestFrameStore age (decode timestamp → now) — PRD §21 recovery bound.
     let frame = receiver.latest_frame().expect("recovered frame");
-    let now_us = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0);
-    let hub_age_ms = now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0;
+    #[cfg(target_os = "macos")]
+    let hub_age_ms = frame.timeline().decoded_at.elapsed().as_secs_f64() * 1000.0;
+    #[cfg(not(target_os = "macos"))]
+    let hub_age_ms = frame.decoded_at.elapsed().as_secs_f64() * 1000.0;
     assert!(
         hub_age_ms < 1_000.0,
         "LatestFrameStore age piled up after recovery: {hub_age_ms}ms (PRD §21 <1s)"
@@ -411,8 +410,8 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
-                if frame.sequence > last_seq {
-                    last_seq = frame.sequence;
+                if super::source_frame_id(frame) > last_seq {
+                    last_seq = super::source_frame_id(frame);
                     observed = Some(t0.elapsed().as_secs_f64() * 1000.0);
                     break;
                 }
@@ -640,8 +639,8 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
-                if frame.sequence > last_seq && frame.timestamp_us > 0 {
-                    last_seq = frame.sequence;
+                if super::source_frame_id(frame) > last_seq && frame.timestamp_us > 0 {
+                    last_seq = super::source_frame_id(frame);
                     observed = Some(t0.elapsed().as_secs_f64() * 1000.0);
                     break;
                 }

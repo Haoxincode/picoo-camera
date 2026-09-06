@@ -13,6 +13,7 @@ use crate::ReceiverError;
 impl ReceiverSession {
     fn reset_session_resources(&mut self) {
         self.decoder_worker.reset();
+        #[cfg(not(target_os = "macos"))]
         self.frame_buffer_pool.clear();
         self.active_sender = None;
         self.pending_pairing = None;

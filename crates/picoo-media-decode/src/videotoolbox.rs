@@ -1,25 +1,22 @@
 //! macOS VideoToolbox H.264 decoder — REQ-PICOO-MEDIA-012.
 //!
 //! The Apple production path is pure Rust over generated framework bindings:
-//! Annex-B/AVCC access unit → CoreMedia sample → VideoToolbox → tightly packed
-//! NV12 for LatestFrameStore. OpenH264 is intentionally not linked on Apple targets.
+//! Annex-B/AVCC access unit → CoreMedia sample → VideoToolbox →
+//! retained native NV12 for FrameBus. OpenH264 is intentionally not linked on Apple targets.
 
 use std::ffi::c_void;
 use std::ptr::{self, NonNull};
 use std::sync::Mutex;
 
-use bytes::Bytes;
-use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained};
+use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_media::{
     CMBlockBuffer, CMFormatDescription, CMSampleBuffer,
     CMVideoFormatDescriptionCreateFromH264ParameterSets,
 };
 use objc2_core_video::{
+    kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferMetalCompatibilityKey,
     kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-    CVImageBuffer, CVPixelBufferGetBaseAddressOfPlane, CVPixelBufferGetBytesPerRowOfPlane,
-    CVPixelBufferGetHeight, CVPixelBufferGetHeightOfPlane, CVPixelBufferGetPixelFormatType,
-    CVPixelBufferGetPlaneCount, CVPixelBufferGetWidth, CVPixelBufferGetWidthOfPlane,
-    CVPixelBufferLockBaseAddress, CVPixelBufferLockFlags, CVPixelBufferUnlockBaseAddress,
+    CVImageBuffer,
 };
 use objc2_video_toolbox::{
     kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder, VTDecodeFrameFlags,
@@ -29,19 +26,12 @@ use picoo_bitstream::avc::{
     access_unit_contains_idr, annex_b_to_length_prefixed, extract_sps_pps,
     is_length_prefixed_access_unit,
 };
-use picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES;
+use picoo_frame_hub::{ApplePixelBufferLease, NativeImage};
 use picoo_protocol::control::StreamConfig;
 
 use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
-struct CopiedNv12 {
-    width: u32,
-    height: u32,
-    stride: u32,
-    bytes: Vec<u8>,
-}
-
-type DecodeOutput = Result<Option<CopiedNv12>, DecodeError>;
+type DecodeOutput = Result<Option<NativeImage>, DecodeError>;
 
 #[derive(Default)]
 struct OutputContext {
@@ -98,9 +88,17 @@ impl VideoToolboxDecoder {
             &[require_hardware],
         );
         let nv12_format = CFNumber::new_i64(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i64);
-        let image_attributes = CFDictionary::from_slices(
-            &[unsafe { kCVPixelBufferPixelFormatTypeKey }],
-            &[&*nv12_format],
+        let surface = CFDictionary::<CFString, CFType>::empty();
+        let metal = CFBoolean::new(true);
+        let image_attributes = CFDictionary::<CFString, CFType>::from_slices(
+            &unsafe {
+                [
+                    kCVPixelBufferPixelFormatTypeKey,
+                    kCVPixelBufferIOSurfacePropertiesKey,
+                    kCVPixelBufferMetalCompatibilityKey,
+                ]
+            },
+            &[nv12_format.as_ref(), surface.as_ref(), metal.as_ref()],
         );
         let callback = VTDecompressionOutputCallbackRecord {
             decompressionOutputCallback: Some(decompression_output_callback),
@@ -148,6 +146,14 @@ impl VideoToolboxDecoder {
         let contains_idr = access_unit_contains_idr(access_unit);
         let (sps, pps) =
             parameter_sets(stream_config, access_unit).ok_or(DecodeError::NotInitialized)?;
+        let facts = picoo_bitstream::AvcSpsFacts::parse(&sps)
+            .map_err(|error| DecodeError::Platform(error.to_string()))?;
+        crate::native_format::validate_source(&facts)?;
+        if stream_config.is_some_and(|config| {
+            (config.width, config.height) != (facts.visible_width, facts.visible_height)
+        }) {
+            return Err(DecodeError::ConfigurationMismatch);
+        }
         self.ensure_session(&sps, &pps)?;
         let sample = create_sample_buffer(&avcc, self.format_description.as_deref())?;
 
@@ -188,14 +194,13 @@ impl VideoToolboxDecoder {
         let Some(output) = output else {
             return Ok(DecodeOutcome::accepted_without_frame(contains_idr));
         };
+        let native_format = crate::native_format::describe(&facts, &output)?;
         Ok(DecodeOutcome::frame(
-            DecodedFrame::cpu_nv12(
-                output.width,
-                output.height,
-                output.stride,
+            DecodedFrame::native(
+                output,
+                native_format,
                 stream_config.map(|config| config.rotation).unwrap_or(0),
                 now_timestamp_us(),
-                Bytes::from(output.bytes),
             ),
             contains_idr,
         ))
@@ -380,11 +385,13 @@ unsafe extern "C-unwind" fn decompression_output_callback(
             .ok_or_else(|| DecodeError::Platform("VideoToolbox returned no image buffer".into()))?;
         // SAFETY: VideoToolbox guarantees the image buffer remains valid for
         // the duration of this callback.
-        unsafe { copy_pixel_buffer(image_buffer.as_ref()).map(Some) }
+        unsafe { ApplePixelBufferLease::retain_completed(image_buffer.as_ref()) }
+            .map(|image| Some(NativeImage::Apple(image)))
+            .map_err(|error| DecodeError::Platform(error.to_string()))
     }))
     .unwrap_or_else(|_| {
         Err(DecodeError::Platform(
-            "panic while copying VideoToolbox output".into(),
+            "panic while retaining VideoToolbox output".into(),
         ))
     });
     // SAFETY: `output_refcon` points to the boxed OutputContext retained by the
@@ -394,102 +401,46 @@ unsafe extern "C-unwind" fn decompression_output_callback(
     }
 }
 
-unsafe fn copy_pixel_buffer(image_buffer: &CVImageBuffer) -> Result<CopiedNv12, DecodeError> {
-    if CVPixelBufferGetPixelFormatType(image_buffer)
-        != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-    {
-        return Err(DecodeError::Platform(format!(
-            "VideoToolbox output is not NV12/420v: {:#010x}",
-            CVPixelBufferGetPixelFormatType(image_buffer)
-        )));
-    }
-    if CVPixelBufferGetPlaneCount(image_buffer) != 2 {
-        return Err(DecodeError::Platform(
-            "VideoToolbox NV12 output does not have two planes".into(),
-        ));
-    }
-
-    let width = CVPixelBufferGetWidth(image_buffer);
-    let height = CVPixelBufferGetHeight(image_buffer);
-    if width == 0 || height == 0 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
-        return Err(DecodeError::Platform(format!(
-            "invalid NV12 dimensions {width}x{height}"
-        )));
-    }
-    let width_u32 = u32::try_from(width)
-        .map_err(|_| DecodeError::OutputTooLarge(width.saturating_mul(height)))?;
-    let height_u32 = u32::try_from(height)
-        .map_err(|_| DecodeError::OutputTooLarge(width.saturating_mul(height)))?;
-    let output_len = width
-        .checked_mul(height)
-        .and_then(|luma| luma.checked_add(luma / 2))
-        .ok_or(DecodeError::OutputTooLarge(usize::MAX))?;
-    if output_len > DEFAULT_MAX_FRAME_BYTES {
-        return Err(DecodeError::OutputTooLarge(output_len));
-    }
-    if CVPixelBufferGetWidthOfPlane(image_buffer, 0) < width
-        || CVPixelBufferGetHeightOfPlane(image_buffer, 0) < height
-        || CVPixelBufferGetHeightOfPlane(image_buffer, 1) < height / 2
-    {
-        return Err(DecodeError::Platform(
-            "VideoToolbox NV12 plane dimensions are smaller than the frame".into(),
-        ));
-    }
-
-    let lock_flags = CVPixelBufferLockFlags::ReadOnly;
-    check_status(
-        "CVPixelBufferLockBaseAddress",
-        CVPixelBufferLockBaseAddress(image_buffer, lock_flags),
-    )?;
-    let copy_result = (|| {
-        let y_base = CVPixelBufferGetBaseAddressOfPlane(image_buffer, 0).cast::<u8>();
-        let uv_base = CVPixelBufferGetBaseAddressOfPlane(image_buffer, 1).cast::<u8>();
-        let y_stride = CVPixelBufferGetBytesPerRowOfPlane(image_buffer, 0);
-        let uv_stride = CVPixelBufferGetBytesPerRowOfPlane(image_buffer, 1);
-        if y_base.is_null() || uv_base.is_null() || y_stride < width || uv_stride < width {
-            return Err(DecodeError::Platform(
-                "invalid VideoToolbox NV12 plane storage".into(),
-            ));
-        }
-
-        let mut bytes = vec![0u8; output_len];
-        for row in 0..height {
-            // SAFETY: Locked CoreVideo plane metadata guarantees at least
-            // `stride` bytes for every reported row.
-            let source = unsafe { std::slice::from_raw_parts(y_base.add(row * y_stride), width) };
-            bytes[row * width..(row + 1) * width].copy_from_slice(source);
-        }
-        let uv_offset = width * height;
-        for row in 0..height / 2 {
-            // SAFETY: Same plane guarantees as the luma copy above.
-            let source = unsafe { std::slice::from_raw_parts(uv_base.add(row * uv_stride), width) };
-            let destination = uv_offset + row * width;
-            bytes[destination..destination + width].copy_from_slice(source);
-        }
-        Ok(CopiedNv12 {
-            width: width_u32,
-            height: height_u32,
-            stride: width_u32,
-            bytes,
-        })
-    })();
-    let unlock_status = CVPixelBufferUnlockBaseAddress(image_buffer, lock_flags);
-    check_status("CVPixelBufferUnlockBaseAddress", unlock_status)?;
-    copy_result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use picoo_bitstream::avc::split_annex_b_nals;
 
-    use picoo_testkit::{H264_1280X720_RED_IDR, H264_64X64_RED_IDR};
+    use picoo_testkit::{
+        AVC_1280X720_BT709_IDR as H264_1280X720_RED_IDR, AVC_64X64_BT709_IDR as H264_64X64_RED_IDR,
+    };
+
+    fn assert_native_red(frame: &DecodedFrame) {
+        use objc2_core_video::*;
+        // Explicit diagnostic read of one YUV sample, not a Decoder pixel API.
+        unsafe {
+            let buffer = frame.native_image().apple().unwrap().pixel_buffer();
+            assert!(CVPixelBufferGetIOSurface(Some(buffer)).is_some());
+            assert_eq!(
+                CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly),
+                0
+            );
+            let y = *CVPixelBufferGetBaseAddressOfPlane(buffer, 0).cast::<u8>();
+            let uv = CVPixelBufferGetBaseAddressOfPlane(buffer, 1).cast::<u8>();
+            let chroma = [*uv, *uv.add(1)];
+            assert_eq!(
+                CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly),
+                0
+            );
+            assert!(
+                y > 16 && chroma[1] > chroma[0],
+                "expected decoded red fixture"
+            );
+        }
+    }
 
     #[test]
     fn conflicting_in_band_configuration_does_not_replace_native_session() {
         let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).unwrap();
         let config = StreamConfig {
             codec: picoo_protocol::control::VideoCodec::Avc as i32,
+            width: 64,
+            height: 64,
             sps,
             pps,
             ..Default::default()
@@ -513,6 +464,38 @@ mod tests {
     }
 
     #[test]
+    fn declared_geometry_mismatch_does_not_mutate_native_session() {
+        let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).unwrap();
+        let mut config = StreamConfig {
+            codec: picoo_protocol::control::VideoCodec::Avc as i32,
+            width: 64,
+            height: 64,
+            sps,
+            pps,
+            ..Default::default()
+        };
+        let mut decoder = VideoToolboxDecoder::new();
+        decoder
+            .decode_access_unit(H264_64X64_RED_IDR, Some(&config))
+            .unwrap();
+        let session = decoder.session.as_ref().map(CFRetained::as_ptr);
+        config.width = 1280;
+        assert!(matches!(
+            decoder.decode_access_unit(H264_64X64_RED_IDR, Some(&config)),
+            Err(DecodeError::ConfigurationMismatch)
+        ));
+        assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
+    }
+
+    #[test]
+    fn unknown_native_color_is_rejected_instead_of_relabelled() {
+        let mut decoder = VideoToolboxDecoder::new();
+        assert!(decoder
+            .decode_access_unit(picoo_testkit::H264_64X64_RED_IDR, None)
+            .is_err());
+    }
+
+    #[test]
     fn videotoolbox_decodes_annex_b_idr_to_nv12() {
         let mut decoder = VideoToolboxDecoder::new();
         let frame = decoder
@@ -520,14 +503,11 @@ mod tests {
             .expect("VideoToolbox decode")
             .frame
             .expect("decoded frame");
-        let description = frame.description();
-        let nv12 = frame.cpu_nv12_bytes().expect("CPU NV12");
         assert_eq!(
-            (description.width, description.height, description.stride),
-            (64, 64, 64)
+            (frame.description().width, frame.description().height),
+            (64, 64)
         );
-        assert_eq!(nv12.len(), 64 * 64 * 3 / 2);
-        assert!(nv12.iter().any(|byte| *byte != 16 && *byte != 128));
+        assert_native_red(&frame);
     }
 
     #[test]
@@ -555,15 +535,11 @@ mod tests {
             .expect("VideoToolbox decode")
             .frame
             .expect("decoded frame");
-        let description = frame.description();
         assert_eq!(
-            (description.width, description.height, description.stride),
-            (64, 64, 64)
+            (frame.description().width, frame.description().height),
+            (64, 64)
         );
-        assert_eq!(
-            frame.cpu_nv12_bytes().expect("CPU NV12").len(),
-            64 * 64 * 3 / 2
-        );
+        assert_native_red(&frame);
     }
 
     #[test]
@@ -609,6 +585,7 @@ mod tests {
             (second.description().width, second.description().height),
             (1280, 720)
         );
+        assert_native_red(&first);
         assert_ne!(first_sps, decoder.sps);
         assert_eq!(
             decoder.sps,

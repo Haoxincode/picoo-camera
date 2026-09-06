@@ -2,17 +2,18 @@
 
 use std::time::Duration;
 
-use bytes::Bytes;
+use crate::ReceiverFrame;
 use picoo_session::ReceiverStatus;
+use std::sync::Arc;
 
 use super::ReceiverSession;
 use crate::{ReceiverError, ReceiverIdentity};
 
-/// Run sender→receiver loopback until one access unit reaches LatestFrameStore.
+/// Run sender→receiver loopback until one access unit reaches the source frame bus.
 ///
 /// Uses the unpaired test bypass — prefer [`run_paired_loopback_access_unit`] for
 /// product-path validation (REQ-PICOO-PAIRING-003).
-pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
+pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Arc<ReceiverFrame>, ReceiverError> {
     use picoo_sender::SenderSession;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
@@ -55,7 +56,7 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
         receiver.pump()?;
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            return Ok(frame.pixel_data.clone());
+            return Ok(Arc::clone(frame));
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -63,12 +64,14 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     Err(ReceiverError::LoopbackTimeout)
 }
 
-/// Pairing/session loopback: first-time pairing (short code) then video → LatestFrameStore.
+/// Pairing/session loopback: first-time pairing (short code) then video → the source frame bus.
 ///
 /// This explicitly uses `StubDecoder` for arbitrary fixture bytes. It validates
 /// the paired transport/session path, not a platform's production H.264 decoder.
 /// Does **not** use `permit_unpaired_video` (REQ-PICOO-PAIRING-003).
-pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
+pub fn run_paired_loopback_access_unit(
+    payload: &[u8],
+) -> Result<Arc<ReceiverFrame>, ReceiverError> {
     use picoo_sender::SenderSession;
     use picoo_session::SenderStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
@@ -140,7 +143,7 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
         receiver.pump()?;
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            return Ok(frame.pixel_data.clone());
+            return Ok(Arc::clone(frame));
         }
         std::thread::sleep(Duration::from_millis(2));
     }

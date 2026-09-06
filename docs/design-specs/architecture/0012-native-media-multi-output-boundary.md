@@ -36,9 +36,11 @@ Windows 的共享句柄和 CPU 输出 ring 是不同的交接后端；macOS 两�
 
 ## 复用与依赖判断
 
-首个边界调整直接移动仓库已使用且有测试的 AVC helper，不新增解析算法或第三方依赖，保留现有行为测试；其运行依赖只有 Rust std，继承 workspace edition/license，四平台均可编译，无新增二进制依赖体积。现有 packet 同时依赖协议与 FEC，Decoder 为了位流转换依赖它属于错误边界，因此拆出。
+位流标准能力复用成熟库：avcC/hvcC 记录采用 Scuffle，AVC SPS/VUI 事实采用 h264-reader；候选、API、许可证与验证边界见 [位流依赖研究](../../research/next-bitstream-dependencies.md)。packet 不拥有这些标准对象，Decoder 不为格式转换反向依赖网络分包。
 
-完整 HEVC/配置记录解析实施前必须独立核对成熟包与平台 SDK 的当前 API、维护、许可证、MSRV、平台和体积；本次未作选型，也不以已有 AVC helper 作为自研 HEVC 的理由。GPU/codec/mux 使用方案列出的 D3D11/MF、Metal/VideoToolbox/AVFoundation/CMIO 候选，接入前按锁定 SDK 验证。
+Apple 图像、硬件 codec 与 GPU 分别复用 CoreVideo/IOSurface、VideoToolbox 和显式 Metal/Core Image；选型和框架颜色合同见 [Apple GPU 研究](../../research/next-apple-gpu.md)。GPUI 的 surface 资源必须由真实 Metal command buffer 完成回调释放；框架缺少该合同的地方只修补资源交接，不把 Picoo 配置、输出协调或像素处理放进 UI 框架。
+
+编码尺寸与原生 allocation 尺寸分别来自 SPS 和平台输出；可见区域扣除 Decoder 已应用的裁剪，禁止再次裁剪同一边。未知 SPS PAR/色彩仍为未知；Apple adapter 使用 CoreVideo 实际 clean aperture、以方形像素表示的 nominal display size 和明确色彩 attachments 建立原生输出描述，并拒绝与已声明编码事实冲突的结果。平台输出缺失 BT.709 色彩依据时拒绝发布，不通过修改共享 attachment 使检查通过。
 
 源配置入口只接受精确的正式尺寸组合（1280×720 / 1920×1080），无 480p 或任意高度归档。用户请求不按 Receiver 最大高度静默替换；不能满足的组合必须明确拒绝。码率策略查询对未知高度返回错误，C/JNI 数值接口以 0 表示不支持，不将其当作可用目标码率（REQ-PICOO-MEDIA-028）。
 

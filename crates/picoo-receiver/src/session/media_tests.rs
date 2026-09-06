@@ -1,6 +1,11 @@
 //! Receiver media admission and stream-gate regressions.
 
 use super::*;
+#[cfg(not(target_os = "macos"))]
+use crate::session::media_publish::FrameTimeline;
+use bytes::Bytes;
+#[cfg(not(target_os = "macos"))]
+use picoo_media_decode::DecodedFrame;
 use picoo_media_decode::StubDecoder;
 use picoo_protocol::control::StreamConfig;
 use picoo_protocol::VideoPacketFlags;
@@ -129,7 +134,7 @@ fn stale_generation_never_reaches_decoder_or_latest_store() {
 
     assert_eq!(receiver.ingress.decode_invocations, 0);
     assert_eq!(receiver.ingress.recovery_dropped_access_units, 1);
-    assert!(receiver.latest_frame_store.latest().is_none());
+    assert!(receiver.frames.latest().is_none());
 }
 
 #[test]
@@ -141,11 +146,21 @@ fn matching_generation_preserves_access_unit_timeline() {
         .expect("matching generation");
     receiver.drain_decoder_until_idle_for_test();
 
-    let frame = receiver.latest_frame_store.latest().expect("video frame");
-    assert_eq!(frame.stream_generation, 2);
-    assert_eq!(frame.frame_id, 9);
-    assert_eq!(frame.source_pts_us, 42_000);
-    assert_eq!(frame.received_at_us, 50_000);
+    let frame = receiver.frames.latest().expect("video frame");
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert_eq!(frame.stream_generation, 2);
+        assert_eq!(frame.frame_id, 9);
+        assert_eq!(frame.source_pts_us, 42_000);
+        assert_eq!(frame.received_at_us, 50_000);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(frame.identity().stream_epoch, 2);
+        assert_eq!(frame.identity().frame_id, 9);
+        assert_eq!(frame.source_pts_us(), 42_000);
+        assert_eq!(frame.timeline().received_at_us, 50_000);
+    }
 }
 
 #[test]
@@ -373,6 +388,7 @@ fn zero_generation_fixture_cannot_bypass_current_timeline() {
     assert!(!receiver.decoder_timeline_is_current(timeline));
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn receiver_reuses_transformed_pixels_after_latest_frame_releases_them() {
     let mut receiver = receiver_for_generation(2);
@@ -564,10 +580,30 @@ fn delayed_frame_keeps_submitted_rotation_and_mirror_snapshot() {
         receiver.drain_decoder_until_idle_for_test();
 
         let frame = receiver.latest_frame().expect("submitted frame");
-        assert_eq!((frame.width, frame.height), expected_size);
-        assert_eq!(frame.pixel_data.as_ref(), expected_pixels);
-        assert_eq!(frame.frame_id, 9);
-        assert_eq!(frame.source_pts_us, 42_000);
+        #[cfg(not(target_os = "macos"))]
+        {
+            assert_eq!((frame.width, frame.height), expected_size);
+            assert_eq!(frame.pixel_data.as_ref(), expected_pixels);
+            assert_eq!(frame.frame_id, 9);
+            assert_eq!(frame.source_pts_us, 42_000);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = (expected_size, expected_pixels);
+            assert_eq!((frame.image().width(), frame.image().height()), (4, 2));
+            assert_eq!(
+                frame.description().transform.rotation,
+                if rotation == 0 {
+                    picoo_frame_hub::Rotation::None
+                } else {
+                    picoo_frame_hub::Rotation::Clockwise90
+                }
+            );
+            assert_eq!(frame.description().transform.mirror, mirrored);
+            assert_eq!(frame.identity().frame_id, 9);
+            assert_eq!(frame.source_pts_us(), 42_000);
+            assert_eq!(receiver.ingress.orientation_transform_frames, 0);
+        }
     }
 }
 
@@ -576,9 +612,17 @@ fn placeholder_does_not_inherit_source_mirror() {
     let mut receiver = receiver_for_generation(2);
     Arc::make_mut(receiver.current_stream_config.as_mut().unwrap()).mirrored = true;
     receiver.publish_waiting_placeholder().unwrap();
-    let expected = receiver.placeholder_mode.waiting_frame();
-    assert_eq!(
-        receiver.latest_frame().unwrap().pixel_data.as_ref(),
-        expected
+    #[cfg(not(target_os = "macos"))]
+    {
+        let expected = receiver.placeholder_mode.waiting_frame();
+        assert_eq!(
+            receiver.latest_frame().unwrap().pixel_data.as_ref(),
+            expected
+        );
+    }
+    #[cfg(target_os = "macos")]
+    assert!(
+        receiver.latest_frame().is_none(),
+        "placeholder is an output, never a source frame"
     );
 }

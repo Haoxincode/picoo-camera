@@ -146,3 +146,20 @@ REQ-PICOO-BITSTREAM-004 新增 AvcSpsFacts，分离编码尺寸和可见 crop，
 Mac 与 Linux 分别 18 项 bitstream 测试通过；Mac Clippy all-targets 无警告。nightly-2026-09-03/libFuzzer 31 秒运行 1,361,338 次，无崩溃；这是有时限的验证，不是解析器无缺陷证明。实际 M4 AVC 1080p fixture 检查 1920×1088 编码尺寸与 1920×1080 可见尺寸。平台 Decoder 的元数据准入和完整配置 wire 接入仍另验。
 
 此前提交 1f7b77c 的 Actions 34023015090 已全部成功。
+
+## Mac 原生主链路与 GPU 下游 lease
+
+REQ-PICOO-MEDIA-030 / GPU-003：VideoToolbox 完成回调直接 retain IOSurface，不再把源 plane 复制为 Bytes。Decoder 输出保留 SPS 编码尺寸与 CoreVideo 剩余 clean aperture、nominal display size、BT.709 色彩；尺寸声明冲突在 session 变化前拒绝，未知色彩不重标记。Receiver Mac 改用 NativeVideoFrame/FrameBus，原始 job 的配置 revision、身份、方向和镜像随帧发布；占位图只进入输出，不进入源 bus。源统计方法从 session owner 拆出，避免超过 800 行。
+
+Mac Preview Worker 改用 Core Image/Metal，删除原 CPU scaling/color-copy 实现；60fps cadence 保持普通轮询相位，恢复可见后重新建立截止时间，避免密集补交。clear 使在途旧结果失效。CPU ring 在独立工作者执行 GPU 处理与输出专用 CpuExporter，不阻塞 Receiver owner 的 GPU/像素操作；启动等待有界，事件 mailbox 与 pending frame 都有固定容量。
+
+GPUI 发布包的 CVMetalTexture/PixelBuffer 寿命问题通过可审查局部 patch 修补，renderer 源文件按职责拆为三个低于 800 行模块。实际 M4 阻塞 GPU 读取/单槽 pool 复用回归通过；移除修补的负向实验失败，恢复后依赖四项单元测试全部通过。上游来源与升级规则见 vendor/gpui-apple，未修改 UI Skills。
+
+`cargo xtask test macos` 全部通过：系统临时 Keychain 合约、FrameHub 49 项与显式 Rust/Swift ring 跨进程合约、Decoder 11 项、GPU 9 项、Receiver 100 项、GPUI Apple 4 项、Desktop 70 项。该命令已把原生 Rust 测试复制到独立临时目录运行，消除 CoreVideo 首次 IOSurface 初始化对大型 Cargo deps 目录的 NSBundle 扫描；不扩大媒体截止时间。Mac 相关库与 xtask Clippy all-targets 通过。Linux Receiver 107 项通过、2 项忽略；这些不代替 Windows 硬件证明。
+
+本步没有完成全部 Next 验收：完整 VideoFormat/config record/framing wire、Windows 原生图像、独立输出协调器、真实 client demand、唯一源导出复用、SampleClock、CMIO/MF GpuNative/CpuBridge、跨输出总预算/超时隔离和严格 IPC generation fence 均仍有工作。当前桌面仍在启动时附加 CPU ring，不能声称普通预览已达到 CPU readback 为零；CPU worker 的提交前 generation 检查也不等同跨进程原子失效边界。源重构与局部资源验证不能替代这些验收。
+
+
+Mac 完整生产构建与本机测试包打包通过；Android 构建在 Mac 上也复用隔离测试执行目录，完整 workspace 单元测试、doc tests 与 Gradle assembleDebug 通过，新包已安装到 Xiaomi 15。手机锁屏尚未解除，本次新包的发现/视频真机验收尚未完成。旧安装包曾连接到新 Mac 后因 StreamConfig wire 类型已改变被明确拒绝；没有添加旧协议兼容。
+
+发现状态修正 13550df：等待真实 Announce 时展示启动中，5 秒无回执进入超时；首次错误也记录。21 项发现测试通过（1 项受控 LAN 测试忽略），discovery 与 xtask Clippy 通过。Mac 正常 GUI 重启的 mDNS 日志确认在物理 Wi-Fi 地址 192.168.8.100 于约 1 秒内完成公告；原运行的 Error 日志级别过滤了诊断，因此未声称查明原持续异常根因。临时 PICOO_LOG_FILTER 不再被 GPUI 启动路径覆盖。c9da1b5 的 Actions 34025594034 五个 job 全部通过。

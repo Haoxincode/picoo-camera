@@ -253,7 +253,10 @@ fn slow_decoder_never_blocks_session_drop() {
 fn loopback_sender_to_receiver_latest_frame_store() {
     let payload = b"test-access-unit";
     let frame = run_loopback_access_unit(payload).expect("loopback");
-    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(&frame.pixel_data[..payload.len()], payload);
+    #[cfg(target_os = "macos")]
+    assert_eq!(frame.identity().frame_id, 1);
 }
 
 #[test]
@@ -304,15 +307,28 @@ fn single_decode_per_access_unit_into_latest_frame_store() {
     assert_eq!(stats.access_units, 1);
     assert_eq!(stats.decode_invocations, 1);
     let frame = receiver.latest_frame().expect("typed video frame");
-    assert_eq!(frame.stream_generation, 1);
-    assert_eq!(frame.frame_id, 1);
-    assert_eq!(frame.source_pts_us, 1);
-    assert!(frame.received_at_us > 0);
+    #[cfg(not(target_os = "macos"))]
+    {
+        assert_eq!(frame.stream_generation, 1);
+        assert_eq!(frame.frame_id, 1);
+        assert_eq!(frame.source_pts_us, 1);
+        assert!(frame.received_at_us > 0);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(frame.identity().stream_epoch, 1);
+        assert_eq!(frame.identity().frame_id, 1);
+        assert_eq!(frame.source_pts_us(), 1);
+        assert!(frame.timeline().received_at_us > 0);
+    }
 }
 
 #[test]
 fn paired_loopback_reaches_latest_frame_store_without_unpaired_bypass() {
     let payload = b"paired-product-path-au";
     let frame = run_paired_loopback_access_unit(payload).expect("paired loopback");
-    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(&frame.pixel_data[..payload.len()], payload);
+    #[cfg(target_os = "macos")]
+    assert_eq!(frame.identity().frame_id, 1);
 }

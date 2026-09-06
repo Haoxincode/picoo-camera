@@ -80,34 +80,49 @@ fn placeholder_mode_bars_and_logo_publish_distinct_frames() {
     // AC-D-SET-01: Logo / Black / Bars must produce distinct waiting frames.
     use picoo_frame_hub::PlaceholderMode;
 
+    use picoo_frame_hub::{SharedFrameRingConsumer, DEFAULT_MAX_FRAME_BYTES};
     let mut receiver = ReceiverSession::new();
-    receiver.set_placeholder_mode(PlaceholderMode::Logo);
-    receiver.publish_waiting_placeholder().expect("logo");
-    let logo = receiver
-        .latest_frame()
-        .expect("logo frame")
-        .pixel_data
-        .clone();
+    let name = format!(
+        "picoo-placeholder-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    receiver.attach_shared_ring(&name).expect("output ring");
+    let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
+    let mut sequence = 0;
+    let mut read_mode = |mode| {
+        receiver.set_placeholder_mode(mode);
+        receiver.publish_waiting_placeholder().unwrap();
+        let expected = mode.waiting_frame();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(frame) = consumer.latest_frame() {
+                if frame.sequence > sequence && frame.nv12 == expected.as_slice() {
+                    sequence = frame.sequence;
+                    break frame.nv12.to_vec();
+                }
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "placeholder output timed out"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    };
+    let logo = read_mode(PlaceholderMode::Logo);
+    let black = read_mode(PlaceholderMode::Black);
+    let bars = read_mode(PlaceholderMode::Bars);
+    #[cfg(target_os = "macos")]
+    assert!(
+        receiver.latest_frame().is_none(),
+        "output placeholders must not become native source frames"
+    );
 
-    receiver.set_placeholder_mode(PlaceholderMode::Black);
-    receiver.publish_waiting_placeholder().expect("black");
-    let black = receiver
-        .latest_frame()
-        .expect("black frame")
-        .pixel_data
-        .clone();
-
-    receiver.set_placeholder_mode(PlaceholderMode::Bars);
-    receiver.publish_waiting_placeholder().expect("bars");
-    let bars = receiver
-        .latest_frame()
-        .expect("bars frame")
-        .pixel_data
-        .clone();
-
-    assert_ne!(logo.as_ref(), black.as_ref(), "Logo ≠ Black");
-    assert_ne!(bars.as_ref(), black.as_ref(), "Bars ≠ Black");
-    assert_ne!(bars.as_ref(), logo.as_ref(), "Bars ≠ Logo");
+    assert_ne!(logo.as_slice(), black.as_slice(), "Logo ≠ Black");
+    assert_ne!(bars.as_slice(), black.as_slice(), "Bars ≠ Black");
+    assert_ne!(bars.as_slice(), logo.as_slice(), "Bars ≠ Logo");
     let black_y_plane = &black[..1280 * 720];
     assert!(
         black_y_plane.iter().all(|&value| value == 0),
@@ -183,26 +198,33 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    let live_ts = receiver.latest_frame().expect("live frame").timestamp_us;
-    assert!(live_ts > 0);
+    let live_frame = receiver.latest_frame().expect("live frame").clone();
 
     receiver
         .inject_peer_disconnect_for_test()
         .expect("disconnect reset");
     assert_eq!(receiver.status(), ReceiverStatus::Reconnecting);
-    assert_eq!(
-        receiver.latest_frame().expect("held frame").timestamp_us,
-        live_ts
-    );
+    assert!(std::sync::Arc::ptr_eq(
+        receiver.latest_frame().expect("held frame"),
+        &live_frame
+    ));
 
     std::thread::sleep(Duration::from_millis(80));
     receiver.pump().expect("finalize hold");
     assert_eq!(receiver.status(), ReceiverStatus::Discovering);
-    let placeholder = receiver.latest_frame().expect("placeholder");
-    assert_eq!(placeholder.timestamp_us, 0);
-    // FRAME-005: reconnect copy (not idle waiting) after last-frame hold.
-    let recon = picoo_frame_hub::reconnecting_placeholder();
-    assert_eq!(placeholder.pixel_data, recon);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let placeholder = receiver.latest_frame().expect("placeholder");
+        assert_eq!(placeholder.timestamp_us, 0);
+        // FRAME-005: reconnect copy (not idle waiting) after last-frame hold.
+        let recon = picoo_frame_hub::reconnecting_placeholder();
+        assert_eq!(placeholder.pixel_data, recon);
+    }
+    #[cfg(target_os = "macos")]
+    assert!(
+        receiver.latest_frame().is_none(),
+        "expired source lease is cleared"
+    );
 }
 
 #[test]

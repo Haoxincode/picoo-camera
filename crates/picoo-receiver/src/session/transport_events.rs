@@ -39,7 +39,7 @@ impl ReceiverSession {
                     if self.transport.active_session().is_none() =>
                 {
                     let retain_frame = self.lifecycle.runtime.stream().is_streaming()
-                        && self.latest_frame_store.latest().is_some()
+                        && self.frames.latest().is_some()
                         && !self.last_frame_hold.is_zero();
                     self.apply_receiver_event(ReceiverEvent::TransportDisconnected {
                         generation: session.0,

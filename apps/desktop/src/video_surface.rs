@@ -23,6 +23,18 @@ pub struct VideoSurface {
 }
 
 impl VideoSurface {
+    pub fn clear(&mut self, cx: &mut App) {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = cx;
+            self.pixel_buffer = None;
+        }
+        #[cfg(not(target_os = "macos"))]
+        if let Some(image) = self.render_image.take() {
+            cx.drop_image(image, None);
+        }
+    }
+
     /// Take ownership of a prepared frame and report whether rendering changed.
     pub fn present(&mut self, preview: PreparedPreview, cx: &mut App) -> bool {
         if !self.accepts_sequence(preview.sequence) {

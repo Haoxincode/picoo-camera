@@ -7,7 +7,8 @@ mod memory;
 mod quic_sim;
 
 pub use h264_fixture::{
-    H264_1280X720_RED_IDR, H264_1920X1080_RED_IDR, H264_64X64_RED_IDR, H264_854X480_RED_IDR,
+    AVC_1280X720_BT709_IDR, AVC_1920X1080_BT709_IDR, AVC_64X64_BT709_IDR, H264_1280X720_RED_IDR,
+    H264_1920X1080_RED_IDR, H264_64X64_RED_IDR, H264_854X480_RED_IDR,
 };
 pub use keyframe_drop::DropKeyframeTailTransport;
 pub use lossy::LossyVideoTransport;

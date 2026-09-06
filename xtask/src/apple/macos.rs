@@ -195,24 +195,33 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     let reader_harness = build_macos_shared_ring_reader_harness(sh)?;
     let _reader_harness = sh.push_env("PICOO_MACOS_RING_READER_HARNESS", &reader_harness);
     test_macos_system_identity_store(sh)?;
-    cmd!(sh, "cargo test -p picoo-frame-hub --lib").run()?;
-    cmd!(
+    super::native_tests::run(sh, &["-p", "picoo-frame-hub", "--lib"], &[])?;
+    super::native_tests::run(
         sh,
-        "cargo test -p picoo-frame-hub --lib shared_ring::tests::macos::macos_rust_swift_cross_process_ring_contract -- --ignored --exact"
-    )
-    .run()?;
-    cmd!(sh, "cargo test -p picoo-media-decode").run()?;
-    cmd!(sh, "cargo test -p picoo-gpu").run()?;
-    cmd!(
+        &["-p", "picoo-frame-hub", "--lib"],
+        &[
+            "shared_ring::tests::macos::macos_rust_swift_cross_process_ring_contract",
+            "--ignored",
+            "--exact",
+        ],
+    )?;
+    for package in ["picoo-media-decode", "picoo-gpu", "picoo-receiver"] {
+        super::native_tests::run(sh, &["-p", package, "--lib"], &[])?;
+    }
+    super::native_tests::run(
         sh,
-        "cargo test -p picoo-receiver --lib paired_avcc_length_prefixed_au_reaches_latest_frame_store"
-    )
-    .run()?;
-    cmd!(
-        sh,
-        "cargo test -p picoo-receiver --lib macos_videotoolbox_explicit_source_configuration"
-    )
-    .run()?;
+        &[
+            "-p",
+            "picoo-desktop",
+            "-p",
+            "gpui-pre-apple",
+            "--features",
+            "picoo-desktop/gpui-ui",
+            "--lib",
+        ],
+        &[],
+    )?;
+    super::native_tests::run(sh, &["-p", "picoo-desktop", "--features", "gpui-ui"], &[])?;
 
     // REQ-PICOO-MEDIA-012 / STACK-001: the Apple product must not regain
     // OpenH264's native build chain after moving decode to VideoToolbox.

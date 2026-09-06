@@ -155,34 +155,62 @@ impl ReceiverSession {
 
     pub(super) fn frame_latency_breakdown(
         &self,
-        frame: &picoo_frame_hub::VideoFrame,
+        frame: &crate::ReceiverFrame,
         receiver_now_us: u64,
     ) -> FrameLatencyBreakdown {
-        let decoded_at_us = frame
+        #[cfg(target_os = "macos")]
+        let (timeline, source_pts_us, stream_generation) = (
+            frame.timeline(),
+            frame.source_pts_us(),
+            frame.identity().stream_epoch,
+        );
+        #[cfg(not(target_os = "macos"))]
+        let (timeline, source_pts_us, stream_generation) = (
+            picoo_frame_hub::FrameTimeline {
+                encoded_at_us: frame.encoded_at_us,
+                received_at_us: frame.received_at_us,
+                decode_submitted_at_us: frame.decode_submitted_at_us,
+                decoded_at: frame.decoded_at,
+            },
+            frame.source_pts_us,
+            frame.stream_generation,
+        );
+
+        self.timeline_latency_breakdown(timeline, source_pts_us, stream_generation, receiver_now_us)
+    }
+
+    fn timeline_latency_breakdown(
+        &self,
+        timeline: picoo_frame_hub::FrameTimeline,
+        source_pts_us: u64,
+        stream_generation: u64,
+        receiver_now_us: u64,
+    ) -> FrameLatencyBreakdown {
+        let decoded_at_us = timeline
             .decoded_at
             .saturating_duration_since(self.timing_origin)
             .as_micros() as u64;
-        let capture_to_encode_ms = frame
+        let capture_to_encode_ms = timeline
             .encoded_at_us
-            .checked_sub(frame.source_pts_us)
+            .checked_sub(source_pts_us)
             .map(microseconds_to_milliseconds);
-        let jitter_residence_ms = frame
+        let jitter_residence_ms = timeline
             .decode_submitted_at_us
-            .checked_sub(frame.received_at_us)
+            .checked_sub(timeline.received_at_us)
             .map(microseconds_to_milliseconds);
         let decode_ms = decoded_at_us
-            .checked_sub(frame.decode_submitted_at_us)
+            .checked_sub(timeline.decode_submitted_at_us)
             .map(microseconds_to_milliseconds);
         let frame_publish_age_ms = receiver_now_us
             .checked_sub(decoded_at_us)
             .map(microseconds_to_milliseconds);
 
-        let mapped_capture = self.mapped_sender_time(frame.stream_generation, frame.source_pts_us);
-        let mapped_encoded = self.mapped_sender_time(frame.stream_generation, frame.encoded_at_us);
+        let mapped_capture = self.mapped_sender_time(stream_generation, source_pts_us);
+        let mapped_encoded = self.mapped_sender_time(stream_generation, timeline.encoded_at_us);
         FrameLatencyBreakdown {
             capture_to_encode_ms,
             encode_to_arrival_ms: mapped_encoded.and_then(|mapped| {
-                frame
+                timeline
                     .received_at_us
                     .checked_sub(mapped.local_time_us)
                     .map(microseconds_to_milliseconds)
@@ -222,8 +250,7 @@ fn microseconds_to_milliseconds(value: u64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
-    use picoo_frame_hub::VideoFrame;
+    use picoo_frame_hub::FrameTimeline;
 
     use super::*;
 
@@ -268,22 +295,17 @@ mod tests {
             .expect("stable affine mapping");
         assert!(mapped.local_time_us.abs_diff(1_800_000) <= 2);
 
-        let frame = VideoFrame::new(
-            7,
-            1,
+        let latency = session.timeline_latency_breakdown(
+            FrameTimeline {
+                encoded_at_us: 1_705_000,
+                received_at_us: 1_810_000,
+                decode_submitted_at_us: 1_820_000,
+                decoded_at: session.timing_origin + Duration::from_micros(1_850_000),
+            },
             1_700_000,
-            1_705_000,
-            1_810_000,
-            1_820_000,
-            session.timing_origin + Duration::from_micros(1_850_000),
-            0,
-            2,
-            2,
-            2,
-            0,
-            Bytes::from_static(&[0; 6]),
+            7,
+            2_000_000,
         );
-        let latency = session.frame_latency_breakdown(&frame, 2_000_000);
         assert_eq!(latency.capture_to_encode_ms, Some(5.0));
         assert!(latency
             .encode_to_arrival_ms
@@ -333,22 +355,17 @@ mod tests {
     #[test]
     fn invalid_sender_timeline_does_not_publish_negative_segments() {
         let session = ReceiverSession::new();
-        let frame = VideoFrame::new(
-            1,
-            1,
+        let latency = session.timeline_latency_breakdown(
+            FrameTimeline {
+                encoded_at_us: 10,
+                received_at_us: 100,
+                decode_submitted_at_us: 90,
+                decoded_at: session.timing_origin,
+            },
             20,
-            10,
+            1,
             100,
-            90,
-            session.timing_origin,
-            0,
-            2,
-            2,
-            2,
-            0,
-            Bytes::from_static(&[0; 6]),
         );
-        let latency = session.frame_latency_breakdown(&frame, 100);
         assert_eq!(latency.capture_to_encode_ms, None);
         assert_eq!(latency.jitter_residence_ms, None);
         assert_eq!(latency.end_to_end_latency_ms, None);

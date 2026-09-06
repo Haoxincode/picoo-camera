@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/gpui-apple"]
 members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
@@ -81,3 +82,6 @@ picoo-sim = { path = "crates/picoo-sim" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[patch.crates-io]
+gpui-pre-apple = { path = "vendor/gpui-apple" }
