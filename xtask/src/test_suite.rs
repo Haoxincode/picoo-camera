@@ -28,7 +28,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             }
             cmd!(
                 sh,
-                "cargo clippy -p picoo-frame-hub -p picoo-windows-vcam-source --all-targets -- -D warnings"
+                "cargo clippy -p picoo-frame-hub -p picoo-gpu -p picoo-windows-vcam-source --all-targets -- -D warnings"
             )
             .run()?;
             cmd!(
@@ -38,7 +38,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
-                "cargo test -p picoo-frame-hub -p picoo-windows-vcam-source"
+                "cargo test -p picoo-frame-hub -p picoo-gpu -p picoo-windows-vcam-source"
             )
             .run()?;
             cmd!(

@@ -17,3 +17,9 @@ objc2-core-video = { version = "0.3.2", default-features = false, features = ["s
 objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
 objc2-core-image = { version = "0.3.2", default-features = false, features = ["std", "CIColor", "CIContext", "CIImage", "CIRenderDestination", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-video", "objc2-metal"] }
 objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi", "Win32_Media_MediaFoundation",
+] }

@@ -336,3 +336,10 @@ Mac SampleClock 最终验证：完整 cargo xtask test macos、Receiver release 
 REQ-PICOO-FRAME-016 新增 D3D11ImageLease，保留原始 MF sample 与 NV12 texture/subresource，不只保留纹理。已完成且不可变的构造契约、平台访问和 GPU 读取寿命均为显式 unsafe 边界；安全 API 只公开尺寸，Clone 共享同一个 sample owner。拒绝 CPU buffer、非 NV12/default storage、多 mip/multisample 或越界 subresource，不提供像素或 map。
 
 Windows 目标 all-targets Clippy 已在 Mac 使用 x86_64-pc-windows-msvc 完成类型检查，包括真实 COM marker 与 WARP 资源测试代码；这不是 Windows 二进制或运行验收。测试检查原始 sample 的 COM marker 必须持续到最后一个跨线程 image clone 释放，及 CPU/BGRA 存储拒绝。现有 cargo xtask test windows 会执行 FrameHub 全套，无新增 workflow 平台逻辑。实际 WARP/MF 对象执行待 Windows CI，硬件 MFT 工厂、GPU 处理和 GPUI surface 接入尚未完成。
+
+
+## Windows GPU device 与 MF manager 关联
+
+REQ-PICOO-GPU-004 新增 WindowsGpuContext::for_adapter，显式使用同一硬件 adapter 创建 D3D11 video/BGRA device 与 immediate context，先启用并读取确认 ID3D11Multithread 保护，再初始化固定的 MF DXGI device manager。只在对象初始化时 ResetDevice，重建应创建新 context；原生对象借用和批量 immediate context 访问为受约束 unsafe API，批量调用的 Enter/Leave 在 panic 时也会释放。平台 codec 工作者持有 MF/COM runtime 责任，可跨线程 context 不承担 CoUninitialize。
+
+生产入口按实际 DXGI descriptor 拒绝 software adapter；诊断测试通过官方 EnumWarpAdapter 获取真实 WARP 对象并检查拒绝。Windows all-targets Clippy、13 项 xtask 测试及文档检查通过；Windows GPU crate 已纳入 xtask test windows 的 Clippy 和原生测试列表。实际硬件成功路径、codec 准入、资源代际与 GPUI 互操作保持待完成，不以构建设备替代 H.264/HEVC 硬解证明。

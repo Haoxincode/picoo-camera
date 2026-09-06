@@ -5,6 +5,11 @@ mod apple;
 #[cfg(target_os = "macos")]
 pub use apple::{AppleRenderer, CpuExporter, CpuImage, RenderedImage};
 
+#[cfg(target_os = "windows")]
+mod windows;
+#[cfg(target_os = "windows")]
+pub use windows::{WindowsAdapterId, WindowsDeviceError, WindowsGpuContext};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputColor {
     /// GPUI's current Metal surface shader contract.

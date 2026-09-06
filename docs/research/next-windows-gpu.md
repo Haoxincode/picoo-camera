@@ -11,3 +11,5 @@
 解码图像 owner 必须保留原始 IMFSample 和纹理/subresource；仅保留 ID3D11Texture2D 不足以阻止 MF allocator 将数组 slice 重新交给解码器。构造入口为 unsafe 已完成且不可变的输出边界；安全接口仅公开几何，平台 GPU 访问同样要求持有 owner 到 GPU 完成。该边界不提供 CPU map、像素或 stride，不替代输出 GPU 完成 fence。
 
 Windows CI 的 WARP 只可用于标准资源对象、COM 保留和边界拒绝的诊断测试，不作为硬件解码、显卡矩阵、吞吐或生产设备工厂验收。生产链路仍必须拒绝软件 codec/GPU。
+
+GPU context 采用官方 DXGI adapter、D3D11CreateDevice、ID3D11Multithread 和 MFCreateDXGIDeviceManager/ResetDevice。创建时固定关联一个 device，只在初始化时 ResetDevice；对外原生访问不得重新绑定 manager。MF/COM runtime 由平台 codec 工作者管理，不在可跨线程图像/context 的 Drop 中 CoUninitialize。context 不是某 codec 的硬件能力证明，生产设备入口先拒绝 DXGI_ADAPTER_FLAG_SOFTWARE；WARP 明确排除。公开 for_adapter 接口允许后续平台预览与解码选择同一 adapter，不用新增 sink 触发整个源 device 重建。

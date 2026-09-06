@@ -5661,6 +5661,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "picoo-frame-hub",
  "thiserror 2.0.20",
+ "windows 0.62.2",
 ]
 
 [[package]]
