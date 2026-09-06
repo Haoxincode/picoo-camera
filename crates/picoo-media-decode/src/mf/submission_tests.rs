@@ -28,7 +28,8 @@ fn fixture() -> (Vec<u8>, StreamConfig) {
             picoo_bitstream::NalFormat::AnnexB,
             annex,
         )
-        .unwrap(),
+        .unwrap()
+        .into_owned(),
         config,
     )
 }

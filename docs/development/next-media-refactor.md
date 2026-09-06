@@ -448,3 +448,5 @@ MF 对 ProcessInput 成功的 AU 登记单调 sample time，最多 16 个 pendin
 Mac Decoder 16 项原生/配置回归通过；Receiver 媒体 18 项（含延迟双帧与三个旧身份门禁）、Decoder/loopback 7 项、实际 VideoToolbox→FrameBus→GPU→CPU 输出 1 项通过。新测试首次因诊断占位图不能容纳 64×32 布局而触发 panic，已改为直接提供合法 NV12 fixture 并要求 codec 无错误，避免旧输出拒绝测试错误地因 codec 崩溃而通过。Mac all-targets 与 Windows MF 库 Clippy 通过；新增两项实际 MF token/reset 测试待 Windows CI。MEDIA-025 因扩大到真实平台延迟输出，暂回到 implemented，不沿用旧较窄 verified 状态。
 
 前一批 CI 34047409630 全部通过；MF runtime lease 提交 7cb7701 已推送，CI 34048304540 的 Windows 原生测试通过，最终产物仍在构建。该运行完成前不推送下一提交，以免取消有效验证。
+
+CI 34049182494 的 Windows Desktop 74 项测试通过，但新增 MF token fixture 编译失败：canonical_access_unit 返回 Cow<[u8]>，fixture 声明 Vec<u8>。已在该测试数据所有权边界调用 into_owned；不是放宽 token 校验或替换原生测试。MF 两项新运行时验证尚未执行，不能把此编译失败描述成解码行为失败。
