@@ -158,6 +158,31 @@ Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工�
 
 ## Secrets 与签名
 
+### 测试快照与签名发布触发（REQ-PICOO-STACK-008）
+
+创建 `v*` tag 只固定源码版本，不代表签名凭据已经就绪。三个 Release workflow
+使用 GitHub Actions 原生 job 条件与仓库级 configuration variables：仅对应变量为字符串
+`true` 时才自动执行 tag 的签名 job；未启用的平台显示 skipped，不生成签名产物。
+
+| 平台 | 仓库级变量 |
+| --- | --- |
+| Android | `PICOO_ANDROID_SIGNED_RELEASE_ENABLED` |
+| Windows | `PICOO_WINDOWS_SIGNED_RELEASE_ENABLED` |
+| macOS | `PICOO_MACOS_SIGNED_RELEASE_ENABLED` |
+| iOS | `PICOO_IOS_SIGNED_RELEASE_ENABLED` |
+
+变量必须配置在仓库 Settings → Secrets and variables → Actions → Variables，不能仅放在
+Environment 中，因为 job 条件在进入 Environment 前求值。先配置下表签名凭据并手动运行
+`workflow_dispatch` 验证，再开启对应平台的自动 tag 发布。手动运行始终执行签名门禁；
+缺少凭据仍失败，不降级为无签名包，不把 skipped 计为签名验收通过。手动验证修复须选择
+包含修复的 ref；重跑旧 tag 的历史 run 仍使用旧配置。
+
+测试快照可将同一提交成功普通 CI 的 Debug／未签名附件归档到 GitHub prerelease，并标明
+平台限制。签名构建仍由现有 `xtask` 与官方平台工具负责；这里只使用 GitHub 原生触发条件，
+不引入发布调度库或自研签名替代。固定 SHA 的 Rust toolchain action 必须显式传入
+`toolchain: stable`，与仓库 `rust-toolchain.toml` 一致。
+
+
 以下项需在 GitHub 仓库 **Settings → Secrets and variables → Actions** 中配置，Agent 只在 workflow 中引用 secret 名称，不包含证书内容：
 
 | Secret（示例名） | 用途 | 必需阶段 |

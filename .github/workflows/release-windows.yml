@@ -21,11 +21,34 @@ concurrency:
 
 jobs:
   release:
+    # REQ-PICOO-STACK-008: tag snapshots do not imply signing is configured.
+    if: github.event_name == 'workflow_dispatch' || vars.PICOO_WINDOWS_SIGNED_RELEASE_ENABLED == 'true'
     runs-on: windows-latest
     environment: windows-release
     steps:
+      - name: Validate required signing configuration
+        shell: bash
+        env:
+          WINDOWS_CERTIFICATE_P12_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_P12_BASE64 }}
+          WINDOWS_CERTIFICATE_P12_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_P12_PASSWORD }}
+          WINDOWS_SIGNER_SHA256: ${{ secrets.WINDOWS_SIGNER_SHA256 }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in WINDOWS_CERTIFICATE_P12_BASE64 WINDOWS_CERTIFICATE_P12_PASSWORD WINDOWS_SIGNER_SHA256; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required signing secret is missing: $name"
+              missing=1
+            fi
+          done
+          if (( missing )); then
+            echo "Configure the protected release environment before requesting a signed build."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
+        with:
+          toolchain: stable
       - name: Resolve release build identity
         shell: bash
         env:

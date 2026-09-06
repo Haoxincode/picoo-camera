@@ -21,9 +21,37 @@ concurrency:
 
 jobs:
   macos:
+    # REQ-PICOO-STACK-008: tag snapshots do not imply signing is configured.
+    if: github.event_name == 'workflow_dispatch' || vars.PICOO_MACOS_SIGNED_RELEASE_ENABLED == 'true'
     runs-on: macos-26
     environment: apple-release
     steps:
+      - name: Validate required signing configuration
+        shell: bash
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+          APPLE_MACOS_HOST_PROFILE_BASE64: ${{ secrets.APPLE_MACOS_HOST_PROFILE_BASE64 }}
+          APPLE_MACOS_EXTENSION_PROFILE_BASE64: ${{ secrets.APPLE_MACOS_EXTENSION_PROFILE_BASE64 }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_MACOS_SIGNING_IDENTITY: ${{ secrets.APPLE_MACOS_SIGNING_IDENTITY }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_KEYCHAIN_PASSWORD APPLE_NOTARY_KEY_BASE64 APPLE_MACOS_HOST_PROFILE_BASE64 APPLE_MACOS_EXTENSION_PROFILE_BASE64 APPLE_TEAM_ID APPLE_MACOS_SIGNING_IDENTITY APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required signing secret is missing: $name"
+              missing=1
+            fi
+          done
+          if (( missing )); then
+            echo "Configure the protected release environment before requesting a signed build."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
@@ -134,9 +162,33 @@ jobs:
           fi
 
   ios:
+    # REQ-PICOO-STACK-008: tag snapshots do not imply signing is configured.
+    if: github.event_name == 'workflow_dispatch' || vars.PICOO_IOS_SIGNED_RELEASE_ENABLED == 'true'
     runs-on: macos-26
     environment: apple-release
     steps:
+      - name: Validate required signing configuration
+        shell: bash
+        env:
+          APPLE_IOS_DISTRIBUTION_P12_BASE64: ${{ secrets.APPLE_IOS_DISTRIBUTION_P12_BASE64 }}
+          APPLE_IOS_DISTRIBUTION_P12_PASSWORD: ${{ secrets.APPLE_IOS_DISTRIBUTION_P12_PASSWORD }}
+          APPLE_IOS_APP_STORE_PROFILE_BASE64: ${{ secrets.APPLE_IOS_APP_STORE_PROFILE_BASE64 }}
+          APPLE_KEYCHAIN_PASSWORD: ${{ secrets.APPLE_KEYCHAIN_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_IOS_SIGNING_IDENTITY: ${{ secrets.APPLE_IOS_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in APPLE_IOS_DISTRIBUTION_P12_BASE64 APPLE_IOS_DISTRIBUTION_P12_PASSWORD APPLE_IOS_APP_STORE_PROFILE_BASE64 APPLE_KEYCHAIN_PASSWORD APPLE_TEAM_ID APPLE_IOS_SIGNING_IDENTITY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required signing secret is missing: $name"
+              missing=1
+            fi
+          done
+          if (( missing )); then
+            echo "Configure the protected release environment before requesting a signed build."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
