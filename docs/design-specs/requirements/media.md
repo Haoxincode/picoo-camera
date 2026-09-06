@@ -29,3 +29,5 @@
 | REQ-PICOO-MEDIA-024 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、024 | 生产 Decoder 工厂只创建当前平台原生后端；缺后端明确 unavailable，绝不创建 Stub/OpenH264；软件 codec 与替身仅在显式 test-codecs/测试图中使用 | 默认 Android/Linux/Apple/Windows feature 图、无后端错误、显式测试工厂及 Receiver 回归 |
 
 | REQ-PICOO-MEDIA-025 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011 | Decoder 完成事件携带提交时不可变配置快照，帧方向/镜像不从 owner 当前状态重建；占位画面不继承源镜像 | 在同 epoch 中切换当前配置后，迟到完成仍保持提交时方向/镜像；占位回归 |
+
+| REQ-PICOO-MEDIA-026 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、009、024 | Android 使用显式硬件 MediaCodec 名称与完整尺寸/帧率/profile 准入；AVC 请求 High、HEVC 请求 Main；实际格式通过校验后放行 AU；iOS AVC 请求 High 且检查硬件属性、不回退 Baseline | Xiaomi 15 通过生产配置工厂执行八种 Surface 编码组合；Apple 编译及硬件属性验证；真实 no-B-frame/长时质量仍按 NEXT 独立验收 |

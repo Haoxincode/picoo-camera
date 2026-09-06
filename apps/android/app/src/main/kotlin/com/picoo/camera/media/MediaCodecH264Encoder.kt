@@ -2,9 +2,7 @@ package com.picoo.camera.media
 
 import android.hardware.camera2.CameraDevice
 import android.media.MediaCodec
-import android.media.MediaCodecInfo
 import android.media.MediaFormat
-import android.util.Size
 import android.view.Surface
 
 /** MediaCodec H.264 access-unit lifecycle (MEDIA-001). */
@@ -19,7 +17,10 @@ internal class MediaCodecH264Encoder(
     )
 
     fun setupEncoderAndSession(camera: CameraDevice, cameraGenerationSnapshot: Long) {
-        val encodeSize = encoder.profile.resolution
+        val profile = encoder.profile
+        val encodeSize = profile.resolution
+        val requestedBitrate = encoder.targetBitrateBps
+        val request = NativeEncoderFormat(NativeVideoCodec.Avc, encodeSize, profile.targetFps, requestedBitrate)
         val generationEpoch = encoder.streamEpoch
         val transition = detachCodec()
         val generation = transition.nextGeneration
@@ -35,15 +36,16 @@ internal class MediaCodecH264Encoder(
                 return@post
             }
 
-            val codec = createEncoder(encodeSize) ?: run {
+            val codec = NativeVideoEncoder.create(request).getOrElse { error ->
                 reportCodecStartFailure(
                     generation,
                     camera,
                     cameraGenerationSnapshot,
-                    "No H.264 hardware encoder",
+                    "Hardware AVC High encoder unavailable: ${error.message}",
                 )
                 return@post
             }
+            encoder.lastAppliedBitrateBps = requestedBitrate
             var inputSurface: Surface? = null
             var compositor: CameraEncodingCompositor? = null
             try {
@@ -82,6 +84,7 @@ internal class MediaCodecH264Encoder(
                         generationEpoch,
                         encodeSize.width,
                         encodeSize.height,
+                        request,
                     ),
                     encoder.codecHandler,
                 )
@@ -157,7 +160,10 @@ internal class MediaCodecH264Encoder(
         generationEpoch: Int,
         generationWidth: Int,
         generationHeight: Int,
+        request: NativeEncoderFormat,
     ) = object : MediaCodec.Callback() {
+        private var formatAccepted = false
+
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
             // InputSurface mode: the EGL compositor feeds the encoder.
         }
@@ -170,7 +176,7 @@ internal class MediaCodecH264Encoder(
             val active = synchronized(encoder.lifecycle.codecLifecycleLock) {
                 generation == encoder.lifecycle.codecGeneration.get() && codec === encoder.mediaCodec
             }
-            if (!active) {
+            if (!active || !formatAccepted) {
                 runCatching { codec.releaseOutputBuffer(index, false) }
                 return
             }
@@ -219,6 +225,12 @@ internal class MediaCodecH264Encoder(
                 generation == encoder.lifecycle.codecGeneration.get() && codec === encoder.mediaCodec
             }
             if (!active) return
+            formatAccepted = false
+            NativeVideoEncoder.validateOutput(format, request).getOrElse { error ->
+                encoder.fail("Native encoder contract rejected: ${error.message}")
+                return
+            }
+            formatAccepted = true
             val csd0 = format.getByteBuffer("csd-0") ?: return
             val copy = ByteArray(csd0.remaining())
             csd0.mark()
@@ -322,54 +334,6 @@ internal class MediaCodecH264Encoder(
                     encoder.lastAppliedBitrateBps = requestedBitrate
                 }
             }
-        }
-    }
-
-    private fun createEncoder(size: Size): MediaCodec? {
-        encoder.lastAppliedBitrateBps = encoder.targetBitrateBps
-        val codec = runCatching {
-            MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
-        }.getOrNull() ?: return null
-        val bitrateMode = runCatching {
-            val capabilities = codec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
-            if (capabilities.encoderCapabilities.isBitrateModeSupported(
-                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR,
-                )
-            ) {
-                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
-            } else {
-                MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR
-            }
-        }.getOrDefault(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
-        val format = MediaFormat.createVideoFormat(
-            MediaFormat.MIMETYPE_VIDEO_AVC,
-            size.width,
-            size.height,
-        ).apply {
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-            setInteger(MediaFormat.KEY_BIT_RATE, encoder.targetBitrateBps)
-            setInteger(MediaFormat.KEY_FRAME_RATE, encoder.profile.targetFps)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
-            setInteger(MediaFormat.KEY_BITRATE_MODE, bitrateMode)
-            setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
-            setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
-            setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
-            // Real-time camera transport must not inherit the vendor encoder's
-            // implementation-defined look-ahead (four frames on Xiaomi 15).
-            // Android defines this value in frames and requires the negotiated
-            // output format to be inspected to confirm what was accepted.
-            setInteger(MediaFormat.KEY_LATENCY, 0)
-            setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-            setInteger(MediaFormat.KEY_OUTPUT_REORDER_DEPTH, 0)
-            setInteger(MediaFormat.KEY_PRIORITY, 0)
-            setFloat(MediaFormat.KEY_OPERATING_RATE, encoder.profile.targetFps.toFloat())
-        }
-        return runCatching {
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-            codec
-        }.getOrElse {
-            runCatching { codec.release() }
-            null
         }
     }
 

@@ -180,6 +180,7 @@ nonisolated final class VideoEncoderEventBuffer: @unchecked Sendable {
 
 nonisolated enum VideoEncoderError: LocalizedError {
     case sessionCreation(OSStatus)
+    case hardwareEncoderUnavailable
     case property(String, OSStatus)
     case prepare(OSStatus)
     case pixelBufferPoolUnavailable
@@ -189,6 +190,8 @@ nonisolated enum VideoEncoderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .hardwareEncoderUnavailable:
+            "没有可用的硬件 H.264 High 编码器"
         case let .sessionCreation(status):
             "无法创建硬件 H.264 编码器（\(status)）"
         case let .property(key, status):

@@ -221,10 +221,10 @@ impl ReceiverSession {
     fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
         // This adapter currently implements AVC/30. Do not advertise HEVC/60
         // until the native decoder adapters have been integrated and validated.
-        let offers = [(1280, 720, 31), (1920, 1080, 40)]
+        let offers = [(1280, 720), (1920, 1080)]
             .into_iter()
-            .filter(|(_, height, _)| *height <= self.advertised_max_height)
-            .map(|(width, height, level)| DecoderOffer {
+            .filter(|(_, height)| *height <= self.advertised_max_height)
+            .map(|(width, height)| DecoderOffer {
                 format: Some(VideoFormat::sdr_709(
                     VideoCodec::Avc,
                     Resolution { width, height },
@@ -235,7 +235,7 @@ impl ReceiverSession {
                     ColorRange::Limited,
                 )),
                 max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
-                max_level_idc: level,
+                max_level_idc: 42,
             })
             .collect();
         let capabilities = Capabilities { offers };

@@ -274,23 +274,30 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             on: session
         )
 
-        let mainProfileStatus = VTSessionSetProperty(
-            session,
-            key: kVTCompressionPropertyKey_ProfileLevel,
-            value: kVTProfileLevel_H264_Main_4_0
+        // REQ-PICOO-MEDIA-026: requested profile is part of the native contract.
+        try set(
+            kVTCompressionPropertyKey_ProfileLevel,
+            value: kVTProfileLevel_H264_High_AutoLevel,
+            on: session
         )
-        if mainProfileStatus != noErr {
-            try set(
-                kVTCompressionPropertyKey_ProfileLevel,
-                value: kVTProfileLevel_H264_Baseline_4_0,
-                on: session
-            )
-        }
         try setBitrate(configuration.bitrateBps, on: session)
 
         let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(session)
         guard prepareStatus == noErr else {
             throw VideoEncoderError.prepare(prepareStatus)
+        }
+        var hardwareValue: Unmanaged<CFTypeRef>?
+        let hardwareStatus = VTSessionCopyProperty(
+            session,
+            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+            allocator: nil,
+            valueOut: &hardwareValue
+        )
+        guard hardwareStatus == noErr else {
+            throw VideoEncoderError.property("UsingHardwareAcceleratedVideoEncoder", hardwareStatus)
+        }
+        guard (hardwareValue?.takeRetainedValue() as? NSNumber)?.boolValue == true else {
+            throw VideoEncoderError.hardwareEncoderUnavailable
         }
     }
 

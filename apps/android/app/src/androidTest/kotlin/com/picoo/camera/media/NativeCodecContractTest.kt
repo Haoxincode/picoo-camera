@@ -2,8 +2,6 @@ package com.picoo.camera.media
 
 import android.graphics.Color
 import android.media.MediaCodec
-import android.media.MediaCodecInfo
-import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.Log
 import android.util.Size
@@ -23,37 +21,15 @@ class NativeCodecContractTest {
     }
 
     private fun verify(mime: String, size: Size, fps: Int) {
-        val profile = if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) {
-            MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
-        } else {
-            MediaCodecInfo.CodecProfileLevel.HEVCProfileMain
-        }
-        val candidate = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstOrNull { info ->
-            info.isEncoder && info.isHardwareAccelerated && !info.isAlias &&
-                info.supportedTypes.any { it.equals(mime, ignoreCase = true) } &&
-                info.getCapabilitiesForType(mime).let { caps ->
-                    caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) &&
-                        caps.profileLevels.any { it.profile == profile } &&
-                        caps.videoCapabilities.areSizeAndRateSupported(size.width, size.height, fps.toDouble())
-                }
-        } ?: error("No hardware $mime $size @$fps profile=$profile")
-        val codec = MediaCodec.createByCodecName(candidate.name)
+        val kind = if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) NativeVideoCodec.Avc else NativeVideoCodec.Hevc
+        val request = NativeEncoderFormat(
+            kind, size, fps, if (kind == NativeVideoCodec.Hevc) 16_000_000 else 24_000_000,
+        )
+        val codec = NativeVideoEncoder.create(request).getOrThrow()
         var surface: android.view.Surface? = null
         var compositor: CameraEncodingCompositor? = null
         val errors = mutableListOf<String>()
         try {
-            val format = MediaFormat.createVideoFormat(mime, size.width, size.height).apply {
-                setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
-                setInteger(MediaFormat.KEY_PROFILE, profile)
-                setInteger(MediaFormat.KEY_BIT_RATE, if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC) 16_000_000 else 24_000_000)
-                setInteger(MediaFormat.KEY_FRAME_RATE, fps)
-                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
-                setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-                setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
-                setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
-                setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
-            }
-            codec.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             surface = codec.createInputSurface()
             compositor = CameraEncodingCompositor.create(
                 encoderSurface = surface,
@@ -89,11 +65,18 @@ class NativeCodecContractTest {
             assertTrue("PTS must identify distinct ordered images", timestamps.zipWithNext().all { (a, b) -> b > a })
             assertTrue("compositor errors: $errors", synchronized(errors) { errors.isEmpty() })
             val output = actual ?: error("No actual output format")
+            NativeVideoEncoder.validateOutput(output, request).getOrThrow()
             assertEquals(mime, output.getString(MediaFormat.KEY_MIME))
+            assertEquals(kind.profile, output.getInteger(MediaFormat.KEY_PROFILE))
+            assertEquals(fps, output.getInteger(MediaFormat.KEY_FRAME_RATE))
+            assertEquals(0, output.getInteger(MediaFormat.KEY_LATENCY))
+            assertEquals(MediaFormat.COLOR_STANDARD_BT709, output.getInteger(MediaFormat.KEY_COLOR_STANDARD))
+            assertEquals(MediaFormat.COLOR_RANGE_LIMITED, output.getInteger(MediaFormat.KEY_COLOR_RANGE))
+            assertEquals(MediaFormat.COLOR_TRANSFER_SDR_VIDEO, output.getInteger(MediaFormat.KEY_COLOR_TRANSFER))
             assertEquals(size.width, output.getInteger(MediaFormat.KEY_WIDTH))
             assertEquals(size.height, output.getInteger(MediaFormat.KEY_HEIGHT))
             assertTrue("Missing codec configuration", output.containsKey("csd-0"))
-            Log.i("PicooNativeProbe", "codec=${candidate.name}; mime=$mime; size=$size; requested_fps=$fps; " +
+            Log.i("PicooNativeProbe", "codec=${codec.name}; mime=$mime; size=$size; requested_fps=$fps; " +
                 "hardware=true; unique_aus=${timestamps.size}; actual=$output; steady_state_fps=not_measured")
         } finally {
             compositor?.close()
