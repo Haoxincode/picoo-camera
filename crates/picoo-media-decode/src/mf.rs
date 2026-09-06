@@ -20,10 +20,10 @@ use windows::Win32::Media::MediaFoundation::{
     MFT_MESSAGE_COMMAND_FLUSH, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MF_E_NOTACCEPTING,
-    MF_E_TRANSFORM_NEED_MORE_INPUT, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
-    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
-    MF_SA_D3D11_AWARE,
+    MF_E_NO_MORE_TYPES, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
+    MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE,
+    MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE,
+    MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX, MF_SA_D3D11_AWARE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -521,34 +521,74 @@ unsafe fn sample_to_frame(
     ))
 }
 
+/// REQ-PICOO-MEDIA-031: renegotiate the native output without flushing or
+/// resubmitting the AU. Only the declared NV12 geometry is accepted here.
+unsafe fn renegotiate_output(
+    transform: &IMFTransform,
+    width: u32,
+    height: u32,
+) -> Result<(), DecodeError> {
+    for index in 0..32 {
+        let candidate = match transform.GetOutputAvailableType(0, index) {
+            Ok(candidate) => candidate,
+            Err(error) if error.code() == MF_E_NO_MORE_TYPES => break,
+            Err(error) => {
+                return Err(DecodeError::Platform(format!(
+                    "GetOutputAvailableType: {error}"
+                )))
+            }
+        };
+        if candidate.GetGUID(&MF_MT_SUBTYPE).ok() != Some(MFVideoFormat_NV12)
+            || candidate.GetUINT64(&MF_MT_FRAME_SIZE).ok() != Some(pack_frame_size(width, height))
+        {
+            continue;
+        }
+        return transform
+            .SetOutputType(0, &candidate, 0)
+            .map_err(|error| DecodeError::Platform(format!("renegotiate output: {error}")));
+    }
+    Err(DecodeError::Platform(
+        "stream change offers no matching NV12 output".into(),
+    ))
+}
+
 unsafe fn drain_output(
     transform: &IMFTransform,
     width: u32,
     height: u32,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
-    let provided_sample = output_sample_for_transform(transform)?;
-    let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
-        dwStreamID: 0,
-        pSample: ManuallyDrop::new(provided_sample),
-        dwStatus: 0,
-        pEvents: ManuallyDrop::new(None),
-    };
-
-    let mut status = 0u32;
-    let result = transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status);
-    let sample = ManuallyDrop::take(&mut output_buffer.pSample);
-    let _events = ManuallyDrop::take(&mut output_buffer.pEvents);
-    match result {
-        Ok(()) => {
-            if let Some(sample) = sample {
-                sample_to_frame(&sample, width, height).map(Some)
-            } else {
-                Ok(None)
+    // One format-change retry is enough to consume the newly negotiated
+    // output. Repeated stream changes fail explicitly instead of spinning.
+    for attempt in 0..2 {
+        let provided_sample = output_sample_for_transform(transform)?;
+        let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
+            dwStreamID: 0,
+            pSample: ManuallyDrop::new(provided_sample),
+            dwStatus: 0,
+            pEvents: ManuallyDrop::new(None),
+        };
+        let mut status = 0u32;
+        let result =
+            transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status);
+        let sample = ManuallyDrop::take(&mut output_buffer.pSample);
+        let events = ManuallyDrop::take(&mut output_buffer.pEvents);
+        match result {
+            Ok(()) => {
+                return sample
+                    .as_ref()
+                    .map(|sample| sample_to_frame(sample, width, height))
+                    .transpose()
             }
+            Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
+            Err(error) if error.code() == MF_E_TRANSFORM_STREAM_CHANGE && attempt == 0 => {
+                drop(sample);
+                drop(events);
+                renegotiate_output(transform, width, height)?;
+            }
+            Err(error) => return Err(DecodeError::Platform(format!("ProcessOutput: {error}"))),
         }
-        Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => Ok(None),
-        Err(e) => Err(DecodeError::Platform(format!("ProcessOutput: {e}"))),
     }
+    unreachable!("bounded output retry returns on its final attempt")
 }
 
 #[cfg(test)]

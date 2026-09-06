@@ -203,3 +203,8 @@ dfd57e8 的 CI 中，5% 丢包恢复测试通过，macOS 失败项为统计用�
 REQ-PICOO-PROTOCOL-018 在 Receiver 改变任何源状态前解析标准配置，并验证声明 profile/level 与记录一致。空记录、必需头截断、声明冲突被拒绝时，当前配置 Arc、revision 和等待中的未来 epoch 均保持不变。Sender 创建时不再预置空 StreamConfig；首份配置由原生编码参数提供。配对/统计/恢复测试与显式 loopback 诊断提供真实 High 参数，不通过关闭生产校验维持合成测试。诊断依赖 picoo-testkit 仅由 loopback-diagnostics feature 启用。
 
 Mac 完整套件通过：Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70；Sender 69 项通过。此条仍不代表完整 VideoFormat 几何/色彩准入、异步平台准备与提交事务完成；对应 Next 要求保持 planned。
+
+
+## MF 输出类型重新协商
+
+b5702aa 的 Windows CI 在真实 High/BT.709 小样本上返回 `MF_E_TRANSFORM_STREAM_CHANGE`，此前 Decoder 将其当成普通错误。按微软 [Handling Stream Changes](https://learn.microsoft.com/en-us/windows/win32/medfound/handling-stream-changes) 的原生契约，使用当前 windows 0.62.2 的 GetOutputAvailableType / SetOutputType，接受匹配几何的 NV12 输出后重新 ProcessOutput。保留 MFT 已收到的 AU，不 flush、不重送输入；32 个候选及一次输出重试保证有界。此修正仍需 Windows CI 验证，不代表 D3D11 原生帧、显卡或 GpuNative VCam 验收。
