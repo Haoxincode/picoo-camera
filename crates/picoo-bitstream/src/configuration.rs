@@ -13,6 +13,8 @@ const MAX_PARAMETER_SETS: usize = 64;
 pub struct CodecConfiguration {
     codec: Codec,
     nal_length_size: NalLengthSize,
+    profile_idc: u8,
+    level_idc: u8,
     record: Bytes,
     vps: Vec<Bytes>,
     sps: Vec<Bytes>,
@@ -33,6 +35,8 @@ impl CodecConfiguration {
         let mut config = Self {
             codec,
             nal_length_size: NalLengthSize::Four,
+            profile_idc: 0,
+            level_idc: 0,
             record: record.clone(),
             vps: Vec::new(),
             sps: Vec::new(),
@@ -53,6 +57,19 @@ impl CodecConfiguration {
                 }) {
                     return Err(BitstreamError::Unsupported("AVC requires 8-bit 4:2:0"));
                 }
+                if avc.sps.iter().any(|sps| {
+                    sps.len() < 4
+                        || sps[1..4]
+                            != [
+                                avc.profile_indication,
+                                avc.profile_compatibility,
+                                avc.level_indication,
+                            ]
+                }) {
+                    return Err(BitstreamError::Malformed("avcC header differs from SPS"));
+                }
+                config.profile_idc = avc.profile_indication;
+                config.level_idc = avc.level_indication;
                 config.nal_length_size = length_size(avc.length_size_minus_one)?;
                 config.sps = avc.sps;
                 config.pps = avc.pps;
@@ -69,6 +86,8 @@ impl CodecConfiguration {
                         "HEVC requires Main 8-bit 4:2:0",
                     ));
                 }
+                config.profile_idc = hevc.general_profile_idc;
+                config.level_idc = hevc.general_level_idc;
                 config.nal_length_size = length_size(hevc.length_size_minus_one)?;
                 for array in hevc.arrays {
                     match u8::from(array.nal_unit_type) {
@@ -106,6 +125,41 @@ impl CodecConfiguration {
         }
         Ok(config)
     }
+    /// Convert the native AVC adapter's raw parameter NALs to standard avcC.
+    /// Storage, NAL headers and profile are checked; this is not full SPS proof.
+    pub fn from_avc_parameter_sets(sps: &[u8], pps: &[u8]) -> Result<Self, BitstreamError> {
+        if sps.len().saturating_add(pps.len()).saturating_add(11) > MAX_CONFIG_BYTES {
+            return Err(BitstreamError::Limit);
+        }
+        if sps.len() < 4
+            || pps.len() < 3
+            || nal_type(Codec::Avc, sps)? != 7
+            || nal_type(Codec::Avc, pps)? != 8
+        {
+            return Err(BitstreamError::Malformed("raw AVC parameter sets required"));
+        }
+        let avc = AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: sps[1],
+            profile_compatibility: sps[2],
+            level_indication: sps[3],
+            length_size_minus_one: 3,
+            sps: vec![Bytes::copy_from_slice(sps)],
+            pps: vec![Bytes::copy_from_slice(pps)],
+            extended_config: None,
+        };
+        let mut record = Vec::with_capacity(avc.size() as usize);
+        avc.build(&mut record)?;
+        Self::parse(Codec::Avc, record.into())
+    }
+
+    pub fn profile_idc(&self) -> u8 {
+        self.profile_idc
+    }
+    pub fn level_idc(&self) -> u8 {
+        self.level_idc
+    }
+
     pub fn codec(&self) -> Codec {
         self.codec
     }

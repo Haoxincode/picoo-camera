@@ -169,6 +169,11 @@ impl ReceiverSession {
         session: SessionId,
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
+        // REQ-PICOO-PROTOCOL-016: do not submit a different/unknown codec to
+        // the current AVC-only adapter or mutate its committed configuration.
+        if config.codec != VideoCodec::Avc as i32 {
+            return Err(ReceiverError::Protocol("unsupported stream codec".into()));
+        }
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         if previous_epoch.is_some_and(|epoch| config.stream_epoch < epoch) {
             return Ok(());
@@ -263,5 +268,43 @@ impl ReceiverSession {
             ));
         }
         self.force_decoder_recovery_request(RecoveryReason::ManualRepair)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn unsupported_codec_does_not_replace_committed_configuration_or_clock() {
+        let mut receiver = ReceiverSession::new();
+        let committed = Arc::new(StreamConfig {
+            codec: VideoCodec::Avc as i32,
+            stream_epoch: 5,
+            width: 1280,
+            height: 720,
+            ..Default::default()
+        });
+        receiver.current_stream_config = Some(committed.clone());
+        receiver.waiting_for_stream_config_epoch = Some(6);
+        for codec in [0, -1, 99, VideoCodec::Hevc as i32] {
+            let result = receiver.handle_stream_config(
+                SessionId(1),
+                StreamConfig {
+                    codec,
+                    stream_epoch: 6,
+                    ..Default::default()
+                },
+            );
+            assert!(
+                matches!(result, Err(ReceiverError::Protocol(message)) if message == "unsupported stream codec")
+            );
+            assert!(Arc::ptr_eq(
+                receiver.current_stream_config.as_ref().unwrap(),
+                &committed
+            ));
+            assert_eq!(receiver.waiting_for_stream_config_epoch, Some(6));
+        }
     }
 }

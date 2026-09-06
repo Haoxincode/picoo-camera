@@ -250,6 +250,7 @@ impl AccessUnitDecoder for MfH264Decoder {
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        crate::configured_avc::validate(access_unit, stream_config)?;
         self.decode_h264_au(access_unit, stream_config)
     }
 

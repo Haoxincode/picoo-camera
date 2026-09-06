@@ -35,3 +35,5 @@
 | REQ-PICOO-MEDIA-027 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、025 | 网络拥塞与恢复只在当前已提交配置的码率边界内调整，不创建分辨率事务或推进 epoch；源配置变更由显式配置事务完成 | 长时间拥塞/恢复保持尺寸与 epoch、无自动 Encoder directive；显式配置事务与失败恢复回归；Android 热策略及 Xiaomi 15 StreamingScreen 6 项 UI 测试通过 |
 
 | REQ-PICOO-MEDIA-028 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-004、005 | 源高度及码率策略仅接受精确 720/1080；拒绝 480 与任意高度，不静默归档或按 Receiver 最大高度替换请求 | Core 事务/码率/FFI 非法参数回归与手机入口验证 |
+
+| REQ-PICOO-MEDIA-029 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、022、027 | 传入 Decoder 的已提交 AVC 参数集为权威事实；逐个检查带内 SPS/PPS，不允许绕过事务覆盖配置；冲突在平台状态变化前拒绝 | 匹配/孤立参数更新/不同表示回归，VideoToolbox 旧 session 和旧配置继续可用；MF 同一校验入口 |

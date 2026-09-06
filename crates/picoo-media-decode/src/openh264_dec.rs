@@ -130,6 +130,7 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return self.stub.decode_access_unit(access_unit, stream_config);
         }
 
+        crate::configured_avc::validate(access_unit, stream_config)?;
         self.ensure_param_sets(stream_config)?;
 
         let annex = access_unit_to_annex_b(access_unit);

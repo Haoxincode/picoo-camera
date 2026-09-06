@@ -674,16 +674,16 @@ impl SimHarness {
     ) {
         self.queue_control(
             ControlPayload::StreamConfig(StreamConfig {
-                codec: "h264".into(),
-                profile: "baseline".into(),
-                level: "3.1".into(),
+                codec: picoo_protocol::control::VideoCodec::Avc as i32,
+                profile: picoo_protocol::control::VideoProfile::Unspecified as i32,
+                level_idc: 31,
                 width,
                 height,
                 fps: 30,
                 bitrate: 1_000_000,
                 rotation: 0,
                 mirrored: false,
-                color_range: "limited".into(),
+                color_range: picoo_protocol::control::ColorRange::Limited as i32,
                 sps: vec![1],
                 pps: vec![2],
                 stream_epoch,

@@ -37,3 +37,5 @@ Windows 的共享句柄和 CPU 输出 ring 是不同的交接后端；macOS 两�
 完整 HEVC/配置记录解析实施前必须独立核对成熟包与平台 SDK 的当前 API、维护、许可证、MSRV、平台和体积；本次未作选型，也不以已有 AVC helper 作为自研 HEVC 的理由。GPU/codec/mux 使用方案列出的 D3D11/MF、Metal/VideoToolbox/AVFoundation/CMIO 候选，接入前按锁定 SDK 验证。
 
 源配置入口只接受精确的正式尺寸组合（1280×720 / 1920×1080），无 480p 或任意高度归档。用户请求不按 Receiver 最大高度静默替换；不能满足的组合必须明确拒绝。码率策略查询对未知高度返回错误，C/JNI 数值接口以 0 表示不支持，不将其当作可用目标码率（REQ-PICOO-MEDIA-028）。
+
+源配置使用与能力声明相同的 codec/profile/色彩枚举和标准 level_idc，不使用可随意拼写的字符串，也不在缺参数时猜测 profile 或 level。已提交参数集属于 Decoder job 的不可变配置快照；带内参数集只有逐个匹配时才可随 AU 进入平台 Decoder，不能绕过配置事务改写 source format。标准 avcC/hvcC 解释与生成由位流依赖负责，领域层只执行有界准入和一致性校验。

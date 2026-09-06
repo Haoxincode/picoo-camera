@@ -1,6 +1,6 @@
 //! StreamConfig helpers — REQ-PICOO-PROTOCOL-005.
 
-use picoo_protocol::control::StreamConfig;
+use picoo_protocol::control::{StreamConfig, VideoProfile};
 use picoo_rate_control::BitrateLadder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,18 +35,18 @@ impl Default for StreamConfigParams {
 
 impl StreamConfigParams {
     pub fn to_proto(&self) -> StreamConfig {
-        let (profile, level) = self.h264_profile_level();
+        let (profile, level_idc) = self.h264_profile_level();
         StreamConfig {
-            codec: "h264".into(),
-            profile,
-            level,
+            codec: picoo_protocol::control::VideoCodec::Avc as i32,
+            profile: profile as i32,
+            level_idc,
             width: self.width,
             height: self.height,
             fps: self.fps,
             bitrate: self.bitrate_bps,
             rotation: Self::normalize_rotation(self.rotation),
             mirrored: self.mirrored,
-            color_range: "limited".into(),
+            color_range: picoo_protocol::control::ColorRange::Limited as i32,
             sps: self.sps.clone(),
             pps: self.pps.clone(),
             stream_epoch: self.stream_epoch,
@@ -64,38 +64,12 @@ impl StreamConfigParams {
         }
     }
 
-    /// SPS is the codec source of truth. Platform encoders may fall back from
-    /// Main to Baseline at runtime, so a hard-coded profile can disagree with
-    /// the Access Units even when the FFI configuration is otherwise valid.
-    fn h264_profile_level(&self) -> (String, String) {
-        let sps = self.sps_payload();
-        let Some(profile_idc) = sps.get(1).copied() else {
-            return ("baseline".into(), "3.1".into());
-        };
-        let profile = match profile_idc {
-            66 => "baseline",
-            77 => "main",
-            88 => "extended",
-            100 => "high",
-            110 => "high-10",
-            122 => "high-4:2:2",
-            244 => "high-4:4:4",
-            _ => "unknown",
-        };
-        let level = sps
-            .get(3)
-            .map(|level_idc| format!("{}.{}", level_idc / 10, level_idc % 10))
-            .unwrap_or_else(|| "3.1".into());
-        (profile.into(), level)
-    }
-
-    fn sps_payload(&self) -> &[u8] {
-        if self.sps.starts_with(&[0, 0, 0, 1]) {
-            &self.sps[4..]
-        } else if self.sps.starts_with(&[0, 0, 1]) {
-            &self.sps[3..]
-        } else {
-            &self.sps
+    /// Preserve source header facts. Missing or unsupported profile is explicit;
+    /// no Baseline/level fallback is invented (REQ-PICOO-PROTOCOL-016).
+    fn h264_profile_level(&self) -> (VideoProfile, u32) {
+        match picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&self.sps, &self.pps) {
+            Ok(config) => (VideoProfile::AvcHigh, u32::from(config.level_idc())),
+            Err(_) => (VideoProfile::Unspecified, 0),
         }
     }
 }
@@ -103,6 +77,24 @@ impl StreamConfigParams {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_or_malformed_sps_never_invents_profile_or_level() {
+        for sps in [
+            vec![],
+            vec![0x67, 100, 0],
+            vec![0x68, 100, 0, 42],
+            vec![0xe7, 100, 0, 42],
+        ] {
+            let config = StreamConfigParams {
+                sps,
+                ..Default::default()
+            }
+            .to_proto();
+            assert_eq!(config.profile, VideoProfile::Unspecified as i32);
+            assert_eq!(config.level_idc, 0);
+        }
+    }
 
     #[test]
     fn to_proto_carries_rotation() {
@@ -122,24 +114,28 @@ mod tests {
     }
 
     #[test]
-    fn stream_config_derives_main_level_4_from_sps() {
+    fn unsupported_profile_is_explicit_without_label_fallback() {
         let cfg = StreamConfigParams {
             sps: vec![0x67, 77, 0, 40, 0xaa],
             ..Default::default()
         };
         let proto = cfg.to_proto();
-        assert_eq!(proto.profile, "main");
-        assert_eq!(proto.level, "4.0");
+        assert_eq!(proto.profile, VideoProfile::Unspecified as i32);
+        assert_eq!(proto.level_idc, 0);
     }
 
     #[test]
-    fn stream_config_derives_annex_b_baseline_from_sps() {
+    fn stream_config_derives_high_profile_and_level_from_native_parameter_sets() {
+        let (sps, pps) =
+            picoo_bitstream::avc::extract_sps_pps(picoo_testkit::H264_1920X1080_RED_IDR).unwrap();
+        let expected_level = u32::from(sps[3]);
         let cfg = StreamConfigParams {
-            sps: vec![0, 0, 0, 1, 0x67, 66, 0, 31],
+            sps,
+            pps,
             ..Default::default()
         };
         let proto = cfg.to_proto();
-        assert_eq!(proto.profile, "baseline");
-        assert_eq!(proto.level, "3.1");
+        assert_eq!(proto.profile, VideoProfile::AvcHigh as i32);
+        assert_eq!(proto.level_idc, expected_level);
     }
 }

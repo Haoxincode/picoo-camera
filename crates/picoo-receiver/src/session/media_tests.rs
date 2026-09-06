@@ -10,7 +10,7 @@ fn receiver_for_generation(generation: u32) -> ReceiverSession {
     receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(StubDecoder::new()));
     receiver.control_generation = Some(1);
     receiver.current_stream_config = Some(Arc::new(StreamConfig {
-        codec: "h264".into(),
+        codec: picoo_protocol::control::VideoCodec::Avc as i32,
         width: 1280,
         height: 720,
         fps: 30,

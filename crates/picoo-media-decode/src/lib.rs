@@ -22,6 +22,14 @@ mod videotoolbox;
 ))]
 mod openh264_dec;
 
+#[cfg(any(
+    test,
+    target_os = "macos",
+    all(windows, feature = "windows-mf"),
+    all(not(windows), not(target_vendor = "apple"), feature = "test-codecs")
+))]
+mod configured_avc;
+
 use bytes::Bytes;
 use picoo_protocol::control::StreamConfig;
 use thiserror::Error;
@@ -35,6 +43,8 @@ pub enum DecodeError {
     NotInitialized,
     #[error("unsupported access unit")]
     UnsupportedAccessUnit,
+    #[error("access unit parameter sets differ from committed configuration")]
+    ConfigurationMismatch,
     #[error("platform decoder: {0}")]
     Platform(String),
     #[error("output too large: {0} bytes")]

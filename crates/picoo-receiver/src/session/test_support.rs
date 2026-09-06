@@ -31,7 +31,7 @@ impl ReceiverSession {
             .map_or(1, |config| u64::from(config.stream_epoch));
         if self.current_stream_config.is_none() {
             self.current_stream_config = Some(Arc::new(StreamConfig {
-                codec: "h264".into(),
+                codec: picoo_protocol::control::VideoCodec::Avc as i32,
                 width: 1280,
                 height: 720,
                 fps: 30,

@@ -56,3 +56,5 @@
 | ID | 状态 | 来源 | 契约 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-BITSTREAM-002 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、023、025 | 双 codec 明确 NAL 格式、有界配置解释与保守 RAP 分类；区分 HEVC IDR/CRA/RASL/RADL，拒绝不支持结构 | 硬件生成 AVC/HEVC fixtures、截断/溢出/多图像/恶意数量回归；跨平台编译；原生解码合同另验 |
+
+| REQ-PICOO-BITSTREAM-003 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | 原生 AVC raw SPS/PPS 通过标准 avcC builder 进入有界配置记录；record profile/compatibility/level 必须与全部 SPS 头一致，禁止缺参数时猜测 | 实际硬件参数集 roundtrip、头冲突/长度边界、fuzz；不等同完整 SPS 几何/色彩/no-B-frame 准入 |

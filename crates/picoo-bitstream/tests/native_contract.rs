@@ -167,3 +167,28 @@ fn configuration_truncations_and_hostile_array_sizes_are_rejected() {
     hevc[25] = 255;
     assert!(CodecConfiguration::parse(Codec::Hevc, hevc.into()).is_err());
 }
+
+#[test]
+fn native_avc_parameter_sets_roundtrip_through_standard_record_builder() {
+    let config = CodecConfiguration::parse(
+        Codec::Avc,
+        Bytes::from_static(include_bytes!("fixtures/avc-720p-config.bin")),
+    )
+    .unwrap();
+    let built =
+        CodecConfiguration::from_avc_parameter_sets(&config.sps()[0], &config.pps()[0]).unwrap();
+    assert_eq!(built.sps(), config.sps());
+    assert_eq!(built.pps(), config.pps());
+    assert_eq!(built.profile_idc(), 100);
+    assert_eq!(built.level_idc(), config.level_idc());
+    let mut mismatched = built.record().to_vec();
+    mismatched[3] ^= 1;
+    assert!(CodecConfiguration::parse(Codec::Avc, mismatched.into()).is_err());
+    for (sps, pps) in [
+        (vec![], vec![]),
+        (vec![0x67, 100, 0, 31], vec![]),
+        (vec![0x67; 65536], vec![0x68, 0, 0]),
+    ] {
+        assert!(CodecConfiguration::from_avc_parameter_sets(&sps, &pps).is_err());
+    }
+}

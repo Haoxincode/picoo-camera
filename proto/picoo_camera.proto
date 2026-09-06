@@ -161,16 +161,16 @@ message Resolution {
 }
 
 message StreamConfig {
-  string codec = 1;
-  string profile = 2;
-  string level = 3;
+  VideoCodec codec = 1;
+  VideoProfile profile = 2;
+  uint32 level_idc = 3;
   uint32 width = 4;
   uint32 height = 5;
   uint32 fps = 6;
   uint32 bitrate = 7;
   uint32 rotation = 8;
   bool mirrored = 9;
-  string color_range = 10;
+  ColorRange color_range = 10;
   bytes sps = 11;
   bytes pps = 12;
   uint32 stream_epoch = 13;

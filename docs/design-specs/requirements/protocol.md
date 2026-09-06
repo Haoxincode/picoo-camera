@@ -18,3 +18,5 @@
 | REQ-PICOO-PROTOCOL-014 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-026、027 | ALPN 固定为 picoocam，无版本字段或版本协商；配对摘要绑定协议标识和 Ed25519 算法，拒绝重复发现字段 | 真实 QUIC 不相关 ALPN 握手拒绝、重复 TXT 门禁、跨协议签名不可复用；旧 schema 语义拒绝在各接口变更中单独验收 |
 
 | REQ-PICOO-PROTOCOL-015 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025 | Decoder 能力由有界完整格式组合表达，显式 codec/profile/level、尺寸/可见区域、有理帧率、8-bit 420 SDR 色彩和 AU 上限；未知/缺失/重复组合拒绝，不拼接独立列表 | Protobuf roundtrip、非法字段边界、跨 codec/fps 不产生虚假支持、Sender/Receiver 配对回归；真实能力探测按 NEXT-004 单独验收 |
+
+| REQ-PICOO-PROTOCOL-016 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、026 | StreamConfig 复用 typed codec/profile/range 与标准数值 level_idc，删除字符串标签和缺参数时的 Baseline/3.1 猜测；当前 AVC adapter 在改变配置前拒绝未知/未接入 codec | Protobuf roundtrip、旧 wire 类型拒绝、参数事实与 Receiver 配置不变回归；完整格式/SPS 准入另验 |

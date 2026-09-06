@@ -108,7 +108,7 @@ fn unpaired_start_stream_is_rejected() {
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
 
     let unauthorized_config = picoo_protocol::control::StreamConfig {
-        codec: "h264".into(),
+        codec: picoo_protocol::control::VideoCodec::Avc as i32,
         width: 1920,
         height: 1080,
         fps: 30,

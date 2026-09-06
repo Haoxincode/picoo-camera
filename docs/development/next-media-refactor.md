@@ -98,3 +98,13 @@ ba6c8a8 的 macOS CI 34019052133 失败于旧专项测试仍期待 ABR 自动降
 最终 Linux 容器回归 rate-control 9、Sender 68、Receiver 106 passed / 2 ignored。旧 camera-epoch 测试同样移除 480p 输入，使用 720p 保留三秒恢复阈值。相关六个 crate all-targets clippy 与文档链接检查通过；macOS Receiver/未签名 Camera Extension build 和 package 成功。桌面只删除一个 PopupMenu 选项及对应 Action，复用原有选中状态、键盘和焦点契约；不将编译作为完整桌面交互或已签名虚拟摄像头验收。
 
 按正常 GUI 语义退出旧测试实例后，以 open -n 启动当前 Mac 测试包；进程已出现，但检查时尚无可见窗口或 UDP 4433 监听，未记录为发现/配对/桌面交互通过。继续以实际运行事实追踪启动条件。
+
+REQ-PICOO-PROTOCOL-016：StreamConfig codec/profile/range 复用 DecoderOffer 枚举，level 直接为标准 level_idc；删除字符串 wire 类型、Baseline/3.1 默认猜测以及 Sender 中参数集头的自定义字符串映射。当前 Receiver AVC adapter 在改变已提交配置和等待 epoch 前拒绝 unspecified/未知/未接入 HEVC codec。此门禁不代替完整 VideoFormat、参数记录与实际 SPS 一致性准入；当前硬件 Sender 仍为 AVC，HEVC/60fps 未完成。
+
+REQ-PICOO-BITSTREAM-003：复用已核对的 Scuffle H.264 0.2.2 AVCDecoderConfigurationRecord::build/parse（现有 MIT/Apache-2.0 Rust 依赖，无新增平台包），从 raw SPS/PPS 构建 bounded avcC；长度边界在分配与 u16 序列化前验证。记录头 profile/compatibility/level 与 SPS 前四字节一致性校验是 Picoo 配置约束，不自行解释完整 SPS。Sender 通过该记录取得 profile/level；不支持或缺参数时明确 unspecified/0，不伪造可支持的格式。完整 SPS 几何、颜色和 no-B-frame 证据仍缺失，未按它们宣称准入完成。
+
+REQ-PICOO-MEDIA-029：VideoToolbox/MF 以及显式测试 OpenH264 adapter 共用 configured_avc gate。已声明配置中的 SPS/PPS 必须是有界 raw NAL，逐个比对 AU 内每个参数集（含孤立 SPS/PPS），任何冲突在 native session 状态变化前拒绝。VideoToolbox 删除“带内优先于配置”与嵌套格式兼容解释；无配置的独立原生 Decoder fixture 测试仍可自描述，生产 Receiver 继续提交配置快照。当前 Annex-B/四字节长度的 adapter 检测尚未被显式 NalFormat wire 字段替换。
+
+用户完成 Keychain 系统授权后，c810636 Mac 测试包窗口已存在且 UDP 4433 监听恢复；此前启动卡住的线程栈确认等待 SecKeychainFindGenericPassword。本记录不把该旧测试包当作当前 typed StreamConfig wire 的端到端证据。
+
+本批最终 Linux 容器：bitstream 13、Decoder 7、protocol 23、Sender 69、Receiver 107 / 2 ignored、sim 20 全部通过。Mac Decoder 9 项（含真实 VideoToolbox 冲突后 session 不变且可继续解码）、Receiver 100 / 2 ignored 通过；最后增加 avcC builder 后 bitstream 13、Sender 69 再次通过。相关六个 crate all-targets clippy、文档链接及格式检查通过。codec-bitstream fuzz 同时覆盖 builder，4,107,645 次 / 21 秒无崩溃。Android 当前 JNI + APK/unit test 构建通过，iOS 当前 XCFramework/未签名 App 构建及 19 项 Swift/C ABI 测试通过。Windows 原生调用仍等待当前变更的 CI，不以 Mac 替代。

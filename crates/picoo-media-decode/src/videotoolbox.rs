@@ -27,7 +27,7 @@ use objc2_video_toolbox::{
 };
 use picoo_bitstream::avc::{
     access_unit_contains_idr, annex_b_to_length_prefixed, extract_sps_pps,
-    is_length_prefixed_access_unit, split_annex_b_nals,
+    is_length_prefixed_access_unit,
 };
 use picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES;
 use picoo_protocol::control::StreamConfig;
@@ -220,6 +220,7 @@ impl AccessUnitDecoder for VideoToolboxDecoder {
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        crate::configured_avc::validate(access_unit, stream_config)?;
         self.decode_real_access_unit(access_unit, stream_config)
     }
 
@@ -246,43 +247,15 @@ fn check_status(operation: &str, status: i32) -> Result<(), DecodeError> {
     }
 }
 
-fn normalize_parameter_set(data: &[u8], nal_type: u8) -> Option<Vec<u8>> {
-    if data.first().is_some_and(|byte| byte & 0x1f == nal_type) {
-        return Some(data.to_vec());
-    }
-    if data.len() > 4 {
-        let length = u32::from_be_bytes(data[..4].try_into().ok()?) as usize;
-        if length == data.len() - 4 && data[4] & 0x1f == nal_type {
-            return Some(data[4..].to_vec());
-        }
-    }
-    split_annex_b_nals(data)
-        .into_iter()
-        .find(|nal| nal.first().is_some_and(|byte| byte & 0x1f == nal_type))
-        .map(ToOwned::to_owned)
-}
-
 fn parameter_sets(
     stream_config: Option<&StreamConfig>,
     access_unit: &[u8],
 ) -> Option<(Vec<u8>, Vec<u8>)> {
-    // In-band parameter sets describe this AU most directly. Prefer them so
-    // a legal mid-stream format change cannot be shadowed by stale config.
-    if let Some(parameter_sets) = extract_sps_pps(access_unit) {
-        return Some(parameter_sets);
+    match stream_config {
+        // Validated before native state mutation by configured_avc::validate.
+        Some(config) => Some((config.sps.clone(), config.pps.clone())),
+        None => extract_sps_pps(access_unit),
     }
-    if let Some(config) = stream_config {
-        if let (Some(sps), Some(pps)) = (
-            normalize_parameter_set(&config.sps, 7),
-            normalize_parameter_set(&config.pps, 8),
-        ) {
-            return Some((sps, pps));
-        }
-        if let Some(parameter_sets) = extract_sps_pps(&config.sps) {
-            return Some(parameter_sets);
-        }
-    }
-    None
 }
 
 fn access_unit_to_avcc(access_unit: &[u8]) -> Result<Vec<u8>, DecodeError> {
@@ -508,8 +481,36 @@ unsafe fn copy_pixel_buffer(image_buffer: &CVImageBuffer) -> Result<CopiedNv12, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use picoo_bitstream::avc::split_annex_b_nals;
 
     use picoo_testkit::{H264_1280X720_RED_IDR, H264_64X64_RED_IDR};
+
+    #[test]
+    fn conflicting_in_band_configuration_does_not_replace_native_session() {
+        let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).unwrap();
+        let config = StreamConfig {
+            codec: picoo_protocol::control::VideoCodec::Avc as i32,
+            sps,
+            pps,
+            ..Default::default()
+        };
+        let mut decoder = VideoToolboxDecoder::new();
+        decoder
+            .decode_access_unit(H264_64X64_RED_IDR, Some(&config))
+            .unwrap();
+        let session = decoder.session.as_ref().map(CFRetained::as_ptr);
+        assert!(matches!(
+            decoder.decode_access_unit(H264_1280X720_RED_IDR, Some(&config)),
+            Err(DecodeError::ConfigurationMismatch)
+        ));
+        assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
+        let frame = decoder
+            .decode_access_unit(H264_64X64_RED_IDR, Some(&config))
+            .unwrap()
+            .frame
+            .unwrap();
+        assert_eq!(frame.description().width, 64);
+    }
 
     #[test]
     fn videotoolbox_decodes_annex_b_idr_to_nv12() {
@@ -540,6 +541,7 @@ mod tests {
         avcc.extend_from_slice(&(idr.len() as u32).to_be_bytes());
         avcc.extend_from_slice(idr);
         let config = StreamConfig {
+            codec: picoo_protocol::control::VideoCodec::Avc as i32,
             width: 64,
             height: 64,
             sps,
