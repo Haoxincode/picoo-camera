@@ -231,3 +231,12 @@ Sender 严格准入最终验证：Mac 完整套件通过（Receiver 103 passed /
 ## MF 部分输出类型
 
 01c1ac1 的 Windows CI 已执行重新协商，但返回“无匹配 NV12”。按 [GetOutputAvailableType](https://learn.microsoft.com/en-us/windows/win32/api/mftransform/nf-mftransform-imftransform-getoutputavailabletype) 契约，候选可为只含 major/subtype 的部分类型；缺失 MF_MT_FRAME_SIZE 不应直接等同已知尺寸不匹配。仅在属性明确不存在时补入请求的输出尺寸，仍以 SetOutputType 原生接受为门禁；已知不匹配尺寸继续拒绝。失败信息包含最多 32 个候选的 subtype/尺寸，以定位剩余原生差异。旧 CI 未记录候选内容，不能据此断言此次失败必然由部分类型导致；后续 Windows CI 继续验证。
+
+
+## 唯一 AU 线路格式
+
+REQ-PICOO-PROTOCOL-020 统一线路图像为四字节大端 NAL 长度。显式原生适配器调用既有有界解析器，拒绝截断、无图像和错误格式，再进入 Sender 状态处理；VideoToolbox/C ABI 输入借用原字节，MediaCodec/JNI 从 Annex B 转换。Receiver 在改变配置前检查记录长度字段，真实 Decoder 不再猜测输入格式；仅 MF/OpenH264 平台 API 边界需要 Annex B。测试样本在显式边界转换，模拟传输的任意字节仍只用于 StubDecoder。
+
+本机 bitstream 单元 15、标准原生记录契约 6、FFI 10 项通过，Decoder/FFI cargo check 通过；Mac 完整套件与跨平台 CI 继续验证。没有手机操作，不将 JNI 编译或样本测试计为 Android 多厂商硬件编码验收。
+
+唯一 AU 格式的 Mac 完整回归通过：Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70；bitstream/FFI/Decoder/Receiver all-targets Clippy 通过。Windows 与 Android 新线路格式仍须本次 CI 验证。

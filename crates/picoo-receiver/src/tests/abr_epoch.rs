@@ -27,7 +27,7 @@ pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Ve
     .expect("encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
-    (annex, sps, pps)
+    (super::wire_avc(&annex), sps, pps)
 }
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
@@ -449,7 +449,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
 
     // Baseline IDR (single-fragment) — tails not armed yet.
     sender
-        .ingest_and_flush(&annex, true, 1, 1)
+        .ingest_and_flush(&super::wire_avc(&annex), true, 1, 1)
         .expect("baseline");
     for _ in 0..200 {
         receiver.pump().expect("rx");
@@ -466,7 +466,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     // Incomplete multi-fragment IDR: only fragment 0 arrives.
     sender.transport_mut().arm();
     sender
-        .ingest_and_flush(&large_key, true, 2, 1)
+        .ingest_and_flush(&super::wire_avc(&large_key), true, 2, 1)
         .expect("large incomplete");
     assert!(
         sender.transport_mut().dropped_tail_fragments >= 1,
@@ -505,7 +505,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
         .unwrap_or(0);
     sender.transport_mut().disarm();
     sender
-        .ingest_and_flush(&recovery_au, true, 100, 1)
+        .ingest_and_flush(&super::wire_avc(&recovery_au), true, 100, 1)
         .expect("recovery idr");
     let mut recovered = false;
     for _ in 0..400 {

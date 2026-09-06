@@ -135,7 +135,8 @@ pub extern "C" fn picoo_sender_wait_for_event(
         .wait_after(after_revision, Duration::from_millis(u64::from(timeout_ms)))
 }
 
-/// Ingest one H.264 access unit. Returns 0 on success, negative on error.
+/// Ingest one H.264 picture with four-byte big-endian NAL lengths.
+/// Returns 0 on success, negative on error; malformed framing returns -2.
 #[no_mangle]
 pub extern "C" fn picoo_sender_ingest_access_unit(
     handle: *mut std::ffi::c_void,
@@ -156,10 +157,17 @@ pub extern "C" fn picoo_sender_ingest_access_unit(
 
     let inner = unsafe { &*(handle as *mut SenderInner) };
     let slice = unsafe { std::slice::from_raw_parts(data, len) };
+    let Ok(access_unit) = picoo_bitstream::canonical_access_unit(
+        picoo_bitstream::Codec::Avc,
+        picoo_bitstream::NalFormat::LengthPrefixed(picoo_bitstream::NalLengthSize::Four),
+        slice,
+    ) else {
+        return -2;
+    };
     let mut session = inner.session.lock_or_recover();
 
     match session.ingest_encoder_access_unit(NativeEncoderAccessUnit {
-        data: slice,
+        data: access_unit.as_ref(),
         is_keyframe: is_keyframe != 0,
         pts_us,
         encoded_at_us,

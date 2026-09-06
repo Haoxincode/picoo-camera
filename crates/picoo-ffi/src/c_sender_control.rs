@@ -17,6 +17,8 @@ pub struct PicooEncoderSubmitOutcome {
 }
 
 /// Submit one complete native encoder callback under the Rust-owned operation order.
+/// AVC picture bytes use four-byte big-endian NAL lengths (VideoToolbox contract).
+/// Malformed framing returns -2 before changing encoder or configuration state.
 #[no_mangle]
 pub extern "C" fn picoo_sender_submit_encoder_event(
     handle: *mut std::ffi::c_void,
@@ -51,6 +53,13 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
         return -1;
     }
     let data = unsafe { std::slice::from_raw_parts(data, len) };
+    let Ok(data) = picoo_bitstream::canonical_access_unit(
+        picoo_bitstream::Codec::Avc,
+        picoo_bitstream::NalFormat::LengthPrefixed(picoo_bitstream::NalLengthSize::Four),
+        data,
+    ) else {
+        return -2;
+    };
     let stream_config = if configure_stream != 0 {
         let (sps, pps) = copy_parameter_sets(sps, sps_len, pps, pps_len);
         Some(StreamConfigParams {
@@ -72,7 +81,7 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
         .session
         .lock_or_recover()
         .submit_encoder_event(NativeEncoderEvent {
-            data,
+            data: data.as_ref(),
             is_keyframe: is_keyframe != 0,
             pts_us,
             encoded_at_us,

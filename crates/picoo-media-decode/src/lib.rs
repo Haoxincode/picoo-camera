@@ -234,7 +234,15 @@ mod tests {
 
         let mut decoder = create_test_decoder().expect("explicit software test decoder");
         let frame = decoder
-            .decode_access_unit(&annex, None)
+            .decode_access_unit(
+                &picoo_bitstream::canonical_access_unit(
+                    picoo_bitstream::Codec::Avc,
+                    picoo_bitstream::NalFormat::AnnexB,
+                    &annex,
+                )
+                .unwrap(),
+                None,
+            )
             .expect("decode")
             .frame
             .expect("picture");

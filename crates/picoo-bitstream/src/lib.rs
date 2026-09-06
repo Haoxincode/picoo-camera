@@ -7,6 +7,8 @@ pub use avc_facts::{AvcColorFacts, AvcSpsFacts};
 
 mod access_unit;
 mod configuration;
+mod wire;
+pub use wire::canonical_access_unit;
 
 pub use access_unit::{
     split_nals, AccessUnit, NalFormat, NalLengthSize, PictureInfo, PictureKind, RandomAccessPoint,

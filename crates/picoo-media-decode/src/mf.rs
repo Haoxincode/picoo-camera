@@ -8,7 +8,7 @@
 use std::mem::ManuallyDrop;
 
 use bytes::Bytes;
-use picoo_bitstream::avc::{access_unit_contains_idr, access_unit_to_annex_b};
+use picoo_bitstream::{AccessUnit, PictureKind, RandomAccessPoint};
 use picoo_protocol::control::StreamConfig;
 use windows::core::{GUID, HRESULT};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
@@ -203,14 +203,16 @@ impl MfH264Decoder {
 
     fn decode_h264_au(
         &mut self,
-        access_unit: &[u8],
+        picture: AccessUnit<'_>,
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
         self.ensure_configured(stream_config)?;
-        // Android MediaCodec commonly emits length-prefixed AUs; MF expects Annex-B.
-        let annex = access_unit_to_annex_b(access_unit);
-        let access_unit = annex.as_ref();
-        let refresh_accepted = access_unit_contains_idr(access_unit);
+        let annex = picture
+            .to_annex_b()
+            .map_err(|_| DecodeError::UnsupportedAccessUnit)?;
+        let access_unit = annex.as_slice();
+        let refresh_accepted =
+            picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
         let owned;
         let payload = if self.inject_sequence_header && !self.sequence_header.is_empty() {
             self.inject_sequence_header = false;
@@ -251,8 +253,8 @@ impl AccessUnitDecoder for MfH264Decoder {
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
-        crate::configured_avc::validate(access_unit, stream_config)?;
-        self.decode_h264_au(access_unit, stream_config)
+        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
+        self.decode_h264_au(picture, stream_config)
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {

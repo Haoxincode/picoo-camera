@@ -80,6 +80,14 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_ingestAccessUnit(
     if data.is_empty() {
         return -1;
     }
+    // MediaCodec AVC byte-buffer output is adapted here, before Core staging.
+    let Ok(data) = picoo_bitstream::canonical_access_unit(
+        picoo_bitstream::Codec::Avc,
+        picoo_bitstream::NalFormat::AnnexB,
+        &data,
+    ) else {
+        return -2;
+    };
     with_sender(handle, |inner| {
         let Ok(mut session) = inner.session.lock() else {
             return -1;

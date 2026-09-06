@@ -183,6 +183,11 @@ impl ReceiverSession {
         .map_err(|error| {
             ReceiverError::Protocol(format!("invalid codec configuration: {error}"))
         })?;
+        if record.nal_length_size() != picoo_bitstream::NalLengthSize::Four {
+            return Err(ReceiverError::Protocol(
+                "stream configuration requires four-byte NAL lengths".into(),
+            ));
+        }
         if config.profile != picoo_protocol::control::VideoProfile::AvcHigh as i32
             || config.level_idc != u32::from(record.level_idc())
         {

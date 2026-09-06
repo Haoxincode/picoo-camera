@@ -4,9 +4,8 @@ use bytes::Bytes;
 use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use openh264::nal_units;
-use picoo_bitstream::avc::{
-    access_unit_contains_idr, access_unit_to_annex_b, is_length_prefixed_access_unit,
-};
+use picoo_bitstream::avc::is_length_prefixed_access_unit;
+use picoo_bitstream::{PictureKind, RandomAccessPoint};
 use picoo_frame_hub::nv12_byte_size;
 use picoo_protocol::control::StreamConfig;
 
@@ -123,12 +122,15 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return self.stub.decode_access_unit(access_unit, stream_config);
         }
 
-        crate::configured_avc::validate(access_unit, stream_config)?;
+        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
         self.ensure_param_sets(stream_config)?;
 
-        let annex = access_unit_to_annex_b(access_unit);
-        let access_unit = annex.as_ref();
-        let contains_idr = access_unit_contains_idr(access_unit);
+        let annex = picture
+            .to_annex_b()
+            .map_err(|_| DecodeError::UnsupportedAccessUnit)?;
+        let access_unit = annex.as_slice();
+        let contains_idr =
+            picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
 
         let mut last: Option<(u32, u32, u32, Vec<u8>)> = None;
         // Decode each NAL; keep the latest picture (IDR/P).

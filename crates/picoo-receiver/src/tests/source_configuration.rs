@@ -31,7 +31,7 @@ fn network_feedback_keeps_source_fixed_and_explicit_changes_still_decode() {
         .expect("encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();
         let (sps, pps) = extract_sps_pps(&annex).expect("sps/pps");
-        (annex, sps, pps)
+        (super::wire_avc(&annex), sps, pps)
     }
 
     let (au_hi, sps_hi, pps_hi) = encode_pattern(1920, 1080, 1);

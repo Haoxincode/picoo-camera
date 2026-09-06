@@ -113,7 +113,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        annex
+        super::wire_avc(&annex)
     };
     #[cfg(any(windows, target_vendor = "apple"))]
     let soak_au: Vec<u8> = b"soak-frame-stub".to_vec();

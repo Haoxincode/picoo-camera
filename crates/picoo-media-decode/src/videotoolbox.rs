@@ -22,10 +22,7 @@ use objc2_video_toolbox::{
     kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder, VTDecodeFrameFlags,
     VTDecodeInfoFlags, VTDecompressionOutputCallbackRecord, VTDecompressionSession,
 };
-use picoo_bitstream::avc::{
-    access_unit_contains_idr, annex_b_to_length_prefixed, extract_sps_pps,
-    is_length_prefixed_access_unit,
-};
+use picoo_bitstream::{AccessUnit, PictureKind, RandomAccessPoint};
 use picoo_frame_hub::{ApplePixelBufferLease, NativeImage};
 use picoo_protocol::control::StreamConfig;
 
@@ -137,15 +134,13 @@ impl VideoToolboxDecoder {
     fn decode_real_access_unit(
         &mut self,
         access_unit: &[u8],
+        picture: AccessUnit<'_>,
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
-        // Validate and normalize the AU before touching decoder state. This
-        // keeps malformed protocol payloads observable instead of turning
-        // them into a misleading "decoder not initialized" result.
-        let avcc = access_unit_to_avcc(access_unit)?;
-        let contains_idr = access_unit_contains_idr(access_unit);
+        let contains_idr =
+            picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
         let (sps, pps) =
-            parameter_sets(stream_config, access_unit).ok_or(DecodeError::NotInitialized)?;
+            parameter_sets(stream_config, &picture).ok_or(DecodeError::NotInitialized)?;
         let facts = picoo_bitstream::AvcSpsFacts::parse(&sps)
             .map_err(|error| DecodeError::Platform(error.to_string()))?;
         crate::native_format::validate_source(&facts)?;
@@ -155,7 +150,7 @@ impl VideoToolboxDecoder {
             return Err(DecodeError::ConfigurationMismatch);
         }
         self.ensure_session(&sps, &pps)?;
-        let sample = create_sample_buffer(&avcc, self.format_description.as_deref())?;
+        let sample = create_sample_buffer(access_unit, self.format_description.as_deref())?;
 
         {
             let mut result =
@@ -225,8 +220,8 @@ impl AccessUnitDecoder for VideoToolboxDecoder {
         access_unit: &[u8],
         stream_config: Option<&StreamConfig>,
     ) -> Result<DecodeOutcome, DecodeError> {
-        crate::configured_avc::validate(access_unit, stream_config)?;
-        self.decode_real_access_unit(access_unit, stream_config)
+        let picture = crate::configured_avc::validate(access_unit, stream_config)?;
+        self.decode_real_access_unit(access_unit, picture, stream_config)
     }
 
     fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
@@ -254,7 +249,7 @@ fn check_status(operation: &str, status: i32) -> Result<(), DecodeError> {
 
 fn parameter_sets(
     stream_config: Option<&StreamConfig>,
-    access_unit: &[u8],
+    picture: &AccessUnit<'_>,
 ) -> Option<(Vec<u8>, Vec<u8>)> {
     match stream_config {
         // Validated before native state mutation by configured_avc::validate.
@@ -268,15 +263,19 @@ fn parameter_sets(
                 configuration.pps()[0].to_vec(),
             ))
         }
-        None => extract_sps_pps(access_unit),
+        None => Some((
+            picture
+                .nals()
+                .iter()
+                .find(|nal| nal[0] & 0x1f == 7)?
+                .to_vec(),
+            picture
+                .nals()
+                .iter()
+                .find(|nal| nal[0] & 0x1f == 8)?
+                .to_vec(),
+        )),
     }
-}
-
-fn access_unit_to_avcc(access_unit: &[u8]) -> Result<Vec<u8>, DecodeError> {
-    if is_length_prefixed_access_unit(access_unit) {
-        return Ok(access_unit.to_vec());
-    }
-    annex_b_to_length_prefixed(access_unit).ok_or(DecodeError::UnsupportedAccessUnit)
 }
 
 fn create_h264_format_description(
@@ -413,11 +412,21 @@ unsafe extern "C-unwind" fn decompression_output_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use picoo_bitstream::avc::split_annex_b_nals;
+    use picoo_bitstream::avc::{extract_sps_pps, split_annex_b_nals};
 
     use picoo_testkit::{
         AVC_1280X720_BT709_IDR as H264_1280X720_RED_IDR, AVC_64X64_BT709_IDR as H264_64X64_RED_IDR,
     };
+
+    fn wire(annex: &[u8]) -> Vec<u8> {
+        picoo_bitstream::canonical_access_unit(
+            picoo_bitstream::Codec::Avc,
+            picoo_bitstream::NalFormat::AnnexB,
+            annex,
+        )
+        .unwrap()
+        .into_owned()
+    }
 
     fn assert_native_red(frame: &DecodedFrame) {
         use objc2_core_video::*;
@@ -460,16 +469,16 @@ mod tests {
         };
         let mut decoder = VideoToolboxDecoder::new();
         decoder
-            .decode_access_unit(H264_64X64_RED_IDR, Some(&config))
+            .decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config))
             .unwrap();
         let session = decoder.session.as_ref().map(CFRetained::as_ptr);
         assert!(matches!(
-            decoder.decode_access_unit(H264_1280X720_RED_IDR, Some(&config)),
+            decoder.decode_access_unit(&wire(H264_1280X720_RED_IDR), Some(&config)),
             Err(DecodeError::ConfigurationMismatch)
         ));
         assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
         let frame = decoder
-            .decode_access_unit(H264_64X64_RED_IDR, Some(&config))
+            .decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config))
             .unwrap()
             .frame
             .unwrap();
@@ -493,12 +502,12 @@ mod tests {
         };
         let mut decoder = VideoToolboxDecoder::new();
         decoder
-            .decode_access_unit(H264_64X64_RED_IDR, Some(&config))
+            .decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config))
             .unwrap();
         let session = decoder.session.as_ref().map(CFRetained::as_ptr);
         config.width = 1280;
         assert!(matches!(
-            decoder.decode_access_unit(H264_64X64_RED_IDR, Some(&config)),
+            decoder.decode_access_unit(&wire(H264_64X64_RED_IDR), Some(&config)),
             Err(DecodeError::ConfigurationMismatch)
         ));
         assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
@@ -508,15 +517,15 @@ mod tests {
     fn unknown_native_color_is_rejected_instead_of_relabelled() {
         let mut decoder = VideoToolboxDecoder::new();
         assert!(decoder
-            .decode_access_unit(picoo_testkit::H264_64X64_RED_IDR, None)
+            .decode_access_unit(&wire(picoo_testkit::H264_64X64_RED_IDR), None)
             .is_err());
     }
 
     #[test]
-    fn videotoolbox_decodes_annex_b_idr_to_nv12() {
+    fn videotoolbox_decodes_canonical_idr_to_native_frame() {
         let mut decoder = VideoToolboxDecoder::new();
         let frame = decoder
-            .decode_access_unit(H264_64X64_RED_IDR, None)
+            .decode_access_unit(&wire(H264_64X64_RED_IDR), None)
             .expect("VideoToolbox decode")
             .frame
             .expect("decoded frame");
@@ -587,7 +596,7 @@ mod tests {
     fn in_band_parameter_change_recreates_session_and_updates_dimensions() {
         let mut decoder = VideoToolboxDecoder::new();
         let first = decoder
-            .decode_access_unit(H264_64X64_RED_IDR, None)
+            .decode_access_unit(&wire(H264_64X64_RED_IDR), None)
             .expect("64x64 decode")
             .frame
             .expect("64x64 frame");
@@ -598,7 +607,7 @@ mod tests {
         let first_sps = decoder.sps.clone();
 
         let second = decoder
-            .decode_access_unit(H264_1280X720_RED_IDR, None)
+            .decode_access_unit(&wire(H264_1280X720_RED_IDR), None)
             .expect("1280x720 decode")
             .frame
             .expect("1280x720 frame");

@@ -42,6 +42,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     let annex = bitstream.to_vec();
     assert!(annex.len() > 64, "AU too small for OpenH264 path");
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS from Annex-B");
+    let annex = super::wire_avc(&annex);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -357,7 +358,7 @@ fn macos_videotoolbox_explicit_source_configuration() {
     assert!(sender.report_encoder_started(transaction_720, 2, epoch_720, 720,));
     sender
         .ingest_encoder_access_unit(super::native_au(
-            H264_1280X720_RED_IDR,
+            &super::wire_avc(H264_1280X720_RED_IDR),
             true,
             2,
             (transaction_720, 2, epoch_720, 720),
@@ -431,7 +432,7 @@ fn macos_videotoolbox_explicit_source_configuration() {
     });
     assert!(sender.report_encoder_started(transaction_1080, 3, epoch_1080, 1080,));
     sender
-        .ingest_encoder_access_unit(super::native_au(H264_1920X1080_RED_IDR, true, 3, (transaction_1080, 3, epoch_1080, 1080)))
+        .ingest_encoder_access_unit(super::native_au(&super::wire_avc(H264_1920X1080_RED_IDR), true, 3, (transaction_1080, 3, epoch_1080, 1080)))
         .unwrap_or_else(|error| {
             panic!(
                 "commit and queue 1080p IDR: {error:?} (sender {:?}, receiver {:?}, session_error {:?})",
@@ -534,6 +535,7 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     .expect("openh264 encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
+    let annex = super::wire_avc(&annex);
 
     let ring_name = format!(
         "picoo-h264-ring-{}",

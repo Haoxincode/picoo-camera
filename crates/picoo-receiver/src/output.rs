@@ -311,7 +311,10 @@ mod tests {
     fn hardware_decode_bus_gpu_and_cpu_sink_preserve_bt709_pixels() {
         // REQ-PICOO-NEXT-011/016/029: source stays native up to the output exporter.
         let decoded = picoo_media_decode::create_platform_decoder()
-            .decode_access_unit(picoo_testkit::AVC_64X64_BT709_IDR, None)
+            .decode_access_unit(
+                &crate::tests::wire_avc(picoo_testkit::AVC_64X64_BT709_IDR),
+                None,
+            )
             .unwrap()
             .frame
             .unwrap();

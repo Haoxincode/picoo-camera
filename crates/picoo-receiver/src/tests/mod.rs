@@ -122,3 +122,13 @@ fn configured_source() -> picoo_sender::StreamConfigParams {
         ..Default::default()
     }
 }
+
+pub(crate) fn wire_avc(annex: &[u8]) -> Vec<u8> {
+    picoo_bitstream::canonical_access_unit(
+        picoo_bitstream::Codec::Avc,
+        picoo_bitstream::NalFormat::AnnexB,
+        annex,
+    )
+    .unwrap()
+    .into_owned()
+}
