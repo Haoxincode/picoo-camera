@@ -38,6 +38,8 @@ private enum SharedRingReaderHarness {
             throw HarnessError.usage
         }
         switch mode {
+        case "output-pool":
+            try verifyOutputPixelBufferPool()
         case "read-once":
             guard arguments.count == 3, let timestamp = UInt64(arguments[2]) else {
                 throw HarnessError.usage

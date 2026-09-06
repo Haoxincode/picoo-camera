@@ -20,7 +20,7 @@ private struct OutputFormat {
     let height: Int
     let description: CMFormatDescription
     let streamFormat: CMIOExtensionStreamFormat
-    let pool: CVPixelBufferPool
+    let pool: OutputPixelBufferPool
 }
 
 final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unchecked Sendable {
@@ -172,14 +172,12 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             // unchanged source image while the ring briefly has no readable slot.
             pixelBuffer = cached
         } else {
-            var allocated: CVPixelBuffer?
-            guard CVPixelBufferPoolCreatePixelBuffer(
-                kCFAllocatorDefault,
-                format.pool,
-                &allocated
-            ) == kCVReturnSuccess, let allocated
-            else {
-                Logger.extension.error("Unable to allocate output pixel buffer")
+            let allocated: CVPixelBuffer
+            do {
+                guard let available = try format.pool.acquire() else { return }
+                allocated = available
+            } catch {
+                Logger.extension.error("Unable to allocate output pixel buffer: \(error)")
                 return
             }
             if frame?.copyNV12(to: allocated, workspace: scaleWorkspace) != true {
@@ -262,23 +260,7 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             throw CocoaError(.coderInvalidValue)
         }
 
-        let attributes: NSDictionary = [
-            kCVPixelBufferWidthKey: width,
-            kCVPixelBufferHeightKey: height,
-            kCVPixelBufferPixelFormatTypeKey:
-                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as NSDictionary,
-        ]
-        var pool: CVPixelBufferPool?
-        guard CVPixelBufferPoolCreate(
-            kCFAllocatorDefault,
-            nil,
-            attributes,
-            &pool
-        ) == kCVReturnSuccess, let pool
-        else {
-            throw CocoaError(.coderInvalidValue)
-        }
+        let pool = try OutputPixelBufferPool(width: width, height: height)
 
         let duration = CMTime(value: 1, timescale: frameRate)
         return OutputFormat(

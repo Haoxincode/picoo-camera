@@ -14,6 +14,7 @@
 		A10000000000000000000006 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* CoreMedia.framework */; };
 		A10000000000000000000007 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* CoreVideo.framework */; };
 		A10000000000000000000008 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* IOKit.framework */; };
+		A10000000000000000000009 /* OutputPixelBufferPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* OutputPixelBufferPool.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -30,6 +31,7 @@
 		A2000000000000000000000B /* CoreVideo.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreVideo.framework; path = System/Library/Frameworks/CoreVideo.framework; sourceTree = SDKROOT; };
 		A2000000000000000000000C /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
 		A2000000000000000000000D /* com.haoxincode.picoo-camera.camera-extension.systemextension */ = {isa = PBXFileReference; explicitFileType = wrapper.system-extension; includeInIndex = 0; path = "com.haoxincode.picoo-camera.camera-extension.systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
+		A2000000000000000000000E /* OutputPixelBufferPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputPixelBufferPool.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,6 +63,7 @@
 			children = (
 				A20000000000000000000001 /* main.swift */,
 				A20000000000000000000002 /* PicooCameraProvider.swift */,
+				A2000000000000000000000E /* OutputPixelBufferPool.swift */,
 				A20000000000000000000003 /* SharedRingReader.swift */,
 				A20000000000000000000004 /* SharedRingAtomic.c */,
 				A20000000000000000000005 /* SharedRingAtomic.h */,
@@ -150,6 +153,7 @@
 			files = (
 				A10000000000000000000001 /* main.swift in Sources */,
 				A10000000000000000000002 /* PicooCameraProvider.swift in Sources */,
+				A10000000000000000000009 /* OutputPixelBufferPool.swift in Sources */,
 				A10000000000000000000003 /* SharedRingReader.swift in Sources */,
 				A10000000000000000000004 /* SharedRingAtomic.c in Sources */,
 			);

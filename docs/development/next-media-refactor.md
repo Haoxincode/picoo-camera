@@ -300,3 +300,12 @@ REQ-PICOO-MEDIA-033 按 Android 官方 [MediaCodec codec-specific data](https://
 
 
 最终 `cargo xtask build android` 完整工作区原生测试、doc tests 与 Android 构建通过；bitstream/FFI Clippy、401 项文档链接检查通过。删除 JNI setStreamConfig 中缺 PPS 时猜测整段 SPS 输入格式的旧分支；配置参数只遵循当前裸 NAL 契约，原生 CSD 只在显式适配入口转换。
+
+
+## Camera Extension 系统图像池上限
+
+REQ-PICOO-VCAM-014 将生产系统 sample 图像分配集中到 OutputPixelBufferPool，采用 CoreVideo 官方 CVPixelBufferPoolCreatePixelBufferWithAuxAttributes 与 kCVPixelBufferPoolAllocationThresholdKey=3，和现有 Rust Apple GPU pool 使用相同平台契约。API 已由当前 macOS SDK/Swift 6 严格并发与 warnings-as-errors 编译验证，不引入依赖或手写引用计数。固定格式表持有固定池，切格式不重建同布局池；外部系统 sample 持有 allocation 时不能通过创建新池绕过上限。
+
+生产 Swift 池的真实 CMSampleBuffer 回归通过：持有三张后拒绝第四张；只释放局部 CVPixelBuffer 引用不能恢复分配，释放一个系统 sample 后恢复，其他持有样本继续占槽。测试纳入 cargo xtask test macos，并随现有 Swift/C harness 在 Mac CI 执行。这是每布局系统图像池边界，不代表全链路显存总预算、CMIO 实际客户端或已交付样本隐私期限完成。
+
+系统池最终验证：cargo xtask test macos 完整回归通过（FrameHub 53 passed/2 ignored，Swift/C 跨进程合同，Decoder 16，GPU 9，Receiver 103 passed/2 ignored，GPUI Apple 4，Desktop 70）；Receiver release/Camera Extension 构建与 Mac 打包成功，文档链接检查通过。
