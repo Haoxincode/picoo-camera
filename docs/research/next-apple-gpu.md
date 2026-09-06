@@ -26,3 +26,11 @@
 | BT.709 | 54/99/255 | 1 |
 
 说明当前系统尊重目标 matrix，提供 GPUI 所需转换的可行性证据。probe 的 CPU 锁定只用于完成后的诊断读值，不是生产图像链路。仍需真实 Decoder 输入、黑白/色条、transfer/primaries、旋转镜像、池容量和 GPU 完成/取消测试；单色结果不作为完整画质或实时性能验收。
+
+## Rust GPU 边界验证
+
+`picoo-gpu` 通过 objc2 0.6.4 与 framework 0.3.2 接入上述实际 API。只增加已有锁定绑定的必要 features，无新版本包或 shader 编译工具链。context 关闭软件 renderer 和中间图像缓存，每次渲染使用 autorelease pool；三张 IOSurface 输出通过 CVPixelBufferPool allocation threshold 限制，调用者持有 clone 时不重复使用该 allocation。`CIRenderTask` 完成等待在 renderer 的专用调用线程内，返回的是完成图像，不把提交当作完成。
+
+实际灰阶测试发现，CVPixelBuffer 的 matrix/primaries/transfer attachments 不足以让 Core Image 自动推断出与指定目标完全相同的传递曲线：原 Y=40 被改变为 52。生产适配现明确传入 `kCIImageColorSpace = CGColorSpaceITUR_709`，并分别指定 BT.709 输出或 GPUI sRGB 输出色彩空间。BT.709 源 attachment 缺失或不匹配时拒绝，不修改共享源对象、不猜测。修改后灰阶、四方向 × 镜像、contain 黑边和两种颜色输出测试通过。
+
+当前验证是合成原生 NV12 经真实 Metal/Core Image 的图像和资源测试；Decoder、FrameBus、预览 UI 尚未改用它。GPUI 后续 GPU 读取的 CVMetalTexture/CVPixelBuffer 保留与完成交接仍需单独审查，不能用本 renderer 已完成写入代替下游 GPU 读取完成。固定布局池的局部上限也不代替跨输出、重建和资源代际的总预算。

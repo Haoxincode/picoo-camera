@@ -202,6 +202,7 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     )
     .run()?;
     cmd!(sh, "cargo test -p picoo-media-decode").run()?;
+    cmd!(sh, "cargo test -p picoo-gpu").run()?;
     cmd!(
         sh,
         "cargo test -p picoo-receiver --lib paired_avcc_length_prefixed_au_reaches_latest_frame_store"

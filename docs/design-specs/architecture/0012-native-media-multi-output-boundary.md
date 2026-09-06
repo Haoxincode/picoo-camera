@@ -16,6 +16,7 @@
 - `picoo-frame-hub` 拥有不可变原生源帧、身份、描述及 FrameBus。native image 不含 CPU 像素变体；资源引用释放与 GPU 完成分别管理。
 - Apple 原生图像在 Decoder 完成回调返回前 retain 已完成的 IOSurface-backed CVPixelBuffer；所有别名不得继续写像素或 attachment。GPU 消费者持有图像引用直至任务完成（包括取消/失败），不能将工作提交或 CPU 引用释放解释为 GPU 完成。图像边界不提供安全的可变平台对象或 CPU mapping 接口。
 - `picoo-gpu` 拥有平台 context、资源池、统一 RenderSpec 与输出专用 exporter。FrameHub 不反向依赖它。
+- RenderSpec 的旋转先于输出坐标中的水平镜像，contain 保持源比例并填充不透明黑边。Apple GPU renderer 使用显式 Metal device 和 Core Image；源、目标色彩空间分别明确指定，不能以隐式推断替代已提交色彩合同。每个固定布局的输出池最多三张表面，拒绝继续分配；输出发布前必须完成 GPU 写入，后续消费者仍对自己的 GPU 读取寿命负责。
 - Preview latest-only；虚拟摄像头使用独立 SampleClock；处理后录像订阅有界有序原生帧；原码流录像在 live scheduler/Decoder 之前接收完整 AU。
 - 每个摄像头 sink 独立验证 GpuNative/CpuBridge。CPU 输出只做目标 GPU 图像的物化、布局复制与必要上传，不拥有 codec/连接事务，不反向发布到原生帧总线。
 

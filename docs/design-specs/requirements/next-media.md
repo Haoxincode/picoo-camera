@@ -58,3 +58,9 @@
 | REQ-PICOO-BITSTREAM-002 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、023、025 | 双 codec 明确 NAL 格式、有界配置解释与保守 RAP 分类；区分 HEVC IDR/CRA/RASL/RADL，拒绝不支持结构 | 硬件生成 AVC/HEVC fixtures、截断/溢出/多图像/恶意数量回归；跨平台编译；原生解码合同另验 |
 
 | REQ-PICOO-BITSTREAM-003 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | 原生 AVC raw SPS/PPS 通过标准 avcC builder 进入有界配置记录；record profile/compatibility/level 必须与全部 SPS 头一致，禁止缺参数时猜测 | 实际硬件参数集 roundtrip、头冲突/长度边界、fuzz；不等同完整 SPS 几何/色彩/no-B-frame 准入 |
+
+## GPU 边界分解
+
+| ID | 状态 | 来源 | 契约 | 验收 |
+| --- | --- | --- | --- | --- |
+| REQ-PICOO-GPU-001 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、016、029 | Apple 原生 NV12 源经显式 Metal/Core Image 转为独立目标图像；源/目标色彩明确，旋转后镜像，contain 不变形；固定布局三槽池，完成 GPU 写入后交付不可变输出 | M4 实际 GPU 色彩/灰阶/八种方向组合、黑边、池耗尽与保留引用、跨线程寿命；不代表 Decoder/Preview 接入或跨输出总预算完成 |

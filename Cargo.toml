@@ -14,6 +14,7 @@ members = [
   "crates/picoo-media-decode",
   "crates/picoo-diagnostics",
   "crates/picoo-frame-hub",
+  "crates/picoo-gpu",
   "crates/picoo-sender",
   "crates/picoo-receiver",
   "crates/picoo-ffi",
@@ -70,6 +71,7 @@ picoo-metrics = { path = "crates/picoo-metrics" }
 picoo-media-decode = { path = "crates/picoo-media-decode" }
 picoo-diagnostics = { path = "crates/picoo-diagnostics" }
 picoo-frame-hub = { path = "crates/picoo-frame-hub" }
+picoo-gpu = { path = "crates/picoo-gpu" }
 picoo-sender = { path = "crates/picoo-sender" }
 picoo-receiver = { path = "crates/picoo-receiver" }
 picoo-ffi = { path = "crates/picoo-ffi" }

@@ -114,3 +114,9 @@ REQ-PICOO-MEDIA-029：VideoToolbox/MF 以及显式测试 OpenH264 adapter 共用
 GPU 转换复用判断与 M4 可重复 probe 见 docs/research/next-apple-gpu.md 和 verification/native-media/core-image-color-probe.swift。Core Image 显式 Metal 渲染的 BT.601/709 target matrix 数值通过；当前 GPUI 的固定颜色契约已核实，不将 CPU 转换删掉后直接提交错误颜色的 source surface。d5cddc4 CI 的 Rust/Android/macOS/iOS job 已通过，Windows 仍在执行。
 
 本步 Mac frame-hub 单元测试 43 passed / 2 ignored（原有忽略项），all-targets clippy -D warnings、cargo fmt、文档链接检查通过；Core Image probe 加入目标 YUV ±1 断言并复跑通过。未运行当前 wire 的 Mac/Xiaomi 相机端到端测试，不将资源单元测试视为该证据。
+
+REQ-PICOO-GPU-001：新增架构指定的 picoo-gpu crate，依赖方向 GPU→FrameHub。AppleRenderer 显式 Metal/Core Image，无 CPU 像素访问或软件 fallback；旋转后镜像、contain 黑边、BT.709 limited 与 GPUI BT.601 full 输出分开。固定布局 CVPixelBufferPool 三槽阈值，GPU 完成写入后才交付 RenderedImage；下游 GPU 读取仍须保留 clone 至自己的完成，不能复用这个写入完成证据。source attachment 不匹配拒绝，源对象不变。每次渲染 autorelease pool，禁用中间图像缓存。
+
+首次红色 fixture 测试通过后，灰阶发现 Core Image 默认输入颜色推断将 Y=40 变为 52；改为显式 kCIImageColorSpace BT.709 后，实际 M4 七项测试全部通过（46.66 秒），覆盖两输出、灰阶、八种方向/镜像、contain、池耗尽、保留 clone、跨线程及非法尺寸/缺失 source color。Linux 仅公共契约 1 项通过，不宣称 Linux GPU 支持。cargo xtask test macos 已包含此测试，以真实 Metal 可用性验收，不增加无 device 时的跳过或软件替代。Decoder/FrameBus/Preview 仍未使用新 renderer，四十项总目标继续未完成。
+
+该 GPU 批次 picoo-gpu/xtask all-targets Clippy -D warnings、cargo fmt、文档链接检查通过。前一批 CI 34021277005 的 Windows/macOS 仍在执行，先保留本地阶段提交，避免频繁 push 取消原生构建；待下一次推送一并提交后续集成。

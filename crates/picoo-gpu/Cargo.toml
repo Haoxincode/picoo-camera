@@ -1,0 +1,19 @@
+[package]
+name = "picoo-gpu"
+description = "Native image rendering and output resource ownership"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+picoo-frame-hub.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDictionary", "NSValue", "NSError", "NSString"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFDictionary", "CFNumber", "CFString", "CFCGTypes"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferPool", "CVReturn"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
+objc2-core-image = { version = "0.3.2", default-features = false, features = ["std", "CIColor", "CIContext", "CIImage", "CIRenderDestination", "objc2-core-foundation", "objc2-core-graphics", "objc2-core-video", "objc2-metal"] }
+objc2-metal = { version = "0.3.2", default-features = false, features = ["std", "MTLDevice"] }
