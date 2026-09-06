@@ -1,30 +1,32 @@
 # CI 与跨平台构建
 
-本文档说明 Picoo Camera 如何在 **Cloud Agent 开发环境** 与 **GitHub Actions** 之间分工，以产出各平台可用二进制。它与 [ARCH-PICOO-STACK-001](../design-specs/architecture/0001-rust-core-monorepo-boundary.md) 中的 monorepo / xtask 边界一致，并补充 PRD §19 的构建与发布约定。
+本文档说明 Picoo Camera 如何在 **本地开发环境** 与 **GitHub Actions** 之间分工，以产出各平台可用二进制。它与 [ARCH-PICOO-STACK-001](../design-specs/architecture/0001-rust-core-monorepo-boundary.md) 中的 monorepo / xtask 边界一致，并补充 PRD §19 的构建与发布约定。
 
 ## 背景
 
 Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依赖不同的原生 SDK 与工具链：
 
-| 平台 | 关键原生依赖 | 能否在 Linux Cloud Agent 上完成最终产物 |
+| 平台 | 关键原生依赖 | Apple Silicon macOS 本地能力 |
 | --- | --- | --- |
 | Rust Core（共享） | Cargo、Quinn/Rustls；vendored `protoc` | ✅ 开发与测试 |
-| Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
-| Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
-| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译与 VideoToolbox→NV12 解码基线 |
-| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；远端已验证 Rust XCFramework、SwiftUI 壳与 Simulator C ABI 测试基线 |
+| Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 配置 NDK、JDK 与 Android SDK 后可构建 APK/AAB |
+| Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境或对应 GitHub Actions runner |
+| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ✅ 可构建并进行真机调试；正式签名与公证由 release workflow 验证 |
+| iOS Sender | Xcode、VideoToolbox、codesign | ✅ 可构建 Simulator / device 产物并进行真机调试；正式签名导出由 release workflow 验证 |
 
-**结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建与 CI 维护；**各平台最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要试图在 Linux 上交叉编译 GPUI 桌面程序、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。
+**结论：** 本地 macOS 负责日常实现、快速验证及 Android / Apple 平台真机调试；Windows 原生产物交给 Windows 环境构建。**GitHub Actions 是全平台可重复构建、测试、签名、打包和发布的统一验证入口**。所有 workflow 均通过 `cargo xtask` 调用平台构建逻辑。
 
 ## 构建分工
 
 ```text
-Cloud Agent（Linux）
+本地 Apple Silicon macOS
 ├── Rust Core crate 开发与 cargo test
 ├── picoo-testkit QUIC 边界测试 + picoo-sim 虚拟时钟全链路模拟
 ├── Android APK/AAB（NDK + Gradle）
+├── macOS Receiver / Camera Extension 构建与真机调试
+├── iOS Sender 构建与真机调试
 ├── .github/workflows/ 维护与 CI 修复
-└── push 后订阅 CI 结果并迭代
+└── push 后等待 CI 结果并迭代
 
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
@@ -143,18 +145,16 @@ Apple 基线保持三个独立 artifact：
 
 Rust Core 静态库理论上可从 Linux 交叉编译为 Windows `.lib`，但 GPUI、MF、VCam 的最终链接与注册仍必须在 `windows-latest` 上完成。因此 CI 策略是 **Windows 原生构建**，而非 Linux 交叉编译整条 Receiver 链路。
 
-## Cloud Agent 工作流
+## Agent 工作流
 
-在 Cursor Cloud Agent 中开发时，Agent 应：
+Agent 应：
 
-1. 在 Linux 环境完成 Rust Core 变更与 `cargo test`。
+1. 按当前开发环境具备的官方 SDK 和工具链执行相关本地构建与测试；macOS 上可覆盖 Rust Core、Android、macOS 与 iOS 开发链路。
 2. 更新或新增 `.github/workflows/` 中与变更相关的 job。
-3. `git commit` 并 `git push` 到功能分支。
-4. 使用 **cursor-subscriptions** 的 `subscribe_github_ci` 订阅该分支 CI，等待结果而非轮询。
-5. CI 失败时读取 GitHub Actions 日志，修复后再次 push。
-6. 不在 Cloud 环境内尝试运行 Windows/macOS 安装包或虚拟摄像头注册。
-
-Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工具；Android NDK 等可在 install 脚本或 workflow 步骤中按需补齐，**macOS SDK 与 Windows SDK 不放入 Linux install**。
+3. 经用户授权后将变更提交并推送到功能分支。
+4. 等待对应 GitHub Actions 完成；若当前环境提供 CI 订阅能力，可优先订阅而非主动轮询。
+5. CI 失败时读取 GitHub Actions 日志，修复后再次验证。
+6. 不在 macOS 或 Linux 上尝试构建、安装或注册 Windows MF 虚拟摄像头；该链路由 Windows runner 和专用 Windows 11 主机验证。
 
 ## Secrets 与签名
 
@@ -225,7 +225,7 @@ Apple Release 把 Developer ID 或 Apple Distribution P12 只导入临时 Keycha
 
 | 验证类型 | 执行位置 |
 | --- | --- |
-| Rust 单元/集成/协议测试 | `ubuntu-latest`（Cloud Agent 本地亦可） |
+| Rust 单元/集成/协议测试 | 本地开发环境与 `ubuntu-latest` |
 | Android Keystore 身份合约 | `androidTest` APK 在普通 CI 编译；本地 AVD/设备以 `connectedDebugAndroidTest` 执行重载、非明文和损坏 fail-closed 合约 |
 | Android 安装与采集发送 | CI artifact + 真机（人工或后续设备 farm） |
 | Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建/静态契约 + 专用 self-hosted Win11 Host Contract；系统相机 UI 与会议软件仍人工验证 |
@@ -237,4 +237,4 @@ Apple Release 把 Developer ID 或 Apple Distribution P12 只导入临时 Keycha
 
 - [ARCH-PICOO-STACK-001](../design-specs/architecture/0001-rust-core-monorepo-boundary.md) — monorepo 与 xtask 边界
 - [产品 PRD §19 构建与发布](../product/picoo-camera-prd-v1.0-2026-08-27.md)
-- [AGENTS.md](../../AGENTS.md) — Cloud Agent 跨平台构建指令
+- [AGENTS.md](../../AGENTS.md) — 本地开发与跨平台构建指令
