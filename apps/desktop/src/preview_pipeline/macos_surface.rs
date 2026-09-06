@@ -44,6 +44,7 @@ impl PlatformPreviewResources {
             rotation: description.transform.rotation,
             mirror: description.transform.mirror,
             color: OutputColor::Bt601Full,
+            format: picoo_gpu::OutputFormat::Nv12,
         };
         if self.spec != Some(spec) {
             self.renderer = Some(

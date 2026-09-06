@@ -26,6 +26,9 @@ pub(crate) struct CpuImagePool {
 impl CpuImagePool {
     pub(crate) fn new(spec: RenderSpec) -> Result<Self, RenderError> {
         spec.validate()?;
+        if spec.format != crate::OutputFormat::Nv12 {
+            return Err(RenderError::UnsupportedOutputFormat);
+        }
         Ok(Self {
             spec,
             slots: Vec::with_capacity(3),

@@ -23,6 +23,14 @@ pub enum OutputColor {
     /// GPUI's current Metal surface shader contract.
     Bt601Full,
     Bt709Limited,
+    /// Full-range RGB with gamma 2.2 and BT.709 primaries (DXGI display contract).
+    RgbFullG22Bt709,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputFormat {
+    Nv12,
+    Bgra8,
 }
 
 pub use picoo_frame_hub::Rotation;
@@ -36,10 +44,13 @@ pub struct RenderSpec {
     pub rotation: Rotation,
     pub mirror: bool,
     pub color: OutputColor,
+    pub format: OutputFormat,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
+    #[error("unsupported output storage/color combination on this backend")]
+    UnsupportedOutputFormat,
     #[error("invalid output size; expected positive even dimensions up to 1920")]
     InvalidDimensions,
     #[error("native output pool is full")]
@@ -56,6 +67,15 @@ pub enum RenderError {
 
 impl RenderSpec {
     pub fn validate(&self) -> Result<(), RenderError> {
+        if !matches!(
+            (self.format, self.color),
+            (
+                OutputFormat::Nv12,
+                OutputColor::Bt601Full | OutputColor::Bt709Limited
+            ) | (OutputFormat::Bgra8, OutputColor::RgbFullG22Bt709)
+        ) {
+            return Err(RenderError::UnsupportedOutputFormat);
+        }
         if self.width == 0
             || self.height == 0
             || self.width > 1920
@@ -74,6 +94,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rgb_targets_cannot_be_interpreted_as_nv12_outputs() {
+        let mut spec = RenderSpec {
+            width: 1280,
+            height: 720,
+            rotation: Rotation::None,
+            mirror: false,
+            color: OutputColor::RgbFullG22Bt709,
+            format: OutputFormat::Bgra8,
+        };
+        spec.validate().unwrap();
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        assert!(matches!(
+            crate::cpu_image::CpuImagePool::new(spec),
+            Err(RenderError::UnsupportedOutputFormat)
+        ));
+        spec.format = OutputFormat::Nv12;
+        assert!(matches!(
+            spec.validate(),
+            Err(RenderError::UnsupportedOutputFormat)
+        ));
+        spec.format = OutputFormat::Bgra8;
+        spec.color = OutputColor::Bt709Limited;
+        assert!(matches!(
+            spec.validate(),
+            Err(RenderError::UnsupportedOutputFormat)
+        ));
+    }
+
+    #[test]
     fn rejects_invalid_dimensions_before_platform_allocation() {
         for (width, height) in [
             (0, 720),
@@ -89,6 +138,7 @@ mod tests {
                 rotation: Rotation::None,
                 mirror: false,
                 color: OutputColor::Bt709Limited,
+                format: crate::OutputFormat::Nv12,
             };
             assert!(matches!(
                 spec.validate(),

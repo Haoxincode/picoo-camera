@@ -56,3 +56,13 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 ## 完整 AU 的输出时间关联
 
 微软 [Time Stamps and Durations](https://learn.microsoft.com/en-us/windows/win32/medfound/time-stamps-and-durations) 要求 MFT 尽可能保留输入时间；含完整单张画面的输入不需要应用猜测输出属于哪次 ProcessInput。Picoo 使用官方 SetSampleTime/GetSampleTime，每个提交具有不同的内部时间键；duration 按正式 fps 转为 100ns 并截断，源 PTS 独立保留，不用重复源 PTS 当唯一键。缺失、插值成未知值或重复返回的键明确拒绝。此原生适配用标准 BTreeMap，容量 16，不新增第三方关联表、回调调度器或无界历史。真实 MF 回归必须证明所用 H.264 MFT 的时间对应；其他 codec 的映射不能从本测试推断。
+
+## BGRA 显示目标与 NT 共享访问
+
+沿用 Video Processor 格式/颜色转换查询，BGRA8 显示契约精确选择 DXGI_FORMAT_B8G8R8A8_UNORM + DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709；不把 gamma 2.2 名称写成已证明任意 sRGB 转换等价。与 NV12 的 pixel format 分开声明，不扩展 CPU exporter 去读取 BGRA 源或引入通用像素转换库。
+
+官方 [CreateSharedHandle](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgiresource1-createsharedhandle) 要求 D3D11_RESOURCE_MISC_SHARED_NTHANDLE + SHARED_KEYEDMUTEX，每个共享 allocation 只能创建一次 NT handle；后续可 DuplicateHandle，释放必须 CloseHandle。采用 std::os::windows::io::OwnedHandle，不建立自有 handle 回收器或使用旧 GetSharedHandle。
+
+官方 [AcquireSync](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgikeyedmutex-acquiresync) 特别警告 SUCCEEDED 不足：WAIT_TIMEOUT 和 WAIT_ABANDONED 也是正值。当前 windows-rs AcquireSync 包装成 Result，会丢失这个区别，因此最小绑定边界直接读取 vtable HRESULT 并要求 exact S_OK。0ms 获取不阻塞 UI/其他输出；不递归获取，不以完成帧数推测释放。原图像 lease 与访问锁随 GPU completion 一起持有；它们各自防止不同的错误，不能只保留 handle。
+
+核对 gpui-pre 0.3.3：Windows PaintSurface 当前没有图像字段，SurfaceSource/surface/paint_surface 的图像入口只在 macOS 编译；gpui-pre-windows 0.3.3 的 draw_surfaces 为空。接入需同时补齐框架表面描述和 Windows 消费者，不应只修改应用选择 surface 元素。框架补丁不得依赖 Picoo 配置、Decoder 或输出事务；此消费部分尚未实现。

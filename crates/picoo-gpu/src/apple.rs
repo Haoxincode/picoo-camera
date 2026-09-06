@@ -70,6 +70,9 @@ impl AppleRenderer {
 
     fn create(spec: RenderSpec) -> Result<Self, RenderError> {
         spec.validate()?;
+        if spec.format != crate::OutputFormat::Nv12 {
+            return Err(RenderError::UnsupportedOutputFormat);
+        }
         let device = MTLCreateSystemDefaultDevice().ok_or(RenderError::DeviceUnavailable)?;
         let software = NSNumber::new_bool(false);
         // SAFETY: The option is Apple's documented Boolean; explicit Metal
@@ -88,6 +91,7 @@ impl AppleRenderer {
             match spec.color {
                 OutputColor::Bt601Full => kCGColorSpaceSRGB,
                 OutputColor::Bt709Limited => kCGColorSpaceITUR_709,
+                OutputColor::RgbFullG22Bt709 => return Err(RenderError::UnsupportedOutputFormat),
             }
         };
         let color_space = CGColorSpace::with_name(Some(name))
@@ -146,10 +150,12 @@ impl AppleRenderer {
             let matrix = match self.spec.color {
                 OutputColor::Bt601Full => kCVImageBufferYCbCrMatrix_ITU_R_601_4,
                 OutputColor::Bt709Limited => kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+                OutputColor::RgbFullG22Bt709 => return Err(RenderError::UnsupportedOutputFormat),
             };
             let transfer = match self.spec.color {
                 OutputColor::Bt601Full => kCVImageBufferTransferFunction_sRGB,
                 OutputColor::Bt709Limited => kCVImageBufferTransferFunction_ITU_R_709_2,
+                OutputColor::RgbFullG22Bt709 => return Err(RenderError::UnsupportedOutputFormat),
             };
             for (key, value) in [
                 (kCVImageBufferYCbCrMatrixKey, matrix),

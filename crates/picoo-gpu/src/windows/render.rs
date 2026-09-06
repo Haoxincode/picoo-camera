@@ -2,6 +2,7 @@
 mod geometry;
 mod pipeline;
 mod pool;
+mod shared;
 
 use crate::{OutputColor, RenderError, RenderSpec, Rotation, WindowsGpuContext};
 use picoo_frame_hub::{ChromaSiting, ImageSize, NativeImage, NativeVideoFrame, SourceColor};
@@ -35,7 +36,7 @@ impl RenderedImage {
     /// Never mutate this target or allow mutable aliases. Retain a clone until
     /// GPU reading completes. Only an output exporter/diagnostic may map it.
     pub unsafe fn texture(&self) -> &ID3D11Texture2D {
-        &self.surface.0
+        &self.surface.texture
     }
 }
 
@@ -45,7 +46,7 @@ pub(super) unsafe fn completed_fixture(
     spec: RenderSpec,
 ) -> RenderedImage {
     RenderedImage {
-        surface: Arc::new(Surface(texture)),
+        surface: Arc::new(Surface::unshared(texture)),
         spec,
     }
 }
@@ -53,6 +54,7 @@ pub(super) unsafe fn completed_fixture(
 struct RenderOwners {
     _source: NativeImage,
     target: Arc<Surface>,
+    target_access: Option<shared::SharedAccess>,
     input_view: ID3D11VideoProcessorInputView,
     output_view: ID3D11VideoProcessorOutputView,
 }
@@ -87,7 +89,10 @@ impl WindowsRenderer {
 
     pub fn new(gpu: Arc<WindowsGpuContext>, spec: RenderSpec) -> Result<Self, RenderError> {
         spec.validate()?;
-        if spec.color != OutputColor::Bt709Limited {
+        if !matches!(
+            spec.color,
+            OutputColor::Bt709Limited | OutputColor::RgbFullG22Bt709
+        ) {
             return Err(unsupported("requested output color"));
         }
         let device = gpu.device.cast().map_err(platform)?;
@@ -145,6 +150,7 @@ impl WindowsRenderer {
             }
             let pipeline = self.pipeline.as_ref().expect("configured processor");
             let target = self.pool.acquire(&self.gpu.device)?;
+            let target_access = shared::SharedAccess::acquire(&target)?;
             let mut input_view = None;
             self.device
                 .CreateVideoProcessorInputView(
@@ -166,7 +172,7 @@ impl WindowsRenderer {
             let mut output_view = None;
             self.device
                 .CreateVideoProcessorOutputView(
-                    &target.0,
+                    &target.texture,
                     &pipeline.enumerator,
                     &D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC {
                         ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2D,
@@ -180,6 +186,7 @@ impl WindowsRenderer {
             let owners = RenderOwners {
                 _source: frame.image().clone(),
                 target,
+                target_access,
                 input_view: input_view.ok_or(RenderError::DeviceUnavailable)?,
                 output_view: output_view.ok_or(RenderError::DeviceUnavailable)?,
             };
@@ -205,6 +212,14 @@ impl WindowsRenderer {
                 })
                 .and_then(|completion| completion.wait_on_worker())
                 .map_err(|error| RenderError::Platform(error.to_string()))?;
+            drop(owners.target_access);
+            if owners
+                .target
+                .failed
+                .load(std::sync::atomic::Ordering::Acquire)
+            {
+                return Err(RenderError::DeviceUnavailable);
+            }
             Ok(RenderedImage {
                 surface: owners.target,
                 spec: self.spec,
@@ -225,10 +240,8 @@ impl WindowsRenderer {
             0,
             DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
         );
-        self.context.VideoProcessorSetOutputColorSpace1(
-            processor,
-            DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
-        );
+        self.context
+            .VideoProcessorSetOutputColorSpace1(processor, output_color(self.spec));
         self.context.VideoProcessorSetStreamRotation(
             processor,
             0,
@@ -285,3 +298,19 @@ impl WindowsRenderer {
 
 #[cfg(test)]
 mod tests;
+
+fn output_format(spec: RenderSpec) -> windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT {
+    use windows::Win32::Graphics::Dxgi::Common::*;
+    match spec.format {
+        crate::OutputFormat::Nv12 => DXGI_FORMAT_NV12,
+        crate::OutputFormat::Bgra8 => DXGI_FORMAT_B8G8R8A8_UNORM,
+    }
+}
+fn output_color(spec: RenderSpec) -> windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPACE_TYPE {
+    use windows::Win32::Graphics::Dxgi::Common::*;
+    match spec.color {
+        OutputColor::Bt709Limited => DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
+        OutputColor::RgbFullG22Bt709 => DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709,
+        OutputColor::Bt601Full => unreachable!("rejected by WindowsRenderer::new"),
+    }
+}

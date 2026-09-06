@@ -16,6 +16,7 @@ fn spec() -> RenderSpec {
         rotation: Rotation::None,
         mirror: false,
         color: OutputColor::Bt709Limited,
+        format: crate::OutputFormat::Nv12,
     }
 }
 struct Upload(Option<ID3D11Texture2D>);

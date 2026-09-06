@@ -9,6 +9,7 @@ fn spec(rotation: Rotation, mirror: bool) -> RenderSpec {
         rotation,
         mirror,
         color: OutputColor::Bt709Limited,
+        format: crate::OutputFormat::Nv12,
     }
 }
 fn rect(rect: RECT) -> (i32, i32, i32, i32) {
@@ -100,7 +101,7 @@ fn native_output_pool_cannot_reuse_a_retained_surface_or_expand_past_three() {
     });
     unsafe {
         let first = pool.acquire(&gpu.device).unwrap();
-        let identity = first.0.as_raw();
+        let identity = first.texture.as_raw();
         let second = pool.acquire(&gpu.device).unwrap();
         let third = pool.acquire(&gpu.device).unwrap();
         assert!(matches!(
@@ -109,7 +110,7 @@ fn native_output_pool_cannot_reuse_a_retained_surface_or_expand_past_three() {
         ));
         drop(first);
         let reused = pool.acquire(&gpu.device).unwrap();
-        assert_eq!(reused.0.as_raw(), identity);
+        assert_eq!(reused.texture.as_raw(), identity);
         assert!(matches!(
             pool.acquire(&gpu.device),
             Err(RenderError::PoolFull)

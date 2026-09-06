@@ -450,3 +450,15 @@ Mac Decoder 16 项原生/配置回归通过；Receiver 媒体 18 项（含延迟
 前一批 CI 34047409630 全部通过；MF runtime lease 提交 7cb7701 已推送，CI 34048304540 的 Windows 原生测试通过，最终产物仍在构建。该运行完成前不推送下一提交，以免取消有效验证。
 
 CI 34049182494 的 Windows Desktop 74 项测试通过，但新增 MF token fixture 编译失败：canonical_access_unit 返回 Cow<[u8]>，fixture 声明 Vec<u8>。已在该测试数据所有权边界调用 into_owned；不是放宽 token 校验或替换原生测试。MF 两项新运行时验证尚未执行，不能把此编译失败描述成解码行为失败。
+
+## Windows BGRA 目标与 NT 共享交接
+
+REQ-PICOO-GPU-006/008 为 RenderSpec 增加独立 OutputFormat，Windows Video Processor 查询并选择 NV12 limited 或 BGRA8 RGB full G22/BT.709 目标，AlphaFillMode 保持 opaque。所有旧调用点明确选择 NV12；不是格式猜测或默认兼容。Apple backend 在创建原生资源前拒绝 BGRA，公共 CPU 输出池也拒绝 BGRA，防止不同字节布局进入 NV12 exporter。
+
+BGRA 复用原三槽输出池，创建 SHARED_NTHANDLE + SHARED_KEYEDMUTEX 纹理并只创建一次 OwnedHandle。渲染前取得 key 0，SharedAccess 和原图像 owner 随 completion 保留到 GPU 完成；ReleaseSync 失败标记池槽不可复用且不发布结果。借出的共享句柄要求消费者持有原 RenderedImage 到 GPU 读取/释放 mutex 完成。AcquireSync 使用原始 HRESULT == S_OK，不能把正值超时/abandoned 当成功。
+
+新增 Windows 原生测试使用两个独立诊断 device：BGRA render-target clear、锁持有时导入端超时拒绝、NT handle 导入、GPU copy、完成后 staging readback 验证 BGRA 红色字节；还检查持有 consumer lease 时三槽满、释放后复用，以及 CPU exporter 拒绝 BGRA。此测试尚待 Windows CI，且不是 Video Processor 硬件像素质量或 GPUI 预览端到端验收。
+
+Windows GPU all-targets Clippy 通过；Mac GPU/Receiver/Desktop all-targets Clippy 与 10 项实际 GPU/输出格式回归通过，文档检查通过。未新增依赖库，使用已有 windows-rs、Video Processor、标准 OwnedHandle 与 GPU completion。GPUI 的共享图像描述、导入和读取完成 owner 尚待接入，源 Windows CPU Decoder/FrameBus 替换与全部 Next 项仍未完成。
+
+CI 34049971485（a112d09）已通过 Windows 原生测试步骤：原 token/reset 两项真实 MF 诊断可以编译并运行；Windows/Mac 最终产物仍在执行。上一轮 34049182494 的其他平台已通过，Windows 因 fixture 返回类型失败跳过最终产物，不能计为完整 CI 成功。

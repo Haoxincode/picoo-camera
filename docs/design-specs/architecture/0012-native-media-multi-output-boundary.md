@@ -79,3 +79,7 @@ MF runtime 与 codec COM apartment 分开持有。COM 初始化和反初始化�
 Decoder 输入由借用的压缩 AU 与不可变 DecodeToken 组成。Token 保留原 connection/stream/decoder generation、frame_id、source PTS、各提交时间、配置 revision 与配置快照，不持有压缩字节。输出是零到多张分别携带原 token 的图像；当前 AU 的 refresh acceptance 与返回图像的归属分开，暂时没有图像不等于丢帧。Receiver 必须逐图像验证原身份，再使用原配置发布，不能用触发本次输出的输入身份或当前 owner 状态替换。
 
 MF 复用 IMFSample 的 100ns sample time 关联完整 AU 与输出。内部时间键单调、checked advance，reset 不归零；相同源 PTS 不冲突，因为源时间只保留在 token 内。只有 ProcessInput 成功才登记对应 token；最多 16 个待输出提交，容量不足明确失败，不额外扩队列。每次取得所有可用输出并消费各自登记项，未知、缺失或重复时间键拒绝；reset 清空登记和原生预测状态。GetSampleTime 与标准有界映射足够表达此适配，不用当前 AU 猜测归属，也不为补图重投原 AU。
+
+RenderSpec 分开表达像素存储格式与颜色，不由颜色名称猜测 NV12/BGRA。Windows 的 NV12 BT.709 limited 用于 NV12 输出，BGRA8 RGB full G22/BT.709 用于原生显示交接；驱动必须明确支持所请求的格式与颜色转换。现有 Apple renderer 与 CPU exporter 只准入各自已实现的 NV12 组合；不把 RGB 目标作为 NV12 字节解释。
+
+Windows BGRA 目标在同一个三槽池内创建 NT shared/keyed-mutex 资源，每个 allocation 只创建一次 handle，并随资源关闭。Producer 与 Consumer 都使用 key 0；只有 AcquireSync 的原始 HRESULT 等于 S_OK 才获得权限，等待超时和 abandoned 不授予访问。Producer 把写入权限和目标 owner 一起保留到 GPU 完成后释放，再交付图像；释放失败使该池槽不可再用。Consumer 必须保留原图像引用到 GPU 读取与 ReleaseSync 完成，不能只持有导入纹理或复制的 handle。共享锁只协调 native device 访问，Rust owner 决定是否可复用池槽，两者不可替代。预览和各输出的消费规格/缓存仍由相应输出 owner 管理，不能通过共享纹理改动源 Decoder。

@@ -354,6 +354,7 @@ fn prepare(
         rotation: description.transform.rotation,
         mirror: description.transform.mirror,
         color: OutputColor::Bt709Limited,
+        format: picoo_gpu::OutputFormat::Nv12,
     };
     if resources
         .as_ref()

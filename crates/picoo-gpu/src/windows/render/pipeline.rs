@@ -38,10 +38,17 @@ impl Pipeline {
         let support = enumerator
             .CheckVideoProcessorFormat(DXGI_FORMAT_NV12)
             .map_err(super::platform)?;
-        let required = (D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT.0
-            | D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT.0) as u32;
-        if support & required != required {
-            return Err(super::unsupported("NV12 input/output"));
+        if support & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_INPUT.0 as u32 == 0 {
+            return Err(super::unsupported("NV12 input"));
+        }
+        let output = super::output_format(spec);
+        if enumerator
+            .CheckVideoProcessorFormat(output)
+            .map_err(super::platform)?
+            & D3D11_VIDEO_PROCESSOR_FORMAT_SUPPORT_OUTPUT.0 as u32
+            == 0
+        {
+            return Err(super::unsupported("requested target storage"));
         }
         let extended: ID3D11VideoProcessorEnumerator1 =
             enumerator.cast().map_err(super::platform)?;
@@ -49,13 +56,15 @@ impl Pipeline {
             .CheckVideoProcessorFormatConversion(
                 DXGI_FORMAT_NV12,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
-                DXGI_FORMAT_NV12,
-                DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709,
+                output,
+                super::output_color(spec),
             )
             .map_err(super::platform)?
             .as_bool()
         {
-            return Err(super::unsupported("BT.709 limited color contract"));
+            return Err(super::unsupported(
+                "requested source-to-target color conversion",
+            ));
         }
         let mut caps = D3D11_VIDEO_PROCESSOR_CAPS::default();
         enumerator

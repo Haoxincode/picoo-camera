@@ -15,11 +15,15 @@ pub(super) struct OutputPool {
 impl OutputPool {
     pub fn new(spec: RenderSpec) -> Result<Self, RenderError> {
         spec.validate()?;
+        if spec.format != crate::OutputFormat::Nv12 {
+            return Err(RenderError::UnsupportedOutputFormat);
+        }
         let width = CFNumber::new_i32(spec.width as i32);
         let height = CFNumber::new_i32(spec.height as i32);
         let format = CFNumber::new_i64(match spec.color {
             OutputColor::Bt601Full => kCVPixelFormatType_420YpCbCr8BiPlanarFullRange as i64,
             OutputColor::Bt709Limited => kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i64,
+            OutputColor::RgbFullG22Bt709 => return Err(RenderError::UnsupportedOutputFormat),
         });
         let surface = CFDictionary::<CFString, CFType>::empty();
         let metal = CFBoolean::new(true);

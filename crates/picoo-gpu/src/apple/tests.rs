@@ -7,6 +7,7 @@ fn spec(color: OutputColor) -> RenderSpec {
         rotation: Rotation::None,
         mirror: false,
         color,
+        format: crate::OutputFormat::Nv12,
     }
 }
 
