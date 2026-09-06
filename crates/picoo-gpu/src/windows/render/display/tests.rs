@@ -64,5 +64,14 @@ fn display_busy_and_failed_surface_preserve_access_contract() {
             pool.acquire(&producer.device),
             Err(RenderError::DeviceUnavailable)
         ));
+        // The production reader intentionally drops completion receivers. Keep
+        // this test's serial lifetime until their native callbacks retire.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while consumer.completion_slots.load(Ordering::Acquire) != 0
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert_eq!(consumer.completion_slots.load(Ordering::Acquire), 0);
     }
 }
