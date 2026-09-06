@@ -5,8 +5,7 @@ use shared_memory::{Shmem, ShmemConf, ShmemError};
 
 use super::layout::{
     layout_size, meta_at, slot_meta_at, slot_pixels_at, validate_ring_header, PIXEL_FORMAT_NV12,
-    READY_EMPTY, READY_WRITING, RING_MAGIC, RING_READY_DONE, RING_SLOT_COUNT, RING_VERSION,
-    WRITER_LEASE,
+    READY_EMPTY, READY_WRITING, RING_MAGIC, RING_READY_DONE, RING_SLOT_COUNT, WRITER_LEASE,
 };
 #[cfg(target_os = "windows")]
 use super::lock::acquire_producer_lock;
@@ -184,7 +183,6 @@ impl SharedFrameRingProducer {
         unsafe {
             let meta = &mut *meta_at(base);
             meta.magic = RING_MAGIC;
-            meta.version = RING_VERSION;
             meta.slot_count = RING_SLOT_COUNT as u32;
             meta.max_frame_bytes = self.max_frame_bytes as u32;
             meta.write_index.store(0, Ordering::Relaxed);

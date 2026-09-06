@@ -31,5 +31,5 @@ pub use shared_ring::{
     RingPublishOutcome, SharedFrameRingConsumer, SharedFrameRingProducer, SharedFrameRingWriter,
     SharedFrameView, SharedRingError, SharedRingSubmitOutcome, SharedRingWriterEvent,
     SharedRingWriterStats, DEFAULT_MAX_FRAME_BYTES, PIXEL_FORMAT_NV12, RING_MAGIC, RING_META_SIZE,
-    RING_READY_DONE, RING_SLOT_COUNT, RING_SLOT_META_SIZE, RING_VERSION,
+    RING_READY_DONE, RING_SLOT_COUNT, RING_SLOT_META_SIZE,
 };

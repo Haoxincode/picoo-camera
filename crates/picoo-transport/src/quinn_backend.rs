@@ -636,7 +636,7 @@ async fn run_connection(
         .export_keying_material(
             &mut channel_binding,
             b"EXPORTER-Picoo-Camera-Channel-Binding",
-            b"picoocam",
+            picoo_protocol::ALPN.as_bytes(),
         )
         .is_err()
     {

@@ -4,7 +4,7 @@
 
 ## 场景与意义
 
-用户以手机作为电脑摄像头，同时预览和保存视频。各输出共享源内容与时间身份，但不能因会议客户端、窗口或磁盘变慢而相互阻塞。架构优先长期维护简单，不维护旧协议、FFI、配置或 IPC 的兼容路径。
+用户以手机作为电脑摄像头，同时预览和保存视频。各输出共享源内容与时间身份，但不能因会议客户端、窗口或磁盘变慢而相互阻塞。架构优先长期维护简单，不维护旧协议、FFI、配置或 IPC 的兼容路径。ALPN 固定为 `picoocam`；协议、FFI、IPC 不引入版本号或版本协商，直接修改当前契约。流/资源 generation 仅用于生命周期安全，不是软件版本。
 
 来源：[已采纳的产品方案](../../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)；关联 PUC-004、PUC-005；追溯：[Next 需求](../requirements/next-media.md)。本文是目标契约，planned 不表示平台实现完成。
 
@@ -23,7 +23,7 @@ AVC/HEVC 使用真实硬件能力准入，正式配置为 720p/1080p × 30/60fps
 
 输出切换只推进该 sink 的 backend generation，保留源配置、正常 Decoder、其他输出与采样时钟。权限失败、旧版本、硬件 codec 缺失和源 GPU 丢失不能通过 CpuBridge 绕过。无 CPU demand 不持续导出；所有池、任务和缓存有容量、期限及隐私清理边界。
 
-Windows 的共享句柄和新版 CPU ring 是不同的交接后端；macOS 两种准备方式都使用合法 CMIO sink/source。必须分别验收两后端真实系统 sample，不能用 CPU 成功代替 native 完成。
+Windows 的共享句柄和 CPU 输出 ring 是不同的交接后端；macOS 两种准备方式都使用合法 CMIO sink/source。必须分别验收两后端真实系统 sample，不能用 CPU 成功代替 native 完成。
 
 ## 对旧规范的替代范围
 

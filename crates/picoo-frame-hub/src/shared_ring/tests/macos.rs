@@ -67,7 +67,6 @@ fn macos_extension_sources_match_shared_ring_identity_and_abi() {
     let info = include_str!("../../../../../extensions/macos-camera-extension/Info.plist");
 
     for expected in [
-        format!("PICOO_RING_VERSION = {RING_VERSION}"),
         format!("PICOO_RING_META_SIZE = {RING_META_SIZE}"),
         format!("PICOO_RING_SLOT_COUNT = {RING_SLOT_COUNT}"),
         format!("PICOO_RING_SLOT_META_SIZE = {RING_SLOT_META_SIZE}"),

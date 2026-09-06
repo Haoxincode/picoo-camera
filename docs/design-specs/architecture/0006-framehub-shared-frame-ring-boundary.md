@@ -74,7 +74,7 @@ Windows Media Foundation Frame Server 以 Local Service 身份运行在 Session 
 
 Windows 文件环是瞬态缓存，创建时使用 `FILE_ATTRIBUTE_TEMPORARY`，提示 Cache Manager 在内存允许时避免把高频脏页持续写回磁盘。当前 V1 把同一台 Windows 主机上的 Builtin Users 视为本地信任边界；由于普通用户与 Local Service 都必须访问固定 per-machine 环，本机其他登录用户理论上可以读取或干扰原始帧文件。面向不受信任多用户主机前，必须改为受控 broker/service 创建 pagefile-backed Global mapping，并按活动用户 SID 下发最小 DACL；不得把当前 ACL 宣称为跨本地账户隔离。
 
-macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`，主应用与扩展的 Info.plist、签名 entitlement 与 Developer ID provisioning profile 必须一致授权该值。Rust Receiver 在 mmap 文件旁持有独占 Producer 生命周期 `flock`，拒绝第二个 Writer；进程异常退出时由内核释放。Rust Receiver 与 Swift Camera Extension 共享 ABI v2：64-byte RingMeta、三个 64-byte SlotMeta，以及固定容量 NV12 payload。Swift 通过小型 C17 原子边界获取/释放槽租约，不在 Swift 中模拟跨进程原子操作。
+macOS 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`，主应用与扩展的 Info.plist、签名 entitlement 与 Developer ID provisioning profile 必须一致授权该值。Rust Receiver 在 mmap 文件旁持有独占 Producer 生命周期 `flock`，拒绝第二个 Writer；进程异常退出时由内核释放。Rust Receiver 与 Swift Camera Extension 共享 当前无版本 ABI：64-byte RingMeta、三个 64-byte SlotMeta，以及固定容量 NV12 payload。Swift 通过小型 C17 原子边界获取/释放槽租约，不在 Swift 中模拟跨进程原子操作。
 
 虚拟摄像头扩展只理解 NV12 帧；不持有 QUIC、解码器或网络会话。
 

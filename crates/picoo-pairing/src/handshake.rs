@@ -22,6 +22,8 @@ pub enum PairingHandshakeError {
 /// Field order is role-defined, so Sender and Receiver independently serialize
 /// identical bytes without relying on protobuf encoding details.
 pub struct PairingTranscript<'a> {
+    /// Negotiated protocol identity supplied by the transport owner.
+    pub protocol: &'a str,
     pub sender_id: &'a str,
     pub sender_public_key: &'a [u8],
     pub sender_nonce: &'a [u8],
@@ -47,7 +49,9 @@ impl PairingTranscript<'_> {
                 )));
             }
         }
-        if self.sender_id.is_empty()
+        if self.protocol.is_empty()
+            || self.protocol.len() > 255
+            || self.sender_id.is_empty()
             || self.receiver_id.is_empty()
             || self.connection_generation == 0
         {
@@ -58,6 +62,8 @@ impl PairingTranscript<'_> {
 
         let mut encoded = Vec::with_capacity(256);
         encoded.extend_from_slice(TRANSCRIPT_DOMAIN);
+        append_field(&mut encoded, self.protocol.as_bytes());
+        append_field(&mut encoded, b"Ed25519");
         append_field(&mut encoded, self.sender_id.as_bytes());
         append_field(&mut encoded, self.sender_public_key);
         append_field(&mut encoded, self.sender_nonce);
@@ -178,6 +184,7 @@ mod tests {
 
     fn transcript<'a>(binding: &'a [u8]) -> PairingTranscript<'a> {
         PairingTranscript {
+            protocol: "picoocam",
             sender_id: "picoo-sender",
             sender_public_key: &[1; 32],
             sender_nonce: &[2; 32],
@@ -217,6 +224,25 @@ mod tests {
             first.short_code().expect("first SAS"),
             next.short_code().expect("next SAS")
         );
+    }
+
+    #[test]
+    fn signatures_cannot_cross_protocol_identities() {
+        let current = transcript(&[5; 32]);
+        let previous = PairingTranscript {
+            protocol: "unrelated-protocol",
+            ..transcript(&[5; 32])
+        };
+        let identity = DeviceIdentity::generate("Sender").unwrap();
+        let signature =
+            sign_transcript_phase(&identity, &previous.hash().unwrap(), b"pairing-confirm");
+        assert!(verify_transcript_phase(
+            identity.public_key(),
+            &current.hash().unwrap(),
+            b"pairing-confirm",
+            &signature
+        )
+        .is_err());
     }
 
     #[test]

@@ -67,7 +67,7 @@ fn consumer_detects_replaced_named_mapping_generation() {
 fn ring_layout_is_stable() {
     assert_eq!(std::mem::size_of::<RingMeta>(), RING_META_SIZE);
     assert_eq!(std::mem::size_of::<SlotMeta>(), RING_SLOT_META_SIZE);
-    assert_eq!(std::mem::offset_of!(RingMeta, latest_sequence), 24);
+    assert_eq!(std::mem::offset_of!(RingMeta, latest_sequence), 16);
     assert_eq!(std::mem::offset_of!(SlotMeta, ready_state), 40);
     assert_eq!(std::mem::offset_of!(SlotMeta, reader_count), 44);
 }
@@ -113,12 +113,11 @@ fn miri_raw_layout_views_stay_aligned_and_within_mapping() {
     unsafe {
         meta_at(mapping.base.as_ptr()).write(RingMeta {
             magic: RING_MAGIC,
-            version: RING_VERSION,
             slot_count: RING_SLOT_COUNT as u32,
             max_frame_bytes: max_frame_bytes as u32,
             write_index: AtomicU32::new(0),
             latest_sequence: AtomicU64::new(0),
-            _pad: [0; 32],
+            _pad: [0; 40],
         });
         for index in 0..RING_SLOT_COUNT {
             slot_meta_at(mapping.base.as_ptr(), max_frame_bytes, index).write(SlotMeta {

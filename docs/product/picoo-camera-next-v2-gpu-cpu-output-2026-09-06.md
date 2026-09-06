@@ -1,5 +1,8 @@
 # Picoo Camera Next：完整需求与技术实现方案（修订版 v2）
 
+> 2026-09-06 实施修正（用户明确决定）：ALPN 始终为 `picoocam`；协议、发现 TXT、FFI、IPC 不带版本号，不维护版本协商或旧接口。直接替换当前契约，不做配置迁移。本文已同步删除原提案的协议版本与版本协商建议。stream epoch、device/backend generation、配置 revision 是运行时身份，继续用于防止迟到结果与资源误用。
+
+
 > 归档说明：2026-09-06 用户授权按本方案开始实施，不要求兼容。以下原始提案正文保留；当前契约与实现状态见 [架构](../design-specs/architecture/0012-native-media-multi-output-boundary.md) 和 [需求追溯](../design-specs/requirements/next-media.md)。D01 为未随本次提供的上一版附件，不是仓库文件。
 
 **方案版本：v2 · GPU 主链路 + 虚拟摄像头 CPU 输出桥接**  
@@ -29,7 +32,7 @@
 
 原码流录像在解码前保存已经编码的 AU；处理后录像仍采用 GPU 图像处理和硬件编码。CPU 输出不能弥补缺失的硬件编解码器，不能在整个 GPU 不可用时凭空恢复新视频。
 
-不维护旧协议、旧 FFI、旧 IPC/配置迁移和软件编解码回退；应用与扩展作为同主版本集合发布。旧 CPU Shared Ring 的安全、lease、Busy 重试等经验证逻辑可以复用，但数据格式、命名空间和接口按新版本重构，不接入旧端点。
+不维护旧协议、旧 FFI、旧 IPC/配置迁移和软件编解码回退；应用与扩展作为完整配套集合发布。旧 CPU Shared Ring 的安全、lease、Busy 重试等经验证逻辑可以复用，但数据格式、命名空间和接口直接重构，不接入旧端点。
 
 ### 0.1 已确认的产品约束
 
@@ -68,7 +71,7 @@
 | GPU 虚拟摄像头 | 合法的原生表面交接、系统 manager/allocator 和独立采样 |
 | CPU 虚拟摄像头 | GPU 完成目标图像处理，输出专用 Exporter 提供 CPU 可访问图像；只做布局整理、复制和必要的目标上传 |
 | 录像 | 原码流不重编码；处理后录像使用 GPU 和硬件 Encoder，不从预览缓存抽帧 |
-| 版本 | PCP/FFI/本地 IPC 同主版本，不接受旧接口；文档 v2 不等于网络协议再升一次 |
+| 接口 | PCP/FFI/本地 IPC 只有当前契约，无版本号、版本协商与旧接口分支 |
 | 故障处理 | 输出能力不足可局部选择 CPU；权限拒绝、硬件 codec 缺失、整个 GPU 丢失不被这种选择掩盖 |
 | UI | 不增加用途/后端模式；默认自动，诊断记录路径与原因 |
 
@@ -143,7 +146,7 @@ CPU output 的存在不能被用来宣布 native 路径完成；native 的存在
 | NEXT-REQ-023 | 重组与恢复 codec-aware；IDR/CRA 不能混同 | AVC/HEVC 各类随机访问样本与缺片注入 |
 | NEXT-REQ-024 | 只有摄像头输出边界可自动选择 CpuBridge；硬件 codec 或 GPU 主链路不足明确失败 | 能力组合故障注入、路由原因和依赖检查 |
 | NEXT-REQ-025 | 网络、命令、媒体、输出全部有容量和时限；控制命令有明确结果 | 过载状态机与预算断言 |
-| NEXT-REQ-026 | 旧协议、旧 IPC、旧配置、旧 FFI 不被新产品接受 | 混版本拒绝测试 |
+| NEXT-REQ-026 | 旧协议、旧 IPC、旧配置、旧 FFI 不被新产品接受 | 非法契约输入拒绝测试 |
 | NEXT-REQ-027 | 配对认证、加密、资源权限、输入边界、隐私行为继续有效 | 未授权访问与恶意输入测试 |
 | NEXT-REQ-028 | 度量自动采集并区分请求值/实际值、提交/呈现、新帧/重复帧 | 结构化诊断完整性检查 |
 
@@ -160,7 +163,7 @@ CPU output 的存在不能被用来宣布 native 路径完成；native 的存在
 | NEXT-REQ-035 | 相同输出内容可共享一次 CPU 物化，不同规格独立准备；低频 sink 不增加高频无用导出 | 一源两消费同/异规格、source60→output30 |
 | NEXT-REQ-036 | 后端切换为事务，推进 backend generation；配置和 SampleClock 连续，旧完成不可提交 | 切换中 stop/格式改变/旧任务完成 |
 | NEXT-REQ-037 | 跨 GPU 原生交接不可用时可用 CPU bridge，不为新增 sink 重置正在录像的源 device | 双 adapter GPU→CPU→合法目标 sample |
-| NEXT-REQ-038 | CPU IPC 使用新版 ABI、最小权限和崩溃可恢复 lease；隐私时限适用所有缓存 | 混版本/未授权/崩溃/断开占位测试 |
+| NEXT-REQ-038 | CPU IPC 使用新版 ABI、最小权限和崩溃可恢复 lease；隐私时限适用所有缓存 | 非法布局/未授权/崩溃/断开占位测试 |
 | NEXT-REQ-039 | CPU 输出按所选30/60fps规格验收，并验证其对 GPU 预览与录像的影响 | 同配置 A/B、p95/p99、热稳态并用 |
 | NEXT-REQ-040 | CPU bridge 不能绕过身份/权限失败，也不能冒充硬件 codec 或 GPU 故障的修复 | 拒绝后无回退访问；缺 decoder 仍失败 |
 
@@ -329,14 +332,14 @@ CPU 物化身份与系统 sample 身份分开：一张 CpuOutputFrame 可用于�
 
 每个异步 export 持有源 lease 至 GPU copy/读取结束；把目标 bytes 发布后不可变，最后一个消费者释放才归池。可以用 `Bytes::from_owner` 复用受限像素池，不通过 Vec→Arc<[u8]> 的额外分配隐藏整帧搬运。缓存键为 source identity＋RenderSpec＋output revision＋device generation；backend generation 用于结果接纳，不把其他 sink 的生命周期与其绑死。
 
-CPU-only placeholder 是允许的例外：预先生成对应格式的静态占位图，供桥接输出在源丢失/重建期间使用；不要求为了输出占位而等待失效 GPU 恢复。占位缓冲受相同隐私与版本控制，不是一套 CPU 视频渲染器。
+CPU-only placeholder 是允许的例外：预先生成对应格式的静态占位图，供桥接输出在源丢失/重建期间使用；不要求为了输出占位而等待失效 GPU 恢复。占位缓冲受相同隐私与运行时身份校验，不是一套 CPU 视频渲染器。
 
 
 ## 8. 破坏性协议与 FFI
 
-### 8.1 版本与发布
+### 8.1 当前契约与发布
 
-使用新 ALPN（提议 `picoocam/2`）和新的发现 TXT 协议主版本。新版本不同时接受旧 ALPN。配对 transcript 必须绑定协议/算法和端点身份；新的本地配置/IPC namespace 明确分离。应用、手机端和扩展必须匹配。旧设备明确提示升级，不发模糊的网络错误。
+ALPN 固定为 `picoocam`。协议、发现 TXT、FFI 和 IPC 不设置版本字段，不做版本协商，也不保留旧接口分支。配对 transcript 绑定协议标识、算法和端点身份。应用、手机端和扩展配套部署，直接使用当前契约；非法消息与布局按具体校验错误拒绝。
 
 旧个人设置与配对记录不设计迁移器；新版本首次配置与配对。卸载旧扩展只清理本项目拥有的注册和 IPC 资源；不触碰录像素材。新旧桌面同名虚拟摄像头不同时保留为正式部署方式。
 
@@ -565,17 +568,17 @@ ActiveGpu / ActiveCpu → Recovering → ActiveGpu / ActiveCpu / Unavailable
 
 `GpuNative`探测包括格式导入、同adapter或可用原生共享、目标allocator及可观察的一次图像准备/交付。若无法建立，只有授权控制面仍成立且CPU exporter/目标sample实际可用，才选择`CpuBridge`。常见触发是`NativeImportUnsupported`、`AdapterMismatch`、`NativeAllocatorUnavailable`、`SharingUnavailable`；普通单次槽忙、暂时无源帧不触发后端切换。
 
-`UnauthorizedProducer`、设备权限被用户撤销、协议主版本不匹配、不受支持输出格式，不通过CPU路径绕开。原生视频decode失败、整个GPU丢失时先恢复主资源，CPU桥接不能生成不存在的新帧。静态占位可以继续输出，但必须明确新视频当前不可用。
+`UnauthorizedProducer`、设备权限被用户撤销、协议输入非法、不受支持输出格式，不通过CPU路径绕开。原生视频decode失败、整个GPU丢失时先恢复主资源，CPU桥接不能生成不存在的新帧。静态占位可以继续输出，但必须明确新视频当前不可用。
 
 默认自动选择；诊断工具可以在测试构建或显式诊断命令中强制GpuNative/CpuBridge复现，不增加普通用户需要理解的性能模式。后端选择不依赖“是Intel还是AMD”这类名称判断，基于实际能力与错误。
 
 ### 14.5 切换为输出事务（新增）
 
-切换保留既有源codec、stream epoch、Decoder、scene和活跃录像。只为受影响sink创建候选OutputPlan，持有新的backend generation与output revision。准备并验证首个可用sample后，原子校验版本并替换活动计划；旧在途结果允许完成释放，但不能再次发布。系统SampleClock不因后端切换清零。
+切换保留既有源codec、stream epoch、Decoder、scene和活跃录像。只为受影响sink创建候选OutputPlan，持有新的backend generation与output revision。准备并验证首个可用sample后，原子校验运行时身份并替换活动计划；旧在途结果允许完成释放，但不能再次发布。系统SampleClock不因后端切换清零。
 
 同一流内是否允许更换buffer backing必须由实际系统sample合同决定，不能假设只要NV12相同就一定支持无缝交换。允许原地切换时保持PTS单调；不允许时执行合法stop/restart/重新协商并对用户报告短暂中断，其他sink不受这次控制操作影响。若候选失败且旧输出仍可工作，保留旧计划；两者都失败进入明确Unavailable。
 
-默认在一次sink活动期间锁定已选后端。GpuNative失败切CPU后，不逐帧探测并来回切换；下一次Start、有效device/allocator变化或显式诊断时才重新评估。持久化失败缓存需要关联OS、driver、adapter及合同版本，升级后失效，不能永久给整张显卡贴不支持标签。
+默认在一次sink活动期间锁定已选后端。GpuNative失败切CPU后，不逐帧探测并来回切换；下一次Start、有效device/allocator变化或显式诊断时才重新评估。持久化失败缓存需要关联OS、driver、adapter及当前能力证据，升级后失效，不能永久给整张显卡贴不支持标签。
 
 ### 14.6 CpuFrameExporter（新增）
 
@@ -590,7 +593,7 @@ ActiveGpu / ActiveCpu → Recovering → ActiveGpu / ActiveCpu / Unavailable
     → 完成事件到达后短时映射/锁定
     → 按真实plane layout复制到受限目标
     → 解锁，归还GPU/staging资源
-    → 校验source/device/output/backend版本
+    → 校验source epoch、device/backend generation与output revision
     → 提交该sink的CPU交接缓存
 ```
 
@@ -641,9 +644,9 @@ Map时读取真实RowPitch和有效平面布局，释放时Unmap。不能把1920
 
 CPU输出按需求采样，先在GPU上降到客户端要求的尺寸，再回读；不能先回读完整1080p/60fps，再在CPU端缩为720p/30fps。两sink同source/spec时共享不可变物化结果，IPC、目标样本copy按实际实例分别计数。
 
-### 15.4 SharedCpuFrameRing：新版本，不恢复旧兼容
+### 15.4 SharedCpuFrameRing：直接替换当前契约
 
-重构/复用旧ring成熟的槽位所有权、进程崩溃恢复、Busy重试与不覆盖读者的逻辑；新版ABI仅服务CpuBridge。建议每个实例初始三槽，固定header包含magic、IPC主版本、instance/session generation、slot容量及布局；每槽包含backend/output revision、source identity、色彩/size、两平面offset/stride/rows、数据长度与序列。
+重构/复用旧ring成熟的槽位所有权、进程崩溃恢复、Busy重试与不覆盖读者的逻辑；当前ABI仅服务CpuBridge。建议每个实例初始三槽，固定header包含magic、instance/session generation、slot容量及布局；每槽包含backend/output revision、source identity、色彩/size、两平面offset/stride/rows、数据长度与序列。
 
 创建时验证checked arithmetic、文件/共享映射长度和协商最大值；layout在该generation内不可变，格式改变新建generation。发布数据与读写lease必须有可证明的同步关系。**仅比较前后sequence不是内存安全同步，不能无锁读写同一普通字节数组形成数据竞争。** 保留已验证的进程锁/原子lease机制和对应压力测试。
 
@@ -941,7 +944,7 @@ CPU mapped指针不能跨Unmap、PixelBuffer锁借用不能跨Unlock，旧IPC视
 | Mac `PicooCameraProvider.swift`及新sink/bridge资源模块 | 同一CMIO sink/source下native/CPU-filled PixelBuffer，统一需求与授权 |
 | `picoo-recording/`（新增） | 两Recorder、native硬编/mux、gap/segment/manifest；不依赖CpuBridge |
 | `metrics/diagnostics/sim/testkit` | 按backend计数、强制CPU/native测试、回退边界和生产等价时序 |
-| `xtask`、安装、CI | 同版本bundle、CPU IPC权限和清理、完整四平台验证入口 |
+| `xtask`、安装、CI | 配套bundle、CPU IPC权限和清理、完整四平台验证入口 |
 | `docs/design-specs/*` | 用本版替代GPU-only硬约束；需求009/013/024修订，新增029—040追溯 |
 
 明确删除：旧PCP/FFI/IPC兼容分支、生产软件codec fallback、全局CpuNv12源帧、Receiver CPU变换、GPUI逐帧CPU图片路径。明确保留/重构：输出专用CPU exporter、plane copy、新版CPU IPC、占位、buffer pool和安全回归。不能用“删CPU”把这次保留的正式输出后端再次删掉。
@@ -962,7 +965,7 @@ CpuBridge成立不能用来跳过GpuNative开发；GpuNative成立也不能跳�
 | 批次 | 内容 | 完成门槛 |
 |---|---|---|
 | P0 | 修订40条需求、平台探针、双codec容器/新协议约定 | CPU/native输出边界都可执行验证，识别各平台合同限制 |
-| P1 | bitstream/native帧/token/typed protocol/FFI，CpuOutputFrame类型边界 | 解析fuzz、生命周期、无隐式readback、混版本拒绝 |
+| P1 | bitstream/native帧/token/typed protocol/FFI，CpuOutputFrame类型边界 | 解析fuzz、生命周期、无隐式readback、非法契约拒绝 |
 | P2A/P2I | Android/iOS双硬件编码 | actual配置、RAP、时钟、本地参考不降质 |
 | P3W/P3M | 硬解、GPU池、GPUI video surface | preview-only零CPU整图；正确颜色/资源释放 |
 | P4 | FrameBus、Presenter、OutputDemand/Plan、独立SampleClock、路由状态机 | hidden/resize与输出互不混淆；后端切换代际正确 |
@@ -985,7 +988,7 @@ P5与P6在共同接口明确后可以并行，先用CPU完成某环境的系统�
 | 012—017 输出时钟/资源 | FrameBus/Presenter/VCam backend | hidden、同帧resize、slow consumer、device lost、池峰值 |
 | 018—022 录像 | Recorder/mux/manifest | RAP启动、缺AU、盘满、切codec、缩窗口/CPU切换不改录像 |
 | 023—025 恢复和有界 | scheduler/recovery/AU sender/runtime | 候选RAP参考链、CRA/RASL、cancel、命令拒绝、期限不重置 |
-| 026—028 版本/权限/观测 | auth/install/IPC/diagnostics | 混版本拒绝、恶意尺寸、真实路径与unique统计 |
+| 026—028 契约/权限/观测 | auth/install/IPC/diagnostics | 非法契约拒绝、恶意尺寸、真实路径与unique统计 |
 | 029—032 CPU隔离/选择/等价/需求 | OutputCoordinator/Exporter/RenderSpec | 无需求零导出；CPU只影响相应sink；同图像无新增压缩 |
 | 033—035 执行器/资源/复用 | staging/CPU pool/IPC/sample | Map未就绪、CPU锁慢、全槽忙、source60→output30、相同spec导出复用 |
 | 036—038 切换/跨adapter/安全 | backend transaction/CPU IPC/CMIO | stop竞态、旧completion、正在录像时跨GPU新sink、权限撤销/崩溃 |

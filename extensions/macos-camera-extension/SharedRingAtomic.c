@@ -10,7 +10,6 @@
 
 enum {
     PICOO_RING_MAGIC = 0x5049434F,
-    PICOO_RING_VERSION = 2,
     PICOO_RING_META_SIZE = 64,
     PICOO_RING_SLOT_COUNT = 3,
     PICOO_RING_SLOT_META_SIZE = 64,
@@ -21,13 +20,11 @@ enum {
 
 typedef struct PicooRingMeta {
     uint32_t magic;
-    uint32_t version;
     uint32_t slot_count;
     uint32_t max_frame_bytes;
     _Atomic uint32_t write_index;
-    uint32_t alignment_padding;
     _Atomic uint64_t latest_sequence;
-    uint8_t padding[32];
+    uint8_t padding[40];
 } PicooRingMeta;
 
 typedef struct PicooSlotMeta {
@@ -48,7 +45,7 @@ _Static_assert(sizeof(PicooRingMeta) == PICOO_RING_META_SIZE,
                "Picoo RingMeta layout drifted");
 _Static_assert(sizeof(PicooSlotMeta) == PICOO_RING_SLOT_META_SIZE,
                "Picoo SlotMeta layout drifted");
-_Static_assert(offsetof(PicooRingMeta, latest_sequence) == 24,
+_Static_assert(offsetof(PicooRingMeta, latest_sequence) == 16,
                "Picoo RingMeta sequence offset drifted");
 _Static_assert(offsetof(PicooSlotMeta, ready_state) == 40,
                "Picoo SlotMeta ready offset drifted");
@@ -113,7 +110,7 @@ bool picoo_ring_validate_layout(void *base, size_t mapped_length) {
     }
 
     PicooRingMeta *ring = (PicooRingMeta *)base;
-    if (ring->magic != PICOO_RING_MAGIC || ring->version != PICOO_RING_VERSION ||
+    if (ring->magic != PICOO_RING_MAGIC ||
         ring->slot_count != PICOO_RING_SLOT_COUNT || ring->max_frame_bytes == 0) {
         return false;
     }

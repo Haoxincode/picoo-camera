@@ -27,7 +27,7 @@ mod tests;
 pub use consumer::SharedFrameRingConsumer;
 pub use layout::{
     DEFAULT_MAX_FRAME_BYTES, PIXEL_FORMAT_NV12, RING_MAGIC, RING_META_SIZE, RING_READY_DONE,
-    RING_SLOT_COUNT, RING_SLOT_META_SIZE, RING_VERSION,
+    RING_SLOT_COUNT, RING_SLOT_META_SIZE,
 };
 #[cfg(target_os = "macos")]
 pub use macos_app_group::{
@@ -55,7 +55,7 @@ pub enum SharedRingError {
     InvalidLayout,
     #[error("frame too large: {0} > max {1}")]
     FrameTooLarge(usize, usize),
-    #[error("invalid magic/version")]
+    #[error("invalid ring header")]
     InvalidHeader,
 }
 

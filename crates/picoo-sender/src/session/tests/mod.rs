@@ -125,6 +125,7 @@ fn signed_server_hello<T: PicooTransport>(
         .channel_binding(session)
         .expect("channel binding");
     let transcript = picoo_pairing::PairingTranscript {
+        protocol: picoo_protocol::ALPN,
         sender_id: sender.identity.device_id(),
         sender_public_key: sender.identity.public_key(),
         sender_nonce: &sender_nonce,

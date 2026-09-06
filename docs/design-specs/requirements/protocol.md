@@ -3,7 +3,7 @@
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-PROTOCOL-001 | implemented | ARCH-PICOO-PROTOCOL-001 | VideoPacket 使用无版本字段的固定二进制头（33 字节 + payload） | 编解码往返 + `VIDEO_PACKET_HEADER_SIZE == 33` 测试 |
-| REQ-PICOO-PROTOCOL-002 | deprecated | ARCH-PICOO-PROTOCOL-001 | 旧数字版本协商已删除；当前 ALPN 仅为 `picoocam` | 仓库不存在协议数字版本常量、字段或兼容解析器；旧构建无法连接 |
+| REQ-PICOO-PROTOCOL-002 | deprecated | ARCH-PICOO-PROTOCOL-001 | 历史数字版本协商已删除；固定无版本 ALPN `picoocam` | 不新增版本字段、版本协商或兼容解析器 |
 | REQ-PICOO-PROTOCOL-003 | implemented | ARCH-PICOO-PROTOCOL-001 | 单包最大 1150 字节，payload 不超 MTU；单 AU 上限 1024 个系统数据片（约 1.1 MiB 原始 AU，FEC 校验片不计入 `fragment_count`），Sender/Receiver 使用同一常量 | `rejects_oversized_datagram`；`access_unit_over_reassembly_budget_is_rejected_before_queueing`；产品分辨率 OpenH264 epoch/分辨率切换测试 |
 | REQ-PICOO-PROTOCOL-004 | implemented | ARCH-PICOO-PROTOCOL-001 | stream_epoch 隔离重组 | packet crate epoch 测试 |
 | REQ-PICOO-PROTOCOL-005 | implemented | PUC-005 | StreamConfig 携带 codec/分辨率/SPS/PPS/epoch；AU AVCC→Annex-B 规范化；Control Stream 与 Datagram 跨通道乱序时，Receiver 最多保留一个 future epoch 完整 IDR，匹配配置到达后才释放 | Android/iOS 提取 SPS/PPS → FFI → StreamConfig；iOS IDR 同时内联 SPS/PPS；future delta/不完整 AU 不跨门禁、更高 epoch 取代旧门禁、teardown 清理；Profile/Level 从真实 SPS 推导；`stream_epoch_bump_requests_keyframe`；`stream_config_derives_main_level_4_from_sps`；`access_unit_to_annex_b`；`paired_avcc_length_prefixed_au_reaches_latest_frame_store` |
@@ -14,3 +14,5 @@
 | REQ-PICOO-PROTOCOL-011 | implemented | ARCH-PICOO-PROTOCOL-001 | 每个可靠控制帧只解码一次 ControlEnvelope；oneof 明确消息类型，`message_id` 非零且连接内单调，`connection_generation` 非零且匹配当前连接，裸 payload、重复/越序 ID 和旧 generation 直接拒绝 | Envelope roundtrip/缺字段/裸消息/重复 ID/旧 generation 测试；生产路径无逐类型 `decode` |
 | REQ-PICOO-PROTOCOL-012 | implemented | ARCH-PICOO-PROTOCOL-001 / ARCH-PICOO-RUNTIME-001 | Trust/Stream 状态机按 payload 白名单做阶段门禁；未知 Receiver 不得以 `pairing_required=false` 绕过配对，认证前不得执行相机、编码器、统计、能力或流配置等特权控制；配对超时关闭该连接；状态篡改与未配对媒体注入能力只存在于默认关闭的测试/诊断 feature | `unknown_receiver_cannot_disable_pairing`；`privileged_control_is_rejected_until_receiver_is_authenticated`；Receiver 配对阶段拒绝 StreamConfig；未认证媒体门禁负向测试；普通产品 feature 图不启用 `picoo-sender/test-support` 或 `picoo-receiver/loopback-diagnostics` |
 | REQ-PICOO-PROTOCOL-013 | implemented | ARCH-PICOO-PROTOCOL-001 | ControlEnvelope、pairing transcript 与 reassembly/FEC 状态可 fuzz，随机输入不得 panic、越界分配或跨状态授权 | 独立 `fuzz/` workspace 的四个 cargo-fuzz target；文本可审查的固定 regression corpus；Receiver 生产路径复用纯 phase whitelist；nightly 有界 campaign 与 crash artifact |
+
+| REQ-PICOO-PROTOCOL-014 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-026、027 | ALPN 固定为 picoocam，无版本字段或版本协商；配对摘要绑定协议标识和 Ed25519 算法，拒绝重复发现字段 | 真实 QUIC 不相关 ALPN 握手拒绝、重复 TXT 门禁、跨协议签名不可复用；旧 schema 语义拒绝在各接口变更中单独验收 |

@@ -339,6 +339,7 @@ impl ReceiverSession {
             ReceiverError::Protocol("missing control connection generation".into())
         })?;
         let transcript = PairingTranscript {
+            protocol: picoo_protocol::ALPN,
             sender_id: &hello.sender_id,
             sender_public_key: &hello.public_key,
             sender_nonce: &hello.sender_nonce,

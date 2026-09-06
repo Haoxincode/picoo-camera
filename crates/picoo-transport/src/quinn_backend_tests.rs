@@ -52,3 +52,33 @@ fn recovery_keyframe_cannot_evict_fragments_from_older_access_units() {
         DATAGRAM_SEND_BUFFER_SIZE
     ));
 }
+
+#[tokio::test]
+async fn unrelated_alpn_cannot_establish_a_picoo_connection() {
+    // REQ-PICOO-PROTOCOL-014: exercise real TLS negotiation, not string comparison.
+    let server =
+        Endpoint::server(server_config().unwrap(), "127.0.0.1:0".parse().unwrap()).unwrap();
+    let mut client = Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+    let mut tls = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_no_client_auth();
+    tls.alpn_protocols = vec![b"unrelated-protocol".to_vec()];
+    client.set_default_client_config(ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(tls).unwrap(),
+    )));
+    let connecting = client
+        .connect(server.local_addr().unwrap(), "picoo-camera")
+        .unwrap();
+    let attempt = async {
+        let (client_result, server_result) =
+            tokio::join!(connecting, async { server.accept().await.unwrap().await });
+        assert!(client_result.is_err(), "unrelated ALPN connected");
+        assert!(server_result.is_err(), "server accepted unrelated ALPN");
+    };
+    tokio::time::timeout(Duration::from_secs(5), attempt)
+        .await
+        .expect("handshake deadline");
+    client.close(VarInt::from_u32(0), b"test-complete");
+    server.close(VarInt::from_u32(0), b"test-complete");
+}

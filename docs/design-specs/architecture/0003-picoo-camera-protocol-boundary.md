@@ -1,5 +1,7 @@
 # ARCH-PICOO-PROTOCOL-001: Picoo Camera Protocol 边界
 
+> Next 当前连接合同由 ARCH-PICOO-MEDIA-002 / REQ-PICOO-PROTOCOL-014 约束：ALPN 固定为 `picoocam`，不加协议版本字段或协商，配对摘要绑定协议与 Ed25519 算法；直接替换当前契约，不保留旧 schema 分支。控制/视频完整新 schema 的完成状态仍按各 Requirement 验证。
+
 Status: planned
 Source: product PRD V1.0 / PUC-002 / PUC-005 / PUC-006
 

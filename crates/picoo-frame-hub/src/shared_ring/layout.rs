@@ -3,7 +3,6 @@ use std::sync::atomic::{AtomicU32, AtomicU64};
 use super::SharedRingError;
 
 pub const RING_MAGIC: u32 = 0x5049_434F; // "PICO"
-pub const RING_VERSION: u32 = 2;
 pub const PIXEL_FORMAT_NV12: u32 = 1;
 
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 1920 * 1080 * 3 / 2;
@@ -20,12 +19,11 @@ pub(super) const WRITER_LEASE: u32 = u32::MAX;
 #[repr(C)]
 pub(super) struct RingMeta {
     pub(super) magic: u32,
-    pub(super) version: u32,
     pub(super) slot_count: u32,
     pub(super) max_frame_bytes: u32,
     pub(super) write_index: AtomicU32,
     pub(super) latest_sequence: AtomicU64,
-    pub(super) _pad: [u8; 32],
+    pub(super) _pad: [u8; 40],
 }
 
 #[repr(C)]
@@ -88,10 +86,7 @@ pub(super) fn validate_ring_header(
     // SAFETY: Every caller has already opened a mapping large enough for the
     // requested ring layout.
     let meta = unsafe { &*const_meta_at(base) };
-    if meta.magic != RING_MAGIC
-        || meta.version != RING_VERSION
-        || meta.slot_count != RING_SLOT_COUNT as u32
-    {
+    if meta.magic != RING_MAGIC || meta.slot_count != RING_SLOT_COUNT as u32 {
         return Err(SharedRingError::InvalidHeader);
     }
     if meta.max_frame_bytes as usize != max_frame_bytes {

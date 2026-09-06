@@ -29,7 +29,7 @@
 | REQ-PICOO-NEXT-023 | planned | NEXT-REQ-023 | 重组与恢复 codec-aware；IDR/CRA 不能混同 | AVC/HEVC 各类随机访问样本与缺片注入 |
 | REQ-PICOO-NEXT-024 | planned | NEXT-REQ-024 | 只有摄像头输出边界可自动选择 CpuBridge；硬件 codec 或 GPU 主链路不足明确失败 | 能力组合故障注入、路由原因和依赖检查 |
 | REQ-PICOO-NEXT-025 | planned | NEXT-REQ-025 | 网络、命令、媒体、输出全部有容量和时限；控制命令有明确结果 | 过载状态机与预算断言 |
-| REQ-PICOO-NEXT-026 | planned | NEXT-REQ-026 | 旧协议、旧 IPC、旧配置、旧 FFI 不被新产品接受 | 混版本拒绝测试 |
+| REQ-PICOO-NEXT-026 | planned | NEXT-REQ-026 | 旧协议、旧 IPC、旧配置、旧 FFI 不被新产品接受 | 非法契约输入拒绝测试 |
 | REQ-PICOO-NEXT-027 | planned | NEXT-REQ-027 | 配对认证、加密、资源权限、输入边界、隐私行为继续有效 | 未授权访问与恶意输入测试 |
 | REQ-PICOO-NEXT-028 | planned | NEXT-REQ-028 | 度量自动采集并区分请求值/实际值、提交/呈现、新帧/重复帧 | 结构化诊断完整性检查 |
 | REQ-PICOO-NEXT-029 | planned | NEXT-REQ-029 | CPU 整图仅由 Output Exporter 产生；不进入 Decoder API 或 Preview | 构建依赖审查、preview-only 导出数为零 |
@@ -41,7 +41,7 @@
 | REQ-PICOO-NEXT-035 | planned | NEXT-REQ-035 | 相同输出内容可共享一次 CPU 物化，不同规格独立准备；低频 sink 不增加高频无用导出 | 一源两消费同/异规格、source60→output30 |
 | REQ-PICOO-NEXT-036 | planned | NEXT-REQ-036 | 后端切换为事务，推进 backend generation；配置和 SampleClock 连续，旧完成不可提交 | 切换中 stop/格式改变/旧任务完成 |
 | REQ-PICOO-NEXT-037 | planned | NEXT-REQ-037 | 跨 GPU 原生交接不可用时可用 CPU bridge，不为新增 sink 重置正在录像的源 device | 双 adapter GPU→CPU→合法目标 sample |
-| REQ-PICOO-NEXT-038 | planned | NEXT-REQ-038 | CPU IPC 使用新版 ABI、最小权限和崩溃可恢复 lease；隐私时限适用所有缓存 | 混版本/未授权/崩溃/断开占位测试 |
+| REQ-PICOO-NEXT-038 | planned | NEXT-REQ-038 | CPU IPC 使用当前无版本 ABI、最小权限和崩溃可恢复 lease；隐私时限适用所有缓存 | 非法布局/未授权/崩溃/断开占位测试 |
 | REQ-PICOO-NEXT-039 | planned | NEXT-REQ-039 | CPU 输出按所选30/60fps规格验收，并验证其对 GPU 预览与录像的影响 | 同配置 A/B、p95/p99、热稳态并用 |
 | REQ-PICOO-NEXT-040 | planned | NEXT-REQ-040 | CPU bridge 不能绕过身份/权限失败，也不能冒充硬件 codec 或 GPU 故障的修复 | 拒绝后无回退访问；缺 decoder 仍失败 |
 

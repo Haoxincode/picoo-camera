@@ -105,7 +105,7 @@ User request / product requirement
 | `Sender` | 运行在 Android 或 iPhone 上的手机端应用，负责摄像头采集、硬件编码和向 Receiver 发送视频。 | 不称为 Client 或 Mobile App 作为架构角色名；UI 层可显示产品名。 |
 | `Receiver` | 运行在 Windows 或 macOS 上的桌面应用，负责发现、配对、接收、解码、预览和驱动虚拟摄像头。 | 不称为 Server 作为用户可见产品名；协议层 Receiver 承担 QUIC Server 角色。 |
 | `Rust Core` | 由多个 `picoo-*` crate 组成的共享业务核心，统一协议、传输、会话、配对、分包、抖动缓冲、码率控制、指标和 FFI。 | 不负责各平台 Camera、MediaCodec、VideoToolbox、虚拟摄像头安装 UI 和系统权限弹窗。 |
-| `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 为 `picoocam`；不维护数字版本或旧协议兼容解析器。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
+| `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 固定为 `picoocam`；协议、FFI、IPC 不加版本号或版本协商，直接修改当前契约，不维护旧接口或迁移器。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
 | `LatestFrameStore` | 桌面端解码帧的同进程容量一出口，发布 `Arc<VideoFrame>`，同时服务 GPUI Preview Worker 与 Shared Frame Ring Writer。 | 一条视频流只解码一次；消费者持有共享不可变帧，变慢时只跳过旧帧，不反压 Decoder。 |
 | `Shared Frame Ring` | 主应用与虚拟摄像头扩展/组件之间的跨进程三槽 NV12 帧共享区。Windows 使用 Named Shared Memory；macOS 使用 App Group mmap。 | ready state、reader lease 与进程恢复只属于跨进程 Ring；不得套用到 `LatestFrameStore`。第一版不依赖 IOSurface 或跨进程 GPU 纹理共享。 |
 | `Virtual Camera` | 向操作系统注册的标准摄像头设备，统一名称为 `Picoo Camera`。 | Windows 使用 MF Virtual Camera；macOS 使用 CMIO Camera Extension。 |
