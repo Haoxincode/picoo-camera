@@ -7,7 +7,8 @@ use super::ReceiverSession;
 use crate::ReceiverError;
 use picoo_protocol::control::{
     camera_command, control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
-    EncoderCommand, Resolution, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
+    ColorRange, DecoderOffer, EncoderCommand, FrameRate, Resolution, SenderStats as SenderStatsMsg,
+    SessionError, StreamConfig, VideoCodec, VideoFormat,
 };
 use picoo_protocol::{receiver_payload_allowed, ReceiverControlPhase};
 use picoo_session::StreamState;
@@ -218,30 +219,26 @@ impl ReceiverSession {
     }
 
     fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
-        // Advertise 480p / 720p / 1080p ladder (REQ-PICOO-UI-0001 AC-M-LIVE-01 + PUC-005).
-        let mut resolutions = vec![
-            Resolution {
-                width: 854,
-                height: 480,
-            },
-            Resolution {
-                width: 1280,
-                height: 720,
-            },
-        ];
-        if self.advertised_max_height >= 1080 {
-            resolutions.push(Resolution {
-                width: 1920,
-                height: 1080,
-            });
-        }
-        let capabilities = Capabilities {
-            codecs: vec!["h264".into()],
-            resolutions,
-            fps: vec![30],
-            front_camera: true,
-            back_camera: true,
-        };
+        // This adapter currently implements AVC/30. Do not advertise HEVC/60
+        // until the native decoder adapters have been integrated and validated.
+        let offers = [(1280, 720, 31), (1920, 1080, 40)]
+            .into_iter()
+            .filter(|(_, height, _)| *height <= self.advertised_max_height)
+            .map(|(width, height, level)| DecoderOffer {
+                format: Some(VideoFormat::sdr_709(
+                    VideoCodec::Avc,
+                    Resolution { width, height },
+                    FrameRate {
+                        numerator: 30,
+                        denominator: 1,
+                    },
+                    ColorRange::Limited,
+                )),
+                max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
+                max_level_idc: level,
+            })
+            .collect();
+        let capabilities = Capabilities { offers };
         self.send_control_payload(session, ControlPayload::Capabilities(capabilities))
     }
 

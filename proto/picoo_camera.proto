@@ -74,12 +74,85 @@ message PairingComplete {
   bytes identity_signature = 2;
 }
 
+// Receiver decoder capabilities. Each entry is one complete combination;
+// neither endpoint may form a Cartesian product from unrelated entries.
 message Capabilities {
-  repeated string codecs = 1;
-  repeated Resolution resolutions = 2;
-  repeated uint32 fps = 3;
-  bool front_camera = 4;
-  bool back_camera = 5;
+  repeated DecoderOffer offers = 1;
+}
+
+enum VideoCodec {
+  VIDEO_CODEC_UNSPECIFIED = 0;
+  VIDEO_CODEC_AVC = 1;
+  VIDEO_CODEC_HEVC = 2;
+}
+
+enum VideoProfile {
+  VIDEO_PROFILE_UNSPECIFIED = 0;
+  VIDEO_PROFILE_AVC_HIGH = 1;
+  VIDEO_PROFILE_HEVC_MAIN = 2;
+}
+
+enum VideoChroma {
+  VIDEO_CHROMA_UNSPECIFIED = 0;
+  VIDEO_CHROMA_YUV420 = 1;
+}
+
+enum ColorRange {
+  COLOR_RANGE_UNSPECIFIED = 0;
+  COLOR_RANGE_LIMITED = 1;
+  COLOR_RANGE_FULL = 2;
+}
+
+enum ColorPrimaries {
+  COLOR_PRIMARIES_UNSPECIFIED = 0;
+  COLOR_PRIMARIES_BT709 = 1;
+}
+
+enum ColorTransfer {
+  COLOR_TRANSFER_UNSPECIFIED = 0;
+  COLOR_TRANSFER_BT709 = 1;
+}
+
+enum ColorMatrix {
+  COLOR_MATRIX_UNSPECIFIED = 0;
+  COLOR_MATRIX_BT709 = 1;
+}
+
+message ColorDescription {
+  ColorRange range = 1;
+  ColorPrimaries primaries = 2;
+  ColorTransfer transfer = 3;
+  ColorMatrix matrix = 4;
+}
+
+message FrameRate {
+  uint32 numerator = 1;
+  uint32 denominator = 2;
+}
+
+message VisibleRect {
+  uint32 x = 1;
+  uint32 y = 2;
+  uint32 width = 3;
+  uint32 height = 4;
+}
+
+message VideoFormat {
+  VideoCodec codec = 1;
+  VideoProfile profile = 2;
+  uint32 bit_depth = 3;
+  VideoChroma chroma = 4;
+  Resolution coded_size = 5;
+  VisibleRect visible_rect = 6;
+  FrameRate frame_rate = 7;
+  ColorDescription color = 8;
+}
+
+message DecoderOffer {
+  VideoFormat format = 1;
+  uint32 max_access_unit_bytes = 2;
+  // Codec-specific standard level_idc ceiling for this complete format.
+  uint32 max_level_idc = 3;
 }
 
 message Resolution {

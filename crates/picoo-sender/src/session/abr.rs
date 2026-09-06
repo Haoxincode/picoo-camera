@@ -11,7 +11,28 @@ impl<T: PicooTransport> SenderSession<T> {
     pub fn receiver_max_height(&self) -> u32 {
         self.receiver_capabilities
             .as_ref()
-            .map(|caps| caps.resolutions.iter().map(|r| r.height).max().unwrap_or(0))
+            .map_or(0, |caps| self.matching_decoder_height(caps))
+    }
+
+    fn matching_decoder_height(&self, caps: &Capabilities) -> u32 {
+        // The current native Sender adapter is AVC. Dual-codec selection will
+        // replace this adapter constraint when its native offers are available.
+        let fps = self
+            .pending_stream_config
+            .as_ref()
+            .map_or(30, |config| config.fps);
+        caps.offers
+            .iter()
+            .filter_map(|offer| offer.format.as_ref())
+            .filter(|format| format.codec == picoo_protocol::control::VideoCodec::Avc as i32)
+            .filter(|format| {
+                format
+                    .frame_rate
+                    .as_ref()
+                    .is_some_and(|rate| rate.numerator == fps && rate.denominator == 1)
+            })
+            .filter_map(|format| format.coded_size.as_ref().map(|size| size.height))
+            .max()
             .unwrap_or(0)
     }
 
@@ -156,18 +177,21 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn handle_capabilities(&mut self, capabilities: Capabilities) -> bool {
-        // Empty Capabilities is a prost false-positive for almost any blob.
-        if !capabilities.codecs.is_empty() {
-            self.receiver_capabilities = Some(capabilities);
-            self.bitrate
-                .set_preferred_height(self.cap_to_receiver_height(self.requested_preferred_height));
-            if self.lifecycle.runtime.stream() == StreamState::Negotiating {
-                self.enter_streaming();
-            }
-            true
-        } else {
-            false
+        if capabilities.validate().is_err() {
+            self.last_session_error = Some("INVALID_DECODER_CAPABILITIES".into());
+            return false;
         }
+        if self.matching_decoder_height(&capabilities) == 0 {
+            self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
+            return false;
+        }
+        self.receiver_capabilities = Some(capabilities);
+        self.bitrate
+            .set_preferred_height(self.cap_to_receiver_height(self.requested_preferred_height));
+        if self.lifecycle.runtime.stream() == StreamState::Negotiating {
+            self.enter_streaming();
+        }
+        true
     }
 
     #[doc(hidden)]

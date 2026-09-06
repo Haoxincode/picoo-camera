@@ -16,3 +16,5 @@
 | REQ-PICOO-PROTOCOL-013 | implemented | ARCH-PICOO-PROTOCOL-001 | ControlEnvelope、pairing transcript 与 reassembly/FEC 状态可 fuzz，随机输入不得 panic、越界分配或跨状态授权 | 独立 `fuzz/` workspace 的四个 cargo-fuzz target；文本可审查的固定 regression corpus；Receiver 生产路径复用纯 phase whitelist；nightly 有界 campaign 与 crash artifact |
 
 | REQ-PICOO-PROTOCOL-014 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-026、027 | ALPN 固定为 picoocam，无版本字段或版本协商；配对摘要绑定协议标识和 Ed25519 算法，拒绝重复发现字段 | 真实 QUIC 不相关 ALPN 握手拒绝、重复 TXT 门禁、跨协议签名不可复用；旧 schema 语义拒绝在各接口变更中单独验收 |
+
+| REQ-PICOO-PROTOCOL-015 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025 | Decoder 能力由有界完整格式组合表达，显式 codec/profile/level、尺寸/可见区域、有理帧率、8-bit 420 SDR 色彩和 AU 上限；未知/缺失/重复组合拒绝，不拼接独立列表 | Protobuf roundtrip、非法字段边界、跨 codec/fps 不产生虚假支持、Sender/Receiver 配对回归；真实能力探测按 NEXT-004 单独验收 |

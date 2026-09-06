@@ -11,6 +11,10 @@ pub mod control {
 }
 
 mod control_gate;
+mod media_format;
+#[cfg(test)]
+mod media_format_tests;
+pub use media_format::{MediaFormatError, MAX_DECODER_OFFERS, MAX_MEDIA_ACCESS_UNIT_BYTES};
 mod video_fec;
 mod video_packet;
 
