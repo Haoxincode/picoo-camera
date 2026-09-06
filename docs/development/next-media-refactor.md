@@ -163,3 +163,6 @@ GPUI 发布包的 CVMetalTexture/PixelBuffer 寿命问题通过可审查局部 p
 Mac 完整生产构建与本机测试包打包通过；Android 构建在 Mac 上也复用隔离测试执行目录，完整 workspace 单元测试、doc tests 与 Gradle assembleDebug 通过，新包已安装到 Xiaomi 15。手机锁屏尚未解除，本次新包的发现/视频真机验收尚未完成。旧安装包曾连接到新 Mac 后因 StreamConfig wire 类型已改变被明确拒绝；没有添加旧协议兼容。
 
 发现状态修正 13550df：等待真实 Announce 时展示启动中，5 秒无回执进入超时；首次错误也记录。21 项发现测试通过（1 项受控 LAN 测试忽略），discovery 与 xtask Clippy 通过。Mac 正常 GUI 重启的 mDNS 日志确认在物理 Wi-Fi 地址 192.168.8.100 于约 1 秒内完成公告；原运行的 Error 日志级别过滤了诊断，因此未声称查明原持续异常根因。临时 PICOO_LOG_FILTER 不再被 GPUI 启动路径覆盖。c9da1b5 的 Actions 34025594034 五个 job 全部通过。
+
+
+Xiaomi 15 解锁后，新 Mac 日志确认真实视频持续进入 VideoToolbox，当前源仍是 30fps；数分钟观测到恢复与丢片，不能把可推流记录当作 60fps/无损质量验收。随后 ADB 显式打开重现两个 MainActivity 共存：旧 ViewModel 继续编码，新页面显示离线。Android MainActivity 改用官方 singleTask 生命周期，通知/重复启动复用原实例，不增加会话全局缓存或旧状态迁移。真机 `SingleSenderActivityTest` 通过，三次系统显式启动保持 Activity 和 ViewModel 身份；ActivityScenario 的同步新实例启动不适用于此复用场景，测试通过 UiAutomation 的真实系统启动路径观察生命周期。
