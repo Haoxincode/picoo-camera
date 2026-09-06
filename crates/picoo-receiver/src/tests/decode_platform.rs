@@ -157,10 +157,7 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
-    #[cfg(target_os = "macos")]
     use picoo_testkit::AVC_64X64_BT709_IDR as H264_64X64_RED_IDR;
-    #[cfg(not(target_os = "macos"))]
-    use picoo_testkit::H264_64X64_RED_IDR;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
     let width = 64usize;

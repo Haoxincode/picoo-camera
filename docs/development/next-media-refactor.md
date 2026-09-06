@@ -189,3 +189,10 @@ Mac 原生套件通过（Decoder 12、GPU 9、Receiver 102 passed / 2 ignored、
 ## CI 时钟统计测试同步
 
 dfd57e8 的 CI 中，5% 丢包恢复测试通过，macOS 失败项为统计用例固定等待后假定时钟映射已稳定。估计器会拒绝延迟异常的交换；统计窗口数不保证低延迟样本数。1dda9cf 改为在独立 5 秒测试超时内等待已发布的映射和至少两个统计窗口，保留延迟/不确定度断言，不修改生产估计器或媒体新鲜度预算。本机完整 Receiver 102 项通过。配置改造涉及的四个 crate all-targets Clippy 与 397 项文档链接检查通过。
+
+
+## 跨平台配置样本与恢复节奏修正
+
+04ab866 的 CI：iOS 通过；Rust/Android 共同失败于 AVCC 跨平台测试仍使用 Baseline 的 64×64 样本，新记录准入正确拒绝。统一采用已有真实 High/BT.709 样本，保留实际解码与尺寸断言。macOS 丢包测试主段通过，但恢复段最新帧年龄 1112ms 超过 1s；该段仍以突发帧和 50fps 发送。恢复段统一按 30fps 持续源发送并在间隔中泵送，保留 1s 新鲜度断言；需以新回归和 CI 验证，不能由节奏调整本身宣称修复生产恢复性能。
+
+修正后 `cargo xtask test macos` 完整通过：Receiver 102 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70，包含恢复帧年龄断言。日志 `/tmp/picoo-config-ci-fixes-tests.log`；跨平台新 CI 另验。

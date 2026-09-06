@@ -316,11 +316,12 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
                 1,
             )
             .expect("recover ingest");
-        for _ in 0..8 {
+        let deadline = Instant::now() + Duration::from_micros(33_333);
+        while Instant::now() < deadline {
             receiver.pump().expect("rx");
-            sender.pump().ok();
+            sender.pump().expect("tx");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(2));
     }
     assert!(
         receiver.latest_frame().is_some(),
@@ -341,11 +342,12 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
             )
             .expect("recover keep-alive");
         recover_id += 1;
-        for _ in 0..6 {
+        let deadline = Instant::now() + Duration::from_micros(33_333);
+        while Instant::now() < deadline {
             receiver.pump().expect("rx");
-            sender.pump().ok();
+            sender.pump().expect("tx");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(20));
     }
     for _ in 0..20 {
         receiver.pump().ok();
