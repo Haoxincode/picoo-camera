@@ -144,7 +144,11 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
                     .add(row * mapped.RowPitch as usize),
                 64 * 4,
             );
-            assert!(bytes.chunks_exact(4).all(|pixel| pixel == [0, 0, 255, 255]));
+            assert!(bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [0, 0, 255, 255]));
         }
         consumer.with_immediate_context(|context| context.Unmap(&copied.staging, 0));
         drop(copied);

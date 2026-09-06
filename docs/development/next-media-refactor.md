@@ -462,3 +462,5 @@ BGRA 复用原三槽输出池，创建 SHARED_NTHANDLE + SHARED_KEYEDMUTEX 纹�
 Windows GPU all-targets Clippy 通过；Mac GPU/Receiver/Desktop all-targets Clippy 与 10 项实际 GPU/输出格式回归通过，文档检查通过。未新增依赖库，使用已有 windows-rs、Video Processor、标准 OwnedHandle 与 GPU completion。GPUI 的共享图像描述、导入和读取完成 owner 尚待接入，源 Windows CPU Decoder/FrameBus 替换与全部 Next 项仍未完成。
 
 CI 34049971485（a112d09）已通过 Windows 原生测试步骤：原 token/reset 两项真实 MF 诊断可以编译并运行；Windows/Mac 最终产物仍在执行。上一轮 34049182494 的其他平台已通过，Windows 因 fixture 返回类型失败跳过最终产物，不能计为完整 CI 成功。
+
+CI 34050770806 的 Windows 在 Clippy 阶段被 Rust 1.98 新增的 chunks_exact_to_as_chunks lint 拒绝；跨 device 测试尚未运行。测试改用 as_chunks::<4> 比较 BGRA 像素，不关闭 lint。另校正本机验证范围：此前 Desktop 命令未带 gpui-ui，只能证明桌面非 UI 目标；后续 GPUI 补丁必须显式启用 gpui-ui 验证。
