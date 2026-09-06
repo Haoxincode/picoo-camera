@@ -44,4 +44,4 @@ Apple 图像、硬件 codec 与 GPU 分别复用 CoreVideo/IOSurface、VideoTool
 
 源配置入口只接受精确的正式尺寸组合（1280×720 / 1920×1080），无 480p 或任意高度归档。用户请求不按 Receiver 最大高度静默替换；不能满足的组合必须明确拒绝。码率策略查询对未知高度返回错误，C/JNI 数值接口以 0 表示不支持，不将其当作可用目标码率（REQ-PICOO-MEDIA-028）。
 
-源配置使用与能力声明相同的 codec/profile/色彩枚举和标准 level_idc，不使用可随意拼写的字符串，也不在缺参数时猜测 profile 或 level。已提交参数集属于 Decoder job 的不可变配置快照；带内参数集只有逐个匹配时才可随 AU 进入平台 Decoder，不能绕过配置事务改写 source format。标准 avcC/hvcC 解释与生成由位流依赖负责，领域层只执行有界准入和一致性校验。
+源配置使用与能力声明相同的 codec/profile/色彩枚举和标准 level_idc，不使用可随意拼写的字符串，也不在缺参数时猜测 profile 或 level。已提交参数集属于 Decoder job 的不可变配置快照；带内参数集只有逐个匹配时才可随 AU 进入平台 Decoder，不能绕过配置事务改写 source format。StreamConfig 的 `codec_configuration` 承载标准 avcC/hvcC 记录，不再单独传输 SPS/PPS；原生 API 提供的参数集仅在平台输入适配边界保留。标准记录中的 configurationVersion 是外部标准语法，不是 Picoo 协议版本。标准 avcC/hvcC 解释与生成由位流依赖负责，领域层只执行有界准入和一致性校验。

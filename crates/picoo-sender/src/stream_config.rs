@@ -35,7 +35,13 @@ impl Default for StreamConfigParams {
 
 impl StreamConfigParams {
     pub fn to_proto(&self) -> StreamConfig {
-        let (profile, level_idc) = self.h264_profile_level();
+        let configuration =
+            picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&self.sps, &self.pps).ok();
+        let (profile, level_idc) = configuration
+            .as_ref()
+            .map_or((VideoProfile::Unspecified, 0), |config| {
+                (VideoProfile::AvcHigh, u32::from(config.level_idc()))
+            });
         StreamConfig {
             codec: picoo_protocol::control::VideoCodec::Avc as i32,
             profile: profile as i32,
@@ -47,8 +53,8 @@ impl StreamConfigParams {
             rotation: Self::normalize_rotation(self.rotation),
             mirrored: self.mirrored,
             color_range: picoo_protocol::control::ColorRange::Limited as i32,
-            sps: self.sps.clone(),
-            pps: self.pps.clone(),
+            codec_configuration: configuration
+                .map_or_else(Vec::new, |config| config.record().to_vec()),
             stream_epoch: self.stream_epoch,
         }
     }
@@ -61,15 +67,6 @@ impl StreamConfigParams {
                 let snapped = ((other as f64) / 90.0).round() as u32 * 90;
                 snapped % 360
             }
-        }
-    }
-
-    /// Preserve source header facts. Missing or unsupported profile is explicit;
-    /// no Baseline/level fallback is invented (REQ-PICOO-PROTOCOL-016).
-    fn h264_profile_level(&self) -> (VideoProfile, u32) {
-        match picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&self.sps, &self.pps) {
-            Ok(config) => (VideoProfile::AvcHigh, u32::from(config.level_idc())),
-            Err(_) => (VideoProfile::Unspecified, 0),
         }
     }
 }

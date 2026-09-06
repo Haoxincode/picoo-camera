@@ -8,9 +8,7 @@
 use std::mem::ManuallyDrop;
 
 use bytes::Bytes;
-use picoo_bitstream::avc::{
-    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
-};
+use picoo_bitstream::avc::{access_unit_contains_idr, access_unit_to_annex_b};
 use picoo_protocol::control::StreamConfig;
 use windows::core::{GUID, HRESULT};
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
@@ -159,11 +157,13 @@ impl MfH264Decoder {
             .unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT, DEFAULT_FPS))
     }
 
-    fn sequence_header_from_config(stream_config: Option<&StreamConfig>) -> Vec<u8> {
+    fn sequence_header_from_config(
+        stream_config: Option<&StreamConfig>,
+    ) -> Result<Vec<u8>, DecodeError> {
         stream_config
-            .filter(|cfg| !cfg.sps.is_empty() && !cfg.pps.is_empty())
-            .map(|cfg| annex_b_parameter_sets(&cfg.sps, &cfg.pps))
-            .unwrap_or_default()
+            .map(crate::configured_avc::sequence_header)
+            .transpose()
+            .map(Option::unwrap_or_default)
     }
 
     fn ensure_configured(
@@ -171,7 +171,7 @@ impl MfH264Decoder {
         stream_config: Option<&StreamConfig>,
     ) -> Result<(), DecodeError> {
         let (width, height, fps) = Self::stream_shape(stream_config);
-        let sequence_header = Self::sequence_header_from_config(stream_config);
+        let sequence_header = Self::sequence_header_from_config(stream_config)?;
         if self.configured
             && self.width == width
             && self.height == height
@@ -562,15 +562,25 @@ mod tests {
 
     #[test]
     fn sequence_header_from_config_builds_annex_b() {
+        let (sps, pps) =
+            picoo_bitstream::avc::extract_sps_pps(picoo_testkit::H264_1280X720_RED_IDR).unwrap();
         let cfg = StreamConfig {
-            sps: vec![0x67, 0x42],
-            pps: vec![0x68, 0xce],
+            codec: picoo_protocol::control::VideoCodec::Avc as i32,
+            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+                &sps, &pps,
+            )
+            .unwrap()
+            .record()
+            .to_vec(),
             width: 1280,
             height: 720,
             ..Default::default()
         };
-        let header = MfH264Decoder::sequence_header_from_config(Some(&cfg));
-        assert_eq!(header, vec![0, 0, 0, 1, 0x67, 0x42, 0, 0, 0, 1, 0x68, 0xce]);
+        let header = MfH264Decoder::sequence_header_from_config(Some(&cfg)).unwrap();
+        assert_eq!(
+            header,
+            picoo_bitstream::avc::annex_b_parameter_sets(&sps, &pps)
+        );
     }
 
     #[test]

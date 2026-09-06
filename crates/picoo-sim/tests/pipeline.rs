@@ -28,8 +28,7 @@ fn config(epoch: u32) -> StreamConfig {
         rotation: 0,
         mirrored: false,
         color_range: picoo_protocol::control::ColorRange::Limited as i32,
-        sps: vec![1],
-        pps: vec![2],
+        codec_configuration: Vec::new(),
         stream_epoch: epoch,
     }
 }

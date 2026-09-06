@@ -258,7 +258,16 @@ fn parameter_sets(
 ) -> Option<(Vec<u8>, Vec<u8>)> {
     match stream_config {
         // Validated before native state mutation by configured_avc::validate.
-        Some(config) => Some((config.sps.clone(), config.pps.clone())),
+        Some(config) => {
+            let configuration = crate::configured_avc::configuration(config).ok()?;
+            if configuration.sps().len() != 1 || configuration.pps().len() != 1 {
+                return None;
+            }
+            Some((
+                configuration.sps()[0].to_vec(),
+                configuration.pps()[0].to_vec(),
+            ))
+        }
         None => extract_sps_pps(access_unit),
     }
 }
@@ -441,8 +450,12 @@ mod tests {
             codec: picoo_protocol::control::VideoCodec::Avc as i32,
             width: 64,
             height: 64,
-            sps,
-            pps,
+            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+                &sps, &pps,
+            )
+            .unwrap()
+            .record()
+            .to_vec(),
             ..Default::default()
         };
         let mut decoder = VideoToolboxDecoder::new();
@@ -470,8 +483,12 @@ mod tests {
             codec: picoo_protocol::control::VideoCodec::Avc as i32,
             width: 64,
             height: 64,
-            sps,
-            pps,
+            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+                &sps, &pps,
+            )
+            .unwrap()
+            .record()
+            .to_vec(),
             ..Default::default()
         };
         let mut decoder = VideoToolboxDecoder::new();
@@ -524,8 +541,12 @@ mod tests {
             codec: picoo_protocol::control::VideoCodec::Avc as i32,
             width: 64,
             height: 64,
-            sps,
-            pps,
+            codec_configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+                &sps, &pps,
+            )
+            .unwrap()
+            .record()
+            .to_vec(),
             ..Default::default()
         };
 

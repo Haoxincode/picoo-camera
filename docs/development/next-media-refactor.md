@@ -175,3 +175,17 @@ Xiaomi 15 解锁后，新 Mac 日志确认真实视频持续进入 VideoToolbox�
 原丢包测试把序号当微秒 PTS、以约 500fps 发送并重复计数缓存帧。测试源改为真实 30fps 节奏、单调微秒 PTS，响应关键帧请求，统计不同帧并以解码进展检测停顿；350ms 检查及恢复后 1s 新鲜度检查保持不变。新的真实节奏用例在修正前稳定于约第 89 帧失败，修正后连续三次通过（同一确定性丢包种子），不将其描述为不同随机种子的覆盖。
 
 Mac `cargo xtask test macos` 完整通过，其中 Receiver 102 passed / 2 ignored、Decoder 11、GPU 9、GPUI Apple 4、Desktop 70；Receiver all-targets Clippy 与 397 项文档链接检查通过。跨平台新提交的 CI 另验，不沿用旧绿灯。
+
+
+## 标准编解码配置记录
+
+REQ-PICOO-PROTOCOL-017 将 StreamConfig 的独立 SPS/PPS 改为 `codec_configuration`。Sender 原生参数输入通过既有 Scuffle avcC 构造，VideoToolbox、Media Foundation 与显式 OpenH264 诊断适配器通过同一有界解析器读取记录。无旧字段、迁移器或协议版本；avcC/hvcC 自带的 configurationVersion 属于标准语法。模拟器使用显式空的合成配置，不伪造参数集；Linux 真实编解码回归的编码器显式选择产品允许的 High profile。
+
+Mac 原生套件通过（Decoder 12、GPU 9、Receiver 102 passed / 2 ignored、GPUI Apple 4、Desktop 70）；Sender 69、协议 24 项测试通过，包含标准 avcC/hvcC 字节往返、记录截断和 codec 不匹配拒绝。全 workspace 单元与集成测试通过。Windows/Linux 与 Android 产物继续由本次构建及 CI 验证，不将标准 hvcC 传输测试计为 HEVC 原生发送/接收完成。
+
+此改动只替换配置载体：完整 VideoFormat 提交前准入、Sender 缺参阶段与合成测试边界收紧、AU 四字节长度规范化和 HEVC 原生事务仍未完成；不将当前 Decoder 的记录校验当成整条配置事务的验证。
+
+
+## CI 时钟统计测试同步
+
+dfd57e8 的 CI 中，5% 丢包恢复测试通过，macOS 失败项为统计用例固定等待后假定时钟映射已稳定。估计器会拒绝延迟异常的交换；统计窗口数不保证低延迟样本数。1dda9cf 改为在独立 5 秒测试超时内等待已发布的映射和至少两个统计窗口，保留延迟/不确定度断言，不修改生产估计器或媒体新鲜度预算。本机完整 Receiver 102 项通过。配置改造涉及的四个 crate all-targets Clippy 与 397 项文档链接检查通过。

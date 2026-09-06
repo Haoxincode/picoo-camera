@@ -33,7 +33,11 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         }
     }
     let yuv = YUVBuffer::from_vec(planes, width, height);
-    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+    )
+    .expect("openh264 encoder");
     let bitstream = encoder.encode(&yuv).expect("encode");
     let annex = bitstream.to_vec();
     assert!(annex.len() > 64, "AU too small for OpenH264 path");
@@ -526,7 +530,11 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         }
     }
     let yuv = YUVBuffer::from_vec(planes, width, height);
-    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+    )
+    .expect("openh264 encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
 

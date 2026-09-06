@@ -5,8 +5,7 @@ use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use openh264::nal_units;
 use picoo_bitstream::avc::{
-    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
-    is_length_prefixed_access_unit,
+    access_unit_contains_idr, access_unit_to_annex_b, is_length_prefixed_access_unit,
 };
 use picoo_frame_hub::nv12_byte_size;
 use picoo_protocol::control::StreamConfig;
@@ -16,8 +15,7 @@ use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, Dec
 
 pub struct OpenH264Decoder {
     decoder: Decoder,
-    last_sps: Vec<u8>,
-    last_pps: Vec<u8>,
+    last_configuration: Vec<u8>,
     param_sets_fed: bool,
     stub: StubDecoder,
 }
@@ -27,8 +25,7 @@ impl OpenH264Decoder {
         let decoder = Decoder::new().map_err(|e| DecodeError::Platform(e.to_string()))?;
         Ok(Self {
             decoder,
-            last_sps: Vec::new(),
-            last_pps: Vec::new(),
+            last_configuration: Vec::new(),
             param_sets_fed: false,
             stub: StubDecoder::new(),
         })
@@ -41,20 +38,16 @@ impl OpenH264Decoder {
         let Some(cfg) = stream_config else {
             return Ok(());
         };
-        if cfg.sps.is_empty() || cfg.pps.is_empty() {
+        if self.param_sets_fed && cfg.codec_configuration == self.last_configuration {
             return Ok(());
         }
-        if self.param_sets_fed && cfg.sps == self.last_sps && cfg.pps == self.last_pps {
-            return Ok(());
-        }
-        let annex = annex_b_parameter_sets(&cfg.sps, &cfg.pps);
+        let annex = crate::configured_avc::sequence_header(cfg)?;
         // Feed SPS/PPS; picture may not be ready yet.
         let _ = self
             .decoder
             .decode(&annex)
             .map_err(|e| DecodeError::Platform(e.to_string()))?;
-        self.last_sps = cfg.sps.clone();
-        self.last_pps = cfg.pps.clone();
+        self.last_configuration = cfg.codec_configuration.clone();
         self.param_sets_fed = true;
         Ok(())
     }

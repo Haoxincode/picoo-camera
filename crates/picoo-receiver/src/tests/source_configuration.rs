@@ -24,7 +24,11 @@ fn network_feedback_keeps_source_fixed_and_explicit_changes_still_decode() {
         let mut planes = vec![128u8; w * h * 3 / 2];
         planes[..w * h].fill(seed.saturating_add(32));
         let yuv = YUVBuffer::from_vec(planes, w, h);
-        let mut encoder = Encoder::new().expect("encoder");
+        let mut encoder = Encoder::with_api_config(
+            openh264::OpenH264API::from_source(),
+            openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        )
+        .expect("encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();
         let (sps, pps) = extract_sps_pps(&annex).expect("sps/pps");
         (annex, sps, pps)

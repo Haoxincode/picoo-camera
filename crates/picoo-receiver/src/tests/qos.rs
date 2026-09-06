@@ -86,7 +86,11 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
             }
         }
         let yuv = YUVBuffer::from_vec(planes, width, height);
-        let mut encoder = Encoder::new().expect("openh264 encoder");
+        let mut encoder = Encoder::with_api_config(
+            openh264::OpenH264API::from_source(),
+            openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        )
+        .expect("openh264 encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();
         let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
         sender.set_stream_config(StreamConfigParams {

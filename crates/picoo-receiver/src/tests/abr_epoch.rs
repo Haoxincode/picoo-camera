@@ -20,7 +20,11 @@ pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Ve
         }
     }
     let yuv = YUVBuffer::from_vec(planes, width, height);
-    let mut encoder = Encoder::new().expect("encoder");
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+    )
+    .expect("encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
     (annex, sps, pps)
@@ -334,7 +338,11 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
         }
     }
     let yuv = YUVBuffer::from_vec(planes.clone(), width, height);
-    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+    )
+    .expect("openh264 encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
     assert!(annex.len() > 32);
@@ -357,7 +365,11 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     let recovery_yuv = YUVBuffer::from_vec(recovery_planes, width, height);
     // The requested recovery frame must be a fresh IDR, not another P-frame
     // whose references may include the discarded incomplete access unit.
-    let mut recovery_encoder = Encoder::new().expect("recovery OpenH264 encoder");
+    let mut recovery_encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+    )
+    .expect("recovery OpenH264 encoder");
     let recovery_au = recovery_encoder
         .encode(&recovery_yuv)
         .expect("recovery encode")

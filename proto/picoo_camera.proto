@@ -171,8 +171,8 @@ message StreamConfig {
   uint32 rotation = 8;
   bool mirrored = 9;
   ColorRange color_range = 10;
-  bytes sps = 11;
-  bytes pps = 12;
+  // Standard avcC/hvcC record, including the explicit NAL length size.
+  bytes codec_configuration = 11;
   uint32 stream_epoch = 13;
 }
 

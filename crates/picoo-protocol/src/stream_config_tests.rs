@@ -41,3 +41,28 @@ fn string_typed_source_identity_is_rejected_instead_of_converted() {
         assert!(StreamConfig::decode(bytes.as_slice()).is_err());
     }
 }
+
+// REQ-PICOO-PROTOCOL-017: the control envelope transports the standard record
+// byte-for-byte. Semantic admission belongs to picoo-bitstream / Receiver.
+#[test]
+fn standard_avcc_hvcc_records_roundtrip_without_separate_parameter_fields() {
+    for (codec, record) in [
+        (
+            VideoCodec::Avc,
+            include_bytes!("../../picoo-bitstream/tests/fixtures/avc-720p-config.bin").as_slice(),
+        ),
+        (
+            VideoCodec::Hevc,
+            include_bytes!("../../picoo-bitstream/tests/fixtures/hevc-720p-config.bin").as_slice(),
+        ),
+    ] {
+        let config = StreamConfig {
+            codec: codec as i32,
+            codec_configuration: record.to_vec(),
+            ..Default::default()
+        };
+        let decoded = StreamConfig::decode(config.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(decoded.codec_configuration, record);
+        assert_eq!(decoded.codec(), codec);
+    }
+}
