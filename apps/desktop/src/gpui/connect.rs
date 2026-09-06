@@ -743,10 +743,11 @@ impl PicooDesktopApp {
                     .flex_1()
                     .min_w_0()
                     .min_h_0()
-                    // AC-D-LIVE-01: collapsing the Sidebar makes the preview
-                    // height-constrained. Keep one spacing-token safety inset
-                    // so the rounded frame never touches the toolbar divider.
-                    .when(self.sidebar_collapsed, |this| this.p_4())
+                    // REQ-PICOO-UI-002 / AC-D-LIVE-01: the page-level p_4 already
+                    // owns the bottom inset. Give the preview stage the matching
+                    // top inset regardless of Sidebar state: a maximized window
+                    // can be height-constrained while the Sidebar stays expanded.
+                    .pt_4()
                     .items_center()
                     .justify_center()
                     .child(
@@ -782,22 +783,4 @@ pub(super) fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
         return "—".into();
     }
     format!("{}:{DEFAULT_QUIC_PORT}", snapshot.advertise_host)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn desktop_disconnect_is_bound_to_the_owner_command_without_a_dialog() {
-        let source = include_str!("connect.rs");
-        let button = source
-            .lines()
-            .skip_while(|line| !line.contains("Button::new(\"disconnect-active-device\")"))
-            .take(32)
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        assert!(!button.is_empty(), "Live disconnect button");
-        assert!(button.contains("this.disconnect_active_sender(cx)"));
-        assert!(!button.contains("open_disconnect_dialog"));
-    }
 }

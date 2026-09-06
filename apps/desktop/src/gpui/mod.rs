@@ -4,6 +4,8 @@
 
 mod bootstrap;
 mod connect;
+#[cfg(test)]
+mod connect_tests;
 mod device;
 mod diagnostics;
 mod icons;
