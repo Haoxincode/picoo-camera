@@ -11,3 +11,7 @@ thiserror.workspace = true
 scuffle-h264 = { version = "=0.2.2", default-features = false }
 scuffle-h265 = { version = "=0.2.2", default-features = false }
 h264-reader = "=0.8.0"
+
+[dev-dependencies]
+scuffle-expgolomb = "=0.1.5"
+scuffle-bytes-util = "=0.1.5"

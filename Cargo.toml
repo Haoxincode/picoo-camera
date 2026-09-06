@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor/gpui-apple", "vendor/gpui", "vendor/gpui-windows"]
+exclude = ["vendor/gpui-apple", "vendor/gpui", "vendor/gpui-windows", "vendor/scuffle-expgolomb"]
 members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
@@ -88,3 +88,5 @@ codegen-units = 1
 gpui-pre = { path = "vendor/gpui" }
 gpui-pre-windows = { path = "vendor/gpui-windows" }
 gpui-pre-apple = { path = "vendor/gpui-apple" }
+
+scuffle-expgolomb = { path = "vendor/scuffle-expgolomb" }

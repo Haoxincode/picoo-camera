@@ -62,3 +62,7 @@ REQ-PICOO-BITSTREAM-005 不新增标准解析器或依赖。沿用 Scuffle 已�
 来源：<https://crates.io/crates/hevc_parser/0.6.12>、<https://github.com/quietvoid/hevc_parser>、<https://crates.io/crates/revelo-parsers-video/0.5.5>、<https://github.com/vbasky/revelo>。上述源码判断来自这些精确发布包，不表示上游未来版本也有同一限制。
 
 执行 `swift -swift-version 6 scripts/probes/apple_native_media.swift`，在 M4/macOS 26.6.2 上重新从 Encoder 的原始参数集创建 AVC/HEVC 格式描述，未传入补充几何或颜色。720p/1080p × 30/60 的八组合成功，随后各三帧硬件解码与原生 Metal blit 完成；结果保存在 [原生参数描述证据](../../verification/native-media/apple-parameter-description.json)。生成器未请求显式 BT.709，因此返回缺失颜色字段属于未知，不作为 SDR 色彩准入证据，也不是生产 Decoder、端到端或持续帧率验收。
+
+### Scuffle Exp-Golomb 边界修补
+
+REQ-PICOO-BITSTREAM-002 / NEXT-025：HEVC SPS 复用前，先修补既有 scuffle-expgolomb 0.1.5 的整数边界。发布实现按任意长度前导零逐位左移到 u64，未报告编码值溢出；signed 解码的最大正值分支也可能溢出。采用保持上游 API 的本地补丁，拒绝超出 u64/i64 的值，保留 u64 最大可表示值。此补丁不增加生产依赖，也不实现 Picoo 私有 Exp-Golomb codec；原发布包、校验和与局部差异保存在 vendor/scuffle-expgolomb。

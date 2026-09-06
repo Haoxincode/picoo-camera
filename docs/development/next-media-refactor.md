@@ -528,3 +528,11 @@ REQ-PICOO-BITSTREAM-005：CodecConfiguration 对已解析 AU 校验 codec 和逐
 CI 34055695761（28e2adf）全部成功。Windows Decoder 19 项、桌面 70 项、GPUI shader 1 项和 Receiver AVCC 1 项均执行通过；日志明确包含 native aperture 与缺失裁剪/色彩拒绝两项。该证据不覆盖真实显卡 Video Processor 画质、VCam 系统交接或四组合端到端。
 
 HEVC SPS 候选与 CoreMedia API 的实证见 next-bitstream-dependencies 研究：新增 raw parameter description probe 从原始 VPS/SPS/PPS 重建平台格式，不补充尺寸或颜色，M4 八种 codec/size/fps 组合执行成功。CoreMedia 返回的尺寸不能替代原始 coded size，继续保留共享位流事实要求；尚未将未经有界审查的 SPS 解析器接入产品。
+
+## HEVC 依赖整数边界
+
+REQ-PICOO-BITSTREAM-002 / NEXT-025：在准确发布包副本上复现 scuffle-expgolomb 0.1.5 读取边界值时发生减法溢出 panic，两项负向回归均失败。修补保留上游读取 API，对超出 u64 的前导零/尾值及超出 i64 的正值返回 InvalidData；合法 u64::MAX 可读。来源、MIT/Apache 双许可、校验和与补丁范围保存在 vendor/scuffle-expgolomb，根 workspace patch 替换既有传递依赖，没有新增生产依赖。
+
+修补后 bitstream 26 项、Mac Decoder 16 项共 42 项全部通过，包括真实 VideoToolbox 与 AVC/HEVC fixture；bitstream/Decoder all-targets Clippy 通过，文档检查零错误。该修补不等同 HEVC SPS 解析准入完成，SPS 块尺寸和扩展分配边界仍待处理。
+
+位流库 aarch64 Android、aarch64 iOS、x86_64 Windows MSVC 三目标 cargo check 通过；不是这些平台的完整产品二进制或硬件解码验收。
