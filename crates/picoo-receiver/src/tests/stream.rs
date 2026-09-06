@@ -112,10 +112,20 @@ fn receiver_sends_stats_to_paired_sender() {
     assert!(stats.packet_loss < 0.5);
     assert_eq!(sender.last_bitrate_action(), BitrateAction::Hold);
 
-    // Let a later complete window observe at least three generation-bound PCP
-    // exchanges spanning 500 ms. The media window may now be idle, but the
-    // latest frame timeline remains a valid clock-mapping probe.
-    super::pump_pair_for(&mut receiver, &mut sender, Duration::from_millis(1100));
+    // A count of elapsed stats windows does not guarantee accepted low-delay
+    // clock samples: loaded runners can reject individual exchanges. Wait for
+    // the published mapping, bounded independently of media freshness budgets.
+    let clock_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while (receiver.last_stats_revision() < 2
+        || sender.last_receiver_stats().is_none_or(|stats| {
+            stats.end_to_end_latency_ms.is_none() || stats.clock_uncertainty_ms.is_none()
+        }))
+        && std::time::Instant::now() < clock_deadline
+    {
+        receiver.pump().expect("clock receiver pump");
+        sender.pump().expect("clock sender pump");
+        std::thread::sleep(Duration::from_millis(2));
+    }
     let clock_stats = sender
         .last_receiver_stats()
         .expect("clock-synchronized receiver stats");
