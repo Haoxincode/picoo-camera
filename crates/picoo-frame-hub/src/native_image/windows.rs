@@ -27,6 +27,8 @@ struct RetainedSurface {
     subresource: u32,
     width: u32,
     height: u32,
+    // Must drop after the sample and texture: their destructors may use the producer runtime.
+    _producer_lifetime: Arc<dyn Send + Sync>,
 }
 
 // SAFETY: The unsafe constructor requires a free-threaded MF sample and immutable,
@@ -55,10 +57,13 @@ impl D3D11ImageLease {
     /// The sample must be free-threaded. All image writes must have completed and
     /// all aliases must remain immutable until the final clone is released. The
     /// producer must honor the retained sample's allocator lease rather than
-    /// manually overwrite the texture or recycle its array slice.
+    /// manually overwrite the texture or recycle its array slice. The lifetime
+    /// owner must keep the producer runtime active through sample destruction;
+    /// its final drop must be safe on any consumer or completion thread.
     pub unsafe fn retain_completed(
         sample: &IMFSample,
         expected_device: &ID3D11Device,
+        producer_lifetime: Arc<dyn Send + Sync>,
     ) -> Result<Self, NativeImageError> {
         if sample.GetBufferCount()? != 1 {
             return Err(NativeImageError::UnsupportedStorage);
@@ -105,6 +110,7 @@ impl D3D11ImageLease {
             subresource,
             width: description.Width,
             height: description.Height,
+            _producer_lifetime: producer_lifetime,
         })))
     }
 

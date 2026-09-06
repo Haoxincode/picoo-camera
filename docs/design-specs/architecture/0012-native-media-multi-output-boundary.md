@@ -73,3 +73,5 @@ Windows RenderSpec 使用固定 GPU context 和原生 Video Processor；输入�
 Windows CpuExporter 只接受相同 RenderSpec、相同 device 的已完成 RenderedImage。无需求调用时不创建 staging，不映射图像；一次导出先取得三槽 CPU 池的可写槽，再将目标图像 GPU-copy 到唯一复用的 NV12 staging。完成事件保留图像与 staging，随后使用 DO_NOT_WAIT 读取映射；若 GPU 仍阻止访问则明确失败，不把 Map 当作完成等待。按平台 RowPitch 分别覆盖完整 Y/UV 有效行，丢弃 padding，不做几何或颜色转换。Map/Unmap 的 context 调用串行化，但 CPU 行复制不持有 context 锁。Mac/Windows 共用同一个 CPU 输出槽位实现，包含 Weak reader 的不可覆盖约束。
 
 WindowsGpuContext 只拥有 D3D11 device、immediate context 保护与完成通知预算。MF DXGI manager 的创建、固定 ResetDevice 和保留属于 Decoder；创建 renderer/exporter 不初始化 MF，也不创建 manager。输出工作者可从原生图像/目标图像采用其现有 device，必须保持相同 COM identity；这种 wrapper 创建不代表新的 source device generation。已有设备同样检查 software adapter 与 SINGLETHREADED 标志，禁止通过导入入口绕过生产准入。MF/COM 的线程归属仍由 Decoder 管理，GPU wrapper 不承担其关闭责任。
+
+MF runtime 与 codec COM apartment 分开持有。COM 初始化和反初始化属于同一个 codec worker；运行时引用随 sample lease 保留，先释放 sample/texture，再释放生产者运行时。最后一个跨线程引用仅关闭标准 channel，由应用创建的专用线程配对执行 MFStartup/MFShutdown，禁止在 MF 工作队列或任意消费者析构里直接关闭。存活与清理中的运行时 cohort 合计最多 16 个，容量不足明确拒绝新 Decoder；挂起的清理仍占容量。此数量上限不代替图像字节预算与隐私期限。

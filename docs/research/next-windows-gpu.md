@@ -48,3 +48,7 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 ## 从源图像采用 device
 
 现有 D3D11 device 提供官方 GetCreationFlags、IDXGIDevice::GetAdapter、GetImmediateContext；输出 worker 通过这些只读身份查询采用同一个 device，不通过 adapter LUID 另造一个 device。检查 SINGLETHREADED 创建标志并拒绝，软件 adapter 同样拒绝，之后沿用已有多线程保护逻辑。WindowsRenderer::for_source 与 CpuExporter::for_image 只建立工作者 wrapper；固定 pipeline/pool 由工作者继续复用。MF manager 已移到 Decoder，故独立 GPU 输出初始化不再触发 MFCreateDXGIDeviceManager。
+
+## MF 运行时线程与样本寿命
+
+微软 [MFShutdown](https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mfshutdown) 要求与每次 MFStartup 配对，且禁止从 work queue thread 调用。复用 std::thread、mpsc 与 Arc 实现最小运行时 owner，不引入另一套执行器；最后引用关闭 channel，专用线程才 Shutdown。全进程 16 个 cohort 许可在创建线程前保留并直到退出才释放。COM apartment 用非 Send guard 单独维持，不能随跨线程 sample owner 移动。FrameHub 只接收不透明 Send + Sync 生命周期引用，不依赖 Decoder 或 GPU crate。

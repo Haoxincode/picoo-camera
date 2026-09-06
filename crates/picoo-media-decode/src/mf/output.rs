@@ -10,11 +10,13 @@ use crate::DecodeError;
 pub(super) struct MftOutput {
     pub sample: Option<IMFSample>,
     pub result: windows::core::Result<()>,
+    _runtime: Arc<dyn Send + Sync>,
 }
 
 // SAFETY: Standard MF output samples are free-threaded. The completion only
 // retains/releases the sample; it does not mutate the image. Event collections
-// remain on the MFT worker, and the transform/runtime never enter this owner.
+// remain on the MFT worker, and the transform/COM apartment never enter this owner.
+// The runtime lease only notifies its dedicated shutdown thread on final release.
 unsafe impl Send for MftOutput {}
 
 impl MftOutput {
@@ -38,10 +40,12 @@ pub(super) unsafe fn process(
     transform: &IMFTransform,
     gpu: Option<&Arc<WindowsGpuContext>>,
     provided: Option<IMFSample>,
+    runtime: Arc<dyn Send + Sync>,
 ) -> Result<MftOutput, DecodeError> {
     let mut output = MftOutput {
         sample: None,
         result: Ok(()),
+        _runtime: runtime,
     };
     if let Some(gpu) = gpu {
         // Reserve event/wait/capacity before consuming a transform output. MFT

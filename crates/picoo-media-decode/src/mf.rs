@@ -7,8 +7,7 @@
 
 use picoo_bitstream::{AccessUnit, AvcSpsFacts, PictureKind, RandomAccessPoint};
 use picoo_protocol::control::StreamConfig;
-use windows::core::{GUID, HRESULT};
-use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::core::GUID;
 use windows::Win32::Media::MediaFoundation::{
     CMSH264DecoderMFT, IMFSample, IMFTransform, MFCreateAlignedMemoryBuffer, MFCreateMediaType,
     MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFNominalRange_16_235,
@@ -21,16 +20,22 @@ use windows::Win32::Media::MediaFoundation::{
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
     MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
 };
-use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 
 use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 mod buffers;
 mod device;
 mod output;
+mod runtime;
 use buffers::sample_to_frame;
+#[cfg(test)]
+use runtime::com_initialization_ownership;
+use runtime::MfRuntimeGuard;
+#[cfg(test)]
+use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize};
+#[cfg(test)]
+use windows::{core::HRESULT, Win32::Foundation::RPC_E_CHANGED_MODE};
 
 const DEFAULT_FPS: u32 = 30;
 /// MF_MT_MPEG_SEQUENCE_HEADER — H.264 SPS/PPS with Annex-B start codes.
@@ -47,56 +52,6 @@ pub struct MfH264Decoder {
     device: device::DecoderDevice,
     // Declared last so the transform is released before MFShutdown/CoUninitialize.
     _runtime: MfRuntimeGuard,
-}
-
-struct MfRuntimeGuard {
-    owns_com_apartment: bool,
-}
-
-impl MfRuntimeGuard {
-    fn start() -> Result<Self, DecodeError> {
-        let com_result = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        let owns_com_apartment = com_initialization_ownership(com_result)?;
-        if let Err(error) = unsafe {
-            windows::Win32::Media::MediaFoundation::MFStartup(
-                windows::Win32::Media::MediaFoundation::MF_VERSION,
-                Default::default(),
-            )
-        } {
-            if owns_com_apartment {
-                unsafe { CoUninitialize() };
-            }
-            return Err(DecodeError::Platform(format!("MFStartup: {error}")));
-        }
-        Ok(Self { owns_com_apartment })
-    }
-}
-
-impl Drop for MfRuntimeGuard {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = windows::Win32::Media::MediaFoundation::MFShutdown();
-            if self.owns_com_apartment {
-                CoUninitialize();
-            }
-        }
-    }
-}
-
-fn com_initialization_ownership(result: HRESULT) -> Result<bool, DecodeError> {
-    if result.is_ok() {
-        // S_OK and S_FALSE both require a matching CoUninitialize.
-        Ok(true)
-    } else if result == RPC_E_CHANGED_MODE {
-        // GPUI initializes OLE/STA on its UI thread. MF's synchronous decoder
-        // can use that existing apartment; do not replace or uninitialize it.
-        Ok(false)
-    } else {
-        Err(DecodeError::Platform(format!(
-            "CoInitializeEx: {}",
-            result.message()
-        )))
-    }
 }
 
 impl MfH264Decoder {
@@ -244,11 +199,12 @@ impl MfH264Decoder {
                 duration_100ns,
                 geometry,
                 self.device.gpu(),
+                &self._runtime,
             )?;
             self.next_sample_time_100ns += duration_100ns;
             let frame = match pending {
                 Some(frame) => Some(frame),
-                None => drain_output(&self.transform, geometry, self.device.gpu())?,
+                None => drain_output(&self.transform, geometry, self.device.gpu(), &self._runtime)?,
             };
             Ok(DecodeOutcome {
                 frame,
@@ -432,6 +388,7 @@ unsafe fn feed_access_unit(
     duration_100ns: i64,
     geometry: &AvcSpsFacts,
     gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
+    runtime: &MfRuntimeGuard,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     let sample = create_input_sample(access_unit, sample_time_100ns, duration_100ns)?;
 
@@ -439,7 +396,7 @@ unsafe fn feed_access_unit(
         Ok(()) => Ok(None),
         Err(e) if e.code() == MF_E_NOTACCEPTING => {
             // Drain pending output then retry once.
-            let pending = drain_output(transform, geometry, gpu)?;
+            let pending = drain_output(transform, geometry, gpu, runtime)?;
             transform
                 .ProcessInput(0, &sample, 0)
                 .map_err(|e| DecodeError::Platform(format!("ProcessInput retry: {e}")))?;
@@ -540,12 +497,13 @@ unsafe fn drain_output(
     transform: &IMFTransform,
     geometry: &AvcSpsFacts,
     gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
+    runtime: &MfRuntimeGuard,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     // One format-change retry is enough to consume the newly negotiated
     // output. Repeated stream changes fail explicitly instead of spinning.
     for attempt in 0..2 {
         let provided_sample = output_sample_for_transform(transform, gpu.is_some())?;
-        let output = output::process(transform, gpu, provided_sample)?;
+        let output = output::process(transform, gpu, provided_sample, runtime._lifetime.clone())?;
         let sample = output.sample;
         let result = output.result;
         match result {
@@ -646,9 +604,14 @@ mod tests {
                     .transform
                     .ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)
                     .unwrap();
-                drain_output(&decoder.transform, decoder.geometry.as_ref().unwrap(), None)
-                    .unwrap()
-                    .expect("EOS drain releases the accepted picture")
+                drain_output(
+                    &decoder.transform,
+                    decoder.geometry.as_ref().unwrap(),
+                    None,
+                    &decoder._runtime,
+                )
+                .unwrap()
+                .expect("EOS drain releases the accepted picture")
             }
         };
         assert_eq!(

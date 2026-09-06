@@ -432,3 +432,9 @@ GPU 测试 helper 不再调用 MFStartup/MFShutdown；原 manager 正向 COM ide
 原生 sample 交付前还需闭合 MF runtime 寿命：MFStartup 必须持续到最后的 sample lease 释放，不能在任意消费线程析构时直接 MFShutdown。实现应让有上限的标准工作线程拥有 Startup/Shutdown，跨线程 lease 最终释放只通知关闭；COM apartment 仍留在调用 MFT 的 codec worker。此项尚未实现，不应提前将原始 MF sample 发布到 FrameBus。
 
 CI 34045983650 已全部通过：Windows NV12 readback/Weak/容量/拒绝回归以及 Windows/Mac 最终产物门禁均成功。本次 device 所有权调整将进入新一轮 CI。
+
+## MF 运行时保留边界
+
+REQ-PICOO-NEXT-011 / FRAME-016 将 MFStartup/Shutdown 移到最多 16 个 cohort 的标准线程。codec worker 的 COM guard 保持线程亲和性；最后 runtime 引用仅关闭 channel，不在消费者或 MF callback 上执行 Shutdown。D3D11ImageLease 增加不透明 producer lifetime，字段释放顺序为 sample、texture、runtime；旧构造签名直接删除。尚未将 MF 输出发布到 FrameBus，完整原始 token 对应和原生描述迁移仍待完成。
+
+新增 Windows 测试覆盖 codec apartment 退出后的 runtime 保留、异线程最后释放与 Shutdown worker 退出，以及 sample 先于 producer lifetime 销毁。Windows MF 库 Clippy 与 FrameHub all-targets Clippy 通过，原生执行待 CI；不据此宣称原生主链路已完成。
