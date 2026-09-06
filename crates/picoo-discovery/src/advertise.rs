@@ -48,27 +48,9 @@ impl MdnsAdvertiser {
         host_ip: &str,
         advertisement: &ReceiverAdvertisement,
     ) -> Result<(), DiscoveryError> {
-        // Unregister prior instance so display_name / TXT updates take effect (DISCOVERY-001).
-        self.unregister_service()?;
-
         let ip: IpAddr = host_ip
             .parse()
             .map_err(|_| DiscoveryError::InvalidHost(host_ip.into()))?;
-        self.advertise_ip = Some(ip);
-        self.registered = false;
-        self.last_error = None;
-
-        // Advertise only on the interface that owns the LAN address selected by
-        // `local_advertise_ipv4`. Leaving the daemon on its all-interface default
-        // lets VPN/Hyper-V/WSL adapters become mDNS egress candidates on desktop
-        // platforms even though the TXT/A record contains the Wi-Fi address.
-        self.daemon
-            .disable_interface(IfKind::All)
-            .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
-        self.daemon
-            .enable_interface(ip)
-            .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
-
         let hostname = format!("{}.local.", advertisement.receiver_id);
         let instance = advertisement.display_name.clone();
         let txt = advertisement.to_txt_properties();
@@ -85,6 +67,40 @@ impl MdnsAdvertiser {
         .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
 
         let fullname = info.get_fullname().to_string();
+        let instance_changed = self
+            .fullname
+            .as_deref()
+            .is_some_and(|current| !current.eq_ignore_ascii_case(&fullname));
+        let interface_changed = self.advertise_ip != Some(ip);
+
+        // mdns-sd supports updating an existing service by registering the same
+        // fullname again. Unregistering first emits an mDNS goodbye; Android NSD
+        // can then retain the removal and fail to report the immediately renewed
+        // instance, leaving a still-running Receiver shown as offline after pairing.
+        // A changed instance name or physical interface really does replace the
+        // old DNS-SD identity and therefore still needs a graceful unregister.
+        if instance_changed || interface_changed {
+            self.unregister_service()?;
+        }
+
+        if interface_changed {
+            // Advertise only on the interface that owns the LAN address selected by
+            // `local_advertise_ipv4`. Leaving the daemon on its all-interface default
+            // lets VPN/Hyper-V/WSL adapters become mDNS egress candidates on desktop
+            // platforms even though the TXT/A record contains the Wi-Fi address.
+            self.daemon
+                .disable_interface(IfKind::All)
+                .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+            self.daemon
+                .enable_interface(ip)
+                .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+            self.advertise_ip = Some(ip);
+        }
+
+        if self.fullname.is_none() {
+            self.registered = false;
+        }
+        self.last_error = None;
         self.daemon
             .register(info)
             .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
@@ -201,6 +217,7 @@ mod tests {
             .register("127.0.0.1", &first)
             .expect("register first");
         let first_fullname = advertiser.fullname().unwrap().to_string();
+        let before = daemon_metrics(&advertiser);
         assert!(
             first_fullname.contains("Old Name") || first_fullname.to_lowercase().contains("old")
         );
@@ -215,6 +232,7 @@ mod tests {
         advertiser
             .register("127.0.0.1", &second)
             .expect("register renamed");
+        let after = daemon_metrics(&advertiser);
         wait_until_announced(&mut advertiser);
         let second_fullname = advertiser.fullname().unwrap();
         assert!(
@@ -222,7 +240,55 @@ mod tests {
             "fullname should reflect rename: {second_fullname}"
         );
         assert_ne!(first_fullname, second_fullname);
+        assert_eq!(
+            after.get("unregister").copied().unwrap_or_default(),
+            before.get("unregister").copied().unwrap_or_default() + 1,
+            "renaming must withdraw the old DNS-SD instance",
+        );
         advertiser.unregister().expect("unregister");
+    }
+
+    #[test]
+    fn mdns_refreshes_same_instance_without_goodbye() {
+        let mut advertiser = MdnsAdvertiser::new().expect("daemon");
+        let ad = ReceiverAdvertisement::new(
+            "picoo-refresh-recv",
+            "Stable Name",
+            ReceiverPlatform::Windows,
+            4433,
+            "abcd1234",
+        );
+        advertiser
+            .register("127.0.0.1", &ad)
+            .expect("register initial service");
+        wait_until_announced(&mut advertiser);
+        let before = daemon_metrics(&advertiser);
+
+        advertiser
+            .register("127.0.0.1", &ad)
+            .expect("refresh same service");
+        let after = daemon_metrics(&advertiser);
+
+        assert_eq!(
+            after.get("register").copied().unwrap_or_default(),
+            before.get("register").copied().unwrap_or_default() + 1,
+            "same-instance refresh must enqueue a fresh announcement",
+        );
+        assert_eq!(
+            after.get("unregister").copied().unwrap_or_default(),
+            before.get("unregister").copied().unwrap_or_default(),
+            "same-instance refresh must not emit an mDNS goodbye",
+        );
+        advertiser.unregister().expect("unregister");
+    }
+
+    fn daemon_metrics(advertiser: &MdnsAdvertiser) -> mdns_sd::Metrics {
+        advertiser
+            .daemon
+            .get_metrics()
+            .expect("request daemon metrics")
+            .recv_timeout(Duration::from_secs(2))
+            .expect("receive daemon metrics")
     }
 
     fn wait_until_announced(advertiser: &mut MdnsAdvertiser) {
