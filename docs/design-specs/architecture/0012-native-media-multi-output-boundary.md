@@ -11,7 +11,7 @@
 ## 范围与职责
 
 - `picoo-bitstream` 拥有 AVC/HEVC 位流解释、参数集、随机访问与平台格式适配；不依赖 packet、协议、GPU、UI 或软件解码器。`picoo-packet` 只拥有分片/FEC/重组，不再导出 AVC helper。消费者直接依赖 bitstream，不设旧 API 转发。
-- Sender/Receiver owner 拥有配置与恢复事务。codec 工作者只报告携带原始 token 的事实，每 AU 在同一 Decoder generation 最多提交一次。
+- Sender/Receiver owner 拥有配置与恢复事务。codec 工作者只报告携带原始 token 和提交时不可变配置快照的事实；完成帧的方向、镜像和色彩不得从 owner 当前配置重建。每 AU 在同一 Decoder generation 最多提交一次。
 - `picoo-frame-hub` 拥有不可变原生源帧、身份、描述及 FrameBus。native image 不含 CPU 像素变体；资源引用释放与 GPU 完成分别管理。
 - `picoo-gpu` 拥有平台 context、资源池、统一 RenderSpec 与输出专用 exporter。FrameHub 不反向依赖它。
 - Preview latest-only；虚拟摄像头使用独立 SampleClock；处理后录像订阅有界有序原生帧；原码流录像在 live scheduler/Decoder 之前接收完整 AU。
@@ -21,7 +21,7 @@
 
 AVC/HEVC 使用真实硬件能力准入，正式配置为 720p/1080p × 30/60fps，默认准入后的 1080p60；不静默降低源配置。软件 codec 与 CPU 预览退出产品路径。
 
-输出切换只推进该 sink 的 backend generation，保留源配置、正常 Decoder、其他输出与采样时钟。权限失败、旧版本、硬件 codec 缺失和源 GPU 丢失不能通过 CpuBridge 绕过。无 CPU demand 不持续导出；所有池、任务和缓存有容量、期限及隐私清理边界。
+输出切换只推进该 sink 的 backend generation，保留源配置、正常 Decoder、其他输出与采样时钟。权限失败、非法契约、硬件 codec 缺失和源 GPU 丢失不能通过 CpuBridge 绕过。无 CPU demand 不持续导出；所有池、任务和缓存有容量、期限及隐私清理边界。
 
 Windows 的共享句柄和 CPU 输出 ring 是不同的交接后端；macOS 两种准备方式都使用合法 CMIO sink/source。必须分别验收两后端真实系统 sample，不能用 CPU 成功代替 native 完成。
 

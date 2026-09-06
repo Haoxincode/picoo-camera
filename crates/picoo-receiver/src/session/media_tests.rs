@@ -396,6 +396,7 @@ fn receiver_reuses_transformed_pixels_after_latest_frame_releases_them() {
                     frame_id * 1_200,
                     Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]),
                 ),
+                false,
             )
             .expect("publish transformed frame");
     }
@@ -527,4 +528,57 @@ fn teardown_discards_stream_config_gate() {
     assert!(receiver.waiting_for_stream_config_epoch.is_none());
     assert!(receiver.pending_stream_config_idr.is_none());
     assert!(receiver.jitter.is_empty());
+}
+
+#[test]
+fn delayed_frame_keeps_submitted_rotation_and_mirror_snapshot() {
+    // REQ-PICOO-MEDIA-025: completion may already be queued, but the owner has
+    // not consumed it when current state changes. No timing-dependent sleep.
+    for (rotation, mirrored, expected_size, expected_pixels) in [
+        (
+            0,
+            false,
+            (4, 2),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21],
+        ),
+        (
+            90,
+            true,
+            (2, 4),
+            vec![1, 5, 2, 6, 3, 7, 4, 8, 10, 11, 20, 21],
+        ),
+    ] {
+        let mut receiver = receiver_for_generation(2);
+        let submitted = Arc::make_mut(receiver.current_stream_config.as_mut().unwrap());
+        submitted.width = 4;
+        submitted.height = 2;
+        submitted.rotation = rotation;
+        submitted.mirrored = mirrored;
+        let mut unit = access_unit(2, 9);
+        unit.data = Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]);
+        receiver.publish_timeline_access_unit(unit).unwrap();
+
+        let current = Arc::make_mut(receiver.current_stream_config.as_mut().unwrap());
+        current.rotation = if rotation == 0 { 90 } else { 0 };
+        current.mirrored = !mirrored;
+        receiver.drain_decoder_until_idle_for_test();
+
+        let frame = receiver.latest_frame().expect("submitted frame");
+        assert_eq!((frame.width, frame.height), expected_size);
+        assert_eq!(frame.pixel_data.as_ref(), expected_pixels);
+        assert_eq!(frame.frame_id, 9);
+        assert_eq!(frame.source_pts_us, 42_000);
+    }
+}
+
+#[test]
+fn placeholder_does_not_inherit_source_mirror() {
+    let mut receiver = receiver_for_generation(2);
+    Arc::make_mut(receiver.current_stream_config.as_mut().unwrap()).mirrored = true;
+    receiver.publish_waiting_placeholder().unwrap();
+    let expected = receiver.placeholder_mode.waiting_frame();
+    assert_eq!(
+        receiver.latest_frame().unwrap().pixel_data.as_ref(),
+        expected
+    );
 }

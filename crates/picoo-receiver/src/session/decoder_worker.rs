@@ -262,6 +262,7 @@ pub(super) enum DecoderEvent {
     Started,
     Completed {
         timeline: AccessUnitTimeline,
+        stream_config: Option<Arc<StreamConfig>>,
         decoder_generation: u64,
         decoded_at: Instant,
         decode_time_us: u64,
@@ -408,6 +409,7 @@ fn process_work_item(
                 event_wake,
                 DecoderEvent::Completed {
                     timeline,
+                    stream_config: job.stream_config,
                     decoder_generation: job.decoder_generation,
                     decoded_at,
                     decode_time_us: started.elapsed().as_micros() as u64,

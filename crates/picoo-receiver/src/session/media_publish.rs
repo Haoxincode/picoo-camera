@@ -34,6 +34,7 @@ impl ReceiverSession {
                 }
                 DecoderEvent::Completed {
                     timeline,
+                    stream_config,
                     decoder_generation,
                     decoded_at,
                     decode_time_us,
@@ -51,7 +52,12 @@ impl ReceiverSession {
                     if !self.decoder_recovery.accepts_completion(timeline) {
                         continue;
                     }
-                    self.handle_decoder_result(timeline, decoded_at, result)?;
+                    self.handle_decoder_result(
+                        timeline,
+                        decoded_at,
+                        stream_config.as_deref(),
+                        result,
+                    )?;
                 }
                 DecoderEvent::ResetFailed(error) => {
                     tracing::warn!(%error, "decoder reset failed; worker rebuilt platform decoder");
@@ -85,6 +91,7 @@ impl ReceiverSession {
         &mut self,
         timeline: AccessUnitTimeline,
         decoded_at: Instant,
+        stream_config: Option<&picoo_protocol::control::StreamConfig>,
         result: Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError>,
     ) -> Result<(), ReceiverError> {
         let outcome = match result {
@@ -107,10 +114,8 @@ impl ReceiverSession {
         }
         match outcome.frame {
             Some(mut frame) => {
-                // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
-                let rotation = self
-                    .current_stream_config
-                    .as_ref()
+                // REQ-PICOO-MEDIA-025: presentation belongs to the submitted AU.
+                let rotation = stream_config
                     .map(|config| config.rotation)
                     .unwrap_or(frame.description().rotation);
                 frame.set_rotation(rotation);
@@ -125,6 +130,7 @@ impl ReceiverSession {
                         decoded_at: Some(decoded_at),
                     },
                     frame,
+                    stream_config.is_some_and(|config| config.mirrored),
                 )?;
                 self.ingress.decoded_frames += 1;
                 self.stats_reporter.record_decoded_frame();
@@ -153,6 +159,7 @@ impl ReceiverSession {
         &mut self,
         timeline: FrameTimeline,
         frame: DecodedFrame,
+        mirrored: bool,
     ) -> Result<(), ReceiverError> {
         let description = frame.description();
         let timestamp_us = frame.timestamp_us();
@@ -163,10 +170,6 @@ impl ReceiverSession {
             description.stride,
             description.rotation,
         );
-        let mirrored = self
-            .current_stream_config
-            .as_ref()
-            .is_some_and(|config| config.mirrored);
         let transform_required =
             picoo_frame_hub::normalize_rotation_degrees(rotation) != 0 || mirrored;
         let transform_started = Instant::now();

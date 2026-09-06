@@ -27,3 +27,5 @@
 | REQ-PICOO-MEDIA-023 | implemented | ARCH-PICOO-RUNTIME-001 | Decoder 输出将不可变帧描述与 backing storage 分离；当前只启用 `CpuNv12(Bytes)`，帧契约显式携带格式、BT.709 limited range、stride、旋转和时间戳；未来原生 surface 必须具有安全可转移 owner，不得给裸平台指针添加宽泛 `Send` | 全平台 decoder 构造/Receiver 消费迁移；`picoo-media-decode` 回归；CPU NV12 accessor/ownership 测试；原生 surface 仍属后续 profile 驱动范围 |
 
 | REQ-PICOO-MEDIA-024 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、024 | 生产 Decoder 工厂只创建当前平台原生后端；缺后端明确 unavailable，绝不创建 Stub/OpenH264；软件 codec 与替身仅在显式 test-codecs/测试图中使用 | 默认 Android/Linux/Apple/Windows feature 图、无后端错误、显式测试工厂及 Receiver 回归 |
+
+| REQ-PICOO-MEDIA-025 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011 | Decoder 完成事件携带提交时不可变配置快照，帧方向/镜像不从 owner 当前状态重建；占位画面不继承源镜像 | 在同 epoch 中切换当前配置后，迟到完成仍保持提交时方向/镜像；占位回归 |
