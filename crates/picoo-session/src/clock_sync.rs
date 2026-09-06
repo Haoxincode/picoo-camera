@@ -255,6 +255,25 @@ mod tests {
     }
 
     #[test]
+    fn stable_mapping_can_reject_an_old_origin_frame_while_mapping_live_frames() {
+        let mut mapper = AffineClockMapper::new(1);
+        for index in 0..4 {
+            mapper
+                .observe(exchange(
+                    1,
+                    1_000_000 + index * 300_000,
+                    1.001,
+                    -1_000.0,
+                    2_000,
+                ))
+                .unwrap();
+        }
+        assert!(mapper.is_stable());
+        assert!(mapper.estimate_local_time(1).is_none());
+        assert!(mapper.estimate_local_time(2_000_000).is_some());
+    }
+
+    #[test]
     fn stable_mapping_recovers_offset_and_drift() {
         let mut mapper = AffineClockMapper::new(4);
         for index in 0..6 {

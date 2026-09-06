@@ -66,6 +66,7 @@ fn receiver_sends_stats_to_paired_sender() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
+    let source_clock = std::time::Instant::now();
     sender
         .ingest_and_flush(&[0u8; 1200], true, 1, 1)
         .expect("send video");
@@ -119,12 +120,26 @@ fn receiver_sends_stats_to_paired_sender() {
     // clock samples: loaded runners can reject individual exchanges. Wait for
     // the published mapping, bounded independently of media freshness budgets.
     let clock_deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut next_frame = std::time::Instant::now();
     while (receiver.last_stats_revision() < 2
         || sender.last_receiver_stats().is_none_or(|stats| {
             stats.end_to_end_latency_ms.is_none() || stats.clock_uncertainty_ms.is_none()
         }))
         && std::time::Instant::now() < clock_deadline
     {
+        // An old bootstrap frame can map before the Receiver clock origin
+        // within estimator uncertainty. Validate live metrics with fresh media.
+        if std::time::Instant::now() >= next_frame {
+            sender
+                .ingest_and_flush(
+                    &[0u8; 1200],
+                    true,
+                    1 + source_clock.elapsed().as_micros() as u64,
+                    1,
+                )
+                .expect("live clock probe");
+            next_frame = std::time::Instant::now() + Duration::from_micros(33_333);
+        }
         receiver.pump().expect("clock receiver pump");
         sender.pump().expect("clock sender pump");
         std::thread::sleep(Duration::from_millis(2));
@@ -146,7 +161,11 @@ fn receiver_sends_stats_to_paired_sender() {
     assert!(clock_stats.jitter_residence_ms.is_some());
     assert!(clock_stats.decode_ms.is_some());
     assert!(clock_stats.frame_publish_age_ms.is_some());
-    assert!(clock_stats.end_to_end_latency_ms.is_some());
+    assert!(
+        clock_stats.end_to_end_latency_ms.is_some(),
+        "clock stats={clock_stats:?}; {}",
+        receiver.clock_mapping_debug_for_test()
+    );
     assert!(clock_stats.clock_uncertainty_ms.is_some());
 
     // The revision identifies complete windows: pumps inside the same interval

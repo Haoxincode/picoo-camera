@@ -217,3 +217,12 @@ REQ-PICOO-PROTOCOL-019 将 StreamConfigParams 的记录构造改为 Result，删
 Sender 71 项测试通过；准入回归按职责位于 `session/tests/configuration_admission.rs`，与原有 epoch 事务测试分开。成功事务与重连测试使用真实 High 参数，不在产品代码保留空参数的测试例外。Android 全 workspace 测试、原生构建及 macOS 最终回归另记录。
 
 Sender 严格准入最终验证：Mac 完整套件通过（Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70），Sender 71 项通过，Sender/Receiver all-targets Clippy 与 Android 完整构建通过。
+
+
+## 时钟统计回归使用实时源
+
+01c1ac1 的 macOS CI 仍在旧首帧的 end-to-end 统计断言失败；只增加等待并不足以保证该断言。新增确定性估计器测试证明：映射已稳定时，靠近原点的旧帧仍可能映射到 Receiver 时钟零点之前，按契约应返回未知；同期新帧可正常映射。统计集成测试保留首个空闲窗口的 stale-frame/ABR 断言，在后续时钟验证阶段持续发送 30fps、单调 PTS 的新帧，并在失败时输出有界估计器诊断。生产时钟估计器及 5 秒测试超时均未修改。这解释了原测试断言为何不普遍成立，但不冒充已取得该 CI 失败时刻的估计器内部状态；新 CI 仍需验证。
+
+用户已通知暂时拔下手机；后续暂停 ADB/手机真机操作，继续本机测试、架构与 CI 工作，真机验收保持待验证。
+
+时钟修正本机验证：6 项 clock_sync 单元测试、Mac 完整套件通过（Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70）。

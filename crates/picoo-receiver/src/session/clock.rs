@@ -130,6 +130,11 @@ impl ReceiverClockSync {
 }
 
 impl ReceiverSession {
+    #[cfg(test)]
+    pub(crate) fn clock_mapping_debug_for_test(&self) -> String {
+        format!("{:?}", self.clock_sync)
+    }
+
     pub(super) fn reset_clock_sync(&mut self, stream_epoch: u32) {
         self.clock_sync.reset(stream_epoch);
     }
