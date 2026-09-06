@@ -66,3 +66,7 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 官方 [AcquireSync](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgikeyedmutex-acquiresync) 特别警告 SUCCEEDED 不足：WAIT_TIMEOUT 和 WAIT_ABANDONED 也是正值。当前 windows-rs AcquireSync 包装成 Result，会丢失这个区别，因此最小绑定边界直接读取 vtable HRESULT 并要求 exact S_OK。0ms 获取不阻塞 UI/其他输出；不递归获取，不以完成帧数推测释放。原图像 lease 与访问锁随 GPU completion 一起持有；它们各自防止不同的错误，不能只保留 handle。
 
 核对 gpui-pre 0.3.3：Windows PaintSurface 当前没有图像字段，SurfaceSource/surface/paint_surface 的图像入口只在 macOS 编译；gpui-pre-windows 0.3.3 的 draw_surfaces 为空。接入需同时补齐框架表面描述和 Windows 消费者，不应只修改应用选择 surface 元素。框架补丁不得依赖 Picoo 配置、Decoder 或输出事务；此消费部分尚未实现。
+
+WindowsDisplayReader 采用 GPUI 所用的实际 ID3D11Device，以官方 OpenSharedResource1/CreateShaderResourceView 导入既有 BGRA allocation，WindowsGpuContext 继续负责线程保护和完成提交。相同图像的重复 UI 绘制通过 Weak<ReadAccess> 共用尚存活的访问权；不能缓存 Weak<Surface>，因为即使没有强 reader，它也会阻止输出池 Arc::get_mut 判定独占。忙碌只跳过本次绘制，不等待、不复制。
+
+框架接入选用当前 gpui-pre / gpui-pre-windows 0.3.3 发布包的最小 surface 扩展，许可证 Apache-2.0，包校验和保存在 vendor 下 ORIGIN.json。继续使用现有 Windows 11/D3D11 与 Rust 构建基线，不增加另一套窗口或 GPU 框架依赖。现有 PolychromeSprite shader 已覆盖 BGRA 纹理采样与 content mask；不采用 CPU atlas 上传或另引 wgpu 的设备/颜色转换层。新增接口仅传递原生 view 和同步绘制回调，GPU 完成仍归资源提供者，避免 GPUI 反向依赖 Picoo。Windows 编译与实际像素回归未完成前不认定框架接入验收通过。

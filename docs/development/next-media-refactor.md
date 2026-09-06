@@ -472,3 +472,19 @@ REQ-PICOO-GPU-008 增加 WindowsDisplayReader：显示 owner 采用 UI 实际 de
 新增实际双 device 回归覆盖写锁期间 busy、导入 view 的 device 身份、同图像尚有读取时重复绘制、失败图像拒绝及池拒绝复用。Windows GPU all-targets Clippy 本机通过，原生运行待 CI；这不是 GPUI 像素绘制或 Windows 完整预览验收。GPUI 框架接入仍在工作区开发。
 
 启用 gpui-ui 的 Mac Desktop all-targets Clippy 已通过。78a4a07 已推送，CI 34051699070 正在执行，待其结束再推送下一批。本次 ADB devices 未列出设备；当前任务不依赖手机。
+
+CI 34051699070 的 Windows 原生测试步骤已成功，BGRA 跨 device clear/共享/copy/readback 与池 lease 回归由 Windows runner 实际执行通过。完整构建、打包仍进行中；be68f37 的显示读取器测试尚未推送，不包含在该结果内。
+
+## GPUI Windows surface 接入（验证中）
+
+在现有 gpui-pre/gpui-pre-windows 0.3.3 增加窄 Direct3DSurfaceSource 接口、Windows PaintSurface/paint_surface 与原生 shader draw。GPUI 不持有业务事务、不导入 CPU 图像；供应者同步提供 UI device 上的 view 并保留读取完成 owner。draw_view 复用 PolychromeSprite shader 与 content mask，结束时解除 VS/PS 的图像绑定。源码包来源、校验和、许可证与升级边界写入 vendor 的 ORIGIN.json / README.picoo.md。
+
+新增 Windows WARP shader 回归直接执行生产 draw_view：BGRA 原生纹理 clear 后绘制，左半裁剪区域输出红色、右半保持黑色；诊断 staging readback 验证像素，并检查 VS/PS 解绑、错误尺寸与错误 device 拒绝。测试已接入 xtask Windows 流程，尚未编译/原生执行通过，不宣称完整 GPUI 预览。完整应用仍待 Windows NativeVideoFrame 接线。
+
+CI 34051699070（78a4a07）全平台已成功。be68f37 已推送，CI 34052549802 运行中；显示测试的异步回调收尾补充提交为 0c8d7d4，尚未推送。Windows GPU all-targets Clippy 对收尾补充已通过。
+
+GPUI 默认特性本机 Windows 跨目标检查在资源嵌入 build script 因缺少 llvm-rc 失败，尚未到达框架代码验证。继续运行 standalone --tests --no-default-features 类型检查，仅排除 manifest 嵌入；Windows CI 保持产品默认特性和原生测试。与发布 tarball 比较，既有源码修改仅 core 的 surface/scene/window 接线和 Windows renderer 接线，新增实现与测试位于独立模块。
+
+无 manifest 的框架类型检查发现并修复 ObjectFit 需要 DevicePixels（不是 Pixels）以及 GPUI glob 导入遮蔽 Rust 内置 test 属性的问题。上游 Windows PlatformWindow 的测试方法要求依赖同步启用 test-support；xtask 原生 shader 测试命令现在显式启用 gpui-pre-windows/test-support，本机继续验证该配置。没有删除原生测试方法来绕过依赖契约。
+
+GPUI Windows 的 standalone --tests --no-default-features --features test-support 跨目标类型检查已通过，包含新 shader 测试。根 workspace 通过桌面直接依赖 gpui-kit/test-support 启用共同 GPUI 测试接口；cargo tree 已确认该测试命令选中本地 gpui-pre-windows 与桌面包。Windows 原生执行仍待提交后的 CI。

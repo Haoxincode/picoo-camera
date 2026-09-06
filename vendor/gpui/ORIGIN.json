@@ -1,0 +1,19 @@
+{
+  "crate": "gpui-pre",
+  "version": "0.3.3",
+  "registry": "https://crates.io/crates/gpui-pre/0.3.3",
+  "sha256": "f8b0f6f593153b6eb84c336ea7ccf12a1fca186f0db99af628e72f85048c1d7b",
+  "upstream_repository": "https://github.com/zed-industries/zed",
+  "license": "Apache-2.0",
+  "local_changes": [
+    "Add externally supplied Direct3D BGRA surfaces with supplier-owned access and completion",
+    "Remove two trailing-whitespace-only documentation lines"
+  ],
+  "excluded_release_files": [
+    "Cargo.lock",
+    "Cargo.toml.orig",
+    ".cargo-ok",
+    ".cargo_vcs_info.json",
+    ".cargo-checksum.json"
+  ]
+}

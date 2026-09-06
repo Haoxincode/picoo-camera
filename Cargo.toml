@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-exclude = ["vendor/gpui-apple"]
+exclude = ["vendor/gpui-apple", "vendor/gpui", "vendor/gpui-windows"]
 members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
@@ -84,4 +84,6 @@ lto = "thin"
 codegen-units = 1
 
 [patch.crates-io]
+gpui-pre = { path = "vendor/gpui" }
+gpui-pre-windows = { path = "vendor/gpui-windows" }
 gpui-pre-apple = { path = "vendor/gpui-apple" }

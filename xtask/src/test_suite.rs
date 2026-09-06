@@ -51,6 +51,11 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
                 "cargo test -p picoo-desktop --features gpui-ui,windows-vcam"
             )
             .run()?;
+            cmd!(
+                sh,
+                "cargo test -p gpui-pre-windows -p picoo-desktop --features picoo-desktop/gpui-ui,picoo-desktop/windows-vcam,gpui-kit/test-support --lib native_surface_shader_draws_bgra_and_respects_clip"
+            )
+            .run()?;
             cmd!(sh, "cargo test -p picoo-media-decode --features windows-mf").run()?;
             cmd!(
                 sh,
