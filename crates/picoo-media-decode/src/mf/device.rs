@@ -2,7 +2,7 @@
 use picoo_gpu::WindowsGpuContext;
 use windows::core::{IUnknown, Interface};
 use windows::Win32::Graphics::Direct3D11::{
-    ID3D11Texture2D, ID3D11VideoDevice, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
+    ID3D11Device, ID3D11Texture2D, ID3D11VideoDevice, D3D11_DECODER_PROFILE_H264_VLD_NOFGT,
     D3D11_VIDEO_DECODER_DESC,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_NV12;
@@ -11,13 +11,17 @@ use windows::Win32::Graphics::Dxgi::{
     DXGI_ERROR_NOT_FOUND,
 };
 use windows::Win32::Media::MediaFoundation::{
-    IMFDXGIBuffer, IMFSample, IMFTransform, MFT_MESSAGE_SET_D3D_MANAGER, MF_SA_D3D11_AWARE,
+    IMFDXGIBuffer, IMFDXGIDeviceManager, IMFSample, IMFTransform, MFCreateDXGIDeviceManager,
+    MFT_MESSAGE_SET_D3D_MANAGER, MF_SA_D3D11_AWARE,
 };
 
 use crate::DecodeError;
 
 pub(super) enum DecoderDevice {
-    Hardware(std::sync::Arc<WindowsGpuContext>),
+    Hardware {
+        _manager: IMFDXGIDeviceManager,
+        gpu: std::sync::Arc<WindowsGpuContext>,
+    },
     #[cfg(any(test, feature = "test-codecs"))]
     SoftwareDiagnostic,
 }
@@ -25,7 +29,7 @@ pub(super) enum DecoderDevice {
 impl DecoderDevice {
     pub(super) fn gpu(&self) -> Option<&std::sync::Arc<WindowsGpuContext>> {
         match self {
-            Self::Hardware(gpu) => Some(gpu),
+            Self::Hardware { gpu, .. } => Some(gpu),
             #[cfg(any(test, feature = "test-codecs"))]
             Self::SoftwareDiagnostic => None,
         }
@@ -58,23 +62,37 @@ pub(super) fn create_context() -> Result<WindowsGpuContext, DecodeError> {
 
 pub(super) fn attach_manager(
     transform: &IMFTransform,
-    gpu: &WindowsGpuContext,
-) -> Result<(), DecodeError> {
+    gpu: std::sync::Arc<WindowsGpuContext>,
+) -> Result<DecoderDevice, DecodeError> {
     unsafe {
         let attributes = transform.GetAttributes().map_err(platform)?;
         if attributes.GetUINT32(&MF_SA_D3D11_AWARE).map_err(platform)? != 1 {
             return Err(platform("MFT is not D3D11 aware"));
         }
+        let manager = create_manager(gpu.device())?;
         // REQ-PICOO-NEXT-009/024: bind before SetInputType/SetOutputType.
         // Never clear the manager and retry media types in software.
         transform
-            .ProcessMessage(
-                MFT_MESSAGE_SET_D3D_MANAGER,
-                gpu.device_manager().as_raw() as usize,
-            )
+            .ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize)
             .map_err(platform)?;
+        Ok(DecoderDevice::Hardware {
+            _manager: manager,
+            gpu,
+        })
     }
-    Ok(())
+}
+
+fn create_manager(device: &ID3D11Device) -> Result<IMFDXGIDeviceManager, DecodeError> {
+    let mut token = 0;
+    let mut manager = None;
+    unsafe {
+        MFCreateDXGIDeviceManager(&mut token, &mut manager).map_err(platform)?;
+    }
+    let manager = manager.ok_or_else(|| platform("missing DXGI device manager"))?;
+    unsafe {
+        manager.ResetDevice(device, token).map_err(platform)?;
+    }
+    Ok(manager)
 }
 
 pub(super) unsafe fn validate_output_device(
@@ -150,3 +168,6 @@ pub(super) fn validate_configuration(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

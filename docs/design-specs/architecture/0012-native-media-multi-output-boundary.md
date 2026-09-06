@@ -71,3 +71,5 @@ MFT 调用不在外部 ID3D11Multithread Enter/Leave 锁内执行，以免等待
 Windows RenderSpec 使用固定 GPU context 和原生 Video Processor；输入为已完成 NV12 BT.709 limited/left-chroma、方形像素的原生帧，输出为 NV12 BT.709 limited，几何与颜色能力均查询驱动。RenderSpec 表示调用方已合并的剩余变换，不再次叠加 FrameDescription 的变换。微软接口按 rotation→mirror→source clipping 应用，因此原生 visible crop 必须先映射到变换后的完整纹理坐标，再设置 source rect；contain 按裁剪后比例计算，黑边不透明。禁用自动画质处理，选择不依赖过去/未来帧的 progressive processor，不为独立 sink 引入隐藏时间队列。
 
 Windows CpuExporter 只接受相同 RenderSpec、相同 device 的已完成 RenderedImage。无需求调用时不创建 staging，不映射图像；一次导出先取得三槽 CPU 池的可写槽，再将目标图像 GPU-copy 到唯一复用的 NV12 staging。完成事件保留图像与 staging，随后使用 DO_NOT_WAIT 读取映射；若 GPU 仍阻止访问则明确失败，不把 Map 当作完成等待。按平台 RowPitch 分别覆盖完整 Y/UV 有效行，丢弃 padding，不做几何或颜色转换。Map/Unmap 的 context 调用串行化，但 CPU 行复制不持有 context 锁。Mac/Windows 共用同一个 CPU 输出槽位实现，包含 Weak reader 的不可覆盖约束。
+
+WindowsGpuContext 只拥有 D3D11 device、immediate context 保护与完成通知预算。MF DXGI manager 的创建、固定 ResetDevice 和保留属于 Decoder；创建 renderer/exporter 不初始化 MF，也不创建 manager。输出工作者可从原生图像/目标图像采用其现有 device，必须保持相同 COM identity；这种 wrapper 创建不代表新的 source device generation。已有设备同样检查 software adapter 与 SINGLETHREADED 标志，禁止通过导入入口绕过生产准入。MF/COM 的线程归属仍由 Decoder 管理，GPU wrapper 不承担其关闭责任。

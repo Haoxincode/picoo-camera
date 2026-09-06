@@ -32,6 +32,16 @@ pub struct CpuExporter {
     exports: u64,
 }
 impl CpuExporter {
+    /// Create once for an output device/layout, without an MF runtime dependency.
+    pub fn for_image(image: &RenderedImage) -> Result<Self, RenderError> {
+        // SAFETY: Only inspect the immutable target's existing native device.
+        let gpu = unsafe {
+            WindowsGpuContext::from_existing_device(image.texture().GetDevice().map_err(platform)?)
+        }
+        .map_err(|error| RenderError::Platform(error.to_string()))?;
+        Self::new(Arc::new(gpu), image.spec())
+    }
+
     pub fn new(gpu: Arc<WindowsGpuContext>, spec: RenderSpec) -> Result<Self, RenderError> {
         Ok(Self {
             gpu,

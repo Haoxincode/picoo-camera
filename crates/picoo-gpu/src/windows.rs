@@ -6,10 +6,10 @@ use windows::Win32::Graphics::Direct3D::{
 };
 use windows::Win32::Graphics::Direct3D11::{
     D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext, ID3D11Multithread,
-    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
+    D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_CREATE_DEVICE_SINGLETHREADED,
+    D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION,
 };
-use windows::Win32::Graphics::Dxgi::{IDXGIAdapter1, DXGI_ADAPTER_FLAG_SOFTWARE};
-use windows::Win32::Media::MediaFoundation::{IMFDXGIDeviceManager, MFCreateDXGIDeviceManager};
+use windows::Win32::Graphics::Dxgi::{IDXGIAdapter1, IDXGIDevice, DXGI_ADAPTER_FLAG_SOFTWARE};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WindowsDeviceError {
@@ -39,11 +39,9 @@ impl WindowsAdapterId {
     }
 }
 
-/// REQ-PICOO-GPU-004: one immutable device/manager association per source context.
-/// The platform owner starts and stops MF/COM on its own worker; this type never
-/// transfers an apartment's CoUninitialize obligation to another thread.
+/// REQ-PICOO-GPU-004: a fixed D3D11 device and protected submission context.
+/// MF managers and MF/COM runtime belong to the Decoder, not GPU output workers.
 pub struct WindowsGpuContext {
-    manager: IMFDXGIDeviceManager,
     protection: ID3D11Multithread,
     immediate: ID3D11DeviceContext,
     device: ID3D11Device,
@@ -51,7 +49,7 @@ pub struct WindowsGpuContext {
     completion_slots: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
-// SAFETY: These are native free-threaded D3D11/MF objects, with multithread
+// SAFETY: These are native free-threaded D3D11 objects, with multithread
 // protection enabled before publication. Raw mutation is confined to unsafe APIs.
 unsafe impl Send for WindowsGpuContext {}
 unsafe impl Sync for WindowsGpuContext {}
@@ -89,6 +87,33 @@ impl WindowsGpuContext {
         )
     }
 
+    /// Adopt the exact source device; never create a replacement for a new sink.
+    ///
+    /// # Safety
+    /// The caller must keep all device aliases under multithread protection and
+    /// retain image owners through GPU completion. SINGLETHREADED devices are
+    /// rejected; never disable protection after a successful adoption.
+    pub unsafe fn from_existing_device(device: ID3D11Device) -> Result<Self, WindowsDeviceError> {
+        if device.GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED.0 != 0 {
+            return Err(WindowsDeviceError::MissingThreadProtection);
+        }
+        let dxgi: IDXGIDevice = device.cast()?;
+        let adapter: IDXGIAdapter1 = dxgi.GetAdapter()?.cast()?;
+        let description = adapter.GetDesc1()?;
+        if description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+            return Err(WindowsDeviceError::SoftwareAdapter);
+        }
+        let immediate = device.GetImmediateContext()?;
+        Self::bind_device(
+            WindowsAdapterId {
+                low: description.AdapterLuid.LowPart,
+                high: description.AdapterLuid.HighPart,
+            },
+            device,
+            immediate,
+        )
+    }
+
     fn bind_device(
         adapter: WindowsAdapterId,
         device: ID3D11Device,
@@ -102,17 +127,7 @@ impl WindowsGpuContext {
         if !unsafe { protection.GetMultithreadProtected() }.as_bool() {
             return Err(WindowsDeviceError::MissingThreadProtection);
         }
-        let mut reset_token = 0;
-        let mut manager = None;
-        unsafe {
-            MFCreateDXGIDeviceManager(&mut reset_token, &mut manager)?;
-        }
-        let manager = manager.ok_or(WindowsDeviceError::MissingDevice)?;
-        unsafe {
-            manager.ResetDevice(&device, reset_token)?;
-        }
         Ok(Self {
-            manager,
             protection,
             immediate,
             device,
@@ -123,13 +138,6 @@ impl WindowsGpuContext {
 
     pub fn adapter_id(&self) -> WindowsAdapterId {
         self.adapter
-    }
-
-    /// # Safety
-    /// Keep this context alive while a transform uses its manager. Never call
-    /// ResetDevice or otherwise change the device association through this borrow.
-    pub unsafe fn device_manager(&self) -> &IMFDXGIDeviceManager {
-        &self.manager
     }
 
     /// # Safety

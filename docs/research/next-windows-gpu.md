@@ -12,7 +12,7 @@
 
 Windows CI 的 WARP 只可用于标准资源对象、COM 保留和边界拒绝的诊断测试，不作为硬件解码、显卡矩阵、吞吐或生产设备工厂验收。生产链路仍必须拒绝软件 codec/GPU。
 
-GPU context 采用官方 DXGI adapter、D3D11CreateDevice、ID3D11Multithread 和 MFCreateDXGIDeviceManager/ResetDevice。创建时固定关联一个 device，只在初始化时 ResetDevice；对外原生访问不得重新绑定 manager。MF/COM runtime 由平台 codec 工作者管理，不在可跨线程图像/context 的 Drop 中 CoUninitialize。context 不是某 codec 的硬件能力证明，生产设备入口先拒绝 DXGI_ADAPTER_FLAG_SOFTWARE；WARP 明确排除。公开 for_adapter 接口允许后续平台预览与解码选择同一 adapter，不用新增 sink 触发整个源 device 重建。
+GPU context 采用官方 DXGI adapter、D3D11CreateDevice 和 ID3D11Multithread。Decoder 使用 MFCreateDXGIDeviceManager/ResetDevice 建立自己的固定 manager，只在初始化时 ResetDevice；GPU context 不暴露 manager，也不承担 MF 初始化。MF/COM runtime 由平台 codec 工作者管理，不在可跨线程图像/context 的 Drop 中 CoUninitialize。context 不是某 codec 的硬件能力证明，生产设备入口先拒绝 DXGI_ADAPTER_FLAG_SOFTWARE；WARP 明确排除。公开 for_adapter 接口允许后续平台预览与解码选择同一 adapter，不用新增 sink 触发整个源 device 重建。
 
 
 ## MFT 硬件模式准入
@@ -44,3 +44,7 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 复用 D3D11 CopyResource、staging texture 与 Map/Unmap，使用现有完成事件。官方 [DXGI_FORMAT_NV12](https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format) 规定 staging/initData 的长度为 rowPitch × (height + height/2)，Y 平面为前 rowPitch × height，UV 为余下行；两者行 pitch 一致，宽高必须为偶数。导出只复制目标有效 width，不把 padding 当像素。
 
 官方 [D3D11_MAP_FLAG_DO_NOT_WAIT](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ne-d3d11-d3d11_map_flag) 使仍被 GPU 占用的资源返回 DXGI_ERROR_WAS_STILL_DRAWING；READ mapping 支持该标志。使用前已等待完成事件，若它仍报告 busy 则明确失败，不增加轮询或隐藏等待。三槽 CPU 输出池直接提取自现有 Apple 实现并由两端复用，无新增通用池库、像素转换库或源 CPU 接口。
+
+## 从源图像采用 device
+
+现有 D3D11 device 提供官方 GetCreationFlags、IDXGIDevice::GetAdapter、GetImmediateContext；输出 worker 通过这些只读身份查询采用同一个 device，不通过 adapter LUID 另造一个 device。检查 SINGLETHREADED 创建标志并拒绝，软件 adapter 同样拒绝，之后沿用已有多线程保护逻辑。WindowsRenderer::for_source 与 CpuExporter::for_image 只建立工作者 wrapper；固定 pipeline/pool 由工作者继续复用。MF manager 已移到 Decoder，故独立 GPU 输出初始化不再触发 MFCreateDXGIDeviceManager。

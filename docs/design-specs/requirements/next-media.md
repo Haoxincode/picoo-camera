@@ -88,4 +88,4 @@
 
 | REQ-PICOO-FRAME-016 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、016、029 | Windows 原生源 owner 保留已完成 MF sample、NV12 D3D11 texture 与合法 subresource；安全 API 无 CPU 像素或可变平台对象，保留 sample 防止 allocator 提前复用 | Windows 原生资源/COM 保留回归，非法存储及不同 device 身份拒绝；GPU fence、MFT 工厂和预览接入另验 |
 
-| REQ-PICOO-GPU-004 | planned | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、010、017、024 | Windows GPU context 绑定明确硬件 adapter 的 D3D11 device 与 MF DXGI device manager，开启原生多线程保护；生产入口拒绝 software adapter，重建使用新对象而非重置仍被使用的 manager | Windows SDK 类型检查、WARP adapter 明确拒绝，MF manager 设备身份与 panic 后锁释放；真实硬件设备/MFT 准入及 adapter 矩阵另验 |
+| REQ-PICOO-GPU-004 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、010、017、024 | Windows GPU context 固定硬件 D3D11 device 并开启原生保护；输出采用原生图像现有 device，不重建源设备，不创建 MF manager；创建/采用入口均拒绝 software/SINGLETHREADED，MF manager 归 Decoder | Windows SDK 类型检查、WARP/SINGLETHREADED 拒绝、native device identity 与 panic 后锁释放；Decoder manager 身份回归；真实硬件及 adapter 矩阵另验 |

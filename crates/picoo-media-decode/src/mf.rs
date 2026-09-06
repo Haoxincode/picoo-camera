@@ -103,14 +103,10 @@ impl MfH264Decoder {
     pub fn new() -> Result<Self, DecodeError> {
         let runtime = MfRuntimeGuard::start()?;
 
-        let gpu = device::create_context()?;
+        let gpu = std::sync::Arc::new(device::create_context()?);
         let transform = create_transform()?;
-        device::attach_manager(&transform, &gpu)?;
-        Ok(Self::initialized(
-            transform,
-            runtime,
-            device::DecoderDevice::Hardware(std::sync::Arc::new(gpu)),
-        ))
+        let device = device::attach_manager(&transform, gpu)?;
+        Ok(Self::initialized(transform, runtime, device))
     }
 
     #[cfg(any(test, feature = "test-codecs"))]

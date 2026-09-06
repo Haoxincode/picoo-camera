@@ -71,6 +71,20 @@ pub struct WindowsRenderer {
     pipeline: Option<Pipeline>,
 }
 impl WindowsRenderer {
+    /// Create once for a source device/output layout; reuse across source frames.
+    /// Adopts the existing device without creating a device or an MF manager.
+    pub fn for_source(source: &NativeImage, spec: RenderSpec) -> Result<Self, RenderError> {
+        let image = source.windows().ok_or(RenderError::DeviceUnavailable)?;
+        // SAFETY: Read-only device lookup on a retained native image. Adoption
+        // validates hardware/threading and preserves this exact native device.
+        let gpu = unsafe {
+            let (texture, _) = image.texture();
+            WindowsGpuContext::from_existing_device(texture.GetDevice().map_err(platform)?)
+        }
+        .map_err(|error| RenderError::Platform(error.to_string()))?;
+        Self::new(Arc::new(gpu), spec)
+    }
+
     pub fn new(gpu: Arc<WindowsGpuContext>, spec: RenderSpec) -> Result<Self, RenderError> {
         spec.validate()?;
         if spec.color != OutputColor::Bt709Limited {

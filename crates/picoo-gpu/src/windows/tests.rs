@@ -4,7 +4,6 @@ use std::time::Duration;
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory2, IDXGIFactory4, DXGI_CREATE_FACTORY_FLAGS,
 };
-use windows::Win32::Media::MediaFoundation::{MFShutdown, MFStartup, MFSTARTUP_FULL, MF_VERSION};
 use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED};
 
 pub(super) static GPU_WORK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -24,24 +23,14 @@ fn production_context_rejects_the_actual_warp_adapter() {
 }
 
 #[test]
-fn manager_returns_the_bound_device_and_panics_release_context_protection() {
+fn bound_context_keeps_device_identity_and_panics_release_protection() {
     // WARP reaches the private device binding only to test platform ownership.
     // The public production constructor continues rejecting this adapter.
     let _runtime = Runtime::start();
     let context = diagnostic_context();
     let device = context.device.clone();
     assert!(unsafe { context.protection.GetMultithreadProtected() }.as_bool());
-    unsafe {
-        let manager = context.device_manager();
-        let handle = manager.OpenDeviceHandle().unwrap();
-        let mut raw = std::ptr::null_mut();
-        let result = manager.GetVideoService(handle, &ID3D11Device::IID, &mut raw);
-        manager.CloseDeviceHandle(handle).unwrap();
-        result.unwrap();
-        assert!(!raw.is_null());
-        let associated = ID3D11Device::from_raw(raw);
-        assert_eq!(associated, device, "MF must use the source GPU device");
-    }
+    assert_eq!(unsafe { context.immediate.GetDevice() }.unwrap(), device);
     let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         context.with_immediate_context(|_| panic!("command-group cancellation fixture"));
     }));
@@ -62,7 +51,6 @@ impl Runtime {
     pub(super) fn start() -> Self {
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
-            MFStartup(MF_VERSION, MFSTARTUP_FULL).unwrap();
         }
         Self
     }
@@ -70,7 +58,6 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         unsafe {
-            let _ = MFShutdown();
             CoUninitialize();
         }
     }
@@ -107,4 +94,36 @@ pub(super) fn diagnostic_context() -> Arc<WindowsGpuContext> {
         )
         .unwrap(),
     )
+}
+
+#[test]
+fn adopting_an_existing_software_device_does_not_bypass_production_admission() {
+    let context = diagnostic_context();
+    assert!(matches!(
+        unsafe { WindowsGpuContext::from_existing_device(context.device.clone()) },
+        Err(WindowsDeviceError::SoftwareAdapter)
+    ));
+}
+
+#[test]
+fn adopting_a_single_threaded_device_is_rejected_before_protection_changes() {
+    let mut device = None;
+    unsafe {
+        D3D11CreateDevice(
+            None,
+            windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_WARP,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_SINGLETHREADED,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(matches!(
+            WindowsGpuContext::from_existing_device(device.unwrap()),
+            Err(WindowsDeviceError::MissingThreadProtection)
+        ));
+    }
 }

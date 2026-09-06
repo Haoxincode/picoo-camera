@@ -417,3 +417,18 @@ CpuImage 与三槽 pool 从已有 Apple exporter 提取为内部公共实现，�
 Windows GPU all-targets Clippy、Mac GPU/Receiver all-targets Clippy 通过；Mac GPU/CPU export 9 项实际原生回归全部通过。Windows 新回归待下一轮 CI。前一轮 CI 34044898768 的 Windows 全部通过，包含 Renderer 几何与 NV12 target pool、release、MSI 和 smoke；这不是实际 Video Processor 画质或整个 CpuBridge 已完成的证明。
 
 CI 34044898768 已全部通过，包含 Mac 最终打包。当前 CpuExporter 提交的 Windows 实际导出测试将由下一轮 CI 执行；整体 Next 与 Windows 主链路迁移仍未完成。
+
+
+## Windows device 采用与 MF manager 归属
+
+REQ-PICOO-GPU-004 / MEDIA-034 将 MF manager 从 GPU context 移入 DecoderDevice。Decoder 在 MFT type 协商前创建并绑定 manager，并持有它直到 transform 释放；固定 device 与不解绑软件重试不变。GPU context 的 renderer/exporter 路径不再初始化 MF，旧 device_manager getter 删除，不做转发兼容。
+
+新增采用已有 device 的入口：GetCreationFlags 拒绝 SINGLETHREADED，IDXGIDevice adapter descriptor 拒绝 software，GetImmediateContext 复用原对象。WindowsRenderer::for_source、CpuExporter::for_image 可从原生图像创建一次对应 worker 的 context，不需要把 Decoder 的 Rust 类型塞入 FrameHub，也不会因为增加输出创建新 source device。
+
+GPU 测试 helper 不再调用 MFStartup/MFShutdown；原 manager 正向 COM identity 回归迁到 Decoder，GPU 侧继续验证实际 device identity、panic 后锁释放，并增加已有 WARP/SINGLETHREADED 拒绝测试。真实硬件采用与主链路接入仍待后续验证，不能以私有 WARP fixture 代替生产成功路径。
+
+静态验证：Windows GPU all-targets Clippy、MF windows-mf/test-codecs 库 Clippy 与文档检查通过，新增 manager/设备采用测试待 CI。
+
+原生 sample 交付前还需闭合 MF runtime 寿命：MFStartup 必须持续到最后的 sample lease 释放，不能在任意消费线程析构时直接 MFShutdown。实现应让有上限的标准工作线程拥有 Startup/Shutdown，跨线程 lease 最终释放只通知关闭；COM apartment 仍留在调用 MFT 的 codec worker。此项尚未实现，不应提前将原始 MF sample 发布到 FrameBus。
+
+CI 34045983650 已全部通过：Windows NV12 readback/Weak/容量/拒绝回归以及 Windows/Mac 最终产物门禁均成功。本次 device 所有权调整将进入新一轮 CI。
