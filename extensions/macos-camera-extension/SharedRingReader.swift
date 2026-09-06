@@ -70,6 +70,10 @@ final class SharedRingReader: @unchecked Sendable {
         Darwin.close(descriptor)
     }
 
+    func clearCpuDemand() {
+        picoo_ring_clear_cpu_demand(base, mappedLength)
+    }
+
     var contentGeneration: UInt64 {
         picoo_ring_content_generation(base, mappedLength)
     }

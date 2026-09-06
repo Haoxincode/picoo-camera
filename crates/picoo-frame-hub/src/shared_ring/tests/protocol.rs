@@ -71,6 +71,7 @@ fn ring_layout_is_stable() {
     assert_eq!(std::mem::offset_of!(SlotMeta, ready_state), 40);
     assert_eq!(std::mem::offset_of!(SlotMeta, reader_count), 44);
     assert_eq!(std::mem::offset_of!(RingMeta, content_generation), 24);
+    assert_eq!(std::mem::offset_of!(RingMeta, cpu_demand_until_ms), 32);
     assert_eq!(std::mem::offset_of!(SlotMeta, content_generation), 48);
 }
 
@@ -120,7 +121,8 @@ fn miri_raw_layout_views_stay_aligned_and_within_mapping() {
             write_index: AtomicU32::new(0),
             latest_sequence: AtomicU64::new(0),
             content_generation: AtomicU64::new(1),
-            _pad: [0; 32],
+            cpu_demand_until_ms: AtomicU64::new(0),
+            _pad: [0; 24],
         });
         for index in 0..RING_SLOT_COUNT {
             slot_meta_at(mapping.base.as_ptr(), max_frame_bytes, index).write(SlotMeta {

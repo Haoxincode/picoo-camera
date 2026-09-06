@@ -19,6 +19,7 @@ typedef struct PicooRingFrameLease {
     int32_t lock_descriptor;
 } PicooRingFrameLease;
 
+void picoo_ring_clear_cpu_demand(void *base, size_t mapped_length);
 uint64_t picoo_ring_content_generation(void *base, size_t mapped_length);
 bool picoo_ring_validate_layout(void *base, size_t mapped_length);
 bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_length,

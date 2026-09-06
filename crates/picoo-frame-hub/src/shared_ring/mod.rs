@@ -9,6 +9,7 @@ use thiserror::Error;
 
 mod consumer;
 mod content_fence;
+mod demand;
 pub use content_fence::RingContentFence;
 mod layout;
 mod lock;

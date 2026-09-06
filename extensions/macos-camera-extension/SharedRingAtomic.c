@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/file.h>
 #include <unistd.h>
+#include <time.h>
 
 enum {
     PICOO_RING_MAGIC = 0x5049434F,
@@ -25,7 +26,8 @@ typedef struct PicooRingMeta {
     _Atomic uint32_t write_index;
     _Atomic uint64_t latest_sequence;
     _Atomic uint64_t content_generation;
-    uint8_t padding[32];
+    _Atomic uint64_t cpu_demand_until_ms;
+    uint8_t padding[24];
 } PicooRingMeta;
 
 typedef struct PicooSlotMeta {
@@ -55,6 +57,7 @@ _Static_assert(offsetof(PicooSlotMeta, reader_count) == 44,
                "Picoo SlotMeta lease offset drifted");
 
 _Static_assert(offsetof(PicooRingMeta, content_generation) == 24, "content generation offset drifted");
+_Static_assert(offsetof(PicooRingMeta, cpu_demand_until_ms) == 32, "CPU demand offset drifted");
 _Static_assert(offsetof(PicooSlotMeta, content_generation) == 48, "slot generation offset drifted");
 
 static PicooSlotMeta *picoo_slot(void *base, uint32_t max_frame_bytes,
@@ -134,6 +137,19 @@ uint64_t picoo_ring_content_generation(void *base, size_t mapped_length) {
     return atomic_load_explicit(&((PicooRingMeta *)base)->content_generation, memory_order_seq_cst);
 }
 
+static void picoo_request_cpu_frames(PicooRingMeta *ring) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0 || now.tv_sec < 0) return;
+    uint64_t milliseconds = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
+    if (milliseconds > UINT64_MAX - 250) return;
+    atomic_store_explicit(&ring->cpu_demand_until_ms, milliseconds + 250, memory_order_seq_cst);
+}
+
+void picoo_ring_clear_cpu_demand(void *base, size_t mapped_length) {
+    if (!picoo_ring_validate_layout(base, mapped_length)) return;
+    atomic_store_explicit(&((PicooRingMeta *)base)->cpu_demand_until_ms, 0, memory_order_seq_cst);
+}
+
 bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_length,
                                PicooRingFrameLease *lease) {
     if (lease == NULL || !picoo_ring_validate_layout(base, mapped_length)) {
@@ -141,6 +157,7 @@ bool picoo_ring_acquire_latest(const char *ring_path, void *base, size_t mapped_
     }
 
     PicooRingMeta *ring = (PicooRingMeta *)base;
+    picoo_request_cpu_frames(ring);
     uint32_t candidate_indices[PICOO_RING_SLOT_COUNT];
     uint64_t candidate_sequences[PICOO_RING_SLOT_COUNT];
     uint32_t candidate_count = 0;

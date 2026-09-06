@@ -21,6 +21,8 @@ struct State {
     pending: Option<Request>,
     generation: u64,
     stopped: bool,
+    exports: u64,
+    demand_waits: u64,
 }
 
 pub(crate) enum OutputEvent {
@@ -58,24 +60,74 @@ impl MacCpuOutput {
                 worker_shared.0.lock().unwrap().generation = worker_generation.invalidate();
                 let _ = started.send(Ok(worker_generation.clone()));
                 let mut resources: Option<Resources> = None;
+                let mut prepared_cache = None;
+                let mut published_key = None;
                 loop {
                     let (generation, request) = {
                         let (lock, ready) = &*worker_shared;
                         let mut state = lock.lock().unwrap();
-                        while state.pending.is_none() && !state.stopped {
-                            state = ready.wait(state).unwrap();
+                        while !state.stopped {
+                            let admitted = match state.pending.as_ref() {
+                                Some(Request::Placeholder(..)) => true,
+                                Some(Request::Frame(_)) => {
+                                    let active = producer.has_cpu_demand();
+                                    if !active {
+                                        state.demand_waits = state.demand_waits.saturating_add(1);
+                                    }
+                                    active
+                                }
+                                None => false,
+                            };
+                            if admitted {
+                                break;
+                            }
+                            // Consumers renew demand through shared atomics, not
+                            // this process's Condvar. A bounded poll admits the
+                            // latest retained source even if capture is paused.
+                            state = if state.pending.is_none() {
+                                ready.wait(state).unwrap()
+                            } else {
+                                ready
+                                    .wait_timeout(state, Duration::from_millis(16))
+                                    .unwrap()
+                                    .0
+                            };
                         }
                         if state.stopped {
                             return;
                         }
                         (state.generation, state.pending.take().unwrap())
                     };
+                    let source_key = match &request {
+                        Request::Frame(frame) => Some((
+                            generation,
+                            frame.identity(),
+                            frame.description().config_revision,
+                        )),
+                        Request::Placeholder(..) => None,
+                    };
+                    if source_key.is_some() && source_key == published_key {
+                        continue;
+                    }
                     let prepared = match request {
                         Request::Frame(frame) => {
-                            prepare(&mut resources, &frame).map(Prepared::Image)
+                            let cached = prepared_cache
+                                .as_ref()
+                                .filter(|(key, _)| Some(*key) == source_key)
+                                .map(|(_, image)| Arc::clone(image));
+                            let image = match cached {
+                                Some(image) => Ok(image),
+                                None => prepare_counted(&mut resources, &frame, &worker_shared),
+                            };
+                            image.map(|image| {
+                                prepared_cache = Some((source_key.unwrap(), Arc::clone(&image)));
+                                Prepared::Image(image)
+                            })
                         }
                         Request::Placeholder(mode, reconnecting) => {
                             resources = None;
+                            prepared_cache = None;
+                            published_key = None;
                             Ok(Prepared::Placeholder(if reconnecting {
                                 mode.reconnecting_frame()
                             } else {
@@ -132,6 +184,7 @@ impl MacCpuOutput {
                         };
                         match result {
                             Ok(RingPublishOutcome::Published { .. }) => {
+                                published_key = source_key;
                                 *worker_events.lock().unwrap() =
                                     Some((generation, OutputEvent::Published));
                                 break;
@@ -247,6 +300,22 @@ enum Prepared {
     Placeholder(Vec<u8>),
 }
 
+fn prepare_counted(
+    resources: &mut Option<Resources>,
+    frame: &NativeVideoFrame,
+    shared: &Arc<(Mutex<State>, Condvar)>,
+) -> Result<Arc<CpuImage>, String> {
+    let image = prepare(resources, frame)?;
+    let mut state = shared.0.lock().unwrap();
+    state.exports = state.exports.saturating_add(1);
+    tracing::trace!(
+        cpu_exports = state.exports,
+        source_frame_id = frame.identity().frame_id,
+        "CPU output materialized for active demand"
+    );
+    Ok(image)
+}
+
 fn prepare(
     resources: &mut Option<Resources>,
     frame: &NativeVideoFrame,
@@ -301,6 +370,17 @@ mod tests {
         PresentationTransform, SharedFrameRingConsumer, SourceColor, DEFAULT_MAX_FRAME_BYTES,
     };
     use std::time::Instant;
+
+    fn wait_until(mut predicate: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !predicate() {
+            assert!(
+                Instant::now() < deadline,
+                "CPU demand worker did not progress"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
 
     #[test]
     fn hardware_decode_bus_gpu_and_cpu_sink_preserve_bt709_pixels() {
@@ -360,7 +440,12 @@ mod tests {
         })
         .unwrap();
         let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
-        output.submit(bus.latest().unwrap().clone());
+        let source = bus.latest().unwrap().clone();
+        output.submit(Arc::clone(&source));
+        // Opening the mapping is not demand; wait until the worker actually
+        // observes the queued frame before checking that no export occurred.
+        wait_until(|| output.shared.0.lock().unwrap().demand_waits > 0);
+        assert_eq!(output.shared.0.lock().unwrap().exports, 0);
         // Releasing the source bus must not invalidate the worker's native lease.
         bus.clear();
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -386,6 +471,49 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(1));
         }
+        assert_eq!(output.shared.0.lock().unwrap().exports, 1);
+        let first_sequence = consumer.latest_frame().unwrap().sequence;
+        for _ in 0..8 {
+            output.submit(Arc::clone(&source));
+        }
+        wait_until(|| output.shared.0.lock().unwrap().pending.is_none());
+        assert_eq!(
+            output.shared.0.lock().unwrap().exports,
+            1,
+            "same source is exported once"
+        );
+        assert_eq!(consumer.latest_frame().unwrap().sequence, first_sequence);
+        drop(consumer);
+        thread::sleep(Duration::from_millis(300)); // crashed reader's 250ms lease expires
+        let waited = output.shared.0.lock().unwrap().demand_waits;
+        let next_source = Arc::new(
+            NativeVideoFrame::new(
+                FrameIdentity {
+                    frame_id: source.identity().frame_id + 1,
+                    ..source.identity()
+                },
+                source.source_pts_us() + 33_333,
+                source.description(),
+                source.image().clone(),
+                source.timeline(),
+            )
+            .unwrap(),
+        );
+        output.submit(next_source);
+        wait_until(|| output.shared.0.lock().unwrap().demand_waits > waited);
+        assert_eq!(
+            output.shared.0.lock().unwrap().exports,
+            1,
+            "expired demand cannot export new source"
+        );
+        let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
+        // No new source submission: an actual read request wakes retained work.
+        wait_until(|| {
+            consumer
+                .latest_frame()
+                .is_some_and(|frame| frame.sequence > first_sequence)
+        });
+        assert_eq!(output.shared.0.lock().unwrap().exports, 2);
         output.invalidate();
         assert!(
             consumer.latest_frame().is_none(),

@@ -274,3 +274,16 @@ Mac CPU 工作者在入队时捕获代际，placeholder、配置失效与退出�
 3 项原子失效/迟到提交/耗尽测试和 2 项 Loom 模型通过；生产 Rust→Swift/C 跨进程门禁通过，新增持有 lease 跨进程失效后拒绝复制的验收正在运行。Mac 完整套件与 frame-hub/Receiver Clippy 已通过前一轮，新增 Extension 缓存合同需要本轮最终验证。
 
 CPU IPC 最终验证：Mac FrameHub 52 passed / 2 ignored，生产 Rust→Swift/C 跨进程合同（包含持有 lease 的失效复制拒绝）通过；Decoder 16、GPU 9、Receiver 103 passed / 2 ignored、GPUI Apple 4、Desktop 70 通过。完整 macOS Receiver release 与 Camera Extension 构建成功；Clippy 和 400 项文档链接检查通过。未运行手机或签名扩展真实客户端验收，Windows Owner 和系统 sample 隐私期限保持待验证。
+
+
+## CPU 消费需求与唯一源物化
+
+REQ-PICOO-FRAME-014 在现有 IPC 中添加有界需求租期：实际读取才续期，打开映射不产生需求；Camera Extension 最后一个客户端停止时清零，异常退出在 250ms 内自动过期。跨进程时钟复用 Unix CLOCK_MONOTONIC（现有 libc 0.2）和 Windows GetTickCount64（现有 windows-sys 0.61.2 的 SystemInformation feature，最低平台早于项目 Windows 11 基线）；只传同机单调毫秒，不引入时钟服务、墙钟或额外消息队列。
+
+Mac CPU 工作者无需求时只保留最新待处理 Arc，不做 GPU render/export。需求晚到时有界唤醒，即使没有新相机回调也能处理该源；无待处理工作时休眠。当前内容代际、原始帧身份和配置 revision 构成物化身份，已发布同源不重复导出或写 ring；Busy 时准备结果可复用。实际导出数进入结构化 trace，测试检查真实 GPU→CPU 路径的 0→1→重复仍 1→租期过期仍 1→新消费后 2，不通过 StubExporter 推断。
+
+本机 Mac 完整回归与 Clippy 已通过初次需求门禁实现；增加 C 读取续期/显式停止检查和空队列休眠后运行最终验证。Windows CPU owner 尚未切到新 GPU 输出协调器，完整多 sink/格式协商仍待，不能由这条 Mac 门禁替代。
+
+39ab1d1 的 CI 34035360507 已通过 Windows Shared Ring/MFT/Receiver AVCC 原生测试以及 macOS Clippy/原生媒体与共享区测试；两端产物构建仍在运行。MF coded/visible 和 EOS drain 至此有 Windows 原生回归证据，仍不等于 D3D11 硬件链路或实际显卡矩阵验收。
+
+CPU demand 最终验证通过：Mac FrameHub 53 passed / 2 ignored、Rust→Swift/C 请求续期/显式停止与共享区合同、Decoder 16、GPU 9、Receiver 103 passed / 2 ignored、GPUI Apple 4、Desktop 70；Receiver release 与 Camera Extension 完整构建、Clippy 和 400 项文档链接检查通过。250ms 是异常退出的有限租期，不是摄像头样本时钟；source60→output30 的完整协商与采样节奏仍由输出协调器验收，当前实现不宣称完成此项。

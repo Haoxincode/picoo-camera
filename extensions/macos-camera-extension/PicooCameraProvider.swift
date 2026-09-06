@@ -112,6 +112,7 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             guard streamingClients > 0 else { return }
             streamingClients -= 1
             guard streamingClients == 0 else { return }
+            ringReader?.clearCpuDemand()
             timer?.cancel()
             timer = nil
             ringReader = nil

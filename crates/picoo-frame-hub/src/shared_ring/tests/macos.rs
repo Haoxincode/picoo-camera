@@ -621,6 +621,22 @@ fn assert_swift_content_fence(harness: &Path, max: usize) {
             .unwrap(),
         "Swift/C current publication",
     );
+    assert!(
+        unsafe {
+            (&*meta_at(producer.mapping.as_ptr()))
+                .cpu_demand_until_ms
+                .load(Ordering::SeqCst)
+        } > 0,
+        "Swift actual read must renew CPU demand"
+    );
+    assert_process_success(
+        Command::new(harness)
+            .args(["clear-demand", path.to_str().unwrap()])
+            .output()
+            .unwrap(),
+        "Swift stop CPU demand",
+    );
+    assert!(!producer.has_cpu_demand());
     drop((producer, fence));
     cleanup_file_ring(&path);
 }

@@ -65,6 +65,11 @@ private enum SharedRingReaderHarness {
                 throw HarnessError.invalidFrame("invalidated lease copied into a new system buffer")
             }
 
+        case "clear-demand":
+            guard arguments.count == 2 else { throw HarnessError.usage }
+            let reader = try SharedRingReader(fileURL: URL(fileURLWithPath: arguments[1]))
+            reader.clearCpuDemand()
+
         case "expect-empty":
             guard arguments.count == 2 else { throw HarnessError.usage }
             let reader = try SharedRingReader(fileURL: URL(fileURLWithPath: arguments[1]))

@@ -24,7 +24,8 @@ pub(super) struct RingMeta {
     pub(super) write_index: AtomicU32,
     pub(super) latest_sequence: AtomicU64,
     pub(super) content_generation: AtomicU64,
-    pub(super) _pad: [u8; 32],
+    pub(super) cpu_demand_until_ms: AtomicU64,
+    pub(super) _pad: [u8; 24],
 }
 
 #[repr(C)]

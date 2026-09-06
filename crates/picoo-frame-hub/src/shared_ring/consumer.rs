@@ -83,6 +83,7 @@ impl SharedFrameRingConsumer {
             if meta.magic != RING_MAGIC {
                 return None;
             }
+            super::demand::request(base);
             if meta.latest_sequence.load(Ordering::Acquire) == 0 {
                 return None;
             }

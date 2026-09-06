@@ -47,3 +47,5 @@ Apple 图像、硬件 codec 与 GPU 分别复用 CoreVideo/IOSurface、VideoTool
 源配置使用与能力声明相同的 codec/profile/色彩枚举和标准 level_idc，不使用可随意拼写的字符串，也不在缺参数时猜测 profile 或 level。已提交参数集属于 Decoder job 的不可变配置快照；带内参数集只有逐个匹配时才可随 AU 进入平台 Decoder，不能绕过配置事务改写 source format。Sender 在原生编码器提供参数前没有源配置，不在会话创建时合成配置。参数解释失败直接返回错误，不能生成空记录或占位身份；完整原生回调必须先验证配置，再绑定 generation 或暂存源状态。Receiver 在替换已提交配置、推进 revision、使输出失效或释放未来 epoch 媒体之前校验记录与声明身份；校验失败必须保持原状态。StreamConfig 的 `codec_configuration` 承载标准 avcC/hvcC 记录，不再单独传输 SPS/PPS；原生 API 提供的参数集仅在平台输入适配边界保留。标准记录中的 configurationVersion 是外部标准语法，不是 Picoo 协议版本。标准 avcC/hvcC 解释与生成由位流依赖负责，领域层只执行有界准入和一致性校验。
 
 CPU IPC 内容失效由独立原子代际表达，与文件/映射的进程世代分开。每次准备携带内容代际，槽位提交保留该原始值；Consumer 获得读 lease 后再次检查槽位值与当前值相等，不能把复制后的最新代际贴到旧内容上。Owner 只推进标量，不等待复制或 GPU 任务，也不覆盖消费者仍持有的像素。此门禁使迟到旧发布不可重新获得 lease；已交付系统 sample、缓存与持有引用的隐私期限仍由各 sink 的清理合同负责。代际耗尽永久关闭该映射，不能归零后重新启用。
+
+CPU demand 必须来自实际消费请求，不能把已打开映射或已安装 VCam 当作持续需求。CPU ring 的消费租期使用同一主机的单调时钟，最长 250ms；有请求才续期，消费者崩溃后不永久保留需求。Camera Extension 聚合客户端生命周期，最后一个客户端停止时撤销请求。输出 owner 只保留一个最新待处理原生源，等待 demand 时不准备 GPU 目标或 readback；当前内容代际内已成功导出的同一源身份不重复物化。租期只控制 CPU 输出工作，不调整源 codec、帧率、Decoder 或其他 sink。
