@@ -176,6 +176,59 @@ fn completed_output_outlives_renderer_on_another_consumer_thread() {
 }
 
 #[test]
+fn cpu_export_materializes_only_the_completed_output_and_is_bounded() {
+    let source = red_source(true);
+    let output_spec = spec(OutputColor::Bt709Limited);
+    let mut renderer = AppleRenderer::new(output_spec).unwrap();
+    let rendered = renderer.render(&source).unwrap();
+    let mut exporter = CpuExporter::new(output_spec).unwrap();
+    assert_eq!(exporter.exports(), 0);
+    let first = exporter.export(&rendered).unwrap();
+    let clone = first.clone();
+    let second = exporter.export(&rendered).unwrap();
+    let third = exporter.export(&rendered).unwrap();
+    assert_eq!(exporter.exports(), 3);
+    assert!(matches!(
+        exporter.export(&rendered),
+        Err(RenderError::PoolFull)
+    ));
+    drop(first);
+    assert!(matches!(
+        exporter.export(&rendered),
+        Err(RenderError::PoolFull)
+    ));
+    assert_eq!(exporter.exports(), 3);
+    let expected = sample(&rendered, 640, 360);
+    let y = clone.pixels()[360 * 1280 + 640];
+    let uv_offset = 1280 * 720 + 180 * 1280 + 640;
+    assert_eq!(
+        [y, clone.pixels()[uv_offset], clone.pixels()[uv_offset + 1]],
+        expected
+    );
+    assert_eq!(clone.stride(), 1280);
+    assert_eq!(clone.pixels().len(), 1280 * 720 * 3 / 2);
+    drop(second);
+    let fourth = exporter.export(&rendered).unwrap();
+    assert_eq!(exporter.exports(), 4);
+    assert_eq!(fourth.pixels(), clone.pixels());
+    drop((third, fourth, rendered, renderer, source, exporter));
+    assert_eq!(clone.pixels()[360 * 1280 + 640], y);
+}
+
+#[test]
+fn cpu_export_rejects_different_output_color_without_readback() {
+    let source = red_source(true);
+    let mut renderer = AppleRenderer::new(spec(OutputColor::Bt601Full)).unwrap();
+    let rendered = renderer.render(&source).unwrap();
+    let mut exporter = CpuExporter::new(spec(OutputColor::Bt709Limited)).unwrap();
+    assert!(matches!(
+        exporter.export(&rendered),
+        Err(RenderError::OutputLayoutMismatch)
+    ));
+    assert_eq!(exporter.exports(), 0);
+}
+
+#[test]
 fn rotation_then_mirror_matches_source_quadrants() {
     let source = source_fixture(true, true);
     for (rotation, expected) in [

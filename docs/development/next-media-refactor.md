@@ -120,3 +120,11 @@ REQ-PICOO-GPU-001：新增架构指定的 picoo-gpu crate，依赖方向 GPU→F
 首次红色 fixture 测试通过后，灰阶发现 Core Image 默认输入颜色推断将 Y=40 变为 52；改为显式 kCIImageColorSpace BT.709 后，实际 M4 七项测试全部通过（46.66 秒），覆盖两输出、灰阶、八种方向/镜像、contain、池耗尽、保留 clone、跨线程及非法尺寸/缺失 source color。Linux 仅公共契约 1 项通过，不宣称 Linux GPU 支持。cargo xtask test macos 已包含此测试，以真实 Metal 可用性验收，不增加无 device 时的跳过或软件替代。Decoder/FrameBus/Preview 仍未使用新 renderer，四十项总目标继续未完成。
 
 该 GPU 批次 picoo-gpu/xtask all-targets Clippy -D warnings、cargo fmt、文档链接检查通过。前一批 CI 34021277005 的 Windows/macOS 仍在执行，先保留本地阶段提交，避免频繁 push 取消原生构建；待下一次推送一并提交后续集成。
+
+REQ-PICOO-GPU-002：为原生输出接入补齐目的端 CPU 物化边界。CpuExporter 只接受已完成 RenderedImage 与完全一致 RenderSpec，逐平面复制可见行，保持目标颜色/方向，不接收 NativeImage、不向帧总线发布、不自行订阅或启动计时器。布局拒绝与三槽耗尽都发生在 mapping 前；只在显式 export 时懒分配，Arc 仍被消费者持有时不能覆盖，弱引用同样不能绕过写入独占。正常/错误路径都释放 CoreVideo read lock，正常 unlock 失败会明确返回错误。
+
+选型核对：仓库 FrameBufferPool 只限制 idle retained storage，checkout 在慢消费者占用时仍可继续分配，不满足新 CPU staging 总量契约。此处直接采用 Rust std::sync::Arc 的 get_mut 独占语义和固定三槽，不引入通用对象池框架、不自行维护引用计数，不复用旧软上限语义。CoreVideo 官方 lock/plane API 复用现有锁定 0.3.2 绑定，无新包。
+
+M4 完整 GPU 套件九项通过（26.36 秒），新增实际 GPU→CPU 像素、紧密行布局、槽满拒绝、clone 寿命及错误 color contract 零导出测试。最终 unlock 错误传播调整后再跑对应 CPU exporter 测试；all-targets clippy -D warnings 与文档检查通过。当前仍在替换前的原生组件接线准备，Decoder/公共 CPU VideoFrame/旧预览尚未删除，不据此将 NEXT-029/033/034 总需求标为完成。输出协调器负责的 demand、唯一源去重和跨 sink 共享仍待实现。
+
+CPU exporter 最终两项定向测试通过（25.28 秒，包含最终 unlock 错误传播实现）；格式及 diff 检查通过。bc3a30d 与本批保持本地阶段提交，等待前一批 Windows 原生构建结束后推送，避免取消其证据。

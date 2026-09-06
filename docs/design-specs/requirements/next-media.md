@@ -64,3 +64,4 @@
 | ID | 状态 | 来源 | 契约 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-GPU-001 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、016、029 | Apple 原生 NV12 源经显式 Metal/Core Image 转为独立目标图像；源/目标色彩明确，旋转后镜像，contain 不变形；固定布局三槽池，完成 GPU 写入后交付不可变输出 | M4 实际 GPU 色彩/灰阶/八种方向组合、黑边、池耗尽与保留引用、跨线程寿命；不代表 Decoder/Preview 接入或跨输出总预算完成 |
+| REQ-PICOO-GPU-002 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-029、033、034 | Apple CPU exporter 只物化匹配 RenderSpec 的 GPU 完成输出，逐 plane 复制可见行并移除 padding；固定三槽，慢消费者不能触发扩池；无调用不 readback | 实际 GPU→CPU 像素比对、池耗尽/clone 寿命、错误输出拒绝；执行器接入、唯一源去重及完整 CpuBridge 验收另验 |

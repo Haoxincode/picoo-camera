@@ -3,7 +3,7 @@
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]
-pub use apple::{AppleRenderer, RenderedImage};
+pub use apple::{AppleRenderer, CpuExporter, CpuImage, RenderedImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputColor {
@@ -41,6 +41,8 @@ pub enum RenderError {
     DeviceUnavailable,
     #[error("native source must declare BT.709 matrix, primaries and transfer")]
     UnsupportedSourceColor,
+    #[error("GPU output layout differs from the CPU exporter contract")]
+    OutputLayoutMismatch,
     #[error("platform GPU render failed: {0}")]
     Platform(String),
 }

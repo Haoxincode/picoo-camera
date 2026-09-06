@@ -19,6 +19,7 @@
 - RenderSpec 的旋转先于输出坐标中的水平镜像，contain 保持源比例并填充不透明黑边。Apple GPU renderer 使用显式 Metal device 和 Core Image；源、目标色彩空间分别明确指定，不能以隐式推断替代已提交色彩合同。每个固定布局的输出池最多三张表面，拒绝继续分配；输出发布前必须完成 GPU 写入，后续消费者仍对自己的 GPU 读取寿命负责。
 - Preview latest-only；虚拟摄像头使用独立 SampleClock；处理后录像订阅有界有序原生帧；原码流录像在 live scheduler/Decoder 之前接收完整 AU。
 - 每个摄像头 sink 独立验证 GpuNative/CpuBridge。CPU 输出只做目标 GPU 图像的物化、布局复制与必要上传，不拥有 codec/连接事务，不反向发布到原生帧总线。
+- CpuExporter 只接受已完成的目标 GPU 图像及完全相同的 RenderSpec；源 native image 不提供 CPU 导出入口。CPU 槽位同时约束正在使用和闲置的分配，持有输出引用时不能覆盖或额外扩池；无调用不分配像素和 readback。唯一源帧去重、需求与跨 sink 复用由输出协调器拥有，不放到 exporter 内重复维护。
 
 ## 约束
 
