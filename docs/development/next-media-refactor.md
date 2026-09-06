@@ -350,3 +350,8 @@ REQ-PICOO-GPU-004 新增 WindowsGpuContext::for_adapter，显式使用同一硬�
 连续平台原生测试后 Windows release 仍需完整重编依赖，当前 CI 未配置 Cargo cache。按 REQ-PICOO-STACK-004/005 复用已核对并固定 SHA 的 Swatinem/rust-cache v2.9.2，只为 Windows job 添加依赖缓存；workspace crate、平台测试、产物构建和打包门禁仍每轮执行。缓存不影响任务完成判断，首次冷/暖缓存结果待 CI；选型、许可证和生命周期边界见 ci-and-build.md。
 
 39899fe 的 CI 34038336004 全部通过，包含 Windows 原生测试、release 构建、MSI 和 smoke。缓存 workflow 的 actionlint 与文档检查通过；本次新 Windows 图像/context 的运行测试将在新提交的 CI 中执行。
+
+
+CI 34039825921 的 Windows 原生测试步骤已通过，包含 D3D11 NV12 sample 保留/跨线程最终释放、CPU/BGRA 拒绝及生产 GPU context 对真实 WARP adapter 的拒绝；Windows release 构建仍运行。Rust/docs、Android、iOS、macOS 已通过。FRAME-016 仅按这一资源 owner 合同标为 implemented，不代表 Windows Native Decoder 或硬件矩阵完成。
+
+补充 GPU context 正向平台合同：复用生产内部 device/manager 绑定逻辑，在仅测试可达的 WARP 资源上检查 GetVideoService 返回同一设备，并在命令组 panic 后由另一线程取得原生锁。没有公开软件设备构造器，生产入口仍先拒绝软件 adapter。Windows all-targets Clippy 通过，新增正向合同待下一轮 Windows CI。

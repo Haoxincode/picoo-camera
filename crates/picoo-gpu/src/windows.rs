@@ -78,6 +78,21 @@ impl WindowsGpuContext {
         }
         let device = device.ok_or(WindowsDeviceError::MissingDevice)?;
         let immediate = immediate.ok_or(WindowsDeviceError::MissingDevice)?;
+        Self::bind_device(
+            WindowsAdapterId {
+                low: description.AdapterLuid.LowPart,
+                high: description.AdapterLuid.HighPart,
+            },
+            device,
+            immediate,
+        )
+    }
+
+    fn bind_device(
+        adapter: WindowsAdapterId,
+        device: ID3D11Device,
+        immediate: ID3D11DeviceContext,
+    ) -> Result<Self, WindowsDeviceError> {
         let protection: ID3D11Multithread = immediate.cast()?;
         unsafe {
             // The return value is the previous state, not a success code.
@@ -100,10 +115,7 @@ impl WindowsGpuContext {
             protection,
             immediate,
             device,
-            adapter: WindowsAdapterId {
-                low: description.AdapterLuid.LowPart,
-                high: description.AdapterLuid.HighPart,
-            },
+            adapter,
         })
     }
 
@@ -150,20 +162,4 @@ impl WindowsGpuContext {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use windows::Win32::Graphics::Dxgi::{
-        CreateDXGIFactory2, IDXGIFactory4, DXGI_CREATE_FACTORY_FLAGS,
-    };
-
-    #[test]
-    fn production_context_rejects_the_actual_warp_adapter() {
-        let factory: IDXGIFactory4 =
-            unsafe { CreateDXGIFactory2(DXGI_CREATE_FACTORY_FLAGS(0)) }.unwrap();
-        let warp: IDXGIAdapter1 = unsafe { factory.EnumWarpAdapter() }.unwrap();
-        assert!(matches!(
-            WindowsGpuContext::for_adapter(&warp),
-            Err(WindowsDeviceError::SoftwareAdapter)
-        ));
-    }
-}
+mod tests;
