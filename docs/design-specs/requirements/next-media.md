@@ -67,6 +67,7 @@
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-GPU-001 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、016、029 | Apple 原生 NV12 源经显式 Metal/Core Image 转为独立目标图像；源/目标色彩明确，旋转后镜像，contain 不变形；固定布局三槽池，完成 GPU 写入后交付不可变输出 | M4 实际 GPU 色彩/灰阶/八种方向组合、黑边、池耗尽与保留引用、跨线程寿命；不代表 Decoder/Preview 接入或跨输出总预算完成 |
 | REQ-PICOO-GPU-002 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-029、033、034 | Apple CPU exporter 只物化匹配 RenderSpec 的 GPU 完成输出，逐 plane 复制可见行并移除 padding；固定三槽，慢消费者不能触发扩池；无调用不 readback | 实际 GPU→CPU 像素比对、池耗尽/clone 寿命、错误输出拒绝；执行器接入、唯一源去重及完整 CpuBridge 验收另验 |
+| REQ-PICOO-GPU-005 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-016、025、034 | Windows Flush1 完成事件保留命令 owner，取消/失败/panic 不提前释放；device removed 只报告失败；每 context 三个、全进程十二个完成对象，未取结果仍占容量；MF 输出在专用 worker 等待完成 | 真实 threadpool 取消、容量、panic、跨 context 上限与 GPU copy 回归；Windows 原生 CI 执行，MFT 硬件端到端与图像字节预算另验 |
 
 ## 原生帧分发分解
 

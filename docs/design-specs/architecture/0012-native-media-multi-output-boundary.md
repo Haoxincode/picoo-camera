@@ -63,3 +63,7 @@ Windows 原生输出必须验证纹理所属 device 与 Decoder generation 固�
 Decoder 工作者接收可跨线程的 factory，在工作线程内创建、调用、重建与释放平台 Decoder。Decoder 接口不要求 Send，不用 unsafe Send 绕过 COM apartment 的同线程清理责任；仅显式测试注入的合成 Decoder 需要 Send。源图像/context 的可跨线程资源寿命与 codec runtime 的线程归属分别约束。
 
 Windows MFT 生产工厂只接受硬件 DXGI adapter；创建固定 D3D11 video device 后检查 MF_SA_D3D11_AWARE 并绑定 manager，然后才协商媒体类型。完整源配置必须存在，正式可见尺寸/帧率、驱动 H.264 NV12 profile 与 coded geometry 的 decoder configuration 均需准入。MFT 必须自行提供 DXGI sample，实际纹理的 device identity 必须匹配；禁止为生产 MFT 分配 CPU 输出 sample 或解绑 manager 后软件重试。显式软件诊断只由 test-codecs/test 构建的诊断入口调用，不是产品工厂的候选或失败分支。
+
+Windows GPU 完成通知使用官方 Flush1 的事件查询和一次性 threadpool wait，避免 CPU 轮询或自行维护跨提交 fence 序号。容量、系统 event、device-removed 注册和 wait 对象在新命令提交前准备；完成通知只在提交函数退出后启用，原生事件提前到达也不能释放提交函数仍在使用的 owner。提交失败或 panic 仍在同一队列后放置完成查询，取消接收者不取消资源保留。设备移除事件只能交付失败，不发布成功图像。每 context 最多三个未消费完成对象，全进程最多十二个；未消费结果仍占容量，context 重建不能绕过全局上限。该计数不替代图像字节总预算。
+
+MFT 调用不在外部 ID3D11Multithread Enter/Leave 锁内执行，以免等待 MFT 内部线程时造成跨线程死锁；实际 GPU 命令组才使用 context 保护。Flush1 在提交函数返回后有序发出，覆盖该函数已提交命令；提交函数不得把尚未提交的 GPU 工作交给游离线程。UI/Receiver owner 不等待完成，允许专用 codec/输出工作者等待系统通知。

@@ -382,3 +382,14 @@ REQ-PICOO-MEDIA-034 将 WindowsGpuContext 接入实际 MfH264Decoder 生产工�
 Windows 目标 windows-mf 生产及 windows-mf,test-codecs 诊断库 Clippy 均通过；Mac Decoder/Receiver all-targets Clippy 通过。全目标 Windows 原生测试由 CI 执行，本机不具备 ring 所需 Windows C 工具链。
 
 本提交 Mac 回归：Receiver 104 passed/2 ignored、Decoder 16 passed，文档检查通过。上一轮 CI 34041534379 现已全部通过；本次工厂接入与线程归属提交待新一轮 Windows CI，软件诊断回归不计入硬件验收。
+
+
+## Windows GPU 完成通知与 MF 输出保留
+
+REQ-PICOO-GPU-005 采用官方 ID3D11DeviceContext3::Flush1(D3D11_CONTEXT_TYPE_ALL, event)、RegisterDeviceRemovedEvent 和一次性 threadpool wait。所有 fallible 等待资源与 capacity 在提交前创建，回调只在提交退出并放置完成查询后 arm；立即完成/设备已移除不会与提交函数并发释放 owner。错误和 panic 也等待已提交工作完成；接收者取消只关闭通知，不释放在途样本。callback 注销设备事件、关闭 wait 与 event 后交付结果，析构/通知 panic 不跨 native ABI。
+
+每 context 三个、全进程十二个 completion permit，完成但未消费的 channel 结果仍持有 permit；重建 context 不绕过全局上限。它不替代全图像字节预算，也不将 GPU hang 的系统 TDR 时间作为已验证隐私期限。
+
+MfH264Decoder 使用 Arc 固定 GPU context，输出前预留 completion，再在同一 Decoder worker 调用 ProcessOutput；MftOutput 立即保存返回的原始 sample，包括错误路径。MFT 调用不持有外部 immediate-context lock；完成查询单独串行提交，工作者等待结果后才检查和读取源。旧 CPU 输出读取仍待原生帧/预览替换，但源样本完成与保留不再依赖 Lock2DSize 的隐式同步。
+
+新增实际 OS wait 取消保留、未消费结果容量、panic 清理、跨 context 全局上限和 WARP GPU CopyResource→完成事件→诊断 Map 校验。GPU all-targets 与生产 MF 库的 Windows 目标 Clippy 通过；实际测试执行待下一轮 Windows CI。上一轮 CI 34042514875 已全部通过，包括硬件生产工厂 feature 编译及显式软件 MF 核心回归，不代表真实硬件解码验收。

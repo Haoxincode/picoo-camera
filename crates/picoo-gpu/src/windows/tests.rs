@@ -25,50 +25,9 @@ fn production_context_rejects_the_actual_warp_adapter() {
 fn manager_returns_the_bound_device_and_panics_release_context_protection() {
     // WARP reaches the private device binding only to test platform ownership.
     // The public production constructor continues rejecting this adapter.
-    struct Runtime;
-    impl Drop for Runtime {
-        fn drop(&mut self) {
-            unsafe {
-                let _ = MFShutdown();
-                CoUninitialize();
-            }
-        }
-    }
-    unsafe {
-        CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
-        MFStartup(MF_VERSION, MFSTARTUP_FULL).unwrap();
-    }
-    let _runtime = Runtime;
-    let adapter = warp_adapter();
-    let description = unsafe { adapter.GetDesc1() }.unwrap();
-    let mut device = None;
-    let mut immediate = None;
-    unsafe {
-        D3D11CreateDevice(
-            &adapter,
-            D3D_DRIVER_TYPE_UNKNOWN,
-            HMODULE::default(),
-            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            Some(&[D3D_FEATURE_LEVEL_11_0]),
-            D3D11_SDK_VERSION,
-            Some(&mut device),
-            None,
-            Some(&mut immediate),
-        )
-        .unwrap();
-    }
-    let device = device.unwrap();
-    let context = Arc::new(
-        WindowsGpuContext::bind_device(
-            WindowsAdapterId {
-                low: description.AdapterLuid.LowPart,
-                high: description.AdapterLuid.HighPart,
-            },
-            device.clone(),
-            immediate.unwrap(),
-        )
-        .unwrap(),
-    );
+    let _runtime = Runtime::start();
+    let context = diagnostic_context();
+    let device = context.device.clone();
     assert!(unsafe { context.protection.GetMultithreadProtected() }.as_bool());
     unsafe {
         let manager = context.device_manager();
@@ -94,4 +53,56 @@ fn manager_returns_the_bound_device_and_panics_release_context_protection() {
         .recv_timeout(Duration::from_secs(3))
         .expect("panic leaked the native context lock");
     worker.join().unwrap();
+}
+
+pub(super) struct Runtime;
+impl Runtime {
+    pub(super) fn start() -> Self {
+        unsafe {
+            CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
+            MFStartup(MF_VERSION, MFSTARTUP_FULL).unwrap();
+        }
+        Self
+    }
+}
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = MFShutdown();
+            CoUninitialize();
+        }
+    }
+}
+
+pub(super) fn diagnostic_context() -> Arc<WindowsGpuContext> {
+    let adapter = warp_adapter();
+    let description = unsafe { adapter.GetDesc1() }.unwrap();
+    let mut device = None;
+    let mut immediate = None;
+    unsafe {
+        D3D11CreateDevice(
+            &adapter,
+            D3D_DRIVER_TYPE_UNKNOWN,
+            HMODULE::default(),
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            Some(&[D3D_FEATURE_LEVEL_11_0]),
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            Some(&mut immediate),
+        )
+        .unwrap();
+    }
+    let device = device.unwrap();
+    Arc::new(
+        WindowsGpuContext::bind_device(
+            WindowsAdapterId {
+                low: description.AdapterLuid.LowPart,
+                high: description.AdapterLuid.HighPart,
+            },
+            device.clone(),
+            immediate.unwrap(),
+        )
+        .unwrap(),
+    )
 }

@@ -8,7 +8,10 @@ pub use apple::{AppleRenderer, CpuExporter, CpuImage, RenderedImage};
 #[cfg(target_os = "windows")]
 mod windows;
 #[cfg(target_os = "windows")]
-pub use windows::{WindowsAdapterId, WindowsDeviceError, WindowsGpuContext};
+pub use windows::{
+    WindowsAdapterId, WindowsCompletionError, WindowsDeviceError, WindowsGpuCompletion,
+    WindowsGpuContext,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputColor {

@@ -28,3 +28,9 @@ GPU context 采用官方 DXGI adapter、D3D11CreateDevice、ID3D11Multithread �
 生产工厂接入复用已有 WindowsGpuContext，并使用官方 ID3D11VideoDevice::CheckVideoDecoderFormat/GetVideoDecoderConfigCount 对 H264_VLD_NOFGT + NV12 + coded size 查询驱动配置。它不提供 60fps 热稳态吞吐保证，MFT SetInputType/SetOutputType 与实际输出仍是独立准入。GetResource/GetDevice/IUnknown 检查实际 sample 所属设备，CPU sample 或另一个 device 均拒绝。首个非 software adapter 的初始化失败直接报告，不为新增 sink 或运行故障重选 source adapter。
 
 GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fence::GetCompletedValue/SetEventOnCompletion：Signal 只允许 immediate context，完成值覆盖此前工作，但 HRESULT 失败不构成已完成证据。尚未将未处理 signal/注册失败寿命的通用 callback tracker 加入产品；资源保留与失败清理须先闭合，再替换源 CPU 读取。
+
+## GPU 完成事件
+
+复用当前 windows-rs 的 [ID3D11DeviceContext3::Flush1](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_3/nf-d3d11_3-id3d11devicecontext3-flush1) 与 D3D11_CONTEXT_TYPE_ALL：官方支持传入 Win32 event 建立异步完成查询，返回 void，不需要应用自行维护 Signal 值。Windows 11 产品基线满足 D3D11.3/4；接口查询在提交前失败则明确拒绝，不回退轮询。每工作独立事件，避免复用 fence/event 时的世代混淆。
+
+[RegisterDeviceRemovedEvent](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_4/nf-d3d11_4-id3d11device4-registerdeviceremovedevent) 可使用同一事件，已移除设备会立即置位；回调检查 GetDeviceRemovedReason，不能把移除误认作成功完成。事件注销先于句柄释放。复用官方 CreateThreadpoolWait/SetThreadpoolWait；wait 为一次性，不重新 arm，CloseThreadpoolWait 可在自己的完成回调内异步清理，不在回调中等待自身结束。泛型 owner 的析构或通知异常不能穿越系统 callback ABI。

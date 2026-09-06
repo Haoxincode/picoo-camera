@@ -48,6 +48,7 @@ pub struct WindowsGpuContext {
     immediate: ID3D11DeviceContext,
     device: ID3D11Device,
     adapter: WindowsAdapterId,
+    completion_slots: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 // SAFETY: These are native free-threaded D3D11/MF objects, with multithread
@@ -116,6 +117,7 @@ impl WindowsGpuContext {
             immediate,
             device,
             adapter,
+            completion_slots: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         })
     }
 
@@ -163,3 +165,6 @@ impl WindowsGpuContext {
 
 #[cfg(test)]
 mod tests;
+
+mod completion;
+pub use completion::{WindowsCompletionError, WindowsGpuCompletion};

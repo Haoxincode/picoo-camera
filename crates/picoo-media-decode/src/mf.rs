@@ -5,8 +5,6 @@
 //! `MF_MT_MPEG_SEQUENCE_HEADER` and injected ahead of the first AU after
 //! (re)configure — REQ-PICOO-PROTOCOL-005 / REQ-PICOO-SESSION-004.
 
-use std::mem::ManuallyDrop;
-
 use picoo_bitstream::{AccessUnit, AvcSpsFacts, PictureKind, RandomAccessPoint};
 use picoo_protocol::control::StreamConfig;
 use windows::core::{GUID, HRESULT};
@@ -16,7 +14,7 @@ use windows::Win32::Media::MediaFoundation::{
     MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFNominalRange_16_235,
     MFVideoFormat_H264, MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFVideoPrimaries_BT709,
     MFVideoTransFunc_709, MFVideoTransferMatrix_BT709, MFT_MESSAGE_COMMAND_FLUSH,
-    MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
+    MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
     MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
     MF_E_ATTRIBUTENOTFOUND, MF_E_NOTACCEPTING, MF_E_NO_MORE_TYPES, MF_E_TRANSFORM_NEED_MORE_INPUT,
     MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
@@ -31,6 +29,7 @@ use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 mod buffers;
 mod device;
+mod output;
 use buffers::sample_to_frame;
 
 const DEFAULT_FPS: u32 = 30;
@@ -110,7 +109,7 @@ impl MfH264Decoder {
         Ok(Self::initialized(
             transform,
             runtime,
-            device::DecoderDevice::Hardware(gpu),
+            device::DecoderDevice::Hardware(std::sync::Arc::new(gpu)),
         ))
     }
 
@@ -436,7 +435,7 @@ unsafe fn feed_access_unit(
     sample_time_100ns: i64,
     duration_100ns: i64,
     geometry: &AvcSpsFacts,
-    gpu: Option<&picoo_gpu::WindowsGpuContext>,
+    gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     let sample = create_input_sample(access_unit, sample_time_100ns, duration_100ns)?;
 
@@ -544,23 +543,15 @@ unsafe fn renegotiate_output(
 unsafe fn drain_output(
     transform: &IMFTransform,
     geometry: &AvcSpsFacts,
-    gpu: Option<&picoo_gpu::WindowsGpuContext>,
+    gpu: Option<&std::sync::Arc<picoo_gpu::WindowsGpuContext>>,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     // One format-change retry is enough to consume the newly negotiated
     // output. Repeated stream changes fail explicitly instead of spinning.
     for attempt in 0..2 {
         let provided_sample = output_sample_for_transform(transform, gpu.is_some())?;
-        let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
-            dwStreamID: 0,
-            pSample: ManuallyDrop::new(provided_sample),
-            dwStatus: 0,
-            pEvents: ManuallyDrop::new(None),
-        };
-        let mut status = 0u32;
-        let result =
-            transform.ProcessOutput(0, std::slice::from_mut(&mut output_buffer), &mut status);
-        let sample = ManuallyDrop::take(&mut output_buffer.pSample);
-        let events = ManuallyDrop::take(&mut output_buffer.pEvents);
+        let output = output::process(transform, gpu, provided_sample)?;
+        let sample = output.sample;
+        let result = output.result;
         match result {
             Ok(()) => {
                 return sample
@@ -576,7 +567,6 @@ unsafe fn drain_output(
             Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
             Err(error) if error.code() == MF_E_TRANSFORM_STREAM_CHANGE && attempt == 0 => {
                 drop(sample);
-                drop(events);
                 renegotiate_output(transform, geometry.coded_width, geometry.coded_height)?;
             }
             Err(error) => return Err(DecodeError::Platform(format!("ProcessOutput: {error}"))),

@@ -17,13 +17,13 @@ use windows::Win32::Media::MediaFoundation::{
 use crate::DecodeError;
 
 pub(super) enum DecoderDevice {
-    Hardware(WindowsGpuContext),
+    Hardware(std::sync::Arc<WindowsGpuContext>),
     #[cfg(any(test, feature = "test-codecs"))]
     SoftwareDiagnostic,
 }
 
 impl DecoderDevice {
-    pub(super) fn gpu(&self) -> Option<&WindowsGpuContext> {
+    pub(super) fn gpu(&self) -> Option<&std::sync::Arc<WindowsGpuContext>> {
         match self {
             Self::Hardware(gpu) => Some(gpu),
             #[cfg(any(test, feature = "test-codecs"))]
