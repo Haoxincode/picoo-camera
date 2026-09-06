@@ -212,10 +212,10 @@ fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(test, not(target_os = "macos")))]
 struct UnavailableDecoder(String);
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(any(test, not(target_os = "macos")))]
 impl AccessUnitDecoder for UnavailableDecoder {
     fn decode_access_unit(
         &mut self,
@@ -269,12 +269,25 @@ mod tests {
     ))]
     fn production_factory_never_uses_enabled_test_codecs() {
         // REQ-PICOO-MEDIA-024: even a build containing test codecs must fail closed.
-        let mut decoder = create_platform_decoder();
+        assert_unavailable_after_reset(create_platform_decoder());
+    }
+
+    #[test]
+    fn unavailable_backend_remains_unavailable_after_reset() {
+        assert_unavailable_after_reset(Box::new(UnavailableDecoder("test unavailable".into())));
+    }
+
+    fn assert_unavailable_after_reset(mut decoder: Box<dyn AccessUnitDecoder>) {
         assert!(matches!(
             decoder.decode_access_unit(b"test-au", None),
             Err(DecodeError::Platform(_))
         ));
-        assert!(decoder.reset().is_err());
+        // Reset discards state; an unavailable backend has no state to discard.
+        decoder.reset().expect("empty reset");
+        assert!(matches!(
+            decoder.decode_access_unit(b"test-au", None),
+            Err(DecodeError::Platform(_))
+        ));
     }
 
     #[test]
