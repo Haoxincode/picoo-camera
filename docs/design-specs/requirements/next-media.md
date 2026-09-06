@@ -52,3 +52,7 @@
 | REQ-PICOO-BITSTREAM-001 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、023 | AVC 位流 helper 从 packet 移入独立 bitstream crate，所有调用方直接依赖；无 packet 重导出、无网络/GPU/软件 codec 依赖 | 原参数集、IDR 与格式转换测试；packet、Sender、Receiver、Decoder、FFI 回归；不代表 HEVC 实现 |
 
 位流拆分验证结果见 [本次实施记录](../../development/next-media-refactor.md)：本机相关 207 个测试通过、2 个忽略；verified 仅限本条模块边界与既有行为，不覆盖 Next 双 codec 或四平台产品验收。
+
+| ID | 状态 | 来源 | 契约 | 验收 |
+| --- | --- | --- | --- | --- |
+| REQ-PICOO-BITSTREAM-002 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、023、025 | 双 codec 明确 NAL 格式、有界配置解释与保守 RAP 分类；区分 HEVC IDR/CRA/RASL/RADL，拒绝不支持结构 | 硬件生成 AVC/HEVC fixtures、截断/溢出/多图像/恶意数量回归；跨平台编译；原生解码合同另验 |

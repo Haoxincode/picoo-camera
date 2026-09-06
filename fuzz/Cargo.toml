@@ -8,6 +8,8 @@ edition = "2021"
 cargo-fuzz = true
 
 [dependencies]
+bytes = "1.12.1"
+picoo-bitstream = { path = "../crates/picoo-bitstream" }
 libfuzzer-sys = "0.4"
 picoo-packet = { path = "../crates/picoo-packet" }
 picoo-pairing = { path = "../crates/picoo-pairing" }
@@ -39,6 +41,13 @@ bench = false
 [[bin]]
 name = "reassembly-fec"
 path = "fuzz_targets/reassembly_fec.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "codec-bitstream"
+path = "fuzz_targets/codec_bitstream.rs"
 test = false
 doc = false
 bench = false

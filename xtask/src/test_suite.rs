@@ -72,6 +72,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
                 "control-envelope",
                 "pairing-transcript",
                 "reassembly-fec",
+                "codec-bitstream",
             ] {
                 cmd!(
                     sh,

@@ -4,3 +4,9 @@ description = "Codec bitstream boundaries for Picoo Camera"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+thiserror.workspace = true
+scuffle-h264 = { version = "=0.2.2", default-features = false }
+scuffle-h265 = { version = "=0.2.2", default-features = false }
