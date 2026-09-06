@@ -5,6 +5,12 @@ use picoo_bitstream::{AccessUnit, VideoSpsFacts, Codec, CodecConfiguration, NalF
 fuzz_target!(|data: &[u8]| {
     let _ = VideoSpsFacts::parse_avc(data);
     let _ = VideoSpsFacts::parse_hevc(data);
+    if let Ok(config) = CodecConfiguration::from_hevc_annex_b(data) {
+        let roundtrip = CodecConfiguration::parse(Codec::Hevc, config.record().clone()).unwrap();
+        assert_eq!(roundtrip.vps(), config.vps());
+        assert_eq!(roundtrip.sps(), config.sps());
+        assert_eq!(roundtrip.pps(), config.pps());
+    }
     if data.len() >= 2 {
         let split = usize::from(u16::from_be_bytes([data[0], data[1]])).min(data.len() - 2);
         let (sps, pps) = data[2..].split_at(split);

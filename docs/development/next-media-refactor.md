@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 架构、无版本协议、旧路径删除 | 主要边界已调整 | 各功能替换时继续删除剩余旧实现 |
 | Windows/macOS 原生帧、GPU 预览、按需 CPU 输出 | 已接线，相关原生 CI 成功 | 真实显卡画质、全局预算、完整多 sink 验收 |
-| AVC/HEVC 与四种正式配置 | 部分完成，HEVC 位流事实在验证 | 原生 HEVC Decoder、配置事务、真实 1080p60 链路 |
+| AVC/HEVC 与四种正式配置 | 部分完成，Apple HEVC 解码已本地验证，Windows 接入待原生验收 | 移动端接线、配置事务、Windows HEVC 实测、真实 1080p60 链路 |
 | 两平台 VCam 双后端 | 尚未完成 | GpuNative/CpuBridge、SampleClock、切换和真实系统 sample |
 | 两种录像 | 主要工作尚未完成 | 原码流/处理后录像、分段、失败语义与独立时间线 |
 | 四组合发布验收 | 尚未完成 | 真机矩阵、画质、延迟、热稳态、设备丢失及隐私期限 |
@@ -572,3 +572,10 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - REQ-PICOO-NEXT-003/009/024：MF Decoder 按 codec 创建系统同步 MFT，HEVC 使用官方枚举和 Main profile；D3D11 准入按 AVC/HEVC profile，公共源事实验证覆盖全部 SPS。配置变更先在同设备新 transform 完成协商，成功后才替换。类型改名 MfVideoDecoder，无旧名称别名；原生类型协商、工厂和测试按职责分离。
 - macOS 上 Windows Decoder library 的 GNU target check/Clippy 通过；未跨编译完整 Receiver。尝试 all-targets 检查被测试依赖 ring 所需的 MinGW C 编译器缺失阻断，不能记录为通过，Windows 测试交由原生 CI。
 - 补充配置几何不匹配在 HEVC 原生激活前拒绝的常规测试。真实系统 HEVC 解码诊断测试明确标记 requires installed Windows system HEVC decoder，默认忽略；安装该组件的 Windows 主机必须显式执行，不以跳过代表成功。尚无 Windows HEVC 原生解码/硬件性能验收证据。
+
+### 2026-09-07：HEVC CSD 配置适配与原生替换失败回归
+
+- REQ-PICOO-BITSTREAM-007：新增显式 Annex B HEVC codec-config→标准 hvcC，复用已准入 SPS 和 Scuffle mux；参数集和 profile/tier/constraint/level 与 M4 原生 hvcC 对照通过。非参数 NAL、缺失集合、冲突集合和超长输入拒绝；重复同一参数集合可归一化。
+- Bitstream/Decoder 53 项本地测试通过，包含新增 VideoToolbox 原生候选创建失败后旧 HEVC 会话和配置仍可用的测试；两 crate all-targets Clippy 通过。
+- codec-bitstream sanitizer fuzz 加入原生 CSD 种子和配置 roundtrip：6,469,219 次 / 61 秒，峰值 RSS 529 MiB，无崩溃。仍是有限 campaign，不表示任意输入安全的完整证明。
+- 移动端正式接口、Sender 配置和 Receiver 事务尚未接入这个 CSD 转换；该边界的通过不提升完整 NEXT-003/004 验收状态。

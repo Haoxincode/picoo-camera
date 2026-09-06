@@ -3,6 +3,7 @@
 
 pub mod avc;
 mod avc_facts;
+mod hevc_configuration;
 mod hevc_facts;
 mod sps_facts;
 pub use sps_facts::{VideoColorFacts, VideoSpsFacts};

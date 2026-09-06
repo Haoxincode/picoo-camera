@@ -349,3 +349,29 @@ fn unverified_hevc_leading_picture_sequences_are_rejected_before_session_creatio
         assert!(decoder.session.is_none());
     }
 }
+
+#[test]
+fn failed_native_session_preparation_preserves_working_decoder() {
+    let mut decoder = VideoToolboxDecoder::new();
+    let config = hevc_config();
+    decoder.decode_fixture(HEVC_IDR, Some(&config)).unwrap();
+    let session = decoder.session.as_ref().map(CFRetained::as_ptr);
+    let record = decoder.configuration.as_ref().unwrap().record().to_vec();
+    let (sps, _) = extract_sps_pps(H264_64X64_RED_IDR).unwrap();
+    // The configuration container can frame this PPS, but native codec syntax
+    // admission must reject the truncated body. Exercise the native preparation
+    // boundary directly so shared source validation cannot hide a destructive reset.
+    let invalid = CodecConfiguration::from_avc_parameter_sets(&sps, &[0x68, 0, 0]).unwrap();
+    assert!(decoder.ensure_session(&invalid).is_err());
+    assert_eq!(session, decoder.session.as_ref().map(CFRetained::as_ptr));
+    assert_eq!(
+        record.as_slice(),
+        decoder.configuration.as_ref().unwrap().record().as_ref()
+    );
+    let frame = decoder
+        .decode_fixture(HEVC_IDR, Some(&config))
+        .unwrap()
+        .into_fixture_frame()
+        .unwrap();
+    assert_native_red(&frame);
+}

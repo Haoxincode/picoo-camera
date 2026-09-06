@@ -76,3 +76,7 @@ REQ-PICOO-BITSTREAM-002 / NEXT-025：HEVC SPS 复用前，先修补既有 scuffl
 REQ-PICOO-NEXT-003/009/024：核对 Microsoft Learn 的 [H.265 / HEVC Video Decoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-265---hevc-video-decoder) 与现有 windows 0.62.2 生成绑定。官方 MFT 通过 MFTEnumEx 枚举，MFVideoFormat_HEVC 接受含 start code、每 sample 一图像的 Annex B；HEVC_ES 可含部分/多图像，不适用产品 AU 合同。输出 NV12/P010；当前仅 Main 8-bit/NV12。最低 Windows 10；运行机必须实际安装可用 HEVC decoder，枚举失败应报告 codec 不可用，不能增加软件后备。系统组件无新增分发体积或第三方 codec 许可证依赖；windows crate 维持现有 MIT/Apache-2.0 与项目 Rust/Windows 基线。
 
 复用同步 IMFTransform 驱动、D3D11 manager 和原始 IMFSample lease，枚举仅接纳同步 MFT；异步硬件 MFT 需要独立事件驱动合同，不能塞入同步 ProcessInput/Output 循环。系统同步 MFT 是否真的使用 DXVA 由同一设备 HEVC Main/NV12 profile、尺寸准入及原生 DXGI 输出共同约束；枚举同步 MFT 本身不是硬件证据。官方说明 HEVC 类型不可动态互换，因此配置替换创建新 transform，并在绑定原设备、输入/输出协商成功后提交替换。软件诊断接口仅供测试，不能成为生产 fallback。吞吐和 Windows 实机支持仍须实测，不以文档支持替代验收。
+
+### MediaCodec HEVC CSD 到配置记录
+
+Android 的 HEVC codec-specific data 使用含 VPS/SPS/PPS 的 Annex B。沿用已有 Scuffle SpsNALUnit 和 HEVCDecoderConfigurationRecord::mux；不引入 MP4 容器库或另一标准解析器。Picoo 仅将已经准入的单组原生参数集合及 SPS profile/tier/level 字段映射到 hvcC；avg frame rate 和 parallelism 无完整证据时明确保持标准 unknown。输入仍受 64 KiB、参数集合数量与单层 Main 源合同约束，拒绝把任意 AU 当作 codec-config。此能力服务正式移动 HEVC 接线，不是网络格式猜测或旧接口兼容器。
