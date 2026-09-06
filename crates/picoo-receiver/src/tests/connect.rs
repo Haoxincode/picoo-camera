@@ -243,6 +243,7 @@ fn paired_loopback_binds_lan_only_without_wan() {
     );
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
@@ -324,6 +325,8 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
+    let (sps, pps) =
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1920X1080_BT709_IDR).unwrap();
     // Prefer 1080 before Caps arrive. Rust exposes the limit but does not claim
     // a native resolution change before the platform reports successful apply.
     sender.set_stream_config(StreamConfigParams {
@@ -334,8 +337,8 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps: vec![0x67],
-        pps: vec![0x68],
+        sps,
+        pps,
     });
     sender.send_client_hello().expect("hello");
     for _ in 0..200 {
@@ -361,8 +364,7 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         stream_epoch: 0,
         mirrored: false,
         rotation: 0,
-        sps: vec![0x67],
-        pps: vec![0x68],
+        ..super::configured_source()
     });
     let transaction_id = sender.encoder_transaction_id_for_epoch(epoch);
     assert!(sender.report_encoder_started(transaction_id, 2, epoch, 720));

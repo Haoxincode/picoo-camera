@@ -194,7 +194,7 @@ impl<T: PicooTransport> SenderSession<T> {
             last_bitrate_action: BitrateAction::Hold,
             last_receiver_stats: None,
             pre_fec_packet_loss: 0.0,
-            pending_stream_config: Some(StreamConfigParams::default()),
+            pending_stream_config: None,
             receiver_capabilities: None,
             stream_config_sent: false,
             keyframe_requested: false,

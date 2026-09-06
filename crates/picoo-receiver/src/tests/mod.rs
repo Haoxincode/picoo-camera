@@ -112,3 +112,13 @@ fn source_frame_id(frame: &crate::ReceiverFrame) -> u64 {
         frame.frame_id
     }
 }
+
+fn configured_source() -> picoo_sender::StreamConfigParams {
+    let (sps, pps) =
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
+    picoo_sender::StreamConfigParams {
+        sps,
+        pps,
+        ..Default::default()
+    }
+}

@@ -209,6 +209,7 @@ fn paired_sender_enters_streaming_after_client_hello() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
@@ -459,6 +460,7 @@ fn first_time_pairing_flow_enables_video() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     let sender_id = sender.identity().device_id().to_owned();
     sender
         .connect(Endpoint {

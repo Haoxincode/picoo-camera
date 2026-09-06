@@ -88,6 +88,13 @@ pub fn run_paired_loopback_access_unit(
     })?;
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    let (sps, pps) = picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR)
+        .expect("valid diagnostic fixture");
+    sender.set_stream_config(picoo_sender::StreamConfigParams {
+        sps,
+        pps,
+        ..Default::default()
+    });
     sender.connect(Endpoint {
         host: bind.ip().to_string(),
         port: bind.port(),

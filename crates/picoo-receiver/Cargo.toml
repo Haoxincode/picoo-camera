@@ -12,9 +12,11 @@ default = []
 windows-mf = ["picoo-media-decode/windows-mf"]
 # Loopback helpers use StubDecoder and may enable the explicit unpaired-peer
 # security harness. They are excluded from normal Receiver/Desktop builds.
-loopback-diagnostics = ["dep:picoo-sender", "picoo-sender/test-support", "picoo-media-decode/test-codecs"]
+loopback-diagnostics = ["dep:picoo-testkit", "dep:picoo-sender", "picoo-sender/test-support", "picoo-media-decode/test-codecs"]
 
 [dependencies]
+picoo-testkit = { workspace = true, optional = true }
+picoo-bitstream.workspace = true
 bytes.workspace = true
 picoo-frame-hub.workspace = true
 picoo-jitter.workspace = true
@@ -36,7 +38,6 @@ picoo-gpu.workspace = true
 
 [dev-dependencies]
 picoo-media-decode = { workspace = true, features = ["test-codecs"] }
-picoo-bitstream.workspace = true
 picoo-discovery.workspace = true
 picoo-protocol.workspace = true
 picoo-sender = { workspace = true, features = ["test-support"] }

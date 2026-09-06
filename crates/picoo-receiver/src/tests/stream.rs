@@ -9,6 +9,8 @@ use crate::ReceiverSession;
 
 use super::use_stub_decoder;
 
+use super::configured_source;
+
 #[test]
 fn receiver_sends_stats_to_paired_sender() {
     use picoo_sender::BitrateAction;
@@ -33,6 +35,7 @@ fn receiver_sends_stats_to_paired_sender() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
@@ -160,7 +163,6 @@ fn receiver_sends_stats_to_paired_sender() {
 
 #[test]
 fn stream_config_and_capabilities_after_paired_hello() {
-    use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
 
     let mut receiver = ReceiverSession::new();
@@ -210,7 +212,7 @@ fn stream_config_and_capabilities_after_paired_hello() {
     }
 
     if receiver.stream_config().is_none() {
-        sender.set_stream_config(StreamConfigParams::default());
+        sender.set_stream_config(configured_source());
     }
 
     for _ in 0..100 {
@@ -285,7 +287,7 @@ fn stream_epoch_bump_requests_keyframe() {
 
     let mut cfg = StreamConfigParams {
         stream_epoch: 1,
-        ..Default::default()
+        ..configured_source()
     };
     sender.set_stream_config(cfg.clone());
     let mut got_first_idr = false;
@@ -414,7 +416,7 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
         height,
         mirrored: true,
         stream_epoch: 1,
-        ..Default::default()
+        ..configured_source()
     };
     sender.set_stream_config(cfg);
     for _ in 0..100 {
@@ -525,7 +527,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         width,
         height,
         rotation: 90,
-        ..Default::default()
+        ..configured_source()
     };
     sender.set_stream_config(cfg);
     for _ in 0..100 {

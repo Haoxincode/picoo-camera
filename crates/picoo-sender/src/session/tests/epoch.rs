@@ -164,6 +164,13 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
 #[test]
 fn stream_config_epoch_changes_only_when_native_apply_commits() {
     let mut session = SenderSession::new(MemoryTransport::new());
+    let (sps, pps) =
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
+    session.set_stream_config(StreamConfigParams {
+        sps,
+        pps,
+        ..Default::default()
+    });
     session
         .connect(Endpoint {
             host: "127.0.0.1".into(),

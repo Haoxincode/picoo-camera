@@ -196,3 +196,10 @@ dfd57e8 的 CI 中，5% 丢包恢复测试通过，macOS 失败项为统计用�
 04ab866 的 CI：iOS 通过；Rust/Android 共同失败于 AVCC 跨平台测试仍使用 Baseline 的 64×64 样本，新记录准入正确拒绝。统一采用已有真实 High/BT.709 样本，保留实际解码与尺寸断言。macOS 丢包测试主段通过，但恢复段最新帧年龄 1112ms 超过 1s；该段仍以突发帧和 50fps 发送。恢复段统一按 30fps 持续源发送并在间隔中泵送，保留 1s 新鲜度断言；需以新回归和 CI 验证，不能由节奏调整本身宣称修复生产恢复性能。
 
 修正后 `cargo xtask test macos` 完整通过：Receiver 102 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70，包含恢复帧年龄断言。日志 `/tmp/picoo-config-ci-fixes-tests.log`；跨平台新 CI 另验。
+
+
+## 提交配置前准入
+
+REQ-PICOO-PROTOCOL-018 在 Receiver 改变任何源状态前解析标准配置，并验证声明 profile/level 与记录一致。空记录、必需头截断、声明冲突被拒绝时，当前配置 Arc、revision 和等待中的未来 epoch 均保持不变。Sender 创建时不再预置空 StreamConfig；首份配置由原生编码参数提供。配对/统计/恢复测试与显式 loopback 诊断提供真实 High 参数，不通过关闭生产校验维持合成测试。诊断依赖 picoo-testkit 仅由 loopback-diagnostics feature 启用。
+
+Mac 完整套件通过：Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70；Sender 69 项通过。此条仍不代表完整 VideoFormat 几何/色彩准入、异步平台准备与提交事务完成；对应 Next 要求保持 planned。

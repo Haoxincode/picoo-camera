@@ -27,6 +27,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -211,6 +212,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
 
     let lossy = LossyVideoTransport::new(QuicSenderTransport::new(), loss_ratio);
     let mut sender = SenderSession::new(lossy);
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
@@ -400,6 +402,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {

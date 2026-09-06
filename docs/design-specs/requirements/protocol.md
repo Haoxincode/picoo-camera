@@ -22,3 +22,5 @@
 | REQ-PICOO-PROTOCOL-016 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、026 | StreamConfig 复用 typed codec/profile/range 与标准数值 level_idc，删除字符串标签和缺参数时的 Baseline/3.1 猜测；当前 AVC adapter 在改变配置前拒绝未知/未接入 codec | Protobuf roundtrip、旧 wire 类型拒绝、参数事实与 Receiver 配置不变回归；完整格式/SPS 准入另验 |
 
 | REQ-PICOO-PROTOCOL-017 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、026 | StreamConfig 用标准 codec_configuration（AVC avcC / HEVC hvcC）替代独立 SPS/PPS；平台参数只在原生适配边界转换，记录解析复用 picoo-bitstream 的 Scuffle 实现与有界检查，不保留旧 wire 分支 | 标准记录往返、截断/codec 不匹配拒绝、多平台配置与解码回归；HEVC 原生接入及提交前完整格式验证另验 |
+
+| REQ-PICOO-PROTOCOL-018 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025、026 | Sender 未获得原生参数前不预置源配置；Receiver 提交配置前解析标准记录并验证 codec/profile/level 一致性；拒绝不得改变当前配置、revision、恢复门禁或输出 | 空/截断/非法记录和身份冲突的状态不变回归；完整几何、色彩及平台配置事务另验 |

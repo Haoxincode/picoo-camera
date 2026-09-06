@@ -174,6 +174,22 @@ impl ReceiverSession {
         if config.codec != VideoCodec::Avc as i32 {
             return Err(ReceiverError::Protocol("unsupported stream codec".into()));
         }
+        // REQ-PICOO-PROTOCOL-018: reject before replacing the snapshot, advancing
+        // revision, invalidating output, or releasing future-epoch media.
+        let record = picoo_bitstream::CodecConfiguration::parse(
+            picoo_bitstream::Codec::Avc,
+            bytes::Bytes::copy_from_slice(&config.codec_configuration),
+        )
+        .map_err(|error| {
+            ReceiverError::Protocol(format!("invalid codec configuration: {error}"))
+        })?;
+        if config.profile != picoo_protocol::control::VideoProfile::AvcHigh as i32
+            || config.level_idc != u32::from(record.level_idc())
+        {
+            return Err(ReceiverError::Protocol(
+                "stream identity differs from codec configuration".into(),
+            ));
+        }
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         if previous_epoch.is_some_and(|epoch| config.stream_epoch < epoch) {
             return Ok(());
@@ -282,6 +298,56 @@ impl ReceiverSession {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn invalid_record_cannot_mutate_committed_source_or_release_future_media() {
+        let record = include_bytes!("../../../picoo-bitstream/tests/fixtures/avc-720p-config.bin");
+        let parsed = picoo_bitstream::CodecConfiguration::parse(
+            picoo_bitstream::Codec::Avc,
+            bytes::Bytes::copy_from_slice(record),
+        )
+        .unwrap();
+        let valid = StreamConfig {
+            codec: VideoCodec::Avc as i32,
+            profile: picoo_protocol::control::VideoProfile::AvcHigh as i32,
+            level_idc: u32::from(parsed.level_idc()),
+            codec_configuration: record.to_vec(),
+            stream_epoch: 5,
+            ..Default::default()
+        };
+        let mut invalid = Vec::new();
+        for length in 0..7 {
+            invalid.push(StreamConfig {
+                codec_configuration: record[..length].to_vec(),
+                ..valid.clone()
+            });
+        }
+        invalid.push(StreamConfig {
+            profile: 0,
+            ..valid.clone()
+        });
+        invalid.push(StreamConfig {
+            level_idc: valid.level_idc + 1,
+            ..valid.clone()
+        });
+        for mut candidate in invalid {
+            let mut receiver = ReceiverSession::new();
+            let committed = Arc::new(valid.clone());
+            receiver.current_stream_config = Some(committed.clone());
+            receiver.config_revision = 9;
+            receiver.waiting_for_stream_config_epoch = Some(6);
+            candidate.stream_epoch = 6;
+            assert!(receiver
+                .handle_stream_config(SessionId(1), candidate)
+                .is_err());
+            assert!(Arc::ptr_eq(
+                receiver.current_stream_config.as_ref().unwrap(),
+                &committed
+            ));
+            assert_eq!(receiver.config_revision, 9);
+            assert_eq!(receiver.waiting_for_stream_config_epoch, Some(6));
+        }
+    }
 
     #[test]
     fn unsupported_codec_does_not_replace_committed_configuration_or_clock() {

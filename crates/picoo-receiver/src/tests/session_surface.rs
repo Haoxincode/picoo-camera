@@ -146,6 +146,7 @@ fn disconnect_holds_last_frame_then_shows_placeholder() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -249,6 +250,7 @@ fn default_jitter_holds_au_until_target_delay() {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
