@@ -464,3 +464,11 @@ Windows GPU all-targets Clippy 通过；Mac GPU/Receiver/Desktop all-targets Cli
 CI 34049971485（a112d09）已通过 Windows 原生测试步骤：原 token/reset 两项真实 MF 诊断可以编译并运行；Windows/Mac 最终产物仍在执行。上一轮 34049182494 的其他平台已通过，Windows 因 fixture 返回类型失败跳过最终产物，不能计为完整 CI 成功。
 
 CI 34050770806 的 Windows 在 Clippy 阶段被 Rust 1.98 新增的 chunks_exact_to_as_chunks lint 拒绝；跨 device 测试尚未运行。测试改用 as_chunks::<4> 比较 BGRA 像素，不关闭 lint。另校正本机验证范围：此前 Desktop 命令未带 gpui-ui，只能证明桌面非 UI 目标；后续 GPUI 补丁必须显式启用 gpui-ui 验证。
+
+## Windows 显示读取 owner
+
+REQ-PICOO-GPU-008 增加 WindowsDisplayReader：显示 owner 采用 UI 实际 device，按图像缓存 NT 共享导入与 shader view，重复重绘共用仍存活的读取锁。每次绘制复用已有 submit_owned 完成边界；原 RenderedImage 持有到实际读取完成，失败释放使池不可复用。忙碌以 false 返回且不调用绘制闭包，生产路径继续拒绝 software/SINGLETHREADED device。
+
+新增实际双 device 回归覆盖写锁期间 busy、导入 view 的 device 身份、同图像尚有读取时重复绘制、失败图像拒绝及池拒绝复用。Windows GPU all-targets Clippy 本机通过，原生运行待 CI；这不是 GPUI 像素绘制或 Windows 完整预览验收。GPUI 框架接入仍在工作区开发。
+
+启用 gpui-ui 的 Mac Desktop all-targets Clippy 已通过。78a4a07 已推送，CI 34051699070 正在执行，待其结束再推送下一批。本次 ADB devices 未列出设备；当前任务不依赖手机。

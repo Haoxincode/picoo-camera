@@ -15,7 +15,8 @@ mod windows;
 #[cfg(target_os = "windows")]
 pub use windows::{
     CpuExporter, RenderedImage, WindowsAdapterId, WindowsCompletionError, WindowsDeviceError,
-    WindowsGpuCompletion, WindowsGpuContext, WindowsRenderer,
+    WindowsDisplayImage, WindowsDisplayReader, WindowsGpuCompletion, WindowsGpuContext,
+    WindowsRenderer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +50,8 @@ pub struct RenderSpec {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RenderError {
+    #[error("shared surface is temporarily busy")]
+    SharedSurfaceBusy,
     #[error("unsupported output storage/color combination on this backend")]
     UnsupportedOutputFormat,
     #[error("invalid output size; expected positive even dimensions up to 1920")]

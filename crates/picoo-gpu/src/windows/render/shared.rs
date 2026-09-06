@@ -4,7 +4,7 @@ use crate::RenderError;
 use std::os::windows::io::{AsHandle, BorrowedHandle, FromRawHandle, OwnedHandle};
 use std::sync::{atomic::Ordering, Arc};
 use windows::core::Interface;
-use windows::Win32::Foundation::S_OK;
+use windows::Win32::Foundation::{S_OK, WAIT_TIMEOUT};
 use windows::Win32::Graphics::Direct3D11::ID3D11Texture2D;
 use windows::Win32::Graphics::Dxgi::{
     IDXGIKeyedMutex, IDXGIResource1, DXGI_SHARED_RESOURCE_READ, DXGI_SHARED_RESOURCE_WRITE,
@@ -73,6 +73,9 @@ pub(super) unsafe fn acquire_mutex(mutex: &IDXGIKeyedMutex) -> Result<(), Render
     // windows-rs Result treats positive WAIT_* codes as success. The SDK
     // explicitly requires exact status matching, not SUCCEEDED/is_ok.
     let status = (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, 0);
+    if status.0 == WAIT_TIMEOUT.0 as i32 {
+        return Err(RenderError::SharedSurfaceBusy);
+    }
     if status != S_OK {
         return Err(RenderError::Platform(format!(
             "shared target AcquireSync: {:#x}",

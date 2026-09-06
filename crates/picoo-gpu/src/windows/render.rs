@@ -1,4 +1,6 @@
 //! REQ-PICOO-GPU-006: native Video Processor output, without source CPU access.
+mod display;
+pub use display::{WindowsDisplayImage, WindowsDisplayReader};
 mod geometry;
 mod pipeline;
 mod pool;
