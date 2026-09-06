@@ -329,11 +329,15 @@ impl PicooDesktopApp {
                 "server",
                 if snapshot.discovery_available {
                     "发现在线"
+                } else if snapshot.discovery_starting {
+                    "发现启动中"
                 } else {
                     "发现异常"
                 },
                 if snapshot.discovery_available {
                     NetworkStatusState::Healthy
+                } else if snapshot.discovery_starting {
+                    NetworkStatusState::Pending
                 } else {
                     NetworkStatusState::Warning
                 },

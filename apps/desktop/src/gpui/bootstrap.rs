@@ -69,8 +69,6 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let prefs = load_prefs();
     // Ensure subscriber exists even if main skipped prefs-aware init paths.
     crate::logging::init_logging(prefs.log_level.env_filter());
-    std::env::set_var("RUST_LOG", prefs.log_level.env_filter());
-    let _ = crate::logging::reload_filter(prefs.log_level.env_filter());
     // REQ-PICOO-UI-007: apply persisted startup preference at launch.
     if let Err(err) = crate::startup::sync_launch_at_startup(prefs.launch_at_startup) {
         tracing::warn!("startup sync on launch: {err}");

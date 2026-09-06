@@ -1,7 +1,7 @@
 //! mDNS/DNS-SD advertiser for desktop Receiver.
 
 use std::net::IpAddr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use mdns_sd::{DaemonEvent, IfKind, Receiver, ServiceDaemon, ServiceInfo};
 use thiserror::Error;
@@ -24,6 +24,7 @@ pub struct MdnsAdvertiser {
     registered: bool,
     advertise_ip: Option<IpAddr>,
     last_error: Option<String>,
+    announcement_started: Option<Instant>,
 }
 
 impl MdnsAdvertiser {
@@ -39,6 +40,7 @@ impl MdnsAdvertiser {
             registered: false,
             advertise_ip: None,
             last_error: None,
+            announcement_started: None,
         })
     }
 
@@ -105,6 +107,7 @@ impl MdnsAdvertiser {
             .register(info)
             .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
         self.fullname = Some(fullname);
+        self.announcement_started = Some(Instant::now());
         Ok(())
     }
 
@@ -114,7 +117,7 @@ impl MdnsAdvertiser {
     /// an active broadcast made the desktop report discovery online even when
     /// Windows Firewall or an interface error prevented any announcement.
     pub fn poll(&mut self) -> bool {
-        let before = self.registered;
+        let before = (self.registered, self.last_error.clone());
         while let Ok(event) = self.monitor.try_recv() {
             match event {
                 // This daemon owns one Picoo service, so a successful announce
@@ -134,7 +137,15 @@ impl MdnsAdvertiser {
                 _ => {}
             }
         }
-        before != self.registered
+        if !self.registered
+            && self.last_error.is_none()
+            && self
+                .announcement_started
+                .is_some_and(|start| start.elapsed() >= Duration::from_secs(5))
+        {
+            self.last_error = Some("mDNS announcement timed out".into());
+        }
+        before != (self.registered, self.last_error.clone())
     }
 
     /// Drop the current service registration without shutting down the daemon.
@@ -143,6 +154,7 @@ impl MdnsAdvertiser {
     }
 
     fn unregister_service(&mut self) -> Result<(), DiscoveryError> {
+        self.announcement_started = None;
         let Some(fullname) = self.fullname.take() else {
             self.registered = false;
             return Ok(());
@@ -162,6 +174,10 @@ impl MdnsAdvertiser {
 
     pub fn is_registered(&self) -> bool {
         self.registered
+    }
+
+    pub fn is_starting(&self) -> bool {
+        self.fullname.is_some() && !self.registered && self.last_error.is_none()
     }
 
     pub fn fullname(&self) -> Option<&str> {
@@ -198,9 +214,33 @@ mod tests {
         advertiser
             .register("127.0.0.1", &ad)
             .expect("register localhost");
+        assert!(advertiser.is_starting());
         wait_until_announced(&mut advertiser);
+        assert!(!advertiser.is_starting());
         advertiser.unregister().expect("unregister");
         assert!(!advertiser.is_registered());
+    }
+
+    #[test]
+    fn missing_interface_transitions_from_starting_to_timeout() {
+        let mut advertiser = MdnsAdvertiser::new().expect("daemon");
+        let ad = ReceiverAdvertisement::new(
+            "picoo-missing-interface",
+            "Missing interface",
+            ReceiverPlatform::Macos,
+            4433,
+            "abcd",
+        );
+        advertiser.register("192.0.2.1", &ad).expect("queued");
+        assert!(advertiser.is_starting());
+        advertiser.announcement_started = Some(Instant::now() - Duration::from_secs(6));
+        assert!(
+            advertiser.poll(),
+            "initial failure must notify even before an announcement"
+        );
+        assert!(!advertiser.is_starting());
+        assert!(!advertiser.is_registered());
+        assert_eq!(advertiser.last_error(), Some("mDNS announcement timed out"));
     }
 
     #[test]

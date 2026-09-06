@@ -94,8 +94,9 @@ pub struct ReceiverSnapshot {
     pub bind_addr: Option<SocketAddr>,
     /// Unicast IPv4 advertised through mDNS and shown for manual IP connection.
     pub advertise_host: String,
-    /// Whether the mDNS advertiser was created successfully for this runtime.
+    /// Whether the daemon has confirmed an actual mDNS announcement.
     pub discovery_available: bool,
+    pub discovery_starting: bool,
     pub pairing_short_code: Option<String>,
     pub pairing_ttl_seconds: u64,
     /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
@@ -382,6 +383,7 @@ impl ReceiverRuntime {
                 .mdns
                 .as_ref()
                 .is_some_and(MdnsAdvertiser::is_registered),
+            discovery_starting: self.mdns.as_ref().is_some_and(MdnsAdvertiser::is_starting),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
             pairing_ttl_seconds: self
                 .receiver

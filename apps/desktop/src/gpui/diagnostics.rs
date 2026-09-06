@@ -322,6 +322,8 @@ impl PicooDesktopApp {
                     .child(status_badge(
                         if snapshot.discovery_available {
                             "在线"
+                        } else if snapshot.discovery_starting {
+                            "启动中"
                         } else {
                             "不可用"
                         },
