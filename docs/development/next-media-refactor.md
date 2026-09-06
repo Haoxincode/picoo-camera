@@ -240,3 +240,10 @@ REQ-PICOO-PROTOCOL-020 统一线路图像为四字节大端 NAL 长度。显式�
 本机 bitstream 单元 15、标准原生记录契约 6、FFI 10 项通过，Decoder/FFI cargo check 通过；Mac 完整套件与跨平台 CI 继续验证。没有手机操作，不将 JNI 编译或样本测试计为 Android 多厂商硬件编码验收。
 
 唯一 AU 格式的 Mac 完整回归通过：Receiver 103 passed / 2 ignored、Decoder 12、GPU 9、GPUI Apple 4、Desktop 70；bitstream/FFI/Decoder/Receiver all-targets Clippy 通过。Windows 与 Android 新线路格式仍须本次 CI 验证。
+
+
+## 调度抖动与时钟未知的验收
+
+c89ce6f 的 CI 34032626796 给出直接证据：Mac 实时视频正常、帧龄 54ms，但 mapper 的 12 个样本只有一个落在最低不确定度加 2ms 的筛选带内，stable=false。不是继续等待或刷新媒体就能保证可用映射。保持生产估计器的三样本和跨度门槛，新增确定性回归重放这组不确定度，确认总时间映射保持未知；新低延迟样本到达后可恢复。
+
+网络统计集成测试验证实际收到至少三个已接受交换、完整统计窗口、本地分段指标以及总延迟与不确定度的依赖，不再把真实宿主调度当作稳定映射保证。精确 affine offset/drift 与总延迟数值仍由生产 ReceiverClockSync 的确定性时序测试验收，没有扩大生产筛选范围或延长测试超时。7 项 clock_sync 和 Mac 完整套件通过；Windows/macOS 新 CI 继续验收。

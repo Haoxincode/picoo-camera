@@ -131,6 +131,11 @@ impl ReceiverClockSync {
 
 impl ReceiverSession {
     #[cfg(test)]
+    pub(crate) fn clock_sample_count_for_test(&self) -> usize {
+        self.clock_sync.mapper.sample_count()
+    }
+
+    #[cfg(test)]
     pub(crate) fn clock_mapping_debug_for_test(&self) -> String {
         format!("{:?}", self.clock_sync)
     }

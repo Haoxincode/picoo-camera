@@ -328,6 +328,50 @@ mod tests {
     }
 
     #[test]
+    fn scheduling_jitter_does_not_turn_sample_count_into_a_stable_mapping() {
+        // REQ-PICOO-SESSION-014: observed macOS CI uncertainties, not an
+        // assumption that twelve authenticated exchanges imply a usable fit.
+        let mut mapper = AffineClockMapper::new(1);
+        for (index, uncertainty) in [
+            18_118, 16_017, 13_190, 12_150, 17_888, 4_136, 13_522, 6_793, 14_943, 10_842, 11_027,
+            10_041,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            mapper
+                .observe(exchange(
+                    1,
+                    1_000_000 + index as u64 * 300_000,
+                    1.0,
+                    10_000.0,
+                    uncertainty,
+                ))
+                .unwrap();
+        }
+        assert_eq!(mapper.sample_count(), MAX_CLOCK_SYNC_SAMPLES);
+        assert!(!mapper.is_stable());
+        assert!(mapper.estimate_local_time(5_000_000).is_none());
+        // Fresh low-delay observations restore the fit without a reset.
+        for index in 0..3 {
+            mapper
+                .observe(exchange(
+                    1,
+                    5_000_000 + index * 300_000,
+                    1.0,
+                    10_000.0,
+                    4_000,
+                ))
+                .unwrap();
+        }
+        assert!(mapper.is_stable());
+        assert_eq!(
+            mapper.estimate_local_time(6_000_000).unwrap().local_time_us,
+            6_010_000
+        );
+    }
+
+    #[test]
     fn generation_reset_invalidates_previous_mapping() {
         let mut mapper = AffineClockMapper::new(1);
         for index in 0..3 {
