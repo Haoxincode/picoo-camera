@@ -184,6 +184,34 @@ impl CodecConfiguration {
         )
     }
 
+    /// REQ-PICOO-BITSTREAM-005: a picture cannot replace committed parameter sets.
+    /// Checks byte identity of every in-band VPS/SPS/PPS, including isolated updates.
+    /// Native decoding remains responsible for full picture syntax and references.
+    pub fn validate_parameter_sets(
+        &self,
+        picture: &crate::AccessUnit<'_>,
+    ) -> Result<(), BitstreamError> {
+        if picture.codec() != self.codec {
+            return Err(BitstreamError::Malformed(
+                "picture codec differs from configuration",
+            ));
+        }
+        for nal in picture.nals() {
+            let expected = match (self.codec, nal_type(self.codec, nal)?) {
+                (Codec::Avc, 7) | (Codec::Hevc, 33) => Some(self.sps()),
+                (Codec::Avc, 8) | (Codec::Hevc, 34) => Some(self.pps()),
+                (Codec::Hevc, 32) => Some(self.vps()),
+                _ => None,
+            };
+            if expected.is_some_and(|sets| !sets.iter().any(|set| set.as_ref() == *nal)) {
+                return Err(BitstreamError::Malformed(
+                    "in-band parameter set differs from configuration",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn profile_idc(&self) -> u8 {
         self.profile_idc
     }

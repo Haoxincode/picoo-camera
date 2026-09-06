@@ -20,16 +20,9 @@ pub(crate) fn validate<'a>(
         return Err(DecodeError::UnsupportedAccessUnit);
     }
     let configuration = configuration(config)?;
-    for nal in picture.nals() {
-        let expected = match nal[0] & 0x1f {
-            7 => Some(configuration.sps()),
-            8 => Some(configuration.pps()),
-            _ => None,
-        };
-        if expected.is_some_and(|expected| !expected.iter().any(|set| set.as_ref() == *nal)) {
-            return Err(DecodeError::ConfigurationMismatch);
-        }
-    }
+    configuration
+        .validate_parameter_sets(&picture)
+        .map_err(|_| DecodeError::ConfigurationMismatch)?;
     Ok(picture)
 }
 

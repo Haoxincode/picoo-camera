@@ -90,3 +90,7 @@
 | REQ-PICOO-FRAME-016 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、016、029 | Windows 原生源 owner 保留已完成 MF sample、NV12 D3D11 texture 与合法 subresource；安全 API 无 CPU 像素或可变平台对象，保留 sample 防止 allocator 提前复用 | Windows 原生资源/COM 保留回归，非法存储及不同 device 身份拒绝；GPU fence、MFT 工厂和预览接入另验 |
 
 | REQ-PICOO-GPU-004 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、010、017、024 | Windows GPU context 固定硬件 D3D11 device 并开启原生保护；输出采用原生图像现有 device，不重建源设备，不创建 MF manager；创建/采用入口均拒绝 software/SINGLETHREADED，MF manager 归 Decoder | Windows SDK 类型检查、WARP/SINGLETHREADED 拒绝、native device identity 与 panic 后锁释放；Decoder manager 身份回归；真实硬件及 adapter 矩阵另验 |
+
+| ID | 状态 | 来源 | 契约 | 验收 |
+| --- | --- | --- | --- | --- |
+| REQ-PICOO-BITSTREAM-005 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、022、027 | bitstream 按已提交配置的 codec 逐个校验 AU 中 VPS/SPS/PPS 的字节身份；孤立参数更新同样不能覆盖配置，拒绝不修改已提交记录 | 硬件 AVC/HEVC fixture 的匹配、逐参数冲突、跨 codec 拒绝及 AVC Decoder 既有配置回归；不替代完整 slice/SPS 准入与 HEVC 原生解码 |

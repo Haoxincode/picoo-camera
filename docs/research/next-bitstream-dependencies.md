@@ -43,3 +43,7 @@ Picoo 的 `AvcSpsFacts` 限制输入 64 KiB、progressive 8-bit 4:2:0 与 8192 �
 M4 原生 1080p AVC fixture 的编码尺寸为 1920×1088、可见尺寸为 1920×1080；该差异必须保留到原生帧元数据，不能从 CVPixelBuffer 的可见 allocation 尺寸反推编码尺寸。
 
 参考：https://crates.io/crates/h264-reader/0.8.0 、https://github.com/dholroyd/h264-reader 。
+
+## 已提交参数集身份
+
+REQ-PICOO-BITSTREAM-005 不新增标准解析器或依赖。沿用 Scuffle 已解析的参数集合和现有 AccessUnit 的显式 codec/header 解释；Picoo 只比较带内 VPS/SPS/PPS 与已提交集合的完整字节身份。这是配置事务的产品约束，不尝试解释 slice 引用或替代平台 HEVC Decoder 准入。

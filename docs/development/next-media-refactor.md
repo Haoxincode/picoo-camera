@@ -516,3 +516,11 @@ CI 34054474529（6fa3372）全部成功；Windows 日志确认 native_surface_sh
 ## MF 原生裁剪尺寸协商
 
 REQ-PICOO-MEDIA-031 / NEXT-025：移除 stream-change 枚举中要求原生 frame size 与 SPS coded size 完全相等的旧判断。协商保留 MF 类型，完成图像仍由 native_output 校验 actual allocation、可见尺寸、aperture、色彩和 PAR；软件诊断的 CPU 布局另由 buffers 严格检查。新增原生 64×64 allocation 对应 192×96 coded size 的回归，并验证超出 allocation 的媒体尺寸被拒绝。Windows 库 Clippy 通过，新回归原生执行待 CI。
+
+## 已提交 AVC/HEVC 参数集统一校验
+
+REQ-PICOO-BITSTREAM-005：CodecConfiguration 对已解析 AU 校验 codec 和逐个 VPS/SPS/PPS 的完整字节身份。AVC Decoder 删除自己的参数遍历并调用共同实现；它仍显式拒绝 HEVC 配置，直到该平台原生适配完成。此处不新增依赖，不解析完整 slice，也不允许带内孤立更新绕过配置事务。
+
+硬件 AVC/HEVC fixture 新增两项回归，逐个参数覆盖原值接受、改变 payload 后拒绝、跨 codec 拒绝和拒绝后配置保持不变。Mac Decoder 16 项测试全部通过，包含真实 VideoToolbox 及拒绝冲突后旧 session 保持有效。bitstream/Decoder all-targets Clippy、Windows MF 库 Clippy、文档检查通过。完整 HEVC 原生解码与正式配置事务仍未完成。
+
+28e2adf 的 CI 34055695761 已通过 Windows 原生测试步骤与 macOS 原生测试；Android、iOS、Rust/docs job 成功，Windows/macOS 最终产物仍在构建。该运行不包含随后提交的裁剪协商修复及共同参数校验。
