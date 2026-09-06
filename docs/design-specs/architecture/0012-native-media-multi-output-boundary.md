@@ -85,3 +85,5 @@ RenderSpec 分开表达像素存储格式与颜色，不由颜色名称猜测 NV
 Windows BGRA 目标在同一个三槽池内创建 NT shared/keyed-mutex 资源，每个 allocation 只创建一次 handle，并随资源关闭。Producer 与 Consumer 都使用 key 0；只有 AcquireSync 的原始 HRESULT 等于 S_OK 才获得权限，等待超时和 abandoned 不授予访问。Producer 把写入权限和目标 owner 一起保留到 GPU 完成后释放，再交付图像；释放失败使该池槽不可再用。Consumer 必须保留原图像引用到 GPU 读取与 ReleaseSync 完成，不能只持有导入纹理或复制的 handle。共享锁只协调 native device 访问，Rust owner 决定是否可复用池槽，两者不可替代。预览和各输出的消费规格/缓存仍由相应输出 owner 管理，不能通过共享纹理改动源 Decoder。
 
 Windows 显示资源提供者采用 UI 的实际 device，持有每图像的导入缓存与原图像 lease。GPUI 仅同步提交只读 draw，不拥有 Picoo 输出状态或另设完成调度器。相同图像的未完成重复读取共用访问权，避免递归 keyed-mutex 获取；每次读取仍分别持有到其 GPU 完成。忙碌时跳过当前图像绘制，其他控件可以重绘。绘制结束必须解绑 view，禁止后续无 owner 的命令继续读取。
+
+MF 输出协商保留枚举类型的原生尺寸与 aperture；编码尺寸不是原生 allocation 必须相等的约束。完成图像的显示范围必须位于实际 allocation 内且与已提交源的可见尺寸一致；Decoder 已裁剪的图像只保留剩余裁剪，不能重复应用 SPS crop。

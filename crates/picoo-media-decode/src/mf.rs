@@ -487,7 +487,8 @@ unsafe fn output_sample_for_transform(
 }
 
 /// REQ-PICOO-MEDIA-031: renegotiate the native output without flushing or
-/// resubmitting the AU. Only the declared NV12 geometry is accepted here.
+/// resubmitting the AU. Native geometry is validated against the completed image
+/// and its negotiated aperture, independently from the coded SPS dimensions.
 unsafe fn renegotiate_output(
     transform: &IMFTransform,
     width: u32,
@@ -517,11 +518,11 @@ unsafe fn renegotiate_output(
             continue;
         }
         match frame_size {
-            Ok(size) if size != pack_frame_size(width, height) => continue,
             Ok(_) => {}
             // IMFTransform explicitly permits partial output media types.
             // Complete the requested output constraint; SetOutputType remains
-            // the native acceptance gate, and known differing sizes are rejected.
+            // the native acceptance gate. Complete images are validated by
+            // native_output; diagnostic CPU layouts are checked by buffers.
             Err(error) if error.code() == MF_E_ATTRIBUTENOTFOUND => {
                 candidate
                     .SetUINT64(&MF_MT_FRAME_SIZE, pack_frame_size(width, height))

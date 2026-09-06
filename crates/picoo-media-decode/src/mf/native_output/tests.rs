@@ -94,3 +94,35 @@ fn native_description_rejects_missing_crop_fractional_aperture_and_missing_color
         assert!(describe(&media, &facts(), &image).is_err());
     }
 }
+
+#[test]
+fn native_cropped_allocation_keeps_coded_size_and_needs_no_remaining_aperture() {
+    let image = crate::native_fixture::upload(64, 64, 64, &vec![128; 64 * 64 * 3 / 2]).unwrap();
+    unsafe {
+        let media = media();
+        media
+            .SetUINT64(&MF_MT_FRAME_SIZE, (64_u64 << 32) | 64)
+            .unwrap();
+        let described = describe(&media, &facts(), &image).unwrap();
+        assert_eq!(
+            described.coded_size,
+            ImageSize {
+                width: 192,
+                height: 96
+            }
+        );
+        assert_eq!(
+            described.visible_rect,
+            VisibleRect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64
+            }
+        );
+        media
+            .SetUINT64(&MF_MT_FRAME_SIZE, (192_u64 << 32) | 96)
+            .unwrap();
+        assert!(describe(&media, &facts(), &image).is_err());
+    }
+}

@@ -512,3 +512,7 @@ CI 34054474529（6fa3372）全部成功；Windows 日志确认 native_surface_sh
 桌面预览删除旧 CPU BGRA 转换、缩放和 RenderImage 路径，以及直接 image/yuv/fast_image_resize/smallvec 依赖。Windows/macOS 共用仅持有 SurfaceSource 的 VideoSurface；GUI 模块只在这两个正式桌面平台编译。原生预览接线的 macOS gpui-ui all-targets Clippy 通过，预览测试继续验证。本机 ADB 当前未列出手机。
 
 原生预览最终验证：macOS 独立目录运行的 preview_pipeline 5 项和 VideoSurface 1 项全部通过；Windows MF/test-codecs 库跨目标 Clippy 通过；文档链接检查零错误。完整 Windows Receiver/桌面及新增 MF 元数据测试仍待本批 CI，不把跨目标库检查作为 Windows 硬件执行证据。
+
+## MF 原生裁剪尺寸协商
+
+REQ-PICOO-MEDIA-031 / NEXT-025：移除 stream-change 枚举中要求原生 frame size 与 SPS coded size 完全相等的旧判断。协商保留 MF 类型，完成图像仍由 native_output 校验 actual allocation、可见尺寸、aperture、色彩和 PAR；软件诊断的 CPU 布局另由 buffers 严格检查。新增原生 64×64 allocation 对应 192×96 coded size 的回归，并验证超出 allocation 的媒体尺寸被拒绝。Windows 库 Clippy 通过，新回归原生执行待 CI。
