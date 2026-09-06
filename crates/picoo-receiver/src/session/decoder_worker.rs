@@ -281,10 +281,18 @@ pub(super) struct DecoderWorker {
 
 impl DecoderWorker {
     pub(super) fn with_event_wake(event_wake: picoo_transport::TransportEventWake) -> Self {
-        #[cfg(all(test, not(windows), not(target_vendor = "apple")))]
+        #[cfg(all(
+            test,
+            not(target_vendor = "apple"),
+            any(not(windows), feature = "windows-mf")
+        ))]
         let factory =
             || picoo_media_decode::create_test_decoder().expect("explicit software test decoder");
-        #[cfg(not(all(test, not(windows), not(target_vendor = "apple"))))]
+        #[cfg(not(all(
+            test,
+            not(target_vendor = "apple"),
+            any(not(windows), feature = "windows-mf")
+        )))]
         let factory = create_platform_decoder;
         Self::with_decoder_factory(factory, event_wake)
     }

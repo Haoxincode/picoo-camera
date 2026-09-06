@@ -371,3 +371,14 @@ REQ-PICOO-MEDIA-018 移除 AccessUnitDecoder 的 Send 超 trait，以及 MF/Vide
 新增刻意含 Rc（不可 Send）的 Decoder 回归，实际检查 create/decode/reset/drop 的 ThreadId 一致且不同于调用方。当前本机 Receiver 104 passed/2 ignored、Decoder 16 passed；Windows windows-mf 库 Clippy 通过。包含测试依赖的 Windows 目标检查受本机 ring C 编译环境缺失限制，交由 Windows CI 验证，不记作平台通过。Mac 测试复制到临时目录执行，与已有 xtask Apple native_tests 的隔离目录方式一致。
 
 CI 34041534379 的 Windows 原生测试已通过，包含 MF manager 正向设备身份、panic 后锁释放及双 device sample 拒绝；发布构建仍在运行。整体 Next 40 项需求未完成，Windows 原生 Decoder/预览生产替换和 GPU completion 等仍待实现。
+
+
+## Windows 生产 MFT 硬件准入接入
+
+REQ-PICOO-MEDIA-034 将 WindowsGpuContext 接入实际 MfH264Decoder 生产工厂：先建立硬件 adapter/device/manager，再检查 D3D11-aware 和发送 SET_D3D_MANAGER。正式尺寸/帧率与驱动 H.264 NV12 coded geometry configuration 在 SetInputType 前检查；配置缺失明确拒绝。输出必须由 MFT 提供并属于固定 device，不为硬件模式分配 caller CPU sample，不清空 manager 后重试。SoftwareDiagnostic 是只在 test/test-codecs 编译的枚举变体，Windows 核心回归显式使用诊断工厂，避免将 CI 无真实显卡时的软件测试冒充硬解测试。
+
+该提交推进硬件生产入口，仍保留旧 mf/buffers.rs 读取 DXGI 输出像素的待删除实现；没有声称 FrameBus、GPU Preview、HEVC、completion、60fps 稳态或显卡矩阵完成。下一步应在完成同步和元数据合同后将其直接替换为原生帧，不为旧路径添加兼容 API。
+
+Windows 目标 windows-mf 生产及 windows-mf,test-codecs 诊断库 Clippy 均通过；Mac Decoder/Receiver all-targets Clippy 通过。全目标 Windows 原生测试由 CI 执行，本机不具备 ring 所需 Windows C 工具链。
+
+本提交 Mac 回归：Receiver 104 passed/2 ignored、Decoder 16 passed，文档检查通过。上一轮 CI 34041534379 现已全部通过；本次工厂接入与线程归属提交待新一轮 Windows CI，软件诊断回归不计入硬件验收。

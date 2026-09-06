@@ -22,7 +22,6 @@ use windows::Win32::Media::MediaFoundation::{
     MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
     MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE,
     MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
-    MF_SA_D3D11_AWARE,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -31,6 +30,7 @@ use windows::Win32::System::Com::{
 use crate::{AccessUnitDecoder, DecodeError, DecodeOutcome, DecodedFrame};
 
 mod buffers;
+mod device;
 use buffers::sample_to_frame;
 
 const DEFAULT_FPS: u32 = 30;
@@ -45,6 +45,7 @@ pub struct MfH264Decoder {
     next_sample_time_100ns: i64,
     sequence_header: Vec<u8>,
     inject_sequence_header: bool,
+    device: device::DecoderDevice,
     // Declared last so the transform is released before MFShutdown/CoUninitialize.
     _runtime: MfRuntimeGuard,
 }
@@ -103,31 +104,32 @@ impl MfH264Decoder {
     pub fn new() -> Result<Self, DecodeError> {
         let runtime = MfRuntimeGuard::start()?;
 
-        let transform: IMFTransform =
-            unsafe { CoCreateInstance(&CMSH264DecoderMFT, None, CLSCTX_INPROC_SERVER) }
-                .map_err(|e| DecodeError::Platform(format!("CoCreateInstance H264 MFT: {e}")))?;
-        unsafe {
-            let attributes = transform
-                .GetAttributes()
-                .map_err(|e| DecodeError::Platform(format!("read MF attributes: {e}")))?;
-            attributes
-                .SetUINT32(&MF_LOW_LATENCY, 1)
-                .map_err(|e| DecodeError::Platform(format!("enable MF low latency: {e}")))?;
-            let d3d11_aware = attributes.GetUINT32(&MF_SA_D3D11_AWARE).unwrap_or(0) != 0;
-            tracing::info!(
-                d3d11_aware,
-                d3d_manager_attached = false,
-                output_storage = "cpu-nv12",
-                "Media Foundation decoder capability"
-            );
-            if d3d11_aware {
-                tracing::warn!(
-                    "MF decoder advertises D3D11 awareness but Picoo has no device manager attached; hardware acceleration is not claimed"
-                );
-            }
-        }
+        let gpu = device::create_context()?;
+        let transform = create_transform()?;
+        device::attach_manager(&transform, &gpu)?;
+        Ok(Self::initialized(
+            transform,
+            runtime,
+            device::DecoderDevice::Hardware(gpu),
+        ))
+    }
 
-        Ok(Self {
+    #[cfg(any(test, feature = "test-codecs"))]
+    pub(super) fn software_diagnostic() -> Result<Self, DecodeError> {
+        let runtime = MfRuntimeGuard::start()?;
+        Ok(Self::initialized(
+            create_transform()?,
+            runtime,
+            device::DecoderDevice::SoftwareDiagnostic,
+        ))
+    }
+
+    fn initialized(
+        transform: IMFTransform,
+        runtime: MfRuntimeGuard,
+        device: device::DecoderDevice,
+    ) -> Self {
+        Self {
             transform,
             configured: false,
             geometry: None,
@@ -135,8 +137,9 @@ impl MfH264Decoder {
             next_sample_time_100ns: 0,
             sequence_header: Vec::new(),
             inject_sequence_header: false,
+            device,
             _runtime: runtime,
-        })
+        }
     }
 
     fn sequence_header_from_config(
@@ -153,6 +156,9 @@ impl MfH264Decoder {
         stream_config: Option<&StreamConfig>,
         picture: &AccessUnit<'_>,
     ) -> Result<(), DecodeError> {
+        if self.device.gpu().is_some() && stream_config.is_none() {
+            return Err(DecodeError::NotInitialized);
+        }
         let fps = stream_config.map_or(DEFAULT_FPS, |cfg| cfg.fps.max(1));
         let (geometry, sequence_header) = if let Some(config) = stream_config {
             let record = crate::configured_avc::configuration(config)?;
@@ -189,6 +195,9 @@ impl MfH264Decoder {
             return Ok(());
         }
 
+        if let Some(gpu) = self.device.gpu() {
+            device::validate_configuration(gpu, &geometry, fps)?;
+        }
         unsafe {
             configure_transform(
                 &self.transform,
@@ -239,11 +248,12 @@ impl MfH264Decoder {
                 self.next_sample_time_100ns,
                 duration_100ns,
                 geometry,
+                self.device.gpu(),
             )?;
             self.next_sample_time_100ns += duration_100ns;
             let frame = match pending {
                 Some(frame) => Some(frame),
-                None => drain_output(&self.transform, geometry)?,
+                None => drain_output(&self.transform, geometry, self.device.gpu())?,
             };
             Ok(DecodeOutcome {
                 frame,
@@ -271,6 +281,19 @@ impl AccessUnitDecoder for MfH264Decoder {
         self.inject_sequence_header = !self.sequence_header.is_empty();
         Ok(())
     }
+}
+
+fn create_transform() -> Result<IMFTransform, DecodeError> {
+    let transform: IMFTransform =
+        unsafe { CoCreateInstance(&CMSH264DecoderMFT, None, CLSCTX_INPROC_SERVER) }
+            .map_err(|e| DecodeError::Platform(format!("CoCreateInstance H264 MFT: {e}")))?;
+    unsafe {
+        transform
+            .GetAttributes()
+            .and_then(|attributes| attributes.SetUINT32(&MF_LOW_LATENCY, 1))
+            .map_err(|e| DecodeError::Platform(format!("enable MF low latency: {e}")))?;
+    }
+    Ok(transform)
 }
 
 fn pack_frame_size(width: u32, height: u32) -> u64 {
@@ -413,6 +436,7 @@ unsafe fn feed_access_unit(
     sample_time_100ns: i64,
     duration_100ns: i64,
     geometry: &AvcSpsFacts,
+    gpu: Option<&picoo_gpu::WindowsGpuContext>,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     let sample = create_input_sample(access_unit, sample_time_100ns, duration_100ns)?;
 
@@ -420,7 +444,7 @@ unsafe fn feed_access_unit(
         Ok(()) => Ok(None),
         Err(e) if e.code() == MF_E_NOTACCEPTING => {
             // Drain pending output then retry once.
-            let pending = drain_output(transform, geometry)?;
+            let pending = drain_output(transform, geometry, gpu)?;
             transform
                 .ProcessInput(0, &sample, 0)
                 .map_err(|e| DecodeError::Platform(format!("ProcessInput retry: {e}")))?;
@@ -432,6 +456,7 @@ unsafe fn feed_access_unit(
 
 unsafe fn output_sample_for_transform(
     transform: &IMFTransform,
+    require_dxgi: bool,
 ) -> Result<Option<IMFSample>, DecodeError> {
     let info = transform
         .GetOutputStreamInfo(0)
@@ -440,6 +465,11 @@ unsafe fn output_sample_for_transform(
     let can_provide_samples = info.dwFlags & MFT_OUTPUT_STREAM_CAN_PROVIDE_SAMPLES.0 as u32 != 0;
     if provides_samples || can_provide_samples {
         return Ok(None);
+    }
+    if require_dxgi {
+        return Err(DecodeError::Platform(
+            "hardware MFT must provide its own DXGI output samples".into(),
+        ));
     }
     if info.cbSize == 0 {
         return Err(DecodeError::Platform(
@@ -514,11 +544,12 @@ unsafe fn renegotiate_output(
 unsafe fn drain_output(
     transform: &IMFTransform,
     geometry: &AvcSpsFacts,
+    gpu: Option<&picoo_gpu::WindowsGpuContext>,
 ) -> Result<Option<DecodedFrame>, DecodeError> {
     // One format-change retry is enough to consume the newly negotiated
     // output. Repeated stream changes fail explicitly instead of spinning.
     for attempt in 0..2 {
-        let provided_sample = output_sample_for_transform(transform)?;
+        let provided_sample = output_sample_for_transform(transform, gpu.is_some())?;
         let mut output_buffer = MFT_OUTPUT_DATA_BUFFER {
             dwStreamID: 0,
             pSample: ManuallyDrop::new(provided_sample),
@@ -534,7 +565,12 @@ unsafe fn drain_output(
             Ok(()) => {
                 return sample
                     .as_ref()
-                    .map(|sample| sample_to_frame(sample, transform, geometry))
+                    .map(|sample| {
+                        if let Some(gpu) = gpu {
+                            device::validate_output_device(sample, gpu)?;
+                        }
+                        sample_to_frame(sample, transform, geometry)
+                    })
                     .transpose()
             }
             Err(error) if error.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => return Ok(None),
@@ -605,7 +641,7 @@ mod tests {
             .to_vec(),
             ..Default::default()
         };
-        let mut decoder = MfH264Decoder::new().unwrap();
+        let mut decoder = MfH264Decoder::software_diagnostic().unwrap();
         let submitted = decoder.decode_access_unit(&wire, Some(&config)).unwrap();
         let frame = if let Some(frame) = submitted.frame {
             frame
@@ -624,7 +660,7 @@ mod tests {
                     .transform
                     .ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)
                     .unwrap();
-                drain_output(&decoder.transform, decoder.geometry.as_ref().unwrap())
+                drain_output(&decoder.transform, decoder.geometry.as_ref().unwrap(), None)
                     .unwrap()
                     .expect("EOS drain releases the accepted picture")
             }
@@ -658,7 +694,8 @@ mod tests {
         let initialized =
             unsafe { CoInitializeEx(None, windows::Win32::System::Com::COINIT_APARTMENTTHREADED) };
         initialized.ok().expect("initialize fixture STA");
-        let decoder = MfH264Decoder::new().expect("create MF decoder inside GPUI-like STA");
+        let decoder =
+            MfH264Decoder::software_diagnostic().expect("create diagnostic MF decoder inside STA");
         drop(decoder);
         unsafe { CoUninitialize() };
     }

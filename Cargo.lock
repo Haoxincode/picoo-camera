@@ -5684,6 +5684,7 @@ dependencies = [
  "openh264",
  "picoo-bitstream",
  "picoo-frame-hub",
+ "picoo-gpu",
  "picoo-protocol",
  "picoo-testkit",
  "thiserror 2.0.20",

@@ -61,3 +61,5 @@ Windows 解码原生图像的持有单位包含原始 MF sample、NV12 D3D11 tex
 Windows 原生输出必须验证纹理所属 device 与 Decoder generation 固定的 device 具有相同 COM identity；同一 adapter 上的不同 device 仍属于不同命令与完成域，不得以 adapter LUID 相同替代该检查。拒绝错误 device 的 sample 不消费或修改生产者资源。
 
 Decoder 工作者接收可跨线程的 factory，在工作线程内创建、调用、重建与释放平台 Decoder。Decoder 接口不要求 Send，不用 unsafe Send 绕过 COM apartment 的同线程清理责任；仅显式测试注入的合成 Decoder 需要 Send。源图像/context 的可跨线程资源寿命与 codec runtime 的线程归属分别约束。
+
+Windows MFT 生产工厂只接受硬件 DXGI adapter；创建固定 D3D11 video device 后检查 MF_SA_D3D11_AWARE 并绑定 manager，然后才协商媒体类型。完整源配置必须存在，正式可见尺寸/帧率、驱动 H.264 NV12 profile 与 coded geometry 的 decoder configuration 均需准入。MFT 必须自行提供 DXGI sample，实际纹理的 device identity 必须匹配；禁止为生产 MFT 分配 CPU 输出 sample 或解绑 manager 后软件重试。显式软件诊断只由 test-codecs/test 构建的诊断入口调用，不是产品工厂的候选或失败分支。

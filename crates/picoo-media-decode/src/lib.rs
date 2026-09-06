@@ -153,6 +153,12 @@ pub fn create_test_decoder() -> Result<Box<dyn AccessUnitDecoder>, DecodeError> 
     Ok(Box::new(openh264_dec::OpenH264Decoder::new()?))
 }
 
+/// Explicit Windows software fixture; never selected by the product factory.
+#[cfg(all(windows, feature = "windows-mf", any(test, feature = "test-codecs")))]
+pub fn create_test_decoder() -> Result<Box<dyn AccessUnitDecoder>, DecodeError> {
+    Ok(Box::new(mf::MfH264Decoder::software_diagnostic()?))
+}
+
 pub fn now_timestamp_us() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -24,3 +24,7 @@ GPU context 采用官方 DXGI adapter、D3D11CreateDevice、ID3D11Multithread �
 文档规定不支持硬件组合时 SetInputType/SetOutputType 返回 MF_E_UNSUPPORTED_D3D_TYPE。标准 Topology Loader 的软件回退是发送 SET_D3D_MANAGER(NULL)，然后重新协商。Picoo 直接管理 MFT，因此必须把此错误作为明确准入失败，禁止清空 manager 后重试。完成帧还必须是同一设备的合法 IMFDXGIBuffer；普通 IMFMediaBuffer 不能进入原生源。MFT 的包装器是否被称作 software decoder 或是否注册为异步 hardware MFT，不足以代替这些实际契约；不能只凭 factory 标签宣称或否定 DXVA。
 
 参考微软 [H.264 Decoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-decoder)：DXVA 支持 Main-compatible Baseline/Main/High，1920×1088 为其说明的保证尺寸上限。Picoo 仍按当前 codec/profile/实际 coded size/驱动能力验证，不能将该文档替代所有显卡与 HEVC 的验收。
+
+生产工厂接入复用已有 WindowsGpuContext，并使用官方 ID3D11VideoDevice::CheckVideoDecoderFormat/GetVideoDecoderConfigCount 对 H264_VLD_NOFGT + NV12 + coded size 查询驱动配置。它不提供 60fps 热稳态吞吐保证，MFT SetInputType/SetOutputType 与实际输出仍是独立准入。GetResource/GetDevice/IUnknown 检查实际 sample 所属设备，CPU sample 或另一个 device 均拒绝。首个非 software adapter 的初始化失败直接报告，不为新增 sink 或运行故障重选 source adapter。
+
+GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fence::GetCompletedValue/SetEventOnCompletion：Signal 只允许 immediate context，完成值覆盖此前工作，但 HRESULT 失败不构成已完成证据。尚未将未处理 signal/注册失败寿命的通用 callback tracker 加入产品；资源保留与失败清理须先闭合，再替换源 CPU 读取。

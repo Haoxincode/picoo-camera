@@ -34,3 +34,5 @@
 | REQ-PICOO-MEDIA-031 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-011、025 | MF 输出类型变化通过原生枚举与 SetOutputType 协商，保留已提交 AU；只接受匹配几何的 NV12，最多一次输出重试 | Windows AVCC 实际解码回归；原生 D3D11 帧路径另验 |
 | REQ-PICOO-MEDIA-032 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-025 | MF 以 SPS coded size 协商原生分配，先校验声明可见尺寸；CPU 适配器用原生 pitch 和明确 crop 复制，不按字节长度猜测布局 | 192×96→64×64 真实样本、1088→1080、带偏移 crop/pitch、越界/溢出；Windows 原生回归及拒绝配置不改状态；不代表 Next D3D11 原生链路完成 |
 | REQ-PICOO-MEDIA-033 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | Android AVC 的 csd-0/csd-1 与 codec-config buffer 在显式 Annex B 边界解析、校验后生成裸 SPS/PPS；不把起始码送入 raw-NAL 构造器，不猜测 avcC，失败明确终止原生配置 | 真实 High 参数集按 Android CSD 布局组合后可生成标准记录；空/缺参/其他 NAL/冲突参数/错误封装/上限拒绝；JNI/Android 构建与真机 CSD 准入回归 |
+
+| REQ-PICOO-MEDIA-034 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、024、040 | Windows 生产 MFT 绑定固定硬件 D3D11 manager 后协商；检查正式源尺寸/帧率、H.264 NV12 驱动配置与输出 device 身份；拒绝 caller CPU sample，不解绑后软件重试；软件仅显式诊断入口 | Windows 生产/诊断 feature 的库 Clippy、Windows CI 与产品 feature graph；真实显卡准入、原生 FrameBus 和删除旧输出读取另验，不能称为 GPU 主链路完成 |
