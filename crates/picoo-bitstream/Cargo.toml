@@ -10,3 +10,4 @@ bytes.workspace = true
 thiserror.workspace = true
 scuffle-h264 = { version = "=0.2.2", default-features = false }
 scuffle-h265 = { version = "=0.2.2", default-features = false }
+h264-reader = "=0.8.0"

@@ -2,6 +2,8 @@
 //! No transport, GPU, UI, or software decoder dependencies.
 
 pub mod avc;
+mod avc_facts;
+pub use avc_facts::{AvcColorFacts, AvcSpsFacts};
 
 mod access_unit;
 mod configuration;

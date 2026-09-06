@@ -29,3 +29,17 @@ scuffle 源包大小分别 29,937 / 56,631 bytes，是压缩发布源码大小�
 锁文件新增 7 个 registry 包：scuffle-h264/h265 0.2.2、scuffle-bytes-util/expgolomb 0.1.5、nutype-enum 0.1.5、bytestring 1.5.1、scuffle-workspace-hack 0.1.0。workspace-hack 0.1.0 是无依赖空包，未把 Scuffle 工作区完整依赖带入。未开启 docs feature。Mac stable 构建通过，Android aarch64、iOS aarch64、Windows MSVC x86_64 的本 crate `cargo check` 通过；Windows 仅纯 Rust 库类型检查，不是桌面链路构建。
 
 测试中的 AVC 高 profile 可选扩展缺失按标准库允许的合法表示处理。Picoo 不编写宽泛 SPS parser：配置对象只声明头部与存储验证，不证明全部图像语义；真实平台 Decoder 与完整 offer 准入仍要验证参数集描述的尺寸、颜色、无 B 帧等合同。
+
+## SPS 几何与 VUI 事实
+
+SPS 解析采用 `h264-reader = 0.8.0`，使用公开 `SeqParameterSet::from_bits(RefNal::rbsp_bits())`，包括 VUI、HRD 和 RBSP 结尾检查。其源码对 Exp-Golomb 的前导零限制为 31、POC 循环数量限制为 255、HRD CPB 数量限制为 32、scaling-list delta 限制为 [-128,127]。Picoo 不自行实现 SPS 或 Exp-Golomb parser。
+
+未采用 scuffle-h264 0.2.2 的 SPS API：新增 fuzz 在 scuffle-expgolomb 0.1.5 的 `result - 1` 触发了整数下溢 panic；崩溃输入已保存为 `sps-exp-golomb-overflow.bin`。该路径未接入生产 Decoder。Scuffle 继续仅用于此前已采用的配置 record API，不再让不可信 SPS 进入其 SPS parser，也不以 catch_unwind 包裹风险。
+
+h264-reader 0.8.0 于 2025-01-28 发布，仓库未归档，最近 push 为 2026-07-08；MIT/Apache-2.0。未声明完整 MSRV，依赖 bitstream-io 2.6.0 声明 Rust 1.79，当前 stable 构建验证另记。纯 Rust，不引入 codec、GPU 或平台 SDK；适合四端共享解析，目标构建仍按实际结果记录。发布源码压缩包 67,807 bytes，锁文件增加 h264-reader、bitstream-io 2.6.0、hex-slice、rfc6381-codec、four-cc、mp4ra-rust、mpeg4-audio-const 七个包；后四个是 codec 标识工具的依赖，不是音频解码器，最终二进制增量尚未量测。
+
+Picoo 的 `AvcSpsFacts` 限制输入 64 KiB、progressive 8-bit 4:2:0 与 8192 编码尺寸上限；所有宏块尺寸和 crop 运算采用 checked arithmetic，不调用第三方尺寸便捷函数。PAR 与 color 未指定时保留 None/CICP unspecified，不默认改为方形像素或 BT.709。chroma location 缺省 0 来自 AVC E.2.1 的明确推导规则。
+
+M4 原生 1080p AVC fixture 的编码尺寸为 1920×1088、可见尺寸为 1920×1080；该差异必须保留到原生帧元数据，不能从 CVPixelBuffer 的可见 allocation 尺寸反推编码尺寸。
+
+参考：https://crates.io/crates/h264-reader/0.8.0 、https://github.com/dholroyd/h264-reader 。

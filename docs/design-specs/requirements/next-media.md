@@ -59,6 +59,8 @@
 
 | REQ-PICOO-BITSTREAM-003 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | 原生 AVC raw SPS/PPS 通过标准 avcC builder 进入有界配置记录；record profile/compatibility/level 必须与全部 SPS 头一致，禁止缺参数时猜测 | 实际硬件参数集 roundtrip、头冲突/长度边界、fuzz；不等同完整 SPS 几何/色彩/no-B-frame 准入 |
 
+| REQ-PICOO-BITSTREAM-004 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | 有界提取 AVC 编码尺寸、可见 crop、PAR 和 VUI 色彩事实；未知值保持未知，拒绝溢出和不支持的像素结构 | 原生 1080p 的 1088 编码高度回归、恶意尺寸/crop/截断/上限；不替代完整 SPS/HRD/no-B-frame 或平台准入 |
+
 ## GPU 边界分解
 
 | ID | 状态 | 来源 | 契约 | 验收 |

@@ -138,3 +138,11 @@ FrameBus 独立保存 latest 和唯一有序订阅，订阅只接收未来发布
 Mac frame-hub 全套 49 passed / 2 ignored，Linux 六项新纯契约测试通过；Linux production cargo check 同时验证没有 Fake variant 时的未实现平台可编译。Linux 1.98.1 容器未安装 Clippy component，未将该失败记作通过；本机两个 crate all-targets Clippy -D warnings 通过。NativeImage 类型变化后，实际 M4 双输出 Metal 颜色回归 1 passed（25.88 秒）。最后取消重查后的六项纯契约再验证见相应日志；四十项总目标继续未完成。
 
 FrameBus 最终六项定向测试、本机两 crate Clippy 及文档/格式检查通过。前一批 07df65a 的 GitHub Actions 34021277005 五个 job 全部成功（包括 Windows）；现将 bc3a30d、2885016 与原生帧总线提交一起推送，当前 GPU/FrameBus 变更的 CI 结果另行验收。
+
+## AVC SPS 事实与恶意输入边界
+
+REQ-PICOO-BITSTREAM-004 新增 AvcSpsFacts，分离编码尺寸和可见 crop，保留未知 PAR/色彩，拒绝溢出、过大尺寸及非 progressive 8-bit 4:2:0。初选 Scuffle SPS parser 的 fuzz 触发 Exp-Golomb 下溢，已放弃该解析入口，改用 h264-reader 0.8.0；选型、依赖规模和未指定 MSRV 的限制见研究记录。真实崩溃输入作为固定回归保存。
+
+Mac 与 Linux 分别 18 项 bitstream 测试通过；Mac Clippy all-targets 无警告。nightly-2026-09-03/libFuzzer 31 秒运行 1,361,338 次，无崩溃；这是有时限的验证，不是解析器无缺陷证明。实际 M4 AVC 1080p fixture 检查 1920×1088 编码尺寸与 1920×1080 可见尺寸。平台 Decoder 的元数据准入和完整配置 wire 接入仍另验。
+
+此前提交 1f7b77c 的 Actions 34023015090 已全部成功。
