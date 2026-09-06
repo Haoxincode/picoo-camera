@@ -72,14 +72,18 @@ pub extern "C" fn picoo_h264_extract_sps_pps(
     0
 }
 
+/// Return the initial bitrate for exact source height 720/1080, or 0 if unsupported.
 #[no_mangle]
 pub extern "C" fn picoo_bitrate_initial_for_height(height: u32) -> u32 {
-    BitrateLadder::for_height(height).initial_bps
+    BitrateLadder::for_height(height).map_or(0, |bounds| bounds.initial_bps)
 }
 
+/// Clamp bitrate within exact source height 720/1080, or return 0 if unsupported.
 #[no_mangle]
 pub extern "C" fn picoo_bitrate_clamp_for_height(bitrate_bps: u32, height: u32) -> u32 {
-    let ladder = BitrateLadder::for_height(height);
+    let Some(ladder) = BitrateLadder::for_height(height) else {
+        return 0;
+    };
     bitrate_bps.clamp(ladder.min_bps, ladder.max_bps)
 }
 

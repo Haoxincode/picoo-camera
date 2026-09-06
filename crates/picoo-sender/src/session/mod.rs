@@ -189,7 +189,7 @@ impl<T: PicooTransport> SenderSession<T> {
             reconnect_backoff: ReconnectBackoff::default(),
             reconnect_after: None,
             last_scheduled_reconnect_delay_ms: None,
-            bitrate: BitrateController::for_height(1080),
+            bitrate: BitrateController::for_height(1080).unwrap(),
             requested_preferred_height: 1080,
             last_bitrate_action: BitrateAction::Hold,
             last_receiver_stats: None,

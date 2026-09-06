@@ -475,12 +475,7 @@ final class SenderAppModel {
             initialResolution = camera.resolution
             requestedResolution = nil
         } else {
-            let receiverMaxHeight = session.snapshot.receiverMaxHeight
-            let preferredHeight = UInt32(preferredResolution.rawValue)
-            let requestedHeight = receiverMaxHeight > 0
-                ? min(preferredHeight, receiverMaxHeight)
-                : preferredHeight
-            initialResolution = VideoResolution.supported(forRequestedHeight: requestedHeight)
+            initialResolution = preferredResolution
             requestedResolution = initialResolution
         }
         if let requestedResolution {
@@ -584,19 +579,6 @@ final class SenderAppModel {
 
         guard mediaControlTask == nil, !encoderApply.isPending else { return }
         let receiverMaxHeight = session.snapshot.receiverMaxHeight
-        if camera.state == .running,
-           receiverMaxHeight > 0,
-           UInt32(camera.resolution.rawValue) > receiverMaxHeight
-        {
-            mediaControlTask = Task { [weak self] in
-                guard let self else { return }
-                await self.applyResolution(
-                    VideoResolution.supported(forRequestedHeight: receiverMaxHeight)
-                )
-                self.mediaControlTask = nil
-            }
-            return
-        }
         let cameraCommand = try? session.takeCameraCommand()
         let encoderDirective = cameraCommand == nil ? try? session.encoderDirective() : nil
         if let encoderDirective,
@@ -620,12 +602,13 @@ final class SenderAppModel {
             if let cameraCommand {
                 await self.apply(cameraCommand)
             } else if let encoderDirective {
-                await self.applyResolution(
-                    VideoResolution.supported(
-                        forRequestedHeight: encoderDirective.targetHeight
-                    ),
-                    directive: encoderDirective
-                )
+                if let resolution = VideoResolution.supported(
+                    forRequestedHeight: encoderDirective.targetHeight
+                ) {
+                    await self.applyResolution(resolution, directive: encoderDirective)
+                } else {
+                    self.encoderApply.rejectBeforeStart(encoderDirective, host: self)
+                }
             }
             guard operation == self.mediaControlGeneration else { return }
             self.mediaControlTask = nil
@@ -640,8 +623,13 @@ final class SenderAppModel {
             await applyCameraSwitch(unlessAlreadyAt: .back, failure: "电脑请求的后置摄像头不可用。")
         case .switchCamera:
             await applyCameraSwitch(unlessAlreadyAt: nil, failure: "电脑请求切换的摄像头不可用。")
-        case let .setResolution(_, height):
-            await applyResolution(VideoResolution.supported(forRequestedHeight: height))
+        case let .setResolution(width, height):
+            guard let resolution = VideoResolution.supported(forRequestedHeight: height),
+                  UInt32(resolution.width) == width else {
+                errorMessage = "电脑请求的视频尺寸不受支持。"
+                return
+            }
+            await applyResolution(resolution)
         case let .setMirror(mirrored):
             remoteMirrored = mirrored
             do {
@@ -688,9 +676,13 @@ final class SenderAppModel {
         directive: SenderEncoderDirective? = nil
     ) async {
         guard let session else { return }
-        let supportedResolution = resolution.clamped(
-            toMaximumHeight: session.snapshot.receiverMaxHeight
-        )
+        let supportedResolution = resolution
+        let maximumHeight = session.snapshot.receiverMaxHeight
+        guard maximumHeight == 0 || UInt32(resolution.rawValue) <= maximumHeight else {
+            errorMessage = "接收端不支持所选视频配置。"
+            if let directive { encoderApply.rejectBeforeStart(directive, host: self) }
+            return
+        }
         if let directive,
            UInt32(supportedResolution.rawValue) != directive.targetHeight
         {

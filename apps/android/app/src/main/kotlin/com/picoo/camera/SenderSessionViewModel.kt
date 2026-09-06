@@ -264,6 +264,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             }
         }
         val preferredResolution = StreamResolution.fromLabel(ui.preferredResolutionLabel)
+            ?: run { ui.errorText = "不支持所选视频配置"; return false }
         ui.resolutionLabel = preferredResolution.label
         val preferredBitrate = PicooNative.bitrateInitialForHeight(preferredResolution.height)
         encoder.setTargetBitrateBps(preferredBitrate)
@@ -389,19 +390,19 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                     streamConfigDirty.set(false)
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.resolutionLabel =
-                        StreamResolution.fromHeight(senderSnapshot.activeHeight).label
+                        StreamResolution.fromHeight(senderSnapshot.activeHeight)?.label.orEmpty()
                     ui.errorText = result.message
                 }
                 is EncoderReconfigurationCoordinator.PollResult.Applied -> {
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.adaptiveBitrateBps = result.bitrateBps
-                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight).label
+                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight)?.label.orEmpty()
                     encoder.setTargetBitrateBps(ui.adaptiveBitrateBps)
                 }
                 is EncoderReconfigurationCoordinator.PollResult.Recovered -> {
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.adaptiveBitrateBps = result.bitrateBps
-                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight).label
+                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight)?.label.orEmpty()
                     encoder.setTargetBitrateBps(ui.adaptiveBitrateBps)
                     ui.errorText = "${result.message}；已恢复上一视频配置"
                 }
@@ -477,8 +478,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                     3 -> {
                         val w = camOut[0]
                         val h = camOut[1]
-                        if (w > 0 && h > 0) {
-                            val res = StreamResolution.fromHeight(h)
+                        val res = StreamResolution.fromHeight(h)
+                        if (res != null && w == res.width) {
                             if (beginLocalEncoderReconfiguration(res.height)) {
                                 ui.resolutionLabel = res.label
                                 val bitrate = PicooNative.bitrateInitialForHeight(res.height)
@@ -488,6 +489,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                                 streamConfigDirty.set(true)
                                 encoder.requestKeyFrame()
                             }
+                        } else {
+                            ui.errorText = "电脑请求的视频尺寸不受支持"
                         }
                     }
                     4 -> {
@@ -503,20 +506,6 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                             streamConfigDirty.set(true)
                         }
                     }
-                }
-            }
-            val receiverMaxHeight = senderSnapshot.receiverMaxHeight
-            if (!encoderReconfiguration.isPending &&
-                receiverMaxHeight in 1 until encoder.profile.resolution.height
-            ) {
-                val target = StreamResolution.fromHeight(receiverMaxHeight)
-                val targetBitrate = PicooNative.bitrateInitialForHeight(target.height)
-                if (beginLocalEncoderReconfiguration(target.height)) {
-                    ui.resolutionLabel = target.label
-                    encoder.setTargetBitrateBps(targetBitrate)
-                    encoder.setResolution(target.width, target.height)
-                    streamConfigDirty.set(true)
-                    encoder.requestKeyFrame()
                 }
             }
             if (!encoderReconfiguration.isPending) {

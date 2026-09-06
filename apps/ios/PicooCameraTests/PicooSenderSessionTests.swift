@@ -115,15 +115,15 @@ struct PicooSenderSessionTests {
 
     @Test("iOS encoder policy keeps negotiated resolution and bitrate in supported bounds")
     func encoderPolicyBounds() {
-        #expect(VideoResolution.supported(forRequestedHeight: 480) == .p480)
+        for height: UInt32 in [0, 480, 719, 721, 1079, 1081, 2160, UInt32.max] {
+            #expect(VideoResolution.supported(forRequestedHeight: height) == nil)
+            #expect(PicooSenderSession.initialBitrate(forHeight: height) == 0)
+        }
         #expect(VideoResolution.supported(forRequestedHeight: 720) == .p720)
         #expect(VideoResolution.supported(forRequestedHeight: 1080) == .p1080)
-        #expect(VideoResolution.p1080.clamped(toMaximumHeight: 720) == .p720)
-        #expect(VideoResolution.p1080.clamped(toMaximumHeight: 480) == .p480)
-        #expect(VideoResolution.p720.clamped(toMaximumHeight: 0) == .p720)
         #expect(PicooSenderSession.clampBitrate(800_000, forHeight: 720) == 1_500_000)
-        #expect(PicooSenderSession.clampBitrate(400_000, forHeight: 480) == 900_000)
-        #expect(PicooSenderSession.clampBitrate(3_000_000, forHeight: 480) == 2_500_000)
+        #expect(PicooSenderSession.clampBitrate(400_000, forHeight: 480) == 0)
+        #expect(PicooSenderSession.clampBitrate(3_000_000, forHeight: 480) == 0)
         #expect(PicooSenderSession.clampBitrate(8_000_000, forHeight: 720) == 5_000_000)
         #expect(PicooSenderSession.clampBitrate(2_000_000, forHeight: 1080) == 3_000_000)
         #expect(PicooSenderSession.clampBitrate(12_000_000, forHeight: 1080) == 10_000_000)

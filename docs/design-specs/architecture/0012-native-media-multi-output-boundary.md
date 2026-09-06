@@ -35,3 +35,5 @@ Windows 的共享句柄和 CPU 输出 ring 是不同的交接后端；macOS 两�
 首个边界调整直接移动仓库已使用且有测试的 AVC helper，不新增解析算法或第三方依赖，保留现有行为测试；其运行依赖只有 Rust std，继承 workspace edition/license，四平台均可编译，无新增二进制依赖体积。现有 packet 同时依赖协议与 FEC，Decoder 为了位流转换依赖它属于错误边界，因此拆出。
 
 完整 HEVC/配置记录解析实施前必须独立核对成熟包与平台 SDK 的当前 API、维护、许可证、MSRV、平台和体积；本次未作选型，也不以已有 AVC helper 作为自研 HEVC 的理由。GPU/codec/mux 使用方案列出的 D3D11/MF、Metal/VideoToolbox/AVFoundation/CMIO 候选，接入前按锁定 SDK 验证。
+
+源配置入口只接受精确的正式尺寸组合（1280×720 / 1920×1080），无 480p 或任意高度归档。用户请求不按 Receiver 最大高度静默替换；不能满足的组合必须明确拒绝。码率策略查询对未知高度返回错误，C/JNI 数值接口以 0 表示不支持，不将其当作可用目标码率（REQ-PICOO-MEDIA-028）。

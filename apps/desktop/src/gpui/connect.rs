@@ -28,7 +28,6 @@ const CONNECT_AUXILIARY_WIDTH: Rems = rems(24.);
 #[derive(Clone, Action, PartialEq, Eq, Deserialize)]
 #[action(namespace = picoo_live_toolbar, no_json)]
 enum LiveToolbarAction {
-    Resolution480,
     Resolution720,
     Resolution1080,
 }
@@ -564,11 +563,6 @@ impl PicooDesktopApp {
             )
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 menu.menu_with_check(
-                    "480p",
-                    current_resolution_height == Some(480),
-                    Box::new(LiveToolbarAction::Resolution480),
-                )
-                .menu_with_check(
                     "720p",
                     current_resolution_height == Some(720),
                     Box::new(LiveToolbarAction::Resolution720),
@@ -591,7 +585,6 @@ impl PicooDesktopApp {
             .overflow_hidden()
             .on_action(cx.listener(|this, action: &LiveToolbarAction, _, cx| {
                 let (width, height) = match action {
-                    LiveToolbarAction::Resolution480 => (854, 480),
                     LiveToolbarAction::Resolution720 => (1280, 720),
                     LiveToolbarAction::Resolution1080 => (1920, 1080),
                 };

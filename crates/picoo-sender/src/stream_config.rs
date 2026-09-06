@@ -23,7 +23,7 @@ impl Default for StreamConfigParams {
             width: 1280,
             height: 720,
             fps: 30,
-            bitrate_bps: BitrateLadder::for_height(720).initial_bps,
+            bitrate_bps: BitrateLadder::for_height(720).unwrap().initial_bps,
             stream_epoch: 1,
             mirrored: false,
             rotation: 0,

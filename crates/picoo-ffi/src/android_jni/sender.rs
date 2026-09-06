@@ -609,8 +609,11 @@ macro_rules! sender_set_u32 {
                 let Ok(mut session) = inner.session.lock() else {
                     return -1;
                 };
-                session.$method(value as u32);
-                0
+                if session.$method(value as u32) {
+                    0
+                } else {
+                    -1
+                }
             })
             .unwrap_or(-1)
         }
@@ -627,7 +630,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_bitrateInitialForHe
     _this: JObject<'_>,
     height: jint,
 ) -> jint {
-    BitrateLadder::for_height(height as u32).initial_bps as jint
+    BitrateLadder::for_height(height as u32).map_or(0, |bounds| bounds.initial_bps as jint)
 }
 
 #[no_mangle]
@@ -637,7 +640,9 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_bitrateClampForHeig
     bitrate_bps: jint,
     height: jint,
 ) -> jint {
-    let ladder = BitrateLadder::for_height(height as u32);
+    let Some(ladder) = BitrateLadder::for_height(height as u32) else {
+        return 0;
+    };
     (bitrate_bps as u32).clamp(ladder.min_bps, ladder.max_bps) as jint
 }
 

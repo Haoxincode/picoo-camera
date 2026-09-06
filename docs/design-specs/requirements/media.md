@@ -33,3 +33,5 @@
 | REQ-PICOO-MEDIA-026 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、009、024 | Android 使用显式硬件 MediaCodec 名称与完整尺寸/帧率/profile 准入；AVC 请求 High、HEVC 请求 Main；实际格式通过校验后放行 AU；iOS AVC 请求 High 且检查硬件属性、不回退 Baseline | Xiaomi 15 通过生产配置工厂执行八种 Surface 编码组合；Apple 编译及硬件属性验证；真实 no-B-frame/长时质量仍按 NEXT 独立验收 |
 
 | REQ-PICOO-MEDIA-027 | verified | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、025 | 网络拥塞与恢复只在当前已提交配置的码率边界内调整，不创建分辨率事务或推进 epoch；源配置变更由显式配置事务完成 | 长时间拥塞/恢复保持尺寸与 epoch、无自动 Encoder directive；显式配置事务与失败恢复回归；Android 热策略及 Xiaomi 15 StreamingScreen 6 项 UI 测试通过 |
+
+| REQ-PICOO-MEDIA-028 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-004、005 | 源高度及码率策略仅接受精确 720/1080；拒绝 480 与任意高度，不静默归档或按 Receiver 最大高度替换请求 | Core 事务/码率/FFI 非法参数回归与手机入口验证 |

@@ -18,7 +18,7 @@ fn receiver_stats_adjusts_bitrate() {
     session.apply_receiver_stats_for_test(stats);
     session.pump().expect("pump");
     assert_eq!(session.last_bitrate_action(), BitrateAction::Decrease);
-    assert!(session.current_bitrate_bps() < BitrateLadder::for_height(1080).initial_bps);
+    assert!(session.current_bitrate_bps() < BitrateLadder::for_height(1080).unwrap().initial_bps);
 }
 
 #[test]

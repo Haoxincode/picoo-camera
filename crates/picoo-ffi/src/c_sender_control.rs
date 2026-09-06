@@ -270,7 +270,7 @@ pub extern "C" fn picoo_sender_take_camera_command(
     cmd.command
 }
 
-/// Set preferred capture height for ABR decisions (480, 720, or 1080).
+/// Set exact preferred capture height (720 or 1080); return -1 for unsupported values.
 #[no_mangle]
 pub extern "C" fn picoo_sender_set_preferred_height(
     handle: *mut std::ffi::c_void,
@@ -280,8 +280,11 @@ pub extern "C" fn picoo_sender_set_preferred_height(
         return -1;
     }
     let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner.session.lock_or_recover().set_preferred_height(height);
-    0
+    if inner.session.lock_or_recover().set_preferred_height(height) {
+        0
+    } else {
+        -1
+    }
 }
 
 /// Allocate the next stream epoch before a native encoder discontinuity.

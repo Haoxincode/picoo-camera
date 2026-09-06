@@ -54,8 +54,7 @@ extension SenderAppModel {
     func toggleResolution() async {
         let target: VideoResolution = switch camera.resolution {
         case .p1080: .p720
-        case .p720: .p480
-        case .p480: .p1080
+        case .p720: .p1080
         }
         await applyResolution(target)
     }

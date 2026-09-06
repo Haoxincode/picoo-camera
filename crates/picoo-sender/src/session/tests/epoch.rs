@@ -248,20 +248,23 @@ fn invalid_local_target_does_not_consume_transaction_or_epoch_identity() {
     let last_epoch = session.last_allocated_stream_epoch;
     let next_transaction = session.next_encoder_directive_id;
 
-    assert_eq!(session.begin_stream_reconfiguration(0), 0);
+    for height in [0, 1, 480, 719, 721, 1079, 1081, 2160, u32::MAX] {
+        assert_eq!(session.begin_stream_reconfiguration(height), 0);
+        assert!(!session.set_preferred_height(height));
+    }
     assert_eq!(session.last_allocated_stream_epoch, last_epoch);
     assert_eq!(session.next_encoder_directive_id, next_transaction);
     assert!(session.pending_encoder_directive().is_none());
 }
 
 #[test]
-fn receiver_capability_caps_preferred_height_in_rust() {
+fn receiver_capability_does_not_replace_explicit_source_preference() {
     let mut session = SenderSession::new(MemoryTransport::new());
     let capabilities = decoder_capabilities(&[(1280, 720)]);
     assert!(session.apply_capabilities_for_test(capabilities));
     session.set_preferred_height(1080);
     assert_eq!(session.receiver_max_height(), 720);
-    assert_eq!(session.bitrate.preferred_height(), 720);
+    assert_eq!(session.bitrate.preferred_height(), 1080);
 
     let expanded = decoder_capabilities(&[(1920, 1080)]);
     assert!(session.apply_capabilities_for_test(expanded));

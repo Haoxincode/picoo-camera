@@ -7,9 +7,9 @@ import org.junit.Test
 
 class ResolutionSheetOptionsTest {
     @Test
-    fun coversThreeTiersInPrototypeOrder() {
+    fun coversSupportedSourceSizes() {
         assertEquals(
-            listOf(StreamResolution.P1080, StreamResolution.P720, StreamResolution.P480),
+            listOf(StreamResolution.P1080, StreamResolution.P720),
             ResolutionSheetOptions.all.map { it.resolution },
         )
     }
@@ -19,6 +19,5 @@ class ResolutionSheetOptionsTest {
         val titles = ResolutionSheetOptions.all.map { it.title }
         assertTrue(titles[0].startsWith("1080p30"))
         assertTrue(titles[1].startsWith("720p30"))
-        assertTrue(titles[2].startsWith("480p30"))
     }
 }

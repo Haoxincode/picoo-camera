@@ -173,7 +173,7 @@ internal fun SenderTabContent(
                 sessionModel.setAutoConnectEnabled(!autoConnectEnabled)
             },
             onSelectDefaultResolution = { label ->
-                sessionModel.setPreferredResolution(StreamResolution.fromLabel(label))
+                StreamResolution.fromLabel(label)?.let(sessionModel::setPreferredResolution)
             },
         )
         SenderTab.Pairing -> PairingScreen(
@@ -271,6 +271,7 @@ internal fun SenderTabContent(
             },
             onToggleResolution = {
                 val current = StreamResolution.fromLabel(resolutionLabel)
+                    ?: return@StreamingScreen
                 val next = StreamResolution.next(current)
                 val maxH = PicooNative.readSenderSnapshot(senderHandle).receiverMaxHeight
                 if (maxH in 1 until next.height) {

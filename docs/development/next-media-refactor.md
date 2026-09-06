@@ -88,3 +88,13 @@ Android ViewModel 保持热状态与提示副作用所有权，plain StreamingSc
 验证：Linux 容器 rate-control 7 passed、Sender 68 passed、Receiver 106 passed / 2 ignored；补充热状态重复报告回归后本机 rate-control 8 passed。显式 1080→720 的真实 OpenH264 测试码流仍可跨 QUIC/配置事务解码到 FrameStore，但 1000 个拥塞窗口和 1000 个恢复窗口均不能自行改变源尺寸或 epoch。相关四个 crate all-targets clippy -D warnings 通过，Android unit test / debug / androidTest（含当前 JNI）构建通过。
 
 该批最终验证：Android 再次完整构建通过（含删除无用协调器方法），cargo fmt、四个 crate clippy 和文档链接检查通过。Xiaomi 15 StreamingScreenSemanticsTest 六项全部通过，包含过热提示下显式分辨率按钮仍可操作。HyperOS 阻止测试 Activity 后台启动并要求 Picoo 打开自身测试包；通过 ADB 前台启动和系统“本次允许”完成测试，未更改全局后台启动策略。总运行 648.455 秒包含系统对话框等待，不作为 UI 性能证据。
+
+REQ-PICOO-MEDIA-028：直接删除 480p 源入口、码率档与 normalize_height，Rust 码率查询返回 Option；非法 source transaction/preference 不推进事务或 epoch。C/JNI 码率查询返回 0、preference 返回 -1，不跨 FFI panic。Android/iOS 的高度解析只做精确匹配，远端宽高必须一起吻合；两端删除 Receiver 最大高度触发的静默重配，桌面菜单删除 480p。沿用已有 enum/Option、JNI/C ABI、GPUI PopupMenu 和原生 UI，不新增包或自制组件。完整 codec/fps/format offer 准入及 60fps 菜单仍未完成，不把本条当作 NEXT-004/005 完整验收。
+
+Core 回归 rate-control 9、Sender 68、FFI 10 通过；Android unit test 与完整 APK/JNI 构建通过，Xiaomi 15 SourceHeightContractTest 1 项通过；iOS 当前 XCFramework/未签名模拟器 App 构建与 19 项 Swift/C ABI 测试通过。
+
+ba6c8a8 的 macOS CI 34019052133 失败于旧专项测试仍期待 ABR 自动降档。已将该测试和 xtask 命令替换为显式 720→1080 配置事务，两个 1000 拥塞窗口不能自行切换。使用新增 M4 VideoToolbox 1080p AVC High 合成 IDR fixture，本机真实 VideoToolbox + QUIC + FrameStore 回归 1 passed（24.75 秒）。这是解码事务证据，不替代真实相机、GPU 输出或 Windows 验收。此前 f60f977 的五平台 CI 34017881353 已全部成功。
+
+最终 Linux 容器回归 rate-control 9、Sender 68、Receiver 106 passed / 2 ignored。旧 camera-epoch 测试同样移除 480p 输入，使用 720p 保留三秒恢复阈值。相关六个 crate all-targets clippy 与文档链接检查通过；macOS Receiver/未签名 Camera Extension build 和 package 成功。桌面只删除一个 PopupMenu 选项及对应 Action，复用原有选中状态、键盘和焦点契约；不将编译作为完整桌面交互或已签名虚拟摄像头验收。
+
+按正常 GUI 语义退出旧测试实例后，以 open -n 启动当前 Mac 测试包；进程已出现，但检查时尚无可见窗口或 UDP 4433 监听，未记录为发现/配对/桌面交互通过。继续以实际运行事实追踪启动条件。

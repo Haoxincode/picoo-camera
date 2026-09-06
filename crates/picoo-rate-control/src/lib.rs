@@ -2,11 +2,6 @@
 
 use picoo_metrics::ReceiverStats;
 
-/// 480p ladder (weak-network floor).
-pub const LADDER_480_MIN_BPS: u32 = 900_000;
-pub const LADDER_480_MAX_BPS: u32 = 2_500_000;
-pub const LADDER_480_INITIAL_BPS: u32 = 1_800_000;
-
 /// 720p ladder (PRD FR-ENC-003 style bounds).
 pub const LADDER_720_MIN_BPS: u32 = 1_500_000;
 pub const LADDER_720_MAX_BPS: u32 = 5_000_000;
@@ -17,15 +12,9 @@ pub const LADDER_1080_MIN_BPS: u32 = 3_000_000;
 pub const LADDER_1080_MAX_BPS: u32 = 10_000_000;
 pub const LADDER_1080_INITIAL_BPS: u32 = 6_000_000;
 
-/// Snap arbitrary encode height onto the V1 ladder (1080 / 720 / 480).
-pub fn normalize_height(height: u32) -> u32 {
-    if height >= 1080 {
-        1080
-    } else if height >= 720 {
-        720
-    } else {
-        480
-    }
+/// Exact source-height boundary — REQ-PICOO-MEDIA-028.
+pub fn is_supported_height(height: u32) -> bool {
+    matches!(height, 720 | 1080)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,8 +25,8 @@ pub struct BitrateLadder {
 }
 
 impl BitrateLadder {
-    pub fn for_height(height: u32) -> Self {
-        match normalize_height(height) {
+    pub fn for_height(height: u32) -> Option<Self> {
+        Some(match height {
             1080 => Self {
                 min_bps: LADDER_1080_MIN_BPS,
                 max_bps: LADDER_1080_MAX_BPS,
@@ -48,12 +37,8 @@ impl BitrateLadder {
                 max_bps: LADDER_720_MAX_BPS,
                 initial_bps: LADDER_720_INITIAL_BPS,
             },
-            _ => Self {
-                min_bps: LADDER_480_MIN_BPS,
-                max_bps: LADDER_480_MAX_BPS,
-                initial_bps: LADDER_480_INITIAL_BPS,
-            },
-        }
+            _ => return None,
+        })
     }
 }
 
@@ -69,7 +54,7 @@ pub struct BitrateController {
     last_sender_quic_sent_packets: u64,
     /// Thermal policy can hold bitrate growth, never change the source format.
     thermal_hold: bool,
-    /// Currently encoded height (480 / 720 / 1080).
+    /// Currently encoded height (720 / 1080).
     active_height: u32,
     /// User/capability preference; feedback never changes the active source height.
     preferred_height: u32,
@@ -92,13 +77,13 @@ impl BitrateController {
         }
     }
 
-    pub fn for_height(height: u32) -> Self {
-        let h = normalize_height(height);
-        let ladder = BitrateLadder::for_height(h);
+    pub fn for_height(height: u32) -> Option<Self> {
+        let ladder = BitrateLadder::for_height(height)?;
+        let h = height;
         let mut ctrl = Self::new(ladder.initial_bps, ladder.min_bps, ladder.max_bps);
         ctrl.active_height = h;
         ctrl.preferred_height = h;
-        ctrl
+        Some(ctrl)
     }
 
     pub fn current_bitrate_bps(&self) -> u32 {
@@ -122,12 +107,16 @@ impl BitrateController {
     }
 
     /// Sync preferred height from StreamConfig / user Resolution toggle.
-    pub fn set_preferred_height(&mut self, height: u32) {
-        let h = normalize_height(height);
+    pub fn set_preferred_height(&mut self, height: u32) -> bool {
+        let Some(ladder) = BitrateLadder::for_height(height) else {
+            return false;
+        };
+        let h = height;
         self.preferred_height = h;
         if self.active_height == h {
-            self.apply_ladder(BitrateLadder::for_height(h), /*reset_current*/ false);
+            self.apply_ladder(ladder, /*reset_current*/ false);
         }
+        true
     }
 
     /// Hold bitrate growth while thermally constrained; source format is unchanged.
@@ -143,14 +132,17 @@ impl BitrateController {
     }
 
     /// Called only when an explicit native configuration transaction commits.
-    pub fn sync_encode_height(&mut self, height: u32) {
-        let height = normalize_height(height);
+    pub fn sync_encode_height(&mut self, height: u32) -> bool {
+        let Some(ladder) = BitrateLadder::for_height(height) else {
+            return false;
+        };
         if height != self.active_height {
             self.active_height = height;
-            self.apply_ladder(BitrateLadder::for_height(height), true);
+            self.apply_ladder(ladder, true);
             self.stable_seconds = 0;
             self.stale_frame_ticks = 0;
         }
+        true
     }
 
     fn apply_ladder(&mut self, ladder: BitrateLadder, reset_current: bool) {
@@ -247,6 +239,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unsupported_source_heights_are_rejected_without_mutation() {
+        let mut controller = BitrateController::for_height(1080).unwrap();
+        for height in [0, 1, 480, 719, 721, 1079, 1081, 2160, u32::MAX] {
+            assert!(BitrateLadder::for_height(height).is_none());
+            assert!(BitrateController::for_height(height).is_none());
+            assert!(!controller.set_preferred_height(height));
+            assert!(!controller.sync_encode_height(height));
+            assert_eq!(controller.active_height(), 1080);
+            assert_eq!(controller.preferred_height(), 1080);
+            assert_eq!(controller.current_bitrate_bps(), LADDER_1080_INITIAL_BPS);
+        }
+    }
+
+    #[test]
     fn decreases_on_packet_loss() {
         let mut ctrl = BitrateController::new(6_000_000, 3_000_000, 10_000_000);
         let action = ctrl.update(&ReceiverStats {
@@ -270,7 +276,7 @@ mod tests {
 
     #[test]
     fn ignores_one_frame_age_spike_but_decreases_when_stale_is_sustained() {
-        let mut ctrl = BitrateController::for_height(720);
+        let mut ctrl = BitrateController::for_height(720).unwrap();
         let stale = ReceiverStats {
             frame_age_ms: 250.0,
             ..Default::default()
@@ -287,7 +293,7 @@ mod tests {
 
     #[test]
     fn recovers_bitrate_after_five_clean_media_windows_regardless_of_occupancy() {
-        let mut ctrl = BitrateController::for_height(1080);
+        let mut ctrl = BitrateController::for_height(1080).unwrap();
         assert_eq!(
             ctrl.update(&ReceiverStats {
                 packet_loss: 0.05,
@@ -323,7 +329,7 @@ mod tests {
     #[test]
     fn sustained_congestion_and_recovery_keep_committed_source_format() {
         for height in [720, 1080] {
-            let mut ctrl = BitrateController::for_height(height);
+            let mut ctrl = BitrateController::for_height(height).unwrap();
             let bad = ReceiverStats {
                 packet_loss: 0.2,
                 frame_age_ms: 500.0,
@@ -345,7 +351,7 @@ mod tests {
 
     #[test]
     fn thermal_hold_blocks_growth_but_keeps_congestion_response() {
-        let mut ctrl = BitrateController::for_height(1080);
+        let mut ctrl = BitrateController::for_height(1080).unwrap();
         ctrl.set_thermal_hold(true);
         let initial = ctrl.current_bitrate_bps();
         for _ in 0..30 {
@@ -370,7 +376,7 @@ mod tests {
 
     #[test]
     fn repeated_healthy_thermal_reports_preserve_bitrate_recovery() {
-        let mut ctrl = BitrateController::for_height(1080);
+        let mut ctrl = BitrateController::for_height(1080).unwrap();
         let initial = ctrl.current_bitrate_bps();
         for _ in 0..5 {
             ctrl.set_thermal_hold(false);
@@ -381,7 +387,7 @@ mod tests {
 
     #[test]
     fn explicit_format_commit_replaces_only_its_bitrate_bounds() {
-        let mut ctrl = BitrateController::for_height(1080);
+        let mut ctrl = BitrateController::for_height(1080).unwrap();
         ctrl.sync_encode_height(720);
         assert_eq!(ctrl.active_height(), 720);
         assert_eq!(ctrl.current_bitrate_bps(), LADDER_720_INITIAL_BPS);

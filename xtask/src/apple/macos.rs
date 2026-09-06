@@ -209,7 +209,7 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     .run()?;
     cmd!(
         sh,
-        "cargo test -p picoo-receiver --lib macos_videotoolbox_abr_epoch_resolution_recovery"
+        "cargo test -p picoo-receiver --lib macos_videotoolbox_explicit_source_configuration"
     )
     .run()?;
 

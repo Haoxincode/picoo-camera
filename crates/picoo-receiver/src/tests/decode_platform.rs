@@ -254,20 +254,20 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn macos_videotoolbox_abr_epoch_resolution_recovery() {
-    // REQ-PICOO-MEDIA-003/010/012: ABR epoch changes flow through QUIC and
+fn macos_videotoolbox_explicit_source_configuration() {
+    // REQ-PICOO-MEDIA-027/028: explicit epoch changes flow through QUIC and
     // rebuild VideoToolbox with the dimensions advertised by StreamConfig.
     use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::nv12_byte_size;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;
-    use picoo_testkit::{H264_1280X720_RED_IDR, H264_854X480_RED_IDR};
+    use picoo_testkit::{H264_1280X720_RED_IDR, H264_1920X1080_RED_IDR};
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
-        device_id: "macos-abr-phone".into(),
-        device_name: "macOS ABR".into(),
+        device_id: "macos-source-phone".into(),
+        device_name: "macOS Source".into(),
         public_key: vec![4, 8, 0],
         certificate_fingerprint: "fp".into(),
         paired_at_ms: 0,
@@ -309,50 +309,43 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
     assert_eq!(sender.status(), picoo_session::SenderStatus::Streaming);
 
-    let inject_congestion = |sender: &mut SenderSession<QuicSenderTransport>| {
-        for _ in 0..40 {
-            let stats = ReceiverStatsMsg {
+    let check_congestion = |sender: &mut SenderSession<QuicSenderTransport>| {
+        let epoch = sender.current_stream_epoch();
+        let height = sender.bitrate_active_height();
+        for _ in 0..1000 {
+            sender.apply_receiver_stats_for_test(ReceiverStatsMsg {
                 packet_loss: 0.05,
                 frame_age_ms: 250.0,
                 ..Default::default()
-            };
-            sender.apply_receiver_stats_for_test(stats);
-            if let Some(directive) = sender.pending_encoder_directive() {
-                return directive;
-            }
+            });
+            assert!(sender.pending_encoder_directive().is_none());
+            assert_eq!(sender.current_stream_epoch(), epoch);
+            assert_eq!(sender.bitrate_active_height(), height);
         }
-        panic!("ABR did not request a resolution downshift");
     };
 
-    let directive_720 = inject_congestion(&mut sender);
+    check_congestion(&mut sender);
+    let epoch_720 = sender.begin_stream_reconfiguration(720);
+    assert_eq!(epoch_720, 2);
+    let transaction_720 = sender.encoder_transaction_id_for_epoch(epoch_720);
     let (sps_720, pps_720) = extract_sps_pps(H264_1280X720_RED_IDR).expect("720p parameter sets");
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
         fps: 30,
         bitrate_bps: 3_000_000,
-        stream_epoch: directive_720.stream_epoch,
+        stream_epoch: epoch_720,
         sps: sps_720,
         pps: pps_720,
         ..Default::default()
     });
-    assert!(sender.report_encoder_started(
-        directive_720.id,
-        2,
-        directive_720.stream_epoch,
-        directive_720.target_height,
-    ));
+    assert!(sender.report_encoder_started(transaction_720, 2, epoch_720, 720,));
     sender
         .ingest_encoder_access_unit(super::native_au(
             H264_1280X720_RED_IDR,
             true,
             2,
-            (
-                directive_720.id,
-                2,
-                directive_720.stream_epoch,
-                directive_720.target_height,
-            ),
+            (transaction_720, 2, epoch_720, 720),
         ))
         .unwrap_or_else(|error| {
             panic!(
@@ -405,39 +398,38 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     assert_eq!(frame_720.pixel_data.len(), nv12_byte_size(1280, 720));
     let sequence_720 = frame_720.sequence;
 
-    let directive_480 = inject_congestion(&mut sender);
-    let (sps_480, pps_480) = extract_sps_pps(H264_854X480_RED_IDR).expect("480p parameter sets");
+    check_congestion(&mut sender);
+    let epoch_1080 = sender.begin_stream_reconfiguration(1080);
+    assert_eq!(epoch_1080, 3);
+    let transaction_1080 = sender.encoder_transaction_id_for_epoch(epoch_1080);
+    let (sps_1080, pps_1080) =
+        extract_sps_pps(H264_1920X1080_RED_IDR).expect("1080p parameter sets");
     sender.set_stream_config(StreamConfigParams {
-        width: 854,
-        height: 480,
+        width: 1920,
+        height: 1080,
         fps: 30,
-        bitrate_bps: 1_800_000,
-        stream_epoch: directive_480.stream_epoch,
-        sps: sps_480,
-        pps: pps_480,
+        bitrate_bps: 6_000_000,
+        stream_epoch: epoch_1080,
+        sps: sps_1080,
+        pps: pps_1080,
         ..Default::default()
     });
-    assert!(sender.report_encoder_started(
-        directive_480.id,
-        3,
-        directive_480.stream_epoch,
-        directive_480.target_height,
-    ));
+    assert!(sender.report_encoder_started(transaction_1080, 3, epoch_1080, 1080,));
     sender
-        .ingest_encoder_access_unit(super::native_au(H264_854X480_RED_IDR, true, 3, (directive_480.id, 3, directive_480.stream_epoch, directive_480.target_height)))
+        .ingest_encoder_access_unit(super::native_au(H264_1920X1080_RED_IDR, true, 3, (transaction_1080, 3, epoch_1080, 1080)))
         .unwrap_or_else(|error| {
             panic!(
-                "commit and queue 480p IDR: {error:?} (sender {:?}, receiver {:?}, session_error {:?})",
+                "commit and queue 1080p IDR: {error:?} (sender {:?}, receiver {:?}, session_error {:?})",
                 sender.status(),
                 receiver.status(),
                 sender.last_session_error(),
             )
         });
-    sender.flush_pending().expect("send 480p IDR");
-    assert_eq!(sender.bitrate_active_height(), 480);
+    sender.flush_pending().expect("send 1080p IDR");
+    assert_eq!(sender.bitrate_active_height(), 1080);
     for _ in 0..80 {
-        receiver.pump().expect("receiver 480p config");
-        sender.pump().expect("sender 480p config");
+        receiver.pump().expect("receiver 1080p config");
+        sender.pump().expect("sender 1080p config");
         if receiver
             .stream_config()
             .is_some_and(|config| config.stream_epoch == 3)
@@ -448,19 +440,19 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     }
     let decode_deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < decode_deadline {
-        receiver.pump().expect("receiver 480p frame");
+        receiver.pump().expect("receiver 1080p frame");
         sender.pump().ok();
         if receiver.latest_frame().is_some_and(|frame| {
-            frame.sequence > sequence_720 && (frame.width, frame.height) == (854, 480)
+            frame.sequence > sequence_720 && (frame.width, frame.height) == (1920, 1080)
         }) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    let frame_480 = receiver.latest_frame().expect("480p frame");
-    assert!(frame_480.sequence > sequence_720);
-    assert_eq!((frame_480.width, frame_480.height), (854, 480));
-    assert_eq!(frame_480.pixel_data.len(), nv12_byte_size(854, 480));
+    let frame_1080 = receiver.latest_frame().expect("1080p frame");
+    assert!(frame_1080.sequence > sequence_720);
+    assert_eq!((frame_1080.width, frame_1080.height), (1920, 1080));
+    assert_eq!(frame_1080.pixel_data.len(), nv12_byte_size(1920, 1080));
 }
 
 #[cfg(not(windows))]

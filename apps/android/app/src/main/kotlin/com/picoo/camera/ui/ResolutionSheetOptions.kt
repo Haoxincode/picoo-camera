@@ -21,10 +21,5 @@ object ResolutionSheetOptions {
             "720p30 (Standard HD)",
             "推荐带宽 ≥ 3.4 Mbps · 功耗平衡",
         ),
-        ResolutionSheetOption(
-            StreamResolution.P480,
-            "480p30 (Low Bandwidth)",
-            "推荐带宽 ≥ 1.8 Mbps · 弱网保底",
-        ),
     )
 }

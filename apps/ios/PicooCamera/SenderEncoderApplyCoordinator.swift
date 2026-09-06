@@ -70,7 +70,8 @@ final class SenderEncoderApplyCoordinator {
         guard let pending,
               accessUnit.streamEpoch == pending.streamEpoch,
               accessUnit.encoderGeneration == pending.encoderGeneration,
-              accessUnit.height == pending.targetHeight
+              accessUnit.height == pending.targetHeight,
+              let resolution = VideoResolution.supported(forRequestedHeight: accessUnit.height)
         else {
             return
         }
@@ -79,7 +80,7 @@ final class SenderEncoderApplyCoordinator {
             recoveryMessage: pending.recoveryMessage
         )
         committed = CommittedEncoderState(
-            resolution: VideoResolution.supported(forRequestedHeight: accessUnit.height),
+            resolution: resolution,
             position: host.camera.position,
             streamEpoch: accessUnit.streamEpoch,
             bitrateBps: pending.targetBitrateBps

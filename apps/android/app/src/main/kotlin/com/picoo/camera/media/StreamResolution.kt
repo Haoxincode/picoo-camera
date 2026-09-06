@@ -6,22 +6,19 @@ package com.picoo.camera.media
 enum class StreamResolution(val label: String, val width: Int, val height: Int) {
     P1080("1080p", 1920, 1080),
     P720("720p", 1280, 720),
-    P480("480p", 854, 480),
     ;
 
     fun displayPill(): String = "${label.removeSuffix("p").uppercase()}P · 30"
 
     companion object {
-        private val cycle = listOf(P1080, P720, P480)
+        private val cycle = listOf(P1080, P720)
 
-        fun fromLabel(label: String): StreamResolution =
-            entries.firstOrNull { it.label.equals(label, ignoreCase = true) } ?: P720
+        fun fromLabel(label: String): StreamResolution? =
+            entries.firstOrNull { it.label == label }
 
-        fun fromHeight(height: Int): StreamResolution = when {
-            height >= 1080 -> P1080
-            height >= 720 -> P720
-            else -> P480
-        }
+        /** REQ-PICOO-MEDIA-028: unknown native/config values are not another format. */
+        fun fromHeight(height: Int): StreamResolution? =
+            entries.firstOrNull { it.height == height }
 
         /** A user action cycles formats; thermal state never substitutes another format. */
         fun next(current: StreamResolution): StreamResolution {

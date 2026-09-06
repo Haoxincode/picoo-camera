@@ -36,10 +36,13 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     /// User / capability preferred capture height (does not change active encode height).
-    pub fn set_preferred_height(&mut self, height: u32) {
-        self.requested_preferred_height = picoo_rate_control::normalize_height(height);
-        let preferred = self.cap_to_receiver_height(self.requested_preferred_height);
-        self.bitrate.set_preferred_height(preferred);
+    pub fn set_preferred_height(&mut self, height: u32) -> bool {
+        if !self.bitrate.set_preferred_height(height) {
+            self.last_session_error = Some("UNSUPPORTED_SOURCE_HEIGHT".into());
+            return false;
+        }
+        self.requested_preferred_height = height;
+        true
     }
 
     /// Host thermal policy holds bitrate growth without changing source format.
@@ -49,16 +52,6 @@ impl<T: PicooTransport> SenderSession<T> {
 
     pub fn thermal_hold(&self) -> bool {
         self.bitrate.thermal_hold()
-    }
-
-    pub(super) fn cap_to_receiver_height(&self, height: u32) -> u32 {
-        let requested = picoo_rate_control::normalize_height(height);
-        let maximum = self.receiver_max_height();
-        if maximum == 0 {
-            requested
-        } else {
-            requested.min(picoo_rate_control::normalize_height(maximum))
-        }
     }
 
     pub(super) fn clear_receiver_capabilities(&mut self) {
@@ -131,7 +124,7 @@ impl<T: PicooTransport> SenderSession<T> {
         }
         self.receiver_capabilities = Some(capabilities);
         self.bitrate
-            .set_preferred_height(self.cap_to_receiver_height(self.requested_preferred_height));
+            .set_preferred_height(self.requested_preferred_height);
         if self.lifecycle.runtime.stream() == StreamState::Negotiating {
             self.enter_streaming();
         }

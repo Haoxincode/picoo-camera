@@ -29,7 +29,7 @@ impl<T: PicooTransport> SenderSession<T> {
     ) -> bool {
         if encoder_generation == 0
             || height == 0
-            || height != picoo_rate_control::normalize_height(height)
+            || !picoo_rate_control::is_supported_height(height)
         {
             return false;
         }
@@ -71,7 +71,7 @@ impl<T: PicooTransport> SenderSession<T> {
     ) -> bool {
         if encoder_generation == 0
             || height == 0
-            || height != picoo_rate_control::normalize_height(height)
+            || !picoo_rate_control::is_supported_height(height)
             || self.encoder_apply_state.is_applying()
             || self.committed_encoder_generation != 0
             || stream_epoch != self.current_stream_epoch
@@ -123,10 +123,9 @@ impl<T: PicooTransport> SenderSession<T> {
         if self.encoder_apply_state.is_applying() {
             return 0;
         }
-        if target_height == 0 {
+        if !picoo_rate_control::is_supported_height(target_height) {
             return 0;
         }
-        let target_height = picoo_rate_control::normalize_height(target_height);
         let id = self.next_encoder_directive_id;
         let Some(next_id) = id.checked_add(1) else {
             self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
@@ -140,7 +139,9 @@ impl<T: PicooTransport> SenderSession<T> {
             id,
             kind: EncoderDirectiveKind::Local,
             target_height,
-            target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
+            target_bitrate_bps: BitrateLadder::for_height(target_height)
+                .expect("validated source height")
+                .initial_bps,
             stream_epoch: epoch,
         };
         if !self.begin_encoder_transaction(directive) {

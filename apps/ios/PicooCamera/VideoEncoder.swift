@@ -7,13 +7,11 @@ import VideoToolbox
 // REQ-PICOO-MEDIA-011: native 420v capture -> hardware H.264 Access Units.
 
 nonisolated enum VideoResolution: Int, CaseIterable, Hashable, Sendable {
-    case p480 = 480
     case p720 = 720
     case p1080 = 1080
 
     var width: Int32 {
         switch self {
-        case .p480: 854
         case .p720: 1280
         case .p1080: 1920
         }
@@ -21,20 +19,11 @@ nonisolated enum VideoResolution: Int, CaseIterable, Hashable, Sendable {
 
     var height: Int32 { Int32(rawValue) }
 
-    static func supported(forRequestedHeight height: UInt32) -> Self {
-        if height >= 1080 { return .p1080 }
-        if height >= 720 { return .p720 }
-        return .p480
+    // REQ-PICOO-MEDIA-028: exact admission, no implicit source-size substitution.
+    static func supported(forRequestedHeight height: UInt32) -> Self? {
+        Self(rawValue: Int(height))
     }
 
-    func clamped(toMaximumHeight maximumHeight: UInt32) -> Self {
-        guard maximumHeight > 0,
-              UInt32(rawValue) > maximumHeight
-        else {
-            return self
-        }
-        return Self.supported(forRequestedHeight: maximumHeight)
-    }
 }
 
 nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {

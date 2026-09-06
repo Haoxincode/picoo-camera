@@ -171,7 +171,7 @@ object PicooNative {
     /** Pending Rust-owned ABR directive: [id, kind, height, bitrate, epoch]. */
     external fun getEncoderDirective(handle: Long): LongArray?
 
-    /** User preferred height for ABR decisions (480, 720, or 1080). */
+    /** Exact preferred source height (720 or 1080); unsupported values return -1. */
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
     /** Allocate a fresh Rust-owned epoch before camera/encoder discontinuity. */

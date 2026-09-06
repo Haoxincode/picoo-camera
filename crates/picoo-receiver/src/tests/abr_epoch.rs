@@ -37,8 +37,8 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
     use picoo_transport::{Endpoint, QuicSenderTransport};
     use std::time::Instant;
 
-    let (au1, sps1, pps1) = openh264_au(854, 480, 3);
-    let (au2, sps2, pps2) = openh264_au(854, 480, 9);
+    let (au1, sps1, pps1) = openh264_au(1280, 720, 3);
+    let (au2, sps2, pps2) = openh264_au(1280, 720, 9);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -84,10 +84,10 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     sender.set_stream_config(StreamConfigParams {
-        width: 854,
-        height: 480,
+        width: 1280,
+        height: 720,
         fps: 30,
-        bitrate_bps: 500_000,
+        bitrate_bps: 3_000_000,
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
@@ -106,7 +106,7 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.width == 854) {
+        if receiver.latest_frame().is_some_and(|f| f.width == 1280) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
@@ -116,13 +116,13 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
 
     // Camera switch: epoch bump + new IDR.
     let t0 = Instant::now();
-    let next_epoch = sender.begin_stream_reconfiguration(480);
+    let next_epoch = sender.begin_stream_reconfiguration(720);
     assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
-        width: 854,
-        height: 480,
+        width: 1280,
+        height: 720,
         fps: 30,
-        bitrate_bps: 500_000,
+        bitrate_bps: 3_000_000,
         stream_epoch: next_epoch,
         mirrored: false,
         rotation: 0,
@@ -143,13 +143,13 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
     assert!(keyed, "epoch bump must request IDR");
 
     let transaction_id = sender.encoder_transaction_id_for_epoch(next_epoch);
-    assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 480));
+    assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 720));
     sender
         .ingest_encoder_access_unit(super::native_au(
             &au2,
             true,
             2,
-            (transaction_id, 2, next_epoch, 480),
+            (transaction_id, 2, next_epoch, 720),
         ))
         .expect("commit switched camera generation");
     sender.flush_pending().expect("send switched camera IDR");
@@ -159,8 +159,8 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
         sender.pump().ok();
         if receiver.ingress_stats().access_units > before_au
             && receiver.latest_frame().is_some_and(|f| {
-                f.width == 854
-                    && f.pixel_data.len() == nv12_byte_size(854, 480)
+                f.width == 1280
+                    && f.pixel_data.len() == nv12_byte_size(1280, 720)
                     && f.pixel_data.iter().any(|b| *b != 16 && *b != 128)
             })
         {
