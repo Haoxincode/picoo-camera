@@ -62,6 +62,7 @@ impl MacCpuOutput {
                 let mut resources: Option<Resources> = None;
                 let mut prepared_cache = None;
                 let mut published_key = None;
+                let mut served_request = 0;
                 loop {
                     let (generation, request) = {
                         let (lock, ready) = &*worker_shared;
@@ -70,7 +71,15 @@ impl MacCpuOutput {
                             let admitted = match state.pending.as_ref() {
                                 Some(Request::Placeholder(..)) => true,
                                 Some(Request::Frame(_)) => {
-                                    let active = producer.has_cpu_demand();
+                                    let request = producer
+                                        .cpu_request_sequence()
+                                        .filter(|sequence| *sequence != served_request);
+                                    let active = request.is_some();
+                                    if let Some(sequence) = request {
+                                        // One latest request authorizes one preparation attempt.
+                                        // Capture it before GPU work so a later request stays pending.
+                                        served_request = sequence;
+                                    }
                                     if !active {
                                         state.demand_waits = state.demand_waits.saturating_add(1);
                                     }
@@ -473,10 +482,13 @@ mod tests {
         }
         assert_eq!(output.shared.0.lock().unwrap().exports, 1);
         let first_sequence = consumer.latest_frame().unwrap().sequence;
+        output.submit(Arc::clone(&source));
+        wait_until(|| output.shared.0.lock().unwrap().pending.is_none());
+        let waited = output.shared.0.lock().unwrap().demand_waits;
         for _ in 0..8 {
             output.submit(Arc::clone(&source));
         }
-        wait_until(|| output.shared.0.lock().unwrap().pending.is_none());
+        wait_until(|| output.shared.0.lock().unwrap().demand_waits > waited);
         assert_eq!(
             output.shared.0.lock().unwrap().exports,
             1,
@@ -508,12 +520,37 @@ mod tests {
         );
         let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
         // No new source submission: an actual read request wakes retained work.
-        wait_until(|| {
-            consumer
-                .latest_frame()
-                .is_some_and(|frame| frame.sequence > first_sequence)
-        });
+        output.poll_event();
+        consumer.latest_frame();
+        wait_until(|| matches!(output.poll_event(), Some(OutputEvent::Published)));
         assert_eq!(output.shared.0.lock().unwrap().exports, 2);
+        let waited = output.shared.0.lock().unwrap().demand_waits;
+        let identity = source.identity();
+        for frame_id in 20..28 {
+            output.submit(Arc::new(
+                NativeVideoFrame::new(
+                    FrameIdentity {
+                        frame_id,
+                        ..identity
+                    },
+                    source.source_pts_us() + frame_id * 16_667,
+                    source.description(),
+                    source.image().clone(),
+                    source.timeline(),
+                )
+                .unwrap(),
+            ));
+        }
+        wait_until(|| output.shared.0.lock().unwrap().demand_waits > waited);
+        assert_eq!(
+            output.shared.0.lock().unwrap().exports,
+            2,
+            "a live lease without a new read request cannot export more source images"
+        );
+        let second_sequence = consumer.latest_frame().unwrap().sequence;
+        wait_until(|| output.shared.0.lock().unwrap().exports == 3);
+        wait_until(|| matches!(output.poll_event(), Some(OutputEvent::Published)));
+        assert!(consumer.latest_frame().unwrap().sequence > second_sequence);
         output.invalidate();
         assert!(
             consumer.latest_frame().is_none(),

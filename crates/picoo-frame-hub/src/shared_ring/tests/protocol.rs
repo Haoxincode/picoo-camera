@@ -1,6 +1,6 @@
 use super::*;
 
-use crate::shared_ring::layout::{RingMeta, SlotMeta};
+use crate::shared_ring::layout::{meta_at, RingMeta, SlotMeta};
 
 #[test]
 fn producer_consumer_roundtrip_in_two_handles() {
@@ -72,6 +72,7 @@ fn ring_layout_is_stable() {
     assert_eq!(std::mem::offset_of!(SlotMeta, reader_count), 44);
     assert_eq!(std::mem::offset_of!(RingMeta, content_generation), 24);
     assert_eq!(std::mem::offset_of!(RingMeta, cpu_demand_until_ms), 32);
+    assert_eq!(std::mem::offset_of!(RingMeta, cpu_request_sequence), 40);
     assert_eq!(std::mem::offset_of!(SlotMeta, content_generation), 48);
 }
 
@@ -122,7 +123,8 @@ fn miri_raw_layout_views_stay_aligned_and_within_mapping() {
             latest_sequence: AtomicU64::new(0),
             content_generation: AtomicU64::new(1),
             cpu_demand_until_ms: AtomicU64::new(0),
-            _pad: [0; 24],
+            cpu_request_sequence: AtomicU64::new(0),
+            _pad: [0; 16],
         });
         for index in 0..RING_SLOT_COUNT {
             slot_meta_at(mapping.base.as_ptr(), max_frame_bytes, index).write(SlotMeta {
@@ -229,5 +231,28 @@ fn leased_slots_are_never_overwritten() {
     assert_eq!(second.timestamp_us, 2);
     assert_eq!(third.timestamp_us, 3);
     drop((first, second, third));
+    cleanup(&name);
+}
+
+#[test]
+fn cpu_request_sequence_is_explicit_and_never_wraps() {
+    // REQ-PICOO-FRAME-015: opening alone is not a preparation request.
+    let name = test_ring_name();
+    let max = nv12_byte_size(64, 64);
+    let producer = SharedFrameRingProducer::create(&name, max).unwrap();
+    let consumer = SharedFrameRingConsumer::open(&name, max).unwrap();
+    assert_eq!(producer.cpu_request_sequence(), None);
+    assert!(consumer.latest_frame().is_none());
+    assert_eq!(producer.cpu_request_sequence(), Some(1));
+    assert!(consumer.latest_frame().is_none());
+    assert_eq!(producer.cpu_request_sequence(), Some(2));
+    unsafe {
+        (&*meta_at(producer.mapping.as_ptr()))
+            .cpu_request_sequence
+            .store(u64::MAX, Ordering::SeqCst);
+    }
+    consumer.latest_frame();
+    assert_eq!(producer.cpu_request_sequence(), Some(u64::MAX));
+    producer.content_fence().invalidate();
     cleanup(&name);
 }

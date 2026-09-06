@@ -27,7 +27,8 @@ typedef struct PicooRingMeta {
     _Atomic uint64_t latest_sequence;
     _Atomic uint64_t content_generation;
     _Atomic uint64_t cpu_demand_until_ms;
-    uint8_t padding[24];
+    _Atomic uint64_t cpu_request_sequence;
+    uint8_t padding[16];
 } PicooRingMeta;
 
 typedef struct PicooSlotMeta {
@@ -58,6 +59,7 @@ _Static_assert(offsetof(PicooSlotMeta, reader_count) == 44,
 
 _Static_assert(offsetof(PicooRingMeta, content_generation) == 24, "content generation offset drifted");
 _Static_assert(offsetof(PicooRingMeta, cpu_demand_until_ms) == 32, "CPU demand offset drifted");
+_Static_assert(offsetof(PicooRingMeta, cpu_request_sequence) == 40, "CPU request offset drifted");
 _Static_assert(offsetof(PicooSlotMeta, content_generation) == 48, "slot generation offset drifted");
 
 static PicooSlotMeta *picoo_slot(void *base, uint32_t max_frame_bytes,
@@ -143,6 +145,10 @@ static void picoo_request_cpu_frames(PicooRingMeta *ring) {
     uint64_t milliseconds = (uint64_t)now.tv_sec * 1000 + (uint64_t)now.tv_nsec / 1000000;
     if (milliseconds > UINT64_MAX - 250) return;
     atomic_store_explicit(&ring->cpu_demand_until_ms, milliseconds + 250, memory_order_seq_cst);
+    uint64_t sequence = atomic_load_explicit(&ring->cpu_request_sequence, memory_order_seq_cst);
+    while (sequence != UINT64_MAX && !atomic_compare_exchange_weak_explicit(
+        &ring->cpu_request_sequence, &sequence, sequence + 1,
+        memory_order_seq_cst, memory_order_seq_cst)) {}
 }
 
 void picoo_ring_clear_cpu_demand(void *base, size_t mapped_length) {

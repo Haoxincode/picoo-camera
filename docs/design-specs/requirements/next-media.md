@@ -80,3 +80,5 @@
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-MEDIA-030 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、011、016、029 | Mac Decoder 直接交付已完成原生 NV12；FrameBus 持有原始身份、编码尺寸和剩余可见区域；预览 GPU 处理，CPU 输出仅在独立 sink 工作者物化；placeholder 不作为原生源 | 实际 VideoToolbox 颜色/几何拒绝、1088/1080 元数据、Receiver 原生快照、GPU→CPU 像素、占位输出；完整配置 wire、sink demand、SampleClock 与全局预算另验 |
 | REQ-PICOO-GPU-003 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-016 | GPUI surface 的 CVPixelBuffer 与 CVMetalTexture 由 Metal 完成回调持有至读取结束，Scene 释放不能提前让池复用 allocation | M4 实际阻塞 Metal 队列：读取未完成时单槽池拒绝分配，完成后复用；移除修补的负向版本必须失败 |
+
+| REQ-PICOO-FRAME-015 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-032、035 | 每个 CPU ring 的实际读取推进有界请求序号；Owner 每次新准备消费一个最新请求，多次请求合并不积压，租期内无新请求也不连续导出；同源仍去重 | 一次请求后多个新源只物化一次；新请求取最新保留源；C/Rust 请求序号一致与耗尽不回绕；多 sink 不同规格协调另验 |

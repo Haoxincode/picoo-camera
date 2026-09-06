@@ -309,3 +309,12 @@ REQ-PICOO-VCAM-014 将生产系统 sample 图像分配集中到 OutputPixelBuffe
 生产 Swift 池的真实 CMSampleBuffer 回归通过：持有三张后拒绝第四张；只释放局部 CVPixelBuffer 引用不能恢复分配，释放一个系统 sample 后恢复，其他持有样本继续占槽。测试纳入 cargo xtask test macos，并随现有 Swift/C harness 在 Mac CI 执行。这是每布局系统图像池边界，不代表全链路显存总预算、CMIO 实际客户端或已交付样本隐私期限完成。
 
 系统池最终验证：cargo xtask test macos 完整回归通过（FrameHub 53 passed/2 ignored，Swift/C 跨进程合同，Decoder 16，GPU 9，Receiver 103 passed/2 ignored，GPUI Apple 4，Desktop 70）；Receiver release/Camera Extension 构建与 Mac 打包成功，文档链接检查通过。
+
+
+## CPU 准备按消费请求合并
+
+REQ-PICOO-FRAME-015 使用现有 ring 的一个 AtomicU64 记录实际读取序号（头偏移 40，仍是 64 字节、无版本）；C11 与 Rust SeqCst 递增均在耗尽时停止而不回绕。250ms lease 仍只负责活跃性。Mac 工作者在 GPU 准备前消费最新请求，一个请求最多授权一次尝试；新请求可在准备期间独立到达，未处理请求只合并为最新值。源帧仍只有一个 latest 待处理槽，生产者不会把消费者租期当作每张源帧的导出许可。
+
+复用现有跨进程原子、单调时钟和 Condvar 工作者，无额外协议库、计时线程或通用调度器。当前一个 ring 是一个 sink 的聚合消费面；本条不替代多种 RenderSpec 共享物化、30/60 协商 SampleClock 或 Windows 新 GPU Owner 的接入。
+
+请求门禁最终验证：真实 GPU 导出回归证明已消费请求后连续 8 个新源不再导出，下次读取才导出最新工作；同源去重、租期过期、晚到请求和内容失效继续通过。FrameHub 54 passed/2 ignored、生产 Swift/C 序号合同、Decoder 16、GPU 9、Receiver 103 passed/2 ignored、GPUI Apple 4、Desktop 70；Clippy、文档检查与完整 Mac 构建通过。

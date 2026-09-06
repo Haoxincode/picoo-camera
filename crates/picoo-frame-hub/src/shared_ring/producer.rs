@@ -189,6 +189,7 @@ impl SharedFrameRingProducer {
             meta.latest_sequence.store(0, Ordering::Relaxed);
             meta.content_generation.store(1, Ordering::SeqCst);
             meta.cpu_demand_until_ms.store(0, Ordering::SeqCst);
+            meta.cpu_request_sequence.store(0, Ordering::SeqCst);
             for i in 0..RING_SLOT_COUNT {
                 let slot = &mut *slot_meta_at(base, self.max_frame_bytes, i);
                 slot.sequence.store(0, Ordering::Relaxed);
@@ -225,6 +226,11 @@ impl SharedFrameRingProducer {
     }
 
     /// Capture this handle before dispatching work; only atomics are shared.
+    /// Latest aggregate request, only while its host-clock lease is live.
+    pub fn cpu_request_sequence(&self) -> Option<u64> {
+        unsafe { super::demand::sequence(self.mapping.as_ptr()) }
+    }
+
     pub fn has_cpu_demand(&self) -> bool {
         unsafe { super::demand::is_requested(self.mapping.as_ptr()) }
     }

@@ -23,6 +23,16 @@ pub(super) unsafe fn is_requested(base: *const u8) -> bool {
     })
 }
 
+pub(super) unsafe fn sequence(base: *const u8) -> Option<u64> {
+    if !is_requested(base) {
+        return None;
+    }
+    let sequence = (&*const_meta_at(base))
+        .cpu_request_sequence
+        .load(Ordering::SeqCst);
+    (sequence != 0).then_some(sequence)
+}
+
 pub(super) unsafe fn request(base: *const u8) {
     if (&*const_meta_at(base))
         .content_generation
@@ -35,6 +45,12 @@ pub(super) unsafe fn request(base: *const u8) {
         (&*const_meta_at(base))
             .cpu_demand_until_ms
             .store(deadline, Ordering::SeqCst);
+        // Exhaustion permanently stops new requests; never reuse an old ticket.
+        let _ = (&*const_meta_at(base)).cpu_request_sequence.fetch_update(
+            Ordering::SeqCst,
+            Ordering::SeqCst,
+            |sequence| sequence.checked_add(1),
+        );
     }
 }
 

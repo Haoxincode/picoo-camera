@@ -629,6 +629,12 @@ fn assert_swift_content_fence(harness: &Path, max: usize) {
         } > 0,
         "Swift actual read must renew CPU demand"
     );
+    assert!(
+        producer
+            .cpu_request_sequence()
+            .is_some_and(|sequence| sequence > 0),
+        "production C reader must advance the Rust request sequence"
+    );
     assert_process_success(
         Command::new(harness)
             .args(["clear-demand", path.to_str().unwrap()])
