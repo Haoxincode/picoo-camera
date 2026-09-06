@@ -124,11 +124,7 @@ fn incomplete_unknown_or_out_of_bounds_formats_are_rejected() {
 #[test]
 fn offer_count_duplicates_and_access_unit_budgets_are_bounded() {
     let entry = offer(VideoCodec::Avc, 720, 30);
-    for offers in [
-        vec![],
-        vec![entry; 2],
-        vec![entry; MAX_DECODER_OFFERS + 1],
-    ] {
+    for offers in [vec![], vec![entry; 2], vec![entry; MAX_DECODER_OFFERS + 1]] {
         assert!(Capabilities { offers }.validate().is_err());
     }
     let mut caps = Capabilities {
