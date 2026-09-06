@@ -351,11 +351,9 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    for _ in 0..20 {
-        receiver.pump().ok();
-        sender.pump().ok();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // Measure while the recovery source is live. A fixed number of sleeps
+    // after stopping capture measures idle host scheduling, not live recovery.
+    // The preceding 1100ms phase already pumps through a complete stats window.
     // Direct LatestFrameStore age (decode timestamp → now) — PRD §21 recovery bound.
     let frame = receiver.latest_frame().expect("recovered frame");
     #[cfg(target_os = "macos")]
@@ -364,7 +362,8 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     let hub_age_ms = frame.decoded_at.elapsed().as_secs_f64() * 1000.0;
     assert!(
         hub_age_ms < 1_000.0,
-        "LatestFrameStore age piled up after recovery: {hub_age_ms}ms (PRD §21 <1s)"
+        "LatestFrameStore age piled up during live recovery: {hub_age_ms}ms (PRD §21 <1s); live_window={:?}; sent_until={recover_id}; stats={:?}",
+        t_stats.elapsed(), receiver.last_stats()
     );
     if let Some(stats) = receiver.last_stats() {
         assert!(

@@ -609,11 +609,29 @@ mod tests {
             ..Default::default()
         };
         let mut decoder = MfH264Decoder::new().unwrap();
-        let frame = decoder
-            .decode_access_unit(&wire, Some(&config))
-            .unwrap()
-            .frame
-            .unwrap();
+        let submitted = decoder.decode_access_unit(&wire, Some(&config)).unwrap();
+        let frame = if let Some(frame) = submitted.frame {
+            frame
+        } else {
+            // A synchronous MFT can retain its last picture until EOS. Drain
+            // the accepted input; never submit the same AU again to force output.
+            unsafe {
+                use windows::Win32::Media::MediaFoundation::{
+                    MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_END_OF_STREAM,
+                };
+                decoder
+                    .transform
+                    .ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0)
+                    .unwrap();
+                decoder
+                    .transform
+                    .ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)
+                    .unwrap();
+                drain_output(&decoder.transform, decoder.geometry.as_ref().unwrap())
+                    .unwrap()
+                    .expect("EOS drain releases the accepted picture")
+            }
+        };
         assert_eq!(
             (frame.description().width, frame.description().height),
             (64, 64)

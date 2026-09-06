@@ -256,3 +256,10 @@ c89ce6f 的 Windows CI 明确列出 NV12 等所有输出候选为 192×96，而�
 遵循微软 [Lock2DSize](https://learn.microsoft.com/en-us/windows/win32/api/mfobjects/nf-mfobjects-imf2dbuffer2-lock2dsize) 的原生内存边界与只读锁契约；核对现有 windows 0.62.2 API。优先使用 IMF2DBuffer2 的 scanline/pitch/allocation bounds；线性 IMFMediaBuffer 使用输出类型 default stride 或官方 MFGetStrideForBitmapInfoHeader，无自研对齐猜测。RAII 在所有退出路径释放一次锁；不引入新依赖。布局复制测试在本机运行，实际 MFT 解码与编译以 Windows CI 为准。这是现存 CPU Decoder 的正确性修复，不是新架构要求的硬件 D3D11 输出验收。
 
 MF 显式布局 4 项本机测试通过，包含实际样本 SPS 的 192×96 编码分配与 64×64 可见尺寸；Windows 平台代码及真实 MFT 验收待 CI。
+
+
+## 6301604 的跨平台回归结果
+
+CI 34034219152 的 Rust/docs、Android 和 iOS 通过。Windows 成功编译并进入原生测试，没有继续出现 coded/visible 协商错误；新增单图测试却错误地假设首个 ProcessInput 必须同步给出图像，实际返回成功但 frame=None。测试按 MFT 的 END_OF_STREAM/COMMAND_DRAIN 契约取得已接受图像，不重复提交 AU；新 Windows 回归待验证。
+
+macOS 时钟回归通过；丢包测试最后的帧龄为 1129ms。检查发现持续恢复源之后还存在 20 次停止供帧的固定 sleep/pump，实际调度时间不受 200ms 名义和约束。删除这段无媒体的等待，直接在已经跨过完整统计窗口的持续恢复阶段测量，保留 1s 断言，并在失败信息中记录实际窗口时间、已发送序号与统计。此次本机完整 Mac 套件通过；不能据删除 idle 阶段推断所有 CI 抖动原因或宣称恢复性能已经跨平台验收。
