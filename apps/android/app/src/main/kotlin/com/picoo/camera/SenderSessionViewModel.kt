@@ -98,6 +98,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     private var displayRotationDegrees: Int = 0
     private var cameraGranted: Boolean = false
     private var previousStatus: Int = PicooNative.STATUS_DISCONNECTED
+    private var thermalWarningShown = false
     private var lastThermalAtMs: Long = 0L
     private var lastThermalStatus: Int? = null
 
@@ -521,28 +522,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             if (!encoderReconfiguration.isPending) {
                 val directive = PicooNative.readEncoderDirective(senderHandle)
                 if (directive != null) {
-                    if (directive.kind == 4) {
-                        encoderReconfiguration.beginDirective(senderHandle, encoder, directive)
-                    } else {
-                        val maxH = senderSnapshot.receiverMaxHeight
-                        val thermalBlocks = ui.thermalForced720 && directive.targetHeight > 720
-                        val capabilityBlocks = maxH in 1 until directive.targetHeight
-                        if (thermalBlocks || capabilityBlocks) {
-                            encoderReconfiguration.rejectBeforeStart(senderHandle, directive)
-                        } else {
-                            val next = StreamResolution.fromHeight(directive.targetHeight)
-                            if (encoderReconfiguration.beginDirective(
-                                    senderHandle,
-                                    encoder,
-                                    directive,
-                                )
-                            ) {
-                                ui.resolutionLabel = next.label
-                                encoder.setTargetBitrateBps(directive.targetBitrateBps)
-                                encoder.setResolution(next.width, next.height)
-                            }
-                        }
-                    }
+                    encoderReconfiguration.beginDirective(senderHandle, encoder, directive)
                 }
             }
             if (previousStatus == PicooNative.STATUS_RECONNECTING &&
@@ -623,8 +603,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val live = isLiveSession()
         if (!live) {
             ui.powerHint = ""
-            ui.thermalForced720 = false
-            ui.thermalToastShown = false
+            ui.thermalLimited = false
+            thermalWarningShown = false
             lastThermalAtMs = 0L
             lastThermalStatus = ui.senderStatus
             return
@@ -641,31 +621,21 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val context = getApplication<Application>()
         val thermal = PowerHints.readThermalStatus(context)
         ui.powerHint = PowerHints.readHint(context)
-        val force720 = PowerHints.shouldForce720p(thermal)
-        ui.thermalForced720 = force720
-        if (force720 && !ui.thermalToastShown) {
+        val holdBitrate = PowerHints.shouldHoldBitrateGrowth(thermal)
+        ui.thermalLimited = holdBitrate
+        if (holdBitrate && !thermalWarningShown) {
             // AC-M-LIVE-02: toast when thermal throttle engages (banner remains visible).
             Toast.makeText(
                 context,
-                "设备偏热保护中 · 已降至 720p，1080P 暂不可选",
+                "设备温度较高，请注意散热或停止推流",
                 Toast.LENGTH_SHORT,
             ).show()
-            ui.thermalToastShown = true
-        } else if (!force720) {
-            ui.thermalToastShown = false
+            thermalWarningShown = true
+        } else if (!holdBitrate) {
+            thermalWarningShown = false
         }
         if (senderHandle != 0L) {
-            PicooNative.setThermalHold(senderHandle, force720)
-        }
-        if (force720 && ui.resolutionLabel == "1080p") {
-            val targetBitrate = PicooNative.bitrateInitialForHeight(720)
-            if (beginLocalEncoderReconfiguration(720)) {
-                ui.resolutionLabel = "720p"
-                encoder.setTargetBitrateBps(targetBitrate)
-                encoder.setResolution(1280, 720)
-                streamConfigDirty.set(true)
-                encoder.requestKeyFrame()
-            }
+            PicooNative.setThermalHold(senderHandle, holdBitrate)
         }
     }
 

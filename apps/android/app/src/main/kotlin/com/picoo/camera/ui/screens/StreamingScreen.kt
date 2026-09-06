@@ -51,7 +51,7 @@ fun StreamingScreen(
     previewSensorOrientationDegrees: Int,
     previewFrontFacing: Boolean,
     localPreviewMirrored: Boolean,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     powerHint: String,
     reconnecting: Boolean,
     packetLossLabel: String,
@@ -80,7 +80,7 @@ fun StreamingScreen(
         resolutionLabel = resolutionLabel,
         bitrateMbps = bitrateMbps,
         localPreviewMirrored = localPreviewMirrored,
-        thermalForced720 = thermalForced720,
+        thermalLimited = thermalLimited,
         powerHint = powerHint,
         reconnecting = reconnecting,
         packetLossLabel = packetLossLabel,
@@ -123,7 +123,7 @@ internal fun StreamingScreenContent(
     resolutionLabel: String,
     bitrateMbps: String,
     localPreviewMirrored: Boolean,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     powerHint: String,
     reconnecting: Boolean,
     packetLossLabel: String,
@@ -147,7 +147,6 @@ internal fun StreamingScreenContent(
     var disconnectArmed by remember { mutableStateOf(false) }
     var flipRotationTarget by remember { mutableFloatStateOf(0f) }
     var flipBlurActive by remember { mutableStateOf(false) }
-    var thermalToast by remember { mutableStateOf(false) }
     var immersive by remember { mutableStateOf(false) }
     var focusRingCenter by remember { mutableStateOf(Offset.Zero) }
     var focusRingActive by remember { mutableStateOf(false) }
@@ -173,12 +172,6 @@ internal fun StreamingScreenContent(
         if (flipBlurActive) {
             delay(PicooCameraDimensions.FlipBlurMillis)
             flipBlurActive = false
-        }
-    }
-    LaunchedEffect(thermalToast) {
-        if (thermalToast) {
-            delay(PicooCameraDimensions.ToastVisibleMillis)
-            thermalToast = false
         }
     }
 
@@ -246,15 +239,9 @@ internal fun StreamingScreenContent(
                 bitrateMbps = bitrateMbps,
                 resolutionLabel = resolutionLabel,
                 packetLossLabel = packetLossLabel,
-                thermalForced720 = thermalForced720,
+                thermalLimited = thermalLimited,
                 enabled = !uiLocked,
-                onToggleResolution = {
-                    if (thermalForced720 && resolutionLabel.contains("720", ignoreCase = true)) {
-                        thermalToast = true
-                    } else {
-                        onToggleResolution()
-                    }
-                },
+                onToggleResolution = onToggleResolution,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
             CameraControlDock(
@@ -264,7 +251,7 @@ internal fun StreamingScreenContent(
                 uiLocked = uiLocked,
                 disconnectArmed = disconnectArmed,
                 flipRotation = flipRotation,
-                thermalForced720 = thermalForced720,
+                thermalLimited = thermalLimited,
                 powerHint = powerHint,
                 onCycleExposure = onCycleExposure,
                 onToggleMirror = onToggleMirror,
@@ -284,12 +271,6 @@ internal fun StreamingScreenContent(
             )
         }
 
-        if (thermalToast) {
-            CameraToast(
-                text = "设备偏热保护中，1080P 暂不可选",
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
-        }
         if (reconnecting) {
             ReconnectOverlay(
                 networkUnstable = networkUnstable,

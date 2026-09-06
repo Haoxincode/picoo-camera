@@ -2,42 +2,6 @@ use picoo_rate_control::BitrateLadder;
 
 use super::*;
 
-fn commit_directive(
-    session: &mut SenderSession<MemoryTransport>,
-    directive: EncoderDirective,
-    generation: u64,
-) {
-    session.force_status_for_test(SenderStatus::Streaming);
-    session.set_stream_config(StreamConfigParams {
-        width: if directive.target_height == 1080 {
-            1920
-        } else {
-            1280
-        },
-        height: directive.target_height,
-        ..Default::default()
-    });
-    assert!(session.report_encoder_started(
-        directive.id,
-        generation,
-        directive.stream_epoch,
-        directive.target_height,
-    ));
-    session
-        .ingest_encoder_access_unit(super::native_au(
-            b"idr",
-            true,
-            1,
-            (
-                directive.id,
-                generation,
-                directive.stream_epoch,
-                directive.target_height,
-            ),
-        ))
-        .expect("matching IDR commits directive");
-}
-
 #[test]
 fn receiver_stats_adjusts_bitrate() {
     let mut session = SenderSession::new(MemoryTransport::new());
@@ -105,103 +69,50 @@ fn fec_tracks_frame_importance_and_receiver_loss() {
 }
 
 #[test]
-fn sustained_floor_congestion_requests_resolution_downshift() {
+fn sustained_network_feedback_never_creates_a_source_configuration_transaction() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    session
-        .connect(Endpoint {
-            host: "127.0.0.1".into(),
-            port: 4433,
-        })
-        .expect("connect");
-    // Drive bitrate to the floor first.
-    for _ in 0..20 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.05,
-            frame_age_ms: 250.0,
+    let epoch = session.current_stream_epoch();
+    let next_transaction = session.next_encoder_directive_id;
+    let initial = session.current_bitrate_bps();
+    for _ in 0..1000 {
+        session.apply_receiver_stats_for_test(ReceiverStatsMsg {
+            packet_loss: 0.2,
+            frame_age_ms: 500.0,
             ..Default::default()
-        };
-        session.apply_receiver_stats_for_test(stats);
+        });
+        assert!(session.pending_encoder_directive().is_none());
+        assert_eq!(session.current_stream_epoch(), epoch);
+        assert_eq!(session.bitrate_active_height(), 1080);
     }
-    // Keep injecting while at floor until downshift fires.
-    let mut saw = false;
-    for _ in 0..10 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.05,
-            frame_age_ms: 250.0,
-            ..Default::default()
-        };
-        session.apply_receiver_stats_for_test(stats);
-        if session.pending_encoder_directive().is_some() {
-            saw = true;
-            break;
-        }
+    assert!(session.current_bitrate_bps() < initial);
+    for _ in 0..1000 {
+        session.apply_receiver_stats_for_test(ReceiverStatsMsg::default());
+        assert!(session.pending_encoder_directive().is_none());
+        assert_eq!(session.current_stream_epoch(), epoch);
+        assert_eq!(session.bitrate_active_height(), 1080);
     }
-    assert!(
-        saw,
-        "expected resolution downshift after sustained floor congestion"
-    );
-    let directive = session.pending_encoder_directive().expect("directive");
-    assert_eq!(directive.kind, EncoderDirectiveKind::AbrDownshift);
-    assert_eq!(directive.target_height, 720);
-    assert_eq!(session.bitrate_active_height(), 1080);
-    assert_eq!(session.pending_encoder_directive(), Some(directive));
-    commit_directive(&mut session, directive, 11);
-    assert_eq!(session.bitrate_active_height(), 720);
-    assert!(session.pending_encoder_directive().is_none());
+    assert_eq!(session.next_encoder_directive_id, next_transaction);
 }
 
 #[test]
-fn rejected_encoder_directive_keeps_active_height_and_can_retry() {
+fn rejected_explicit_configuration_can_be_requested_again_without_automatic_retry() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    session
-        .connect(Endpoint {
-            host: "127.0.0.1".into(),
-            port: 4433,
-        })
-        .expect("connect");
-    for _ in 0..30 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.05,
-            frame_age_ms: 250.0,
-            ..Default::default()
-        };
-        session.apply_receiver_stats_for_test(stats);
-        if session.pending_encoder_directive().is_some() {
-            break;
-        }
-    }
-    let first = session
-        .pending_encoder_directive()
-        .expect("first directive");
+    let first_epoch = session.begin_stream_reconfiguration(720);
+    let first_id = session.encoder_transaction_id_for_epoch(first_epoch);
+    assert_ne!(first_id, 0);
     assert_eq!(
-        session.report_encoder_failed(first.id, 0),
+        session.report_encoder_failed(first_id, 0),
         EncoderFailureOutcome::RolledBack
     );
     assert_eq!(session.bitrate_active_height(), 1080);
-
-    for _ in 0..10 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.05,
-            frame_age_ms: 250.0,
-            ..Default::default()
-        };
-        session.apply_receiver_stats_for_test(stats);
-        if session.pending_encoder_directive().is_some() {
-            break;
-        }
-    }
-    let retry = session
-        .pending_encoder_directive()
-        .expect("retry directive");
-    assert_ne!(retry.id, first.id);
-    assert_eq!(retry.target_height, 720);
-    assert_eq!(session.bitrate_active_height(), 1080);
-
-    let local_epoch = session.begin_stream_reconfiguration(720);
-    assert!(local_epoch > retry.stream_epoch);
-    assert!(session.pending_encoder_directive().is_none());
-    assert_eq!(session.begin_stream_reconfiguration(720), 0);
-    assert_eq!(session.bitrate_active_height(), 1080);
+    assert!(!session.encoder_apply_state.is_applying());
+    let retry_epoch = session.begin_stream_reconfiguration(720);
+    assert!(retry_epoch > first_epoch);
+    assert_ne!(
+        session.encoder_transaction_id_for_epoch(retry_epoch),
+        first_id
+    );
+    assert_eq!(session.begin_stream_reconfiguration(1080), 0);
 }
 
 #[test]

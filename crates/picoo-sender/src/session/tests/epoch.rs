@@ -371,18 +371,13 @@ fn failed_before_start_restores_committed_stream_config() {
 }
 
 #[test]
-fn disconnect_aborts_pending_local_and_directive_generations() {
+fn disconnect_aborts_pending_local_generation() {
     let mut session = SenderSession::new(MemoryTransport::new());
     assert_ne!(session.begin_stream_reconfiguration(720), 0);
     assert!(session.encoder_apply_state.is_applying());
     assert!(session.pending_encoder_directive().is_none());
     session.disconnect();
     assert!(!session.encoder_apply_state.is_applying());
-    assert!(session.pending_encoder_directive().is_none());
-
-    session.queue_encoder_directive(EncoderDirectiveKind::AbrDownshift, 720);
-    assert!(session.pending_encoder_directive().is_some());
-    session.disconnect();
     assert!(session.pending_encoder_directive().is_none());
 }
 

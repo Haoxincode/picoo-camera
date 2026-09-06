@@ -20,7 +20,7 @@ class PowerHintsTest {
     @Test
     fun thermalHint_severe_and_critical() {
         assertEquals(
-            "Device overheating — reduce resolution or stop streaming",
+            "Device overheating — cool the device or stop streaming",
             PowerHints.thermalHint(PowerManager.THERMAL_STATUS_SEVERE),
         )
         assertEquals(
@@ -33,7 +33,7 @@ class PowerHintsTest {
     @Test
     fun combine_joins_non_null() {
         assertEquals(
-            "Low battery (10%) — streaming may stop · Device overheating — reduce resolution or stop streaming",
+            "Low battery (10%) — streaming may stop · Device overheating — cool the device or stop streaming",
             PowerHints.combine(
                 PowerHints.batteryHint(10),
                 PowerHints.thermalHint(PowerManager.THERMAL_STATUS_SEVERE),
@@ -42,10 +42,10 @@ class PowerHintsTest {
     }
 
     @Test
-    fun thermalSevereForces720p() {
-        assertEquals(true, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_SEVERE))
-        assertEquals(true, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_CRITICAL))
-        assertEquals(false, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_NONE))
-        assertEquals(false, PowerHints.shouldForce720p(PowerManager.THERMAL_STATUS_MODERATE))
+    fun thermalSevereHoldsBitrateGrowth() {
+        assertEquals(true, PowerHints.shouldHoldBitrateGrowth(PowerManager.THERMAL_STATUS_SEVERE))
+        assertEquals(true, PowerHints.shouldHoldBitrateGrowth(PowerManager.THERMAL_STATUS_CRITICAL))
+        assertEquals(false, PowerHints.shouldHoldBitrateGrowth(PowerManager.THERMAL_STATUS_NONE))
+        assertEquals(false, PowerHints.shouldHoldBitrateGrowth(PowerManager.THERMAL_STATUS_MODERATE))
     }
 }

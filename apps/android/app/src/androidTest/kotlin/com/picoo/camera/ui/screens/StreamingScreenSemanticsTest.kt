@@ -97,6 +97,17 @@ class StreamingScreenSemanticsTest {
         )
     }
 
+    @Test
+    fun thermalWarningKeepsExplicitResolutionControlAvailable() {
+        var changes = 0
+        setConnectedContent(thermalLimited = true, onToggleResolution = { changes += 1 })
+        composeRule.onNodeWithText("设备温度较高，请注意散热或停止推流")
+            .assertTextEquals("设备温度较高，请注意散热或停止推流")
+        composeRule.onNodeWithContentDescription("切换画质，当前 720p 30fps")
+            .assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, changes) }
+    }
+
     private fun controlWidth(contentDescription: String): Float =
         composeRule.onNodeWithContentDescription(contentDescription)
             .fetchSemanticsNode()
@@ -108,6 +119,8 @@ class StreamingScreenSemanticsTest {
         cameraPermissionPermanentlyDenied: Boolean = false,
         onRequestCamera: () -> Unit = {},
         onDisconnect: () -> Unit = {},
+        thermalLimited: Boolean = false,
+        onToggleResolution: () -> Unit = {},
     ) {
         composeRule.setContent {
             PicooCameraTheme {
@@ -119,13 +132,13 @@ class StreamingScreenSemanticsTest {
                     resolutionLabel = "720p",
                     bitrateMbps = "1.9 Mbps",
                     localPreviewMirrored = false,
-                    thermalForced720 = false,
+                    thermalLimited = thermalLimited,
                     powerHint = "",
                     reconnecting = false,
                     packetLossLabel = "0% 丢包",
                     onRequestCamera = onRequestCamera,
                     onFlipCamera = {},
-                    onToggleResolution = {},
+                    onToggleResolution = onToggleResolution,
                     onToggleMirror = {},
                     onCycleExposure = {},
                     exposureEv = 0,

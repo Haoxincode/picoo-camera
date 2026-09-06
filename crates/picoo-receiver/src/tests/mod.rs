@@ -50,7 +50,6 @@ fn trust_receiver<T: PicooTransport>(
 }
 
 mod abr_epoch;
-mod abr_ladder;
 mod connect;
 mod control_gate;
 mod decode_platform;
@@ -59,6 +58,7 @@ mod pairing;
 mod pairing_trust;
 mod qos;
 mod session_surface;
+mod source_configuration;
 mod stream;
 
 fn use_stub_decoder(receiver: &mut ReceiverSession) {

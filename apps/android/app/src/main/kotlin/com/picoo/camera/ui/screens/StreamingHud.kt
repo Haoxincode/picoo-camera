@@ -40,7 +40,7 @@ internal fun ConnectionHud(
     bitrateMbps: String,
     resolutionLabel: String,
     packetLossLabel: String,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     enabled: Boolean,
     onToggleResolution: () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,7 +90,7 @@ internal fun ConnectionHud(
             TelemetrySeparator()
             ResolutionMetric(
                 resolutionLabel = resolutionLabel,
-                thermalForced720 = thermalForced720,
+                thermalLimited = thermalLimited,
                 enabled = enabled,
                 onClick = onToggleResolution,
             )
@@ -119,7 +119,7 @@ internal fun TelemetrySeparator() {
 @Composable
 internal fun ResolutionMetric(
     resolutionLabel: String,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
@@ -130,7 +130,7 @@ internal fun ResolutionMetric(
             .alpha(if (enabled) 1f else PicooCameraDimensions.DisabledAlpha)
             .semantics {
                 contentDescription = "切换画质，当前 $resolutionLabel 30fps"
-                stateDescription = if (thermalForced720) "设备偏热，已限制为 720p" else "可切换"
+                stateDescription = if (thermalLimited) "设备偏热，可手动切换" else "可切换"
                 role = Role.Button
                 if (!enabled) disabled()
             }
@@ -138,7 +138,7 @@ internal fun ResolutionMetric(
         horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (thermalForced720) {
+        if (thermalLimited) {
             ReiconIcon(
                 icon = Reicon.Overheat,
                 contentDescription = null,
@@ -148,7 +148,7 @@ internal fun ResolutionMetric(
         }
         Text(
             text = resolutionLabel.lowercase(),
-            color = if (thermalForced720) PicooCameraColors.Warning else PicooCameraColors.ContentMuted,
+            color = if (thermalLimited) PicooCameraColors.Warning else PicooCameraColors.ContentMuted,
             style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
         )
         Text(

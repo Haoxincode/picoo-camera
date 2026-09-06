@@ -25,7 +25,7 @@ object PowerHints {
     fun thermalHint(status: Int): String? =
         when (status) {
             PowerManager.THERMAL_STATUS_SEVERE ->
-                "Device overheating — reduce resolution or stop streaming"
+                "Device overheating — cool the device or stop streaming"
             PowerManager.THERMAL_STATUS_CRITICAL,
             PowerManager.THERMAL_STATUS_EMERGENCY,
             PowerManager.THERMAL_STATUS_SHUTDOWN,
@@ -33,8 +33,8 @@ object PowerHints {
             else -> null
         }
 
-    /** PUC-006 / PRD risk: force 720p when thermal is severe or worse. */
-    fun shouldForce720p(status: Int): Boolean =
+    /** REQ-PICOO-MEDIA-027: thermal feedback may hold bitrate growth, never change source format. */
+    fun shouldHoldBitrateGrowth(status: Int): Boolean =
         status >= PowerManager.THERMAL_STATUS_SEVERE
 
     fun combine(battery: String?, thermal: String?): String =

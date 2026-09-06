@@ -78,10 +78,6 @@ impl EncoderApplyState {
         }
     }
 
-    pub(super) fn kind(&self) -> Option<EncoderDirectiveKind> {
-        self.directive().map(|directive| directive.kind)
-    }
-
     pub(super) fn stream_config_staged(&self) -> bool {
         matches!(self, Self::Applying(transaction) if transaction.stream_config_staged)
     }

@@ -75,11 +75,6 @@ class EncoderReconfigurationCoordinator {
         return true
     }
 
-    /** Report that a directive cannot be executed before a native generation starts. */
-    fun rejectBeforeStart(senderHandle: Long, directive: PicooNative.EncoderDirective) {
-        PicooNative.reportEncoderFailed(senderHandle, directive.id, 0)
-    }
-
     fun poll(senderHandle: Long, encoder: Camera2MediaEncoder): PollResult? {
         if (PicooNative.readSenderSnapshot(senderHandle).status == PicooNative.STATUS_DISCONNECTED) {
             abandonDisconnectedSession()

@@ -44,8 +44,6 @@ pub struct SessionStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum EncoderDirectiveKind {
-    AbrDownshift = 1,
-    AbrUpshift = 2,
     Local = 3,
     Recovery = 4,
 }

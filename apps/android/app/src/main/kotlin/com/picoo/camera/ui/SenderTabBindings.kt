@@ -51,7 +51,7 @@ internal fun SenderTabContent(
     var resolutionLabel by uiState::resolutionLabel
     var preferredResolutionLabel by uiState::preferredResolutionLabel
     var powerHint by uiState::powerHint
-    var thermalForced720 by uiState::thermalForced720
+    var thermalLimited by uiState::thermalLimited
     var linkQualityChip by uiState::linkQualityChip
     var adaptiveBitrateBps by uiState::adaptiveBitrateBps
     var exposureEv by uiState::exposureEv
@@ -242,8 +242,8 @@ internal fun SenderTabContent(
             previewFrontFacing =
                 previewTransformInfo.lensFacing == LensFacing.Front,
             localPreviewMirrored = localPreviewMirrored,
-            thermalForced720 = thermalForced720,
-            powerHint = if (thermalForced720) "" else powerHint,
+            thermalLimited = thermalLimited,
+            powerHint = if (thermalLimited) "" else powerHint,
             reconnecting = senderStatus == PicooNative.STATUS_RECONNECTING ||
                 senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
             networkUnstable = senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
@@ -271,19 +271,10 @@ internal fun SenderTabContent(
             },
             onToggleResolution = {
                 val current = StreamResolution.fromLabel(resolutionLabel)
-                val next = StreamResolution.next(current, thermalForced720)
+                val next = StreamResolution.next(current)
                 val maxH = PicooNative.readSenderSnapshot(senderHandle).receiverMaxHeight
                 if (maxH in 1 until next.height) {
                     errorText = "接收端最高 ${maxH}p — 无法切换至 ${next.label}"
-                    return@StreamingScreen
-                }
-                if (thermalForced720 && next == StreamResolution.P1080) {
-                    errorText = "设备过热，暂不可升 1080p"
-                    Toast.makeText(
-                        context,
-                        "设备偏热保护中，1080P 暂不可选",
-                        Toast.LENGTH_SHORT,
-                    ).show()
                     return@StreamingScreen
                 }
                 val bitrate = PicooNative.bitrateInitialForHeight(next.height)

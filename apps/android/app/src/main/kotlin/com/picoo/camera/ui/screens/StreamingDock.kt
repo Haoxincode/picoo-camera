@@ -45,7 +45,7 @@ internal fun CameraControlDock(
     uiLocked: Boolean,
     disconnectArmed: Boolean,
     flipRotation: Float,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     powerHint: String,
     onCycleExposure: () -> Unit,
     onToggleMirror: () -> Unit,
@@ -80,7 +80,7 @@ internal fun CameraControlDock(
                 .widthIn(max = dimensions.controlContentWidth)
                 .fillMaxWidth(),
         ) {
-            if (thermalForced720) {
+            if (thermalLimited) {
                 ThermalBanner()
                 Spacer(modifier = Modifier.height(dimensions.space8))
             } else if (powerHint.isNotEmpty()) {

@@ -62,7 +62,7 @@ internal fun PowerHint(text: String) {
 internal fun ThermalBanner() {
     val dimensions = PicooTheme.dimensions
     Text(
-        text = "设备偏热保护：已自动降至 720P 稳住帧率，1080P 暂不可选",
+        text = "设备温度较高，请注意散热或停止推流",
         color = PicooCameraColors.WarningContent,
         style = PicooCameraTypography.Status,
         textAlign = TextAlign.Center,

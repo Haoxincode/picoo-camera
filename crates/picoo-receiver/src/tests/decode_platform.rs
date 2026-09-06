@@ -465,13 +465,10 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
 
 #[cfg(not(windows))]
 #[test]
-fn thermal_hold_blocks_abr_upshift_on_sender() {
-    // REQ-PICOO-MEDIA-010: host thermal force keeps ABR from requesting 1080p.
+fn thermal_hold_changes_bitrate_growth_without_source_reconfiguration() {
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_transport::QuicSenderTransport;
-
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    sender.set_preferred_height(1080);
     sender.set_stream_config(picoo_sender::StreamConfigParams {
         width: 1280,
         height: 720,
@@ -479,39 +476,21 @@ fn thermal_hold_blocks_abr_upshift_on_sender() {
     });
     assert!(sender.report_encoder_started(0, 1, sender.current_stream_epoch(), 720));
     sender.set_thermal_hold(true);
-    assert_eq!(sender.bitrate_active_height(), 720);
-    assert!(sender.thermal_hold());
-
+    let epoch = sender.current_stream_epoch();
+    let initial = sender.current_bitrate_bps();
     for _ in 0..80 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.0,
-            frame_age_ms: 40.0,
-            jitter_buffer_occupancy_ms: 40.0,
-            ..Default::default()
-        };
-        sender.apply_receiver_stats_for_test(stats);
-        assert!(
-            sender.pending_encoder_directive().is_none(),
-            "thermal hold must suppress upshift hint"
-        );
+        sender.apply_receiver_stats_for_test(ReceiverStatsMsg::default());
+        assert!(sender.pending_encoder_directive().is_none());
+        assert_eq!(sender.current_bitrate_bps(), initial);
     }
     sender.set_thermal_hold(false);
-    let mut up = false;
     for _ in 0..120 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.0,
-            frame_age_ms: 40.0,
-            jitter_buffer_occupancy_ms: 40.0,
-            ..Default::default()
-        };
-        sender.apply_receiver_stats_for_test(stats);
-        if let Some(directive) = sender.pending_encoder_directive() {
-            assert_eq!(directive.target_height, 1080);
-            up = true;
-            break;
-        }
+        sender.apply_receiver_stats_for_test(ReceiverStatsMsg::default());
+        assert!(sender.pending_encoder_directive().is_none());
+        assert_eq!(sender.current_stream_epoch(), epoch);
+        assert_eq!(sender.bitrate_active_height(), 720);
     }
-    assert!(up, "after thermal clear, ABR should request upshift");
+    assert!(sender.current_bitrate_bps() > initial);
 }
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]

@@ -200,7 +200,7 @@ object PicooNative {
 
     external fun bitrateClampForHeight(bitrateBps: Int, height: Int): Int
 
-    /** Thermal hold blocks ABR upshift while overheating (MEDIA-010). */
+    /** Thermal hold blocks bitrate growth without changing source configuration (MEDIA-027). */
     external fun setThermalHold(handle: Long, hold: Boolean): Int
 
     /**

@@ -157,7 +157,7 @@ private fun StreamingScreenPreview() {
             resolutionLabel = "720p",
             bitrateMbps = "1.9 Mbps",
             localPreviewMirrored = false,
-            thermalForced720 = false,
+            thermalLimited = false,
             powerHint = "",
             reconnecting = false,
             packetLossLabel = "0% 丢包",

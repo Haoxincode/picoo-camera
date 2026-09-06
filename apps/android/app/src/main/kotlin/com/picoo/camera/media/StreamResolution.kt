@@ -23,11 +23,8 @@ enum class StreamResolution(val label: String, val width: Int, val height: Int) 
             else -> P480
         }
 
-        /** Tap-to-cycle: 1080 → 720 → 480 → 1080; thermal mode only 720 ↔ 480. */
-        fun next(current: StreamResolution, thermalForced720: Boolean): StreamResolution {
-            if (thermalForced720) {
-                return if (current == P480) P720 else P480
-            }
+        /** A user action cycles formats; thermal state never substitutes another format. */
+        fun next(current: StreamResolution): StreamResolution {
             val idx = cycle.indexOf(current).coerceAtLeast(0)
             return cycle[(idx + 1) % cycle.size]
         }

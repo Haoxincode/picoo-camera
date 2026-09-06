@@ -1,10 +1,9 @@
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_protocol::control::{Capabilities, ReceiverStats as ReceiverStatsMsg};
-use picoo_rate_control::{BitrateAction, BitrateLadder};
 use picoo_session::{HealthState, StreamState};
 use picoo_transport::PicooTransport;
 
-use super::{EncoderDirective, EncoderDirectiveKind, SenderSession};
+use super::SenderSession;
 
 impl<T: PicooTransport> SenderSession<T> {
     /// Max height from receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
@@ -43,53 +42,13 @@ impl<T: PicooTransport> SenderSession<T> {
         self.bitrate.set_preferred_height(preferred);
     }
 
-    /// Host thermal policy — block ABR upshift while overheating (MEDIA-010).
+    /// Host thermal policy holds bitrate growth without changing source format.
     pub fn set_thermal_hold(&mut self, hold: bool) {
         self.bitrate.set_thermal_hold(hold);
     }
 
     pub fn thermal_hold(&self) -> bool {
         self.bitrate.thermal_hold()
-    }
-
-    pub(super) fn queue_encoder_directive(
-        &mut self,
-        kind: EncoderDirectiveKind,
-        target_height: u32,
-    ) {
-        if self.encoder_apply_state.is_applying() {
-            return;
-        }
-        let target_height = self.cap_to_receiver_height(target_height);
-        if target_height == self.bitrate.active_height() {
-            let action = match kind {
-                EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery => return,
-                EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
-                EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
-            };
-            self.bitrate.reject_resolution_change(action);
-            return;
-        }
-        let id = self.next_encoder_directive_id;
-        let Some(next_id) = id.checked_add(1) else {
-            self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
-            return;
-        };
-        let stream_epoch = self.allocate_stream_epoch();
-        if stream_epoch == 0 {
-            return;
-        }
-        let directive = EncoderDirective {
-            id,
-            kind,
-            target_height,
-            target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
-            stream_epoch,
-        };
-        if !self.begin_encoder_transaction(directive) {
-            return;
-        }
-        self.next_encoder_directive_id = next_id;
     }
 
     pub(super) fn cap_to_receiver_height(&self, height: u32) -> u32 {
@@ -144,21 +103,6 @@ impl<T: PicooTransport> SenderSession<T> {
         };
         self.last_receiver_stats = Some(metrics.clone());
         self.last_bitrate_action = self.bitrate.update(&metrics);
-        if !self.encoder_apply_state.is_applying()
-            && matches!(
-                self.last_bitrate_action,
-                BitrateAction::DownshiftResolution | BitrateAction::UpshiftResolution
-            )
-        {
-            if let Some(target_height) = self.bitrate.target_height_for(self.last_bitrate_action) {
-                let kind = match self.last_bitrate_action {
-                    BitrateAction::DownshiftResolution => EncoderDirectiveKind::AbrDownshift,
-                    BitrateAction::UpshiftResolution => EncoderDirectiveKind::AbrUpshift,
-                    _ => unreachable!(),
-                };
-                self.queue_encoder_directive(kind, target_height);
-            }
-        }
         // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
         if self.lifecycle.runtime.stream().is_streaming() {
             if metrics.packet_loss > 0.03 {

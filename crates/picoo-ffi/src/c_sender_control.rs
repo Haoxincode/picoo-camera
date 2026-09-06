@@ -360,7 +360,7 @@ pub extern "C" fn picoo_sender_report_encoder_failed(
     }
 }
 
-/// Thermal hold: block ABR upshift above 720 while overheating (MEDIA-010).
+/// Thermal hold: block bitrate growth without changing source configuration (MEDIA-027).
 #[no_mangle]
 pub extern "C" fn picoo_sender_set_thermal_hold(handle: *mut std::ffi::c_void, hold: i32) -> i32 {
     if handle.is_null() {

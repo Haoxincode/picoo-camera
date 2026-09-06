@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use picoo_protocol::control::control_envelope::Payload as ControlPayload;
-use picoo_rate_control::{BitrateAction, BitrateLadder};
+use picoo_rate_control::BitrateLadder;
 use picoo_transport::PicooTransport;
 
 use super::encoder_transaction::{
@@ -121,24 +121,7 @@ impl<T: PicooTransport> SenderSession<T> {
     /// Allocate a fresh stream generation before a native encoder discontinuity.
     pub fn begin_stream_reconfiguration(&mut self, target_height: u32) -> u32 {
         if self.encoder_apply_state.is_applying() {
-            match self.encoder_apply_state.kind() {
-                Some(EncoderDirectiveKind::AbrDownshift | EncoderDirectiveKind::AbrUpshift) => {
-                    // A user/camera transition supersedes ABR inside the Rust
-                    // authority. Late native facts retain the old transaction
-                    // id and therefore cannot commit the replacement.
-                    let transition = self
-                        .encoder_apply_state
-                        .reduce(EncoderTransactionEvent::Abort);
-                    let EncoderTransactionTransition::Rollback(transaction) = transition else {
-                        return 0;
-                    };
-                    self.reject_transaction_bitrate(transaction.directive.kind);
-                    self.rollback_encoder_transaction(transaction);
-                }
-                Some(EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery) | None => {
-                    return 0;
-                }
-            }
+            return 0;
         }
         if target_height == 0 {
             return 0;
@@ -253,7 +236,6 @@ impl<T: PicooTransport> SenderSession<T> {
         let EncoderTransactionTransition::Rollback(transaction) = transition else {
             return;
         };
-        self.reject_transaction_bitrate(transaction.directive.kind);
         self.committed_encoder_generation = transaction.rollback.encoder_generation;
         self.rollback_encoder_transaction(transaction);
     }
@@ -300,13 +282,11 @@ impl<T: PicooTransport> SenderSession<T> {
         match transition {
             EncoderFailureTransition::Ignored => EncoderFailureOutcome::Ignored,
             EncoderFailureTransition::Rollback(transaction) => {
-                self.reject_transaction_bitrate(transaction.directive.kind);
                 self.committed_encoder_generation = transaction.rollback.encoder_generation;
                 self.rollback_encoder_transaction(transaction);
                 EncoderFailureOutcome::RolledBack
             }
             EncoderFailureTransition::Recover(transaction) => {
-                self.reject_transaction_bitrate(transaction.directive.kind);
                 self.committed_encoder_generation = transaction.rollback.encoder_generation;
                 self.rollback_encoder_transaction(transaction);
                 self.start_committed_encoder_recovery()
@@ -348,17 +328,5 @@ impl<T: PicooTransport> SenderSession<T> {
         self.next_encoder_directive_id = next_id;
         self.keyframe_requested = true;
         EncoderFailureOutcome::RecoveryRequested
-    }
-
-    fn reject_transaction_bitrate(&mut self, kind: EncoderDirectiveKind) {
-        match kind {
-            EncoderDirectiveKind::AbrDownshift => self
-                .bitrate
-                .reject_resolution_change(BitrateAction::DownshiftResolution),
-            EncoderDirectiveKind::AbrUpshift => self
-                .bitrate
-                .reject_resolution_change(BitrateAction::UpshiftResolution),
-            EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery => {}
-        }
     }
 }
