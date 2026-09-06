@@ -11,6 +11,9 @@ shared_memory = "0.12"
 thiserror.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
+objc2-io-surface = { version = "0.3.2", default-features = false, features = ["std", "IOSurfaceRef", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFDictionary", "CFString"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferIOSurface", "CVReturn", "objc2-io-surface"] }
 libc = "0.2"
 memmap2 = "0.9.11"
 objc2-foundation = { version = "0.3.2", default-features = false, features = [

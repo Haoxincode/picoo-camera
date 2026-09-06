@@ -14,6 +14,7 @@
 - Decoder 能力以完整 codec/profile、图像布局、帧率、色彩组合表达；每组合独立记录标准 level 上限和 AU 预算，不能跨条目拼接能力。源码流实际 level 可低于同组合的 Decoder 上限，原生适配器负责提供实际准入证据。
 - Sender/Receiver owner 拥有配置与恢复事务。codec 工作者只报告携带原始 token 和提交时不可变配置快照的事实；完成帧的方向、镜像和色彩不得从 owner 当前配置重建。每 AU 在同一 Decoder generation 最多提交一次。
 - `picoo-frame-hub` 拥有不可变原生源帧、身份、描述及 FrameBus。native image 不含 CPU 像素变体；资源引用释放与 GPU 完成分别管理。
+- Apple 原生图像在 Decoder 完成回调返回前 retain 已完成的 IOSurface-backed CVPixelBuffer；所有别名不得继续写像素或 attachment。GPU 消费者持有图像引用直至任务完成（包括取消/失败），不能将工作提交或 CPU 引用释放解释为 GPU 完成。图像边界不提供安全的可变平台对象或 CPU mapping 接口。
 - `picoo-gpu` 拥有平台 context、资源池、统一 RenderSpec 与输出专用 exporter。FrameHub 不反向依赖它。
 - Preview latest-only；虚拟摄像头使用独立 SampleClock；处理后录像订阅有界有序原生帧；原码流录像在 live scheduler/Decoder 之前接收完整 AU。
 - 每个摄像头 sink 独立验证 GpuNative/CpuBridge。CPU 输出只做目标 GPU 图像的物化、布局复制与必要上传，不拥有 codec/连接事务，不反向发布到原生帧总线。
