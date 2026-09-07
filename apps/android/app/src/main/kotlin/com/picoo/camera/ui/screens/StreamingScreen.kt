@@ -71,6 +71,7 @@ fun StreamingScreen(
     networkUnstable: Boolean = false,
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
+    errorText: String? = null,
 ) {
     StreamingScreenContent(
         cameraGranted = cameraGranted,
@@ -97,6 +98,7 @@ fun StreamingScreen(
         networkUnstable = networkUnstable,
         reconnectAttempt = reconnectAttempt,
         reconnectDelayMs = reconnectDelayMs,
+        errorText = errorText,
         previewContent = {
             CameraPreviewSurface(
                 modifier = Modifier.fillMaxSize(),
@@ -141,6 +143,7 @@ internal fun StreamingScreenContent(
     networkUnstable: Boolean = false,
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
+    errorText: String? = null,
 ) {
     val motion = PicooTheme.motion
     var uiLocked by remember { mutableStateOf(false) }
@@ -268,6 +271,18 @@ internal fun StreamingScreenContent(
                     onFlipCamera()
                 },
                 modifier = Modifier.align(Alignment.BottomCenter),
+            )
+        }
+
+        errorText?.let { message ->
+            Text(
+                text = message,
+                color = PicooCameraColors.Content,
+                style = PicooCameraTypography.Status,
+                modifier = Modifier.align(Alignment.Center)
+                    .padding(PicooTheme.dimensions.space24)
+                    .background(PicooCameraColors.SurfaceRaised)
+                    .padding(PicooTheme.dimensions.space16),
             )
         }
 

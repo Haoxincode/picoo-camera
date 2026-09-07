@@ -816,3 +816,11 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - C/Swift状态删除无调用方的activeHeight/receiverMaxHeight，不保留兼容字段。AVFoundation服务删除多余的高度参数，直接接收完整编码配置；待提交事务期间普通ABR不覆盖目标码率。
 - iOS device/simulator Rust XCFramework和App构建通过；新ABI的Swift模拟器套件通过，新增完整格式不匹配拒绝与HEVC720p60事务合同。FFI14项通过，文档链接通过。具体日志为/tmp/picoo-ios-source-validated-test.log、/tmp/picoo-ios-source-abi-build.log、/tmp/picoo-ios-source-ffi-suite/result.log。
 - 尚无iPhone真机能力、实际八组合、持续fps或端到端恢复证据；方向仍需按完整原生输入事务继续重构。模拟器结果不证明VideoToolbox硬件候选可用。Mac Receiver已观察到UDP4433监听，原先Keychain阻塞不再作为当前阻碍。
+
+### 2026-09-07：按目标镜头上限自动适配
+
+- 用户真机反馈竖持1080p60翻转失败；日志证实前摄输入像素不足。进一步明确产品意图：切镜头自动适配目标上限，不要求用户预先调画质。已同步产品补充及REQ-PICOO-MEDIA-060：优先当前codec，再按分辨率、fps选择同一完整准备候选；无当前codec时才选择其他codec。此规则不用于显式画质菜单或运行中热降级。
+- Android手机按钮与电脑摄像头命令统一委托ViewModel。后台按目标镜头、当前方向、Receiver能力准备；返回后核对原profile、epoch、源格式及直播状态，陈旧结果不执行。镜头、方向、尺寸、codec和fps在一次原生profile替换中重建，Core提交后才更新HUD。直播页补充可见准备错误，避免失败无提示。
+- Android完整APK/test APK、78项JVM通过；隔离只读模拟器7项直播UI合同通过，含错误可见且画质选择仍可操作。小米15相机八组合、方向切换与自动镜头适配共3项合同通过：竖持后摄1080p60约60.12fps → 前摄1080p30约30.05fps → 恢复后摄1080p60约60.11fps；三段输入2448×2448，世代1/3/5与epoch1/2/1正确。记录仅配置和PTS，不保存相机图像。
+- 最新APK已安装，测试后恢复MainActivity；完整GUI翻转仍待用户操作验证，ADB注入点击当前未改变界面。Mac最新包正常GUI启动且用户完成Keychain授权，UDP4433监听；用户确认手机连接成功，手机HUD观察H.2641080p60、约6.2Mbps。Android NSD此前未发现服务但IP可达，Mac本机DNS-SD可解析，此发现问题仍需独立排查。
+- iOS完整格式提交f6e041f的CI34089952717已全平台成功；本次镜头上限策略尚待同步iOS。

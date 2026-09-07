@@ -24,6 +24,16 @@ class StreamingScreenSemanticsTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun sourcePreparationFailureIsVisibleAndFormatSelectionRemainsAvailable() {
+        val message = "前置镜头在当前方向不支持 H.264 · 1080p · 60 fps"
+        var selections = 0
+        setConnectedContent(errorText = message, onChooseSourceFormat = { selections++ })
+        composeRule.onNodeWithText(message).assertTextEquals(message)
+        composeRule.onNodeWithContentDescription("切换画质，当前 H.264 · 720p · 60 fps").performClick()
+        composeRule.runOnIdle { assertEquals(1, selections) }
+    }
+
+    @Test
     fun connectedControlsUseEqualWidthsWithinEachRow() {
         setConnectedContent()
 
@@ -115,6 +125,7 @@ class StreamingScreenSemanticsTest {
             .width
 
     private fun setConnectedContent(
+        errorText: String? = null,
         cameraGranted: Boolean = true,
         cameraPermissionPermanentlyDenied: Boolean = false,
         onRequestCamera: () -> Unit = {},
@@ -134,6 +145,7 @@ class StreamingScreenSemanticsTest {
                     localPreviewMirrored = false,
                     thermalLimited = thermalLimited,
                     powerHint = "",
+                    errorText = errorText,
                     reconnecting = false,
                     packetLossLabel = "0% 丢包",
                     onRequestCamera = onRequestCamera,

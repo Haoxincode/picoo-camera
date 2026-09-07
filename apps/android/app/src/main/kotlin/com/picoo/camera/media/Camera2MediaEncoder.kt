@@ -168,25 +168,20 @@ class Camera2MediaEncoder(
     }
 
     override fun setLensFacing(facing: LensFacing) {
-        if (profile.lensFacing == facing) {
-            return
-        }
-        profile = profile.copy(lensFacing = facing)
-        when (lifecycle.state) {
-            CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
-            CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()
-            else -> Unit
-        }
-        // New epoch requires IDR for remote decoder recovery (REQ-PICOO-MEDIA-003).
-        videoEncoder.requestSyncFrame()
+        if (profile.lensFacing == facing) return
+        setCaptureProfile(profile.copy(lensFacing = facing))
     }
 
     override fun setSourceFormat(source: VideoSourceFormat) {
-        profile = profile.copy(
+        setCaptureProfile(profile.copy(
             resolution = Size(source.resolution.width, source.resolution.height),
             codec = source.codec,
             targetFps = source.framesPerSecond,
-        )
+        ))
+    }
+
+    internal fun setCaptureProfile(requested: CaptureProfile) {
+        profile = requested
         when (lifecycle.state) {
             CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
             CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()

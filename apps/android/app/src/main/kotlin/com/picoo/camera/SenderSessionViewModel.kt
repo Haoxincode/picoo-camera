@@ -28,6 +28,7 @@ import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.ui.screens.WaitOutcome
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -81,6 +82,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     private val pendingConnectionSource = AtomicReference<VideoSourceFormat?>(null)
     private var requestedDisplayRotationDegrees: Int = 0
     private var pendingDisplayRotation: Int? = null
+    private var cameraSwitchJob: Job? = null
     private var cameraGranted: Boolean = false
     private var previousStatus: Int = PicooNative.STATUS_DISCONNECTED
     private var thermalWarningShown = false
@@ -253,6 +255,41 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         streamConfigDirty.set(true)
         if (configurationKeyframeRequested.compareAndSet(false, true)) {
             encoder.requestKeyFrame()
+        }
+    }
+
+    fun requestCameraSwitch(target: LensFacing? = null) {
+        if (cameraSwitchJob?.isActive == true || encoderReconfiguration.isPending) {
+            uiState.errorText = "正在完成上一项视频调整，请稍后重试"
+            return
+        }
+        val before = encoder.profile
+        val facing = target ?: if (before.lensFacing == LensFacing.Back) LensFacing.Front else LensFacing.Back
+        if (facing == before.lensFacing) return
+        val snapshot = PicooNative.readSenderSnapshot(runtime.senderHandle)
+        val source = snapshot.lastCommittedSourceFormat ?: return
+        val rotation = requestedDisplayRotationDegrees
+        cameraSwitchJob = viewModelScope.launch {
+            val targetSource = sourceSelection.prepareCameraSource(source, facing, rotation) ?: return@launch
+            val current = PicooNative.readSenderSnapshot(runtime.senderHandle)
+            if (!cameraGranted || encoder.profile != before || requestedDisplayRotationDegrees != rotation ||
+                current.streamEpoch != snapshot.streamEpoch || current.lastCommittedSourceFormat != source ||
+                current.status !in setOf(PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE) ||
+                encoderReconfiguration.isPending
+            ) return@launch
+            if (encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, targetSource) == 0) return@launch
+            encoder.setTargetBitrateBps(PicooNative.bitrateInitialForHeight(targetSource.resolution.height))
+            pendingDisplayRotation = null
+            uiState.errorText = null
+            encoder.setCaptureProfile(before.copy(
+                lensFacing = facing, displayRotationDegrees = rotation,
+                resolution = android.util.Size(targetSource.resolution.width, targetSource.resolution.height),
+                codec = targetSource.codec, targetFps = targetSource.framesPerSecond,
+            ))
+            encoder.startPreview()
+            uiState.localPreviewMirrored = LocalPreviewMirror.defaultFor(facing)
+            sourceSelection.refresh(facing, rotation)
+            applyStreamConfig()
         }
     }
 
@@ -501,26 +538,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             run {
                 val camOut = IntArray(3)
                 when (PicooNative.takeCameraCommand(senderHandle, camOut)) {
-                    1 -> {
-                        if (encoder.profile.lensFacing != LensFacing.Front &&
-                            beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
-                        ) {
-                            encoder.setLensFacing(LensFacing.Front)
-                            ui.localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
-                        }
-                    }
-                    2 -> {
-                        if (encoder.profile.lensFacing != LensFacing.Back &&
-                            beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
-                        ) {
-                            encoder.setLensFacing(LensFacing.Back)
-                            ui.localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
-                        }
-                    }
+                    1 -> requestCameraSwitch(LensFacing.Front)
+                    2 -> requestCameraSwitch(LensFacing.Back)
                     3 -> {
                         val w = camOut[0]
                         val h = camOut[1]
@@ -536,14 +555,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                         remoteMirroredRef.set(ui.remoteMirrored)
                         streamConfigDirty.set(true)
                     }
-                    5 -> {
-                        if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
-                            encoder.switchCamera()
-                            ui.localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
-                        }
-                    }
+                    5 -> requestCameraSwitch()
                 }
             }
             if (!encoderReconfiguration.isPending) {

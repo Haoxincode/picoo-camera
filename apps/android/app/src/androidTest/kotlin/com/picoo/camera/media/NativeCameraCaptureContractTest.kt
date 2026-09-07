@@ -59,38 +59,14 @@ class NativeCameraCaptureContractTest {
     fun orientationRebuildsInputAndRestoresCommittedProfile() = withProbeActivity {
         val original = CaptureProfile(Size(1920, 1080), 60, LensFacing.Back,
             NativeVideoCodec.Avc, displayRotationDegrees = 90)
-        data class Fact(val epoch: Int, val generation: Long, val pts: Long,
-            val codec: NativeVideoCodec, val height: Int, val fps: Int)
-        val facts = java.util.concurrent.LinkedBlockingQueue<Fact>()
+        val facts = CaptureFacts()
         val bitrate = com.picoo.camera.jni.PicooNative.bitrateInitialForHeight(1080)
         val encoder = Camera2MediaEncoder(
             context = ApplicationProvider.getApplicationContext(),
             initialProfile = original, initialBitrateBps = bitrate, initialStreamEpoch = 1,
-            frameListener = { frame -> facts.offer(Fact(frame.streamEpoch,
-                frame.encoderGeneration, frame.presentationTimeUs, frame.configuration.codec,
-                frame.configuration.height, frame.configuration.framesPerSecond)) },
+            frameListener = facts,
         )
-        fun sample(epoch: Int, afterGeneration: Long): Long {
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
-            val samples = ArrayList<Fact>()
-            while (samples.size < 240 && System.nanoTime() < deadline) {
-                val fact = facts.poll(500, TimeUnit.MILLISECONDS) ?: continue
-                if (fact.generation <= afterGeneration) continue
-                assertEquals("new generation must preserve its epoch", epoch, fact.epoch)
-                assertEquals(NativeVideoCodec.Avc, fact.codec)
-                assertEquals(1080, fact.height)
-                assertEquals(60, fact.fps)
-                samples += fact
-            }
-            assertEquals("capture failed: ${encoder.lastError}", 240, samples.size)
-            assertEquals(1, samples.map { it.generation }.distinct().size)
-            val steady = samples.drop(60)
-            assertTrue(steady.zipWithNext().all { (a, b) -> b.pts > a.pts })
-            val fps = (steady.size - 1) * 1_000_000.0 / (steady.last().pts - steady.first().pts)
-            Log.i("PicooCameraProbe", "orientation=${encoder.profile.displayRotationDegrees}; epoch=$epoch; generation=${samples.first().generation}; capture=${encoder.captureSize}; fps=$fps")
-            assertTrue("actual fps=$fps", fps in 57.0..63.0)
-            return samples.first().generation
-        }
+        fun sample(epoch: Int, afterGeneration: Long) = facts.sample(encoder, epoch, afterGeneration, 60)
         try {
             encoder.startPreview()
             val first = sample(1, 0)
@@ -110,6 +86,69 @@ class NativeCameraCaptureContractTest {
             encoder.close()
             encoder.cameraHandler.looper.thread.join(2_000)
             encoder.codecHandler.looper.thread.join(2_000)
+        }
+    }
+
+    /** MEDIA-060: a supported portrait format really switches to front and back. */
+    @Test
+    fun cameraSwitchChoosesTargetCeilingAndRestores() = withProbeActivity {
+        val original = CaptureProfile(Size(1920, 1080), 60, LensFacing.Back,
+            NativeVideoCodec.Avc, displayRotationDegrees = 0)
+        val facts = CaptureFacts()
+        val bitrate = com.picoo.camera.jni.PicooNative.bitrateInitialForHeight(1080)
+        val encoder = Camera2MediaEncoder(ApplicationProvider.getApplicationContext(),
+            original, bitrate, 1, facts)
+        try {
+            val available = SourcePreparation.candidates(encoder.cameraManager, LensFacing.Front,
+                0, VideoSourceFormat.ProductFormats) { bitrate }.getOrThrow()
+            val target = checkNotNull(CameraSourceSelection.select(available, original.codec))
+            assertEquals(VideoSourceFormat(NativeVideoCodec.Avc, StreamResolution.P1080, 30), target)
+            encoder.startPreview()
+            val first = facts.sample(encoder, 1, 0, 60)
+            encoder.prepareStreamEpoch(2)
+            encoder.setCaptureProfile(original.copy(lensFacing = LensFacing.Front, targetFps = target.framesPerSecond))
+            val second = facts.sample(encoder, 2, first, 30)
+            assertEquals(LensFacing.Front, encoder.profile.lensFacing)
+            assertTrue(encoder.captureSize.height >= 1920)
+            encoder.restoreCommittedConfiguration(original, 1, bitrate)
+            facts.sample(encoder, 1, second, 60)
+            assertEquals(original, encoder.profile)
+        } finally {
+            encoder.close()
+            encoder.cameraHandler.looper.thread.join(2_000)
+            encoder.codecHandler.looper.thread.join(2_000)
+        }
+    }
+
+    private class CaptureFacts : EncodedFrameListener {
+        private data class Fact(val epoch: Int, val generation: Long, val pts: Long,
+            val codec: NativeVideoCodec, val height: Int, val fps: Int)
+        private val facts = java.util.concurrent.LinkedBlockingQueue<Fact>()
+        override fun onEncodedFrame(frame: EncodedFrame) {
+            facts.offer(Fact(frame.streamEpoch, frame.encoderGeneration, frame.presentationTimeUs,
+                frame.configuration.codec, frame.configuration.height, frame.configuration.framesPerSecond))
+        }
+        fun sample(encoder: Camera2MediaEncoder, epoch: Int, afterGeneration: Long, requestedFps: Int): Long {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+            val samples = ArrayList<Fact>()
+            val count = requestedFps * 4
+            while (samples.size < count && System.nanoTime() < deadline) {
+                val fact = facts.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                if (fact.generation <= afterGeneration) continue
+                assertEquals("new generation must preserve its epoch", epoch, fact.epoch)
+                assertEquals(NativeVideoCodec.Avc, fact.codec)
+                assertEquals(1080, fact.height)
+                assertEquals(requestedFps, fact.fps)
+                samples += fact
+            }
+            assertEquals("capture failed: ${encoder.lastError}", count, samples.size)
+            assertEquals(1, samples.map { it.generation }.distinct().size)
+            val steady = samples.drop(requestedFps)
+            assertTrue(steady.zipWithNext().all { (a, b) -> b.pts > a.pts })
+            val fps = (steady.size - 1) * 1_000_000.0 / (steady.last().pts - steady.first().pts)
+            Log.i("PicooCameraProbe", "lens=${encoder.profile.lensFacing}; orientation=${encoder.profile.displayRotationDegrees}; epoch=$epoch; generation=${samples.first().generation}; capture=${encoder.captureSize}; fps=$fps")
+            assertTrue("actual fps=$fps", fps in requestedFps * 0.95..requestedFps * 1.05)
+            return samples.first().generation
         }
     }
 

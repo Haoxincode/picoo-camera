@@ -49,6 +49,21 @@ internal class SenderSourceSelection(
         }
     }
 
+    suspend fun prepareCameraSource(current: VideoSourceFormat, facing: LensFacing, rotation: Int): VideoSourceFormat? {
+        val remote = state.receiverSourceFormats ?: return null
+        val result = withContext(Dispatchers.IO) {
+            SourcePreparation.candidates(manager, facing, rotation, remote) {
+                PicooNative.bitrateInitialForHeight(it.resolution.height)
+            }
+        }
+        val selected = com.picoo.camera.media.CameraSourceSelection.select(result.getOrNull().orEmpty(), current.codec)
+        if (selected == null) {
+            val lens = if (facing == LensFacing.Front) "前置镜头" else "后置镜头"
+            state.errorText = "$lens 与接收端没有共同可用的视频格式，请调整手机方向后重试"
+        }
+        return selected
+    }
+
     fun selectDefault(source: VideoSourceFormat) {
         if (!canPrepare(source)) return
         state.preferredSourceFormat = source

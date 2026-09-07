@@ -235,6 +235,7 @@ internal fun SenderTabContent(
             receiverName = pairingDisplayName,
             linkQualityChip = linkQualityChip,
             sourceLabel = uiState.committedSourceFormat?.label ?: "等待源格式提交",
+            errorText = errorText,
             bitrateMbps = bitrateMbps,
             previewBufferWidth = previewTransformInfo.bufferSize.width,
             previewBufferHeight = previewTransformInfo.bufferSize.height,
@@ -260,16 +261,7 @@ internal fun SenderTabContent(
                 }
             },
             onRequestCamera = onRequestCamera,
-            onFlipCamera = {
-                if (sessionModel.beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
-                    encoder.switchCamera()
-                    previewTransformInfo = encoder.previewTransformInfo
-                    localPreviewMirrored =
-                        LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                    encoderState = encoder.state
-                    sessionModel.streamConfigDirty.set(true)
-                }
-            },
+            onFlipCamera = { sessionModel.requestCameraSwitch() },
             onChooseSourceFormat = { showSourceSheet = true },
             onToggleMirror = { localPreviewMirrored = !localPreviewMirrored },
             onCycleExposure = {
