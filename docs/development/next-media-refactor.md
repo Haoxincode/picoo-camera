@@ -688,3 +688,18 @@ ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推�
 - 八组小米码流全部通过共享位流 IDR/颜色/几何核对；首次 Mac 验证在 HEVC 720p 遇到实际 1280×736 存储，被原格式表误拒绝。支持有界 736 存储后，将最低 level 从可见档位表改成 H.264 Annex A macroblock / H.265 Annex A luma 工作量计算，保留 AVC 736 超出 level 3.1 的回归。协议最终 30 项通过。
 - Mac 生产 Decoder 成功解码 Apple 和小米各八组样本；每张确认原始 token、可见图像与原生 NV12 输出，HEVC 736 和 1080 的 1088 padding 均正确。样本含来源记录，保存在 picoo-testkit；不作为其他运行设备能力证据。
 - 完整 Android APK/JNI/JVM 构建成功；Protocol/Bitstream/Decoder all-targets Clippy、文档与格式检查通过。仍不宣称实际 Camera2 采集、持续 60fps、热稳态、网络全链路或产品 offers 广告已完成。
+
+### Camera2 真机验证基础设施
+
+按 testing-setup 检查现有测试栈：JUnit 4.13.2、AndroidX runner 1.6.2/ext-junit 1.2.1、Compose instrumented tests 已存在；生产对象采用构造器注入 EncodedFrameListener，无需新增 DI/Mock 框架。相机测试需真实硬件与前台 UID，因此在 debug source set 添加受系统 DUMP 权限保护的空 Activity，使用既有 AndroidX lifecycle monitor 与 shell 启动；release 不包含该入口。测试只保留有界时间戳和配置元数据，不保存真实相机图像。结果继续维护本实施记录，避免新增重复测试策略文档。
+
+### 2026-09-07：Camera2 删除静默降级并验证实际帧率
+
+- REQ-PICOO-MEDIA-050：删除 CaptureSizeSelector 的 1080→720 回退、空表猜目标及不足输入的隐式放大；按旋转后几何选择最小足够输入。Camera2 只使用相同 stream map 中已知且满足请求 fps 的 min duration，并要求所选固定 AE fps range 实际存在；删除“筛空后恢复全部候选”和修改 CaptureProfile 的路径。
+- 核对 Android 16 AOSP 的 StreamConfigurationMap / CaptureRequest：min duration 为0表示未知；所选 AE range 应来自 characteristics；多 stream 最低时长取各自最大值。这些是静态候选证据，不替代实际 Camera2 session 或持续帧率。复用平台 API 与已有自有 geometry policy，不添加库。
+- 原六项尺寸测试改为三项明确请求准入回归，最终 74 项 JVM 全通过；完整 Android APK/JNI/test APK 构建成功。
+- 新前台测试首次被小米后台启动策略拦截，主动结束挂起 instrumentation；改为 shell 启动受 DUMP 权限保护的 debug Activity 后，重装造成相机授权失效，补授权后又发现 harness 漏掉 JNI ensureLoaded。修正测试环境后正式相机测试成功（1 项覆盖八组合，36.971秒）。这些失败不被记作硬件编码失败。
+- 小米15 后置 camera0 横向输入：AVC720/1080 的30fps分别30.040/30.040，60fps分别60.106/60.133；HEVC720/1080 的30fps分别30.048/30.040，60fps分别60.130/60.154。测量原生编码输出的唯一 PTS，先忽略1秒启动，再取约3秒；profile 与请求一致，无静默变化。未保存相机图像。
+- 用户指出测试入口白屏，已添加中文测试提示和保持亮屏，仅 debug source set；测试结束自动关闭，并已恢复手机正式 MainActivity。最后构建覆盖提示修改；无需因文字修改重测硬件。前摄/竖持、长时间热稳态、网络以及完整产品 offers 仍待验。
+
+9832582 的 CI 34075347404 全平台成功；b5cf956 已推送，CI 34076167154 执行中。

@@ -33,3 +33,9 @@ cargo run -p picoo-media-decode --example check_native_formats -- /tmp/picoo-xia
 第一条显式解释 Android Annex B，检查实际位流并写入规范 `.au`；没有格式猜测。第二条使用正式平台 Decoder，验证八组实际参数、原生图像及原始 token。Windows 需加 `--features windows-mf` 并在 Windows 原生环境运行。Apple harness 的输出目录可直接传给第二条。
 
 REQ-PICOO-MEDIA-049：这些合成输入证明原生 API 与完整参数事实，不证明摄像头、网络、持续帧率、画质或热稳态；程序不自动发布任何 Decoder offers。历史样本保存在 picoo-testkit 的 apple-native-formats/xiaomi-native-formats，不能替代运行设备的探测。
+
+## 实际 Camera2 帧率
+
+调试 App 的 `MediaProbeActivity` 仅存在于 debug，受系统 DUMP 权限保护；instrumentation 通过 shell 启动。重装后确认相机权限，然后运行 `com.picoo.camera.media.NativeCameraCaptureContractTest`。入口显示测试提示，结束自动关闭；只采集有界 PTS 与配置，不持有或保存相机画面。`PicooCameraProbe` 日志区分请求 fps、实际 PTS 帧率和约3秒测量窗口。
+
+该测试覆盖后置横向 Camera2→生产 compositor→生产 MediaCodec 八组合；不能作为前摄、竖持、网络、长时热稳态或录像并发证明。关联 REQ-PICOO-MEDIA-050。

@@ -58,7 +58,7 @@ internal class Camera2DeviceSession(
             }
         }
         if (!removed) return
-        // Keep H.264 encode alive when the Compose TextureView is torn down
+        // Keep native encode alive when the Compose TextureView is torn down
         // (tab switch / config change); rebuild a codec-only Camera2 session.
         scheduleCaptureSessionRebuild(expectedPreviewSurfaceTexture = null)
     }
@@ -523,13 +523,18 @@ internal class Camera2DeviceSession(
         val characteristics = encoder.cameraManager.getCameraCharacteristics(cameraId)
         val map = characteristics
             .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?: return target
-        val maxFrameDurationNanos = 1_000_000_000L / encoder.profile.targetFps.coerceAtLeast(1)
+            ?: error("Camera stream configuration is unavailable")
+        val fps = encoder.profile.targetFps
+        require(fps == 30 || fps == 60) { "Unsupported source frame rate" }
+        val fixedRate = Range(fps, fps)
+        check(characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            .orEmpty().contains(fixedRate)) { "Camera does not support the requested fixed frame rate" }
+        val maxFrameDurationNanos = 1_000_000_000L / fps
         val outputSizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
         val frameRateCapable = outputSizes.filter { size ->
             val duration = map.getOutputMinFrameDuration(SurfaceTexture::class.java, size)
-            duration <= 0L || duration <= maxFrameDurationNanos
-        }.ifEmpty { outputSizes.toList() }
+            duration > 0L && duration <= maxFrameDurationNanos
+        }
         val sensorOrientation =
             characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
         val portraitCrop = StreamOrientation.relativeRotationDegrees(
@@ -544,17 +549,7 @@ internal class Camera2DeviceSession(
             CaptureSizeSelector.Dim(target.width, target.height),
             portraitCrop = portraitCrop,
         )
-        if (selected.fellBackFrom1080) {
-            val encode = CaptureSizeSelector.encodeSizeFor(
-                selected,
-                CaptureSizeSelector.Dim(target.width, target.height),
-            )
-            val encodeSize = Size(encode.width, encode.height)
-            if (encoder.profile.resolution != encodeSize) {
-                encoder.profile = encoder.profile.copy(resolution = encodeSize)
-            }
-        }
-        return Size(selected.size.width, selected.size.height)
+        return Size(selected.width, selected.height)
     }
 
     fun closeCaptureSession() {

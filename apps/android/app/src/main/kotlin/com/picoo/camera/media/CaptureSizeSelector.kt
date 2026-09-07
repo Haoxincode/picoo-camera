@@ -1,67 +1,23 @@
 package com.picoo.camera.media
 
-import kotlin.math.min
-
-/**
- * Pick a Camera2 output size for the negotiated encode target (REQ-PICOO-MEDIA-002).
- *
- * Prefer the closest available size; when 1080p is requested but no near-1080
- * option exists, fall back to the best ≤720p candidate (OEM capability fallback).
- *
- * Uses plain ints so JVM unit tests do not need Robolectric / android.jar.
- */
+/** Input geometry for an explicit source request — REQ-PICOO-MEDIA-050. */
 object CaptureSizeSelector {
     data class Dim(val width: Int, val height: Int)
 
-    data class Choice(val size: Dim, val fellBackFrom1080: Boolean)
-
-    /** Manhattan distance in pixels between two sizes. */
-    fun distance(a: Dim, b: Dim): Int =
-        kotlin.math.abs(a.width - b.width) + kotlin.math.abs(a.height - b.height)
-
-    /**
-     * @param available output sizes from SCALER_STREAM_CONFIGURATION_MAP
-     * @param target preferred encode size (typically 1280×720 or 1920×1080)
-     */
+    /** Candidates must already satisfy the same camera's requested fixed rate. */
     fun select(
         available: List<Dim>,
         target: Dim,
         portraitCrop: Boolean = false,
-    ): Choice {
-        if (available.isEmpty()) {
-            return Choice(target, fellBackFrom1080 = false)
-        }
-
-        val wants1080 = target.height >= 1080 || target.width >= 1920
-        val near1080 = available.filter { it.height >= 1000 || it.width >= 1800 }
-
-        if (wants1080 && near1080.isEmpty()) {
-            val capped = available
-                .filter { it.height <= 720 || (it.width <= 1280 && it.height <= 800) }
-                .ifEmpty { available }
-            val best = capped.minBy { distance(it, Dim(1280, 720)) }
-            return Choice(best, fellBackFrom1080 = true)
-        }
-
-        val pool = if (wants1080 && near1080.isNotEmpty()) near1080 else available
-        if (portraitCrop) {
-            // After a 90° rotation, a landscape 16:9 crop uses the camera
-            // buffer's short edge as its source width. Avoid upscaling that
-            // narrow strip whenever Camera2 exposes a 30 fps-capable size.
-            val sharpEnough = pool.filter { min(it.width, it.height) >= target.width }
-            if (sharpEnough.isNotEmpty()) {
-                val best = sharpEnough.minWith(
-                    compareBy<Dim> { it.width.toLong() * it.height.toLong() }
-                        .thenBy { distance(it, target) },
-                )
-                return Choice(best, fellBackFrom1080 = false)
-            }
-        }
-        val best = pool.minBy { distance(it, target) }
-        return Choice(best, fellBackFrom1080 = false)
+    ): Dim {
+        require(target.width > 0 && target.height > 0) { "Invalid source dimensions" }
+        return available.filter { candidate ->
+            val width = if (portraitCrop) candidate.height else candidate.width
+            val height = if (portraitCrop) candidate.width else candidate.height
+            width >= target.width && height >= target.height
+        }.minWithOrNull(
+            compareBy<Dim> { it.width.toLong() * it.height.toLong() }
+                .thenBy { it.width }.thenBy { it.height },
+        ) ?: error("Camera cannot provide the requested image without upscaling")
     }
-
-    /** Encode resolution should follow capability fallback (canonical 720p when 1080 unavailable). */
-    fun encodeSizeFor(choice: Choice, requested: Dim): Dim =
-        if (choice.fellBackFrom1080) Dim(1280, 720) else requested
 }

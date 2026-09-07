@@ -129,3 +129,5 @@ Android 每个编码 generation 从不可变 CaptureProfile 取得 codec、尺�
 实际配置到协议 VideoFormat 的映射由协议层统一拥有，复用 bitstream 的有界源事实，不另写 SPS 解析器。映射保留 coded size、visible crop 和明确 VUI 色彩；缺失或不支持事实拒绝，不能从请求标签补齐。StreamConfig 的 codec/profile/level/可见尺寸/色彩声明必须与记录一致；该映射用于能力比较，不产生原生支持证据。依赖方向为 protocol → bitstream，bitstream 不依赖协议或平台。
 
 720p HEVC 可使用 1280×736 编码存储，正式可见高度仍为 720。允许的有界存储高度包含 720/736 和 1080/1088；AVC level 按 coded macroblock 数与每秒 macroblock 数计算，HEVC 按 coded luma samples 与每秒速率计算，不能简单把补齐高度归回可见档位。最终能力成员比较仍精确区分存储/crop。
+
+Android 相机输入必须来自同一个 Camera2 stream map，具有可满足所选固定 fps 的已知最小时长及固定 AE fps range；未知时长或空候选不猜测可用。输入在既定旋转裁剪后足以覆盖已请求图像，禁止隐式放大或把源请求改成 720p。不能满足的指定配置明确失败，由源事务处理，采集适配器不修改 CaptureProfile 来掩盖失败。
