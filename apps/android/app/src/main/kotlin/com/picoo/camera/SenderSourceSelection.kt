@@ -74,8 +74,6 @@ internal class SenderSourceSelection(
 
     fun canPrepare(source: VideoSourceFormat): Boolean = admit(source, state.availableSourceFormats)
 
-    fun canPrepareLocally(source: VideoSourceFormat): Boolean = admit(source, state.localSourceFormats)
-
     private fun admit(source: VideoSourceFormat, candidates: List<VideoSourceFormat>?): Boolean {
         if (candidates?.contains(source) == true) return true
         state.errorText = state.sourcePreparationError ?: if (candidates == null) {

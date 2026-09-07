@@ -758,8 +758,10 @@ impl PicooDesktopApp {
                             .flex_none()
                             .relative()
                             .on_prepaint(move |bounds, window, _| {
+                                // REQ-PICOO-MEDIA-063: display demand must survive source gaps.
+                                window.request_animation_frame();
                                 let scale = window.scale_factor();
-                                preview_viewport.record_painted(
+                                preview_viewport.request_frame(
                                     bounds.size.width.as_f32() * scale,
                                     bounds.size.height.as_f32() * scale,
                                 );

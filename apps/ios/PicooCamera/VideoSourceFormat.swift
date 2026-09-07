@@ -13,6 +13,10 @@ nonisolated struct VideoSourceFormat: Hashable, Sendable {
         }
     }
 
+    static func initial(_ candidates: [Self], preferred: Self) -> Self? {
+        candidates.contains(preferred) ? preferred : cameraCeiling(candidates, preferredCodec: preferred.codec)
+    }
+
     static func cameraCeiling(_ candidates: [Self], preferredCodec: NativeVideoCodec) -> Self? {
         let sameCodec = candidates.filter { $0.codec == preferredCodec }
         return (sameCodec.isEmpty ? candidates : sameCodec).max {

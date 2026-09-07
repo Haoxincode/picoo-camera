@@ -6,6 +6,14 @@ import Testing
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("Initial media adapts an unavailable default after connection and preserves explicit available intent")
+    func initialSourceAfterConnection() {
+        let front = VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30)
+        #expect(VideoSourceFormat.initial([front], preferred: .defaultFormat) == front)
+        #expect(VideoSourceFormat.initial([front, .defaultFormat], preferred: front) == front)
+        #expect(VideoSourceFormat.initial([], preferred: .defaultFormat) == nil)
+    }
+
     @Test("Camera switch selects a complete ceiling and can restore a higher ceiling")
     func cameraCeilingSelection() {
         let front = VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30)

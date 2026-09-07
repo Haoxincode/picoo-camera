@@ -136,3 +136,7 @@
 | REQ-PICOO-MEDIA-060 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、026 | 手机与电脑触发Android镜头切换共用目标镜头完整准备；按用户明确授权自动选择目标镜头与Receiver交集上限，优先当前codec、其次分辨率、再fps；镜头和格式一次提交，异步准备后核对原会话/方向/源事实，无交集保留原镜头；画质菜单的明确格式请求仍不降级 | 不支持目标保持原镜头，前后摄可准备格式实际切换与fps合同；完整GUI链路验证 |
 
 | REQ-PICOO-MEDIA-061 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、026 | iOS镜头切换按与Android一致的codec、分辨率、fps优先序选择目标完整上限；镜头与完整格式在同一次原生配置中提交，目标码率由实际目标高度派生，失败恢复旧事实 | Swift上限选择与回退合同、iOS构建；iPhone真机切换及持续fps另验 |
+
+| REQ-PICOO-MEDIA-062 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-002、005、026 | 先完成安全连接/配对，再准备当前镜头的视频；默认请求可用则保留，否则按可用上限准备初始媒体；本地准备未知、不可用或失败不阻挡/拆掉已授权连接，无共同格式保留连接并明确提示 | 前摄竖持默认1080p60连接后适配1080p30；无视频能力仍可连接；显式画质请求不降级 |
+
+| REQ-PICOO-MEDIA-063 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-007、012 | 桌面预览需求由GPUI可见帧回调驱动，不依赖新视频帧反向触发重绘；重连/源空档后继续请求新帧，单次显示需求只消费一次，无显示回调不重复提交GPU预览 | 超过旧100ms门槛的源空档恢复、单次需求消费、Mac重连与隐藏/恢复窗口验证 |

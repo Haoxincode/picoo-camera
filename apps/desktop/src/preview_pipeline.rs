@@ -20,7 +20,6 @@ use windows_surface::PlatformPreviewResources;
 
 const PREVIEW_MAX_DETAIL_WIDTH: u32 = 1920;
 const PREVIEW_TARGET_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
-const PREVIEW_PAINT_FRESHNESS: Duration = Duration::from_millis(100);
 
 #[derive(Debug)]
 struct PreviewRequest {
@@ -53,7 +52,7 @@ pub(crate) struct PreviewViewportTracker(Arc<Mutex<PreviewViewport>>);
 struct PreviewViewport {
     width: f32,
     height: f32,
-    painted_at: Option<Instant>,
+    pending: bool,
 }
 
 impl Default for PreviewViewportTracker {
@@ -61,26 +60,24 @@ impl Default for PreviewViewportTracker {
         Self(Arc::new(Mutex::new(PreviewViewport {
             width: 0.0,
             height: 0.0,
-            painted_at: None,
+            pending: false,
         })))
     }
 }
 
 impl PreviewViewportTracker {
-    pub(crate) fn record_painted(&self, width: f32, height: f32) {
+    pub(crate) fn request_frame(&self, width: f32, height: f32) {
         *self.0.lock().unwrap() = PreviewViewport {
             width,
             height,
-            painted_at: Some(Instant::now()),
+            pending: true,
         };
     }
 
-    pub(crate) fn target_physical_width(&self) -> Option<f32> {
-        let viewport = self.0.lock().unwrap();
-        let recently_painted = viewport
-            .painted_at
-            .is_some_and(|painted_at| painted_at.elapsed() <= PREVIEW_PAINT_FRESHNESS);
-        if !recently_painted || viewport.width <= 0.0 || viewport.height <= 0.0 {
+    pub(crate) fn take_target_physical_width(&self) -> Option<f32> {
+        let mut viewport = self.0.lock().unwrap();
+        let pending = std::mem::take(&mut viewport.pending);
+        if !pending || viewport.width <= 0.0 || viewport.height <= 0.0 {
             return None;
         }
         Some(viewport.width)
@@ -308,6 +305,17 @@ mod tests {
     use super::*;
     use picoo_frame_hub::nv12_black;
     use std::time::Instant;
+
+    #[test]
+    fn preview_demand_survives_a_source_gap_and_is_consumed_once() {
+        let viewport = PreviewViewportTracker::default();
+        viewport.request_frame(1280.0, 720.0);
+        std::thread::sleep(Duration::from_millis(150));
+        assert_eq!(viewport.take_target_physical_width(), Some(1280.0));
+        assert_eq!(viewport.take_target_physical_width(), None);
+        viewport.request_frame(1920.0, 1080.0);
+        assert_eq!(viewport.take_target_physical_width(), Some(1920.0));
+    }
 
     fn request(sequence: u64, width: u32, height: u32, target_width: u32) -> PreviewRequest {
         request_with_pixels(

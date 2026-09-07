@@ -320,7 +320,6 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             }
         }
         val requested = ui.preferredSourceFormat
-        if (!sourceSelection.canPrepareLocally(requested)) return false
         encoderReconfiguration.abandonDisconnectedSession()
         pendingConnectionSource.set(requested)
         val rc = PicooNative.connect(runtime.senderHandle, host.trim(), port)
@@ -424,19 +423,20 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             val requested = pendingConnectionSource.get()
             if (requested != null && ui.sourcePreparationError != null) {
                 ui.errorText = ui.sourcePreparationError
-                PicooNative.disconnect(senderHandle)
-                pendingConnectionSource.set(null)
-                return
             }
             if (requested != null && cameraGranted && senderSnapshot.receiverSourceFormats != null &&
                 ui.localSourceFormats != null && ui.senderStatus in setOf(
                     PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE,
                 )
             ) {
-                // Keep fresh offers available for an explicit alternative. The
-                // pending intent continues to block old preview AUs meanwhile.
-                if (!requestSourceFormat(requested)) return
-                pendingConnectionSource.set(null)
+                val initial = com.picoo.camera.media.CameraSourceSelection.initial(
+                    ui.availableSourceFormats.orEmpty(), requested,
+                )
+                if (initial == null) {
+                    ui.errorText = "已连接，但当前镜头与接收端没有共同可用的视频格式"
+                } else if (!encoderReconfiguration.isPending) {
+                    requestSourceFormat(initial)
+                }
             }
             if (ui.senderStatus == PicooNative.STATUS_PAIRING ||
                 ui.senderStatus == PicooNative.STATUS_STREAMING ||

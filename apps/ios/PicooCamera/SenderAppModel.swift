@@ -479,29 +479,19 @@ final class SenderAppModel {
             return
         }
         suspendMediaSending()
-        let initialSourceFormat: VideoSourceFormat
-        let requestedSourceFormat: VideoSourceFormat?
-        if selectedInitialSourceFormat {
-            initialSourceFormat = camera.sourceFormat
-            requestedSourceFormat = nil
-        } else {
-            initialSourceFormat = preferredSourceFormat
-            requestedSourceFormat = initialSourceFormat
-        }
+        let preferred = selectedInitialSourceFormat ? camera.sourceFormat : preferredSourceFormat
         guard session.snapshot.receiverSourceFormats != nil else {
             waitingForSourceCapabilities = true
             return
         }
         await camera.refreshSourceFormats()
-        guard !Task.isCancelled, availableSourceFormats?.contains(initialSourceFormat) == true else {
-            errorMessage = "默认视频格式不可用，请选择可准备的完整格式。"
+        guard !Task.isCancelled, let initialSourceFormat = VideoSourceFormat.initial(
+            availableSourceFormats ?? [], preferred: preferred
+        ) else {
+            errorMessage = "已连接，但当前镜头与接收端没有共同可用的视频格式。"
             return
         }
-        if let requestedSourceFormat {
-            activeBitrateBps = PicooSenderSession.initialBitrate(
-                forHeight: UInt32(requestedSourceFormat.resolution.rawValue)
-            )
-        }
+        activeBitrateBps = PicooSenderSession.initialBitrate(forHeight: UInt32(initialSourceFormat.resolution.rawValue))
         let streamEpoch = encoderApply.beginLocal(
             session: session,
             sourceFormat: initialSourceFormat
@@ -514,7 +504,7 @@ final class SenderAppModel {
             return
         }
         let granted = await camera.start(
-            sourceFormat: requestedSourceFormat,
+            sourceFormat: initialSourceFormat,
             bitrateBps: activeBitrateBps,
             streamEpoch: streamEpoch
         )
