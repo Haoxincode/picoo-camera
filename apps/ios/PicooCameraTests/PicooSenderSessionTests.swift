@@ -6,6 +6,38 @@ import Testing
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("Direction failure is attempted once until the intent changes or a new session begins")
+    func captureRotationIntent() {
+        var intent = CaptureRotationIntent()
+        #expect(intent.take(applied: 0) == nil)
+        intent.observe(90)
+        #expect(intent.take(applied: 0) == 90)
+        intent.observe(90)
+        #expect(intent.take(applied: 0) == nil)
+        intent.observe(180)
+        #expect(intent.take(applied: 0) == 180)
+        #expect(intent.take(applied: 180) == nil)
+        intent.observe(90)
+        #expect(intent.take(applied: 0) == 90)
+        intent.reset()
+        #expect(intent.take(applied: 0) == 90)
+        #expect(intent.take(applied: 90) == nil)
+    }
+
+    @MainActor
+    @Test("A direction transaction rejects an otherwise matching AU with the old rotation")
+    func captureRotationTransaction() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Rotation Transaction")
+        let coordinator = SenderEncoderApplyCoordinator()
+        let source = VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 30)
+        let epoch = coordinator.beginLocal(session: session, sourceFormat: source)
+        coordinator.waitForApply(directive: nil, streamEpoch: epoch, encoderGeneration: 1,
+            sourceFormat: source, captureRotation: 90, bitrateBps: 3_000_000, session: session)
+        #expect(!coordinator.accepts(accessUnit(keyframe: true, pts: 1, epoch: epoch, rotation: 0)))
+        #expect(coordinator.accepts(accessUnit(keyframe: true, pts: 1, epoch: epoch, rotation: 90)))
+        #expect(!coordinator.accepts(accessUnit(keyframe: false, pts: 2, epoch: epoch, rotation: 90)))
+    }
+
     @Test("Initial media adapts an unavailable default after connection and preserves explicit available intent")
     func initialSourceAfterConnection() {
         let front = VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30)
@@ -47,7 +79,7 @@ struct PicooSenderSessionTests {
         let epoch = coordinator.beginLocal(session: session, sourceFormat: requested)
         #expect(epoch > PicooSenderSession.initialStreamEpoch)
         coordinator.waitForApply(directive: nil, streamEpoch: epoch, encoderGeneration: 1,
-            sourceFormat: requested, bitrateBps: 3_000_000, session: session)
+            sourceFormat: requested, captureRotation: 0, bitrateBps: 3_000_000, session: session)
         // An AVC 720p30 AU cannot satisfy the HEVC 720p60 transaction.
         #expect(!coordinator.accepts(accessUnit(keyframe: true, pts: 1)))
         #expect(session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0) == .rolledBack)
@@ -366,7 +398,7 @@ struct PicooSenderSessionTests {
         for identifier in identifiers.dropFirst() { #expect(pending.take(identifier) == frame) }
     }
 
-    private func accessUnit(keyframe: Bool, pts: UInt64) -> EncodedAccessUnit {
+    private func accessUnit(keyframe: Bool, pts: UInt64, epoch: UInt32 = 1, rotation: UInt32 = 0) -> EncodedAccessUnit {
         EncodedAccessUnit(
             data: Data([0, 0, 0, 1, keyframe ? 0x65 : 0x41]),
             isKeyframe: keyframe,
@@ -376,9 +408,9 @@ struct PicooSenderSessionTests {
             height: 720,
             framesPerSecond: 30,
             bitrateBps: 3_000_000,
-            streamEpoch: 1,
+            streamEpoch: epoch,
             encoderGeneration: 1,
-            rotation: 0,
+            rotation: rotation,
             codecConfiguration: EncodedCodecConfiguration(codec: 1, record: Data([1]))
         )
     }

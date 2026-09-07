@@ -74,20 +74,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         }
     }
 
-    func updateRotation(_ rotation: UInt32) async {
-        await perform {
-            self.configuration = VideoEncoderConfiguration(
-                codec: self.configuration.codec,
-                resolution: self.configuration.resolution,
-                framesPerSecond: self.configuration.framesPerSecond,
-                bitrateBps: self.configuration.bitrateBps,
-                streamEpoch: self.configuration.streamEpoch,
-                encoderGeneration: self.configuration.encoderGeneration,
-                rotation: rotation
-            )
-        }
-    }
-
     func requestKeyframe() async {
         await perform { self.forceNextKeyframe = true }
     }
@@ -444,7 +430,7 @@ extension VideoEncoderPipeline {
                 : CMTime(value: 1, timescale: CMTimeScale(configuration.framesPerSecond))
             guard let context = compressionContext,
                   let identifier = context.reserveFrame(
-                    bitrateBps: configuration.bitrateBps, rotation: configuration.rotation
+                    bitrateBps: configuration.bitrateBps
                   )
             else { throw VideoEncoderError.pendingFramesExhausted }
             let status = VTCompressionSessionEncodeFrame(

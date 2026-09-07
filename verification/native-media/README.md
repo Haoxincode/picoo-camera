@@ -9,6 +9,7 @@ mkdir -p target/verification
 xcrun swiftc -swift-version 6 -default-isolation MainActor \
   -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macosx15.0 \
   apps/ios/PicooCamera/VideoEncoder.swift \
+  apps/ios/PicooCamera/VideoSourceFormat.swift \
   apps/ios/PicooCamera/VideoEncoderOutput.swift \
   apps/ios/PicooCamera/VideoEncoderPipeline.swift \
   verification/native-media/ios-encoder-harness.swift \
@@ -19,7 +20,7 @@ cargo run -p picoo-bitstream --example check_native_encoder -- target/verificati
 
 harness 直接编译生产 Swift，检查未知色彩输入拒绝、八种 codec/尺寸/fps 请求的原生硬件输出和输入快照；Rust 检查器复用正式位流解析器验证 avcC/hvcC、闭合 IDR、可见尺寸和 BT.709 limited。生成文件是合成画面的诊断产物，可删除。CPU mapping 仅用于初始化测试像素。
 
-关联 REQ-PICOO-MEDIA-045。这不是 iPhone 摄像头、持续帧率、画质、热稳态或四组合验收；完整边界和已记录结果见 [Apple 原生媒体研究](../../docs/research/next-apple-gpu.md)。
+关联 REQ-PICOO-MEDIA-045、064；每组还以新的epoch/原生世代验证方向0→90→0重建，检查AU始终保留所属回调配置。这不是 iPhone 摄像头、持续帧率、画质、热稳态或四组合验收；完整边界和已记录结果见 [Apple 原生媒体研究](../../docs/research/next-apple-gpu.md)。
 
 ## 小米合成编码样本与 Mac 原生解码
 

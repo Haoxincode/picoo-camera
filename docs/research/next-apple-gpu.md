@@ -68,3 +68,9 @@ Mac Decoder 不再复制源 NV12 plane。原生 adapter 从有界 SPS 提取真�
 最低几何/速率 level 采用 H.264 Annex A Table A-1 的 MaxFS/MaxMBPS 与 H.265 Annex A Table A.8 的 MaxLumaPs/MaxLumaSr；这些只验证对应工作量下限，不替代 bitrate/DPB/tier/HRD 或完整硬件准入。AVC 1280×736 的 3680 宏块大于 level 3.1 的 3600，不能把高度取整为720后继续宣称 level 3.1。
 
 正式 Mac Decoder 对 Apple 与小米各八组合样本均返回原 token 与合法原生图像；工具直接调用产品工厂，无测试软件 Decoder。只是原生解码合同证据，不发布能力、不证明持续吞吐。
+
+## iOS方向与不可变编码回调
+
+2026-09-07复核既有AVCaptureDevice.RotationCoordinator与VideoToolbox回调配置：RotationCoordinator自iOS17可用，满足iOS18最低版本，使用项目官方SDK，不增加包或运行时。原生传感器输入保持不旋转，方向作为呈现元数据；旧实现通过reserveFrame逐帧保存动态方向，已有输入快照保证；但动态更新不经过方向事务，恢复缓存也没有方向。采用现有Core源事务重建VT世代，方向固定于世代配置，reserveFrame仅接受仍可动态变化的码率；方向匹配后才提交，恢复同时保存方向。没有引入第二套方向线程或GPU像素实现。
+
+生产Swift的Apple硬件harness在八种codec/尺寸/fps下额外验证0→90→0的新epoch/世代，每次AU方向与所属回调一致，合成输入验证全部通过。此结果不替代iPhone传感器方向、预览与输出构图及持续帧率的真机验收。

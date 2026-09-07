@@ -26,7 +26,7 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
         self.eventHandler = eventHandler
     }
 
-    func reserveFrame(bitrateBps: UInt32, rotation: UInt32) -> UInt? {
+    func reserveFrame(bitrateBps: UInt32) -> UInt? {
         submittedFrames.reserve(EncodedFrameConfiguration(
             codec: configuration.codec,
             width: configuration.width,
@@ -35,7 +35,7 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
             bitrateBps: bitrateBps,
             streamEpoch: configuration.streamEpoch,
             encoderGeneration: configuration.encoderGeneration,
-            rotation: rotation
+            rotation: configuration.rotation
         ))
     }
 

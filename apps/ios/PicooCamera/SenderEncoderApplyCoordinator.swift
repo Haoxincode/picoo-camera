@@ -5,6 +5,7 @@ struct PendingEncoderApply {
     let streamEpoch: UInt32
     let encoderGeneration: UInt64
     let targetFormat: VideoSourceFormat
+    let captureRotation: UInt32
     let targetBitrateBps: UInt32
     let recoveryMessage: String?
 }
@@ -12,6 +13,7 @@ struct PendingEncoderApply {
 struct CommittedEncoderState {
     let sourceFormat: VideoSourceFormat
     let position: CameraPosition
+    let captureRotation: UInt32
     let streamEpoch: UInt32
     let bitrateBps: UInt32
 }
@@ -37,6 +39,7 @@ final class SenderEncoderApplyCoordinator {
         streamEpoch: UInt32,
         encoderGeneration: UInt64,
         sourceFormat: VideoSourceFormat,
+        captureRotation: UInt32,
         bitrateBps: UInt32,
         session: PicooSenderSession
     ) {
@@ -47,6 +50,7 @@ final class SenderEncoderApplyCoordinator {
             streamEpoch: streamEpoch,
             encoderGeneration: encoderGeneration,
             targetFormat: sourceFormat,
+            captureRotation: captureRotation,
             targetBitrateBps: bitrateBps,
             recoveryMessage: nil
         )
@@ -64,13 +68,15 @@ final class SenderEncoderApplyCoordinator {
             && accessUnit.streamEpoch == pending.streamEpoch
             && accessUnit.encoderGeneration == pending.encoderGeneration
             && pending.targetFormat.matches(accessUnit)
+            && accessUnit.rotation == pending.captureRotation
     }
 
     func didCommit(_ accessUnit: EncodedAccessUnit, host: SenderAppModel) {
         guard let pending,
               accessUnit.streamEpoch == pending.streamEpoch,
               accessUnit.encoderGeneration == pending.encoderGeneration,
-              pending.targetFormat.matches(accessUnit)
+              pending.targetFormat.matches(accessUnit),
+              accessUnit.rotation == pending.captureRotation
         else {
             return
         }
@@ -81,6 +87,7 @@ final class SenderEncoderApplyCoordinator {
         committed = CommittedEncoderState(
             sourceFormat: pending.targetFormat,
             position: host.camera.position,
+            captureRotation: pending.captureRotation,
             streamEpoch: accessUnit.streamEpoch,
             bitrateBps: pending.targetBitrateBps
         )
@@ -218,6 +225,7 @@ final class SenderEncoderApplyCoordinator {
             let restored = await host.camera.restoreCommittedConfiguration(
                 sourceFormat: committed.sourceFormat,
                 position: committed.position,
+                captureRotation: committed.captureRotation,
                 bitrateBps: directive.targetBitrateBps,
                 streamEpoch: directive.streamEpoch
             )
@@ -236,6 +244,7 @@ final class SenderEncoderApplyCoordinator {
                 streamEpoch: directive.streamEpoch,
                 encoderGeneration: host.camera.encoderGeneration,
                 targetFormat: committed.sourceFormat,
+                captureRotation: committed.captureRotation,
                 targetBitrateBps: directive.targetBitrateBps,
                 recoveryMessage: message
             )

@@ -83,7 +83,6 @@ nonisolated enum Failure: Error { case message(String) }
                             continuation.resume()
                         }
                     }
-                    await encoder.updateRotation(90)
                     await encoder.stop()
                     let output = events.take()
                     guard output.count == 1, case let .accessUnit(frame) = output[0],
@@ -100,6 +99,28 @@ nonisolated enum Failure: Error { case message(String) }
                         let stem = "\(codec.rawValue)-\(resolution.rawValue)-\(fps)"
                         try frame.data.write(to: directory.appendingPathComponent(stem + ".au"))
                         try frame.codecConfiguration.record.write(to: directory.appendingPathComponent(stem + ".config"))
+                    }
+                    // A direction change rebuilds the native generation. Each AU
+                    // retains the configuration captured by its own VT callback.
+                    for (rotation, epoch, generation) in [(UInt32(90), UInt32(8), UInt64(12)), (0, 9, 13)] {
+                        let next = VideoEncoderConfiguration(codec: codec, resolution: resolution,
+                            framesPerSecond: fps, bitrateBps: 6_000_000, streamEpoch: epoch,
+                            encoderGeneration: generation, rotation: rotation)
+                        await encoder.start(configuration: next)
+                        await withCheckedContinuation { continuation in
+                            encoder.callbackQueue.async {
+                                encoder.submit(input.sample)
+                                continuation.resume()
+                            }
+                        }
+                        await encoder.stop()
+                        guard case let .accessUnit(rotated)? = events.take().last,
+                              rotated.rotation == rotation, rotated.streamEpoch == epoch,
+                              rotated.encoderGeneration == generation, rotated.isKeyframe,
+                              rotated.width == frame.width, rotated.height == frame.height,
+                              rotated.framesPerSecond == fps else {
+                            throw Failure.message("direction generation did not match")
+                        }
                     }
                     print("PASS \(codec) \(resolution.rawValue)p\(fps) AU=\(frame.data.count) record=\(frame.codecConfiguration.record.count)")
                 }

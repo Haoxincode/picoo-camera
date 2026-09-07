@@ -11,6 +11,8 @@ final class CameraCaptureModel {
     private(set) var localSourceFormats: [VideoSourceFormat]?
     private(set) var sourceFormat: VideoSourceFormat = .defaultFormat
     var resolution: VideoResolution { sourceFormat.resolution }
+    private(set) var captureRotation: UInt32 = 0
+    @ObservationIgnored private var rotationIntent = CaptureRotationIntent()
     private(set) var streamEpoch: UInt32
     private(set) var encoderGeneration: UInt64
     private(set) var previewLayer: AVCaptureVideoPreviewLayer?
@@ -97,6 +99,8 @@ final class CameraCaptureModel {
         }
 
         state = .starting
+        rotationIntent.reset()
+        captureRotation = Self.captureAngle(at: position)
         let previousEncoderGeneration = encoderGeneration
         encoderGeneration &+= 1
         do {
@@ -148,6 +152,7 @@ final class CameraCaptureModel {
 
     func rebuildAfterReconnect(streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
+        rotationIntent.reset()
         let operation = beginOperation()
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
@@ -176,8 +181,10 @@ final class CameraCaptureModel {
         guard !Task.isCancelled, state == .running, prepared.contains(requestedSourceFormat) else { return false }
         let operation = beginOperation()
         let previousSourceFormat = sourceFormat
+        let previousRotation = captureRotation
         let previousBitrate = targetBitrateBps
         sourceFormat = requestedSourceFormat
+        captureRotation = Self.captureAngle(at: targetPosition)
         targetBitrateBps = PicooSenderSession.initialBitrate(forHeight: UInt32(requestedSourceFormat.resolution.rawValue))
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
@@ -201,6 +208,7 @@ final class CameraCaptureModel {
         } catch {
             guard operation == operationGeneration else { return false }
             sourceFormat = previousSourceFormat
+            captureRotation = previousRotation
             targetBitrateBps = previousBitrate
             self.streamEpoch = previousEpoch
             encoderGeneration = previousEncoderGeneration
@@ -210,16 +218,19 @@ final class CameraCaptureModel {
 
     func setSourceFormat(
         _ requestedSourceFormat: VideoSourceFormat,
+        captureRotation requestedRotation: UInt32,
         bitrateBps: UInt32,
         streamEpoch: UInt32
     ) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
         let previousSourceFormat = sourceFormat
+        let previousRotation = captureRotation
         let previousBitrate = targetBitrateBps
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
         sourceFormat = requestedSourceFormat
+        captureRotation = requestedRotation
         targetBitrateBps = bitrateBps
         self.streamEpoch = streamEpoch
         encoderGeneration &+= 1
@@ -234,6 +245,7 @@ final class CameraCaptureModel {
         } catch {
             guard operation == operationGeneration else { return false }
             sourceFormat = previousSourceFormat
+            captureRotation = previousRotation
             targetBitrateBps = previousBitrate
             self.streamEpoch = previousEpoch
             encoderGeneration = previousEncoderGeneration
@@ -247,18 +259,21 @@ final class CameraCaptureModel {
     func restoreCommittedConfiguration(
         sourceFormat committedSourceFormat: VideoSourceFormat,
         position committedPosition: CameraPosition,
+        captureRotation committedRotation: UInt32,
         bitrateBps committedBitrateBps: UInt32,
         streamEpoch committedStreamEpoch: UInt32
     ) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
         let previousSourceFormat = sourceFormat
+        let previousRotation = captureRotation
         let previousPosition = position
         let previousBitrate = targetBitrateBps
         let previousEpoch = streamEpoch
         let previousEncoderGeneration = encoderGeneration
 
         sourceFormat = committedSourceFormat
+        captureRotation = committedRotation
         targetBitrateBps = committedBitrateBps
         streamEpoch = committedStreamEpoch
         encoderGeneration &+= 1
@@ -293,6 +308,7 @@ final class CameraCaptureModel {
         } catch {
             guard operation == operationGeneration else { return false }
             sourceFormat = previousSourceFormat
+            captureRotation = previousRotation
             position = previousPosition
             targetBitrateBps = previousBitrate
             streamEpoch = previousEpoch
@@ -340,7 +356,8 @@ final class CameraCaptureModel {
             framesPerSecond: sourceFormat.framesPerSecond,
             bitrateBps: targetBitrateBps,
             streamEpoch: streamEpoch,
-            encoderGeneration: encoderGeneration
+            encoderGeneration: encoderGeneration,
+            rotation: captureRotation
         )
     }
 
@@ -405,7 +422,21 @@ final class CameraCaptureModel {
         let captureAngle = UInt32(
             coordinator.videoRotationAngleForHorizonLevelCapture.rounded()
         ) % 360
-        Task { await service.updateRotation(captureAngle) }
+        rotationIntent.observe(captureAngle)
+    }
+
+    var requestedCaptureRotation: UInt32 { rotationIntent.requested }
+
+    func takeRotationRequest() -> UInt32? {
+        guard state == .running else { return nil }
+        return rotationIntent.take(applied: captureRotation)
+    }
+
+    private static func captureAngle(at position: CameraPosition) -> UInt32 {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,
+            for: .video, position: position.capturePosition) else { return 0 }
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        return UInt32(coordinator.videoRotationAngleForHorizonLevelCapture.rounded()) % 360
     }
 
     private func beginOperation() -> UInt64 {

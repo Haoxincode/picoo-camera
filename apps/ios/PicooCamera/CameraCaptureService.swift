@@ -78,7 +78,6 @@ actor CameraCaptureService {
     private var resolution: VideoResolution = .p1080
     private var framesPerSecond: UInt32 = 30
     private var encoderConfiguration: VideoEncoderConfiguration
-    private var captureRotation: UInt32 = 0
     private var operationGeneration: UInt64 = 0
 
     init(
@@ -117,7 +116,7 @@ actor CameraCaptureService {
                 resolution: configuration.resolution,
                 framesPerSecond: configuration.framesPerSecond
             )
-            let appliedConfiguration = configuration.withRotation(captureRotation)
+            let appliedConfiguration = configuration
             encoderConfiguration = appliedConfiguration
             await encoder.start(configuration: appliedConfiguration)
             try ensureCurrent(operation)
@@ -171,12 +170,6 @@ actor CameraCaptureService {
         await encoder.updateBitrate(bitrateBps)
     }
 
-    func updateRotation(_ rotation: UInt32) async {
-        captureRotation = rotation % 360
-        encoderConfiguration = encoderConfiguration.withRotation(captureRotation)
-        await encoder.updateRotation(captureRotation)
-    }
-
     func requestKeyframe() async {
         await encoder.requestKeyframe()
     }
@@ -204,7 +197,7 @@ actor CameraCaptureService {
                 resolution: configuration.resolution,
                 framesPerSecond: configuration.framesPerSecond
             )
-            let appliedConfiguration = configuration.withRotation(captureRotation)
+            let appliedConfiguration = configuration
             encoderConfiguration = appliedConfiguration
             await encoder.start(configuration: appliedConfiguration)
             try ensureCurrent(operation)
@@ -297,15 +290,6 @@ actor CameraCaptureService {
             position = requestedPosition
             resolution = requestedResolution
             framesPerSecond = requestedFps
-            if let device = activeInput?.device {
-                let coordinator = AVCaptureDevice.RotationCoordinator(
-                    device: device,
-                    previewLayer: nil
-                )
-                captureRotation = UInt32(
-                    coordinator.videoRotationAngleForHorizonLevelCapture.rounded()
-                ) % 360
-            }
             session.commitConfiguration()
         } catch {
             let inputWasReplaced = activeInput !== previousInput
@@ -383,18 +367,3 @@ actor CameraCaptureService {
         guard operation == operationGeneration else { throw CancellationError() }
     }
 }
-
-nonisolated private extension VideoEncoderConfiguration {
-    func withRotation(_ rotation: UInt32) -> Self {
-        Self(
-            codec: codec,
-            resolution: resolution,
-            framesPerSecond: framesPerSecond,
-            bitrateBps: bitrateBps,
-            streamEpoch: streamEpoch,
-            encoderGeneration: encoderGeneration,
-            rotation: rotation
-        )
-    }
-}
-
