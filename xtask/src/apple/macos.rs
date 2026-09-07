@@ -207,7 +207,12 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
             "--exact",
         ],
     )?;
-    for package in ["picoo-media-decode", "picoo-gpu", "picoo-receiver"] {
+    for package in [
+        "picoo-media-decode",
+        "picoo-gpu",
+        "picoo-receiver",
+        "picoo-recording",
+    ] {
         super::native_tests::run(sh, &["-p", package, "--lib"], &[])?;
     }
     super::native_tests::run(

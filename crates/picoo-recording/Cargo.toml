@@ -1,0 +1,24 @@
+[package]
+name = "picoo-recording"
+description = "Bounded recording and native media mux adapters — ARCH-PICOO-MEDIA-002"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+picoo-bitstream.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSError"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFNumber", "CFDictionary", "CFArray", "CFString"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMBase", "CMBlockBuffer", "CMFormatDescription", "CMSampleBuffer", "CMTime"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat", "objc2-core-media", "block2"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVAsset", "AVAssetTrack", "AVAssetReader", "AVAssetReaderOutput"] }

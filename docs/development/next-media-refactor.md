@@ -852,3 +852,9 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 - 已核对平台mux与mp4-rust/Scuffle/FFmpeg候选，继续采用产品已对齐的AVAssetWriter/MF平台adapter；详见next-recording-mux研究。新增合成AU专用apple-mux-probe，未接入真实手机录像，也未将Recorder标记完成。
 - 八种AVC/HEVC×720p/1080p×30/60文件经AVAssetReader逐AU字节和PTS回读一致；FFprobe独立解码计数、尺寸、帧率、BT.709一致。AVC/HEVC720p30均故意在finalize前退出probe：91帧中90帧/3秒可读，尾帧丢失；验证了必须保留partial与不完整结果。日志/tmp/picoo-apple-mux-probe-4.log，合成输出/tmp/picoo-mux-probe-output-4；部分文件使用独立interrupted目录。
+
+### 2026-09-07：macOS原生MP4段适配
+
+- 新picoo-recording的AppleSegment为专用录像工作者提供AVAssetWriter压缩直通，不拥有Receiver状态或UI。独立CoreMedia模块创建标准配置描述、带源PTS/帧时长与NotSync标记的压缩sample；段首IDR、参数集、时间戳及原生状态均显式校验，Busy不消费输入，finalize失败保留partial。
+- M4原生两项测试通过，覆盖AVC/HEVC720p×30/60fps的系统逐AU回读和精确微秒时间戳，以及覆盖文件/非法段首/重复PTS/溢出拒绝；Clippy和文档检查通过。测试binary复制到/tmp/picoo-recording-suite隔离运行，结果results.log；cargo xtask test macos已加入同一原生套件，CI不能用Linux空模块测试代替。
+- 此提交只完成REQ-PICOO-MEDIA-066的平台段边界；Recorder的有界事件队列、入口、分段/gap/manifest、Windows适配与产品按钮尚未完成。iOS方向和原生输入清理bdca1de的CI34094321195已全平台通过。

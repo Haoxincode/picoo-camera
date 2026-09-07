@@ -29,3 +29,11 @@ M4/macOS26.6.2实测AVC/HEVC×720p/1080p×30/60八组合，每个文件有91或1
 movieFragmentInterval设为0.5秒仅用于故障探针，生产按产品要求约10秒分段并请求RAP。正常finish后的文件可被平台整理为非fragment结构，不能仅检查完成文件中moof数量判断写入中是否有恢复点。刻意在写完3秒零1帧后直接退出probe进程，跳过finalize：AVC与HEVC的720p30部分文件均可独立读取3秒/90帧，AVC检查保留moov与5个moof；尾部1帧未持久化，证明必须保留.partial并报告不完整，不能声称崩溃后全部帧可恢复。
 
 这不是产品录像完成：Receiver入口接线、队列/超时、gap依赖链、分段事务、manifest耐久性、目录权限、UI状态、Windows后端及真实磁盘故障仍需实现和验证。probe不保存真实相机帧。
+
+## Rust原生段适配验证
+
+picoo-recording复用同一官方AVAssetWriter接口和objc2-av-foundation0.3.2，严格只启用Writer/Input/媒体类型及CoreMedia所需feature；系统Reader仅测试使用。Cargo新增AVFoundation绑定，锁文件也记录CoreMedia的可选CoreAudio绑定，但本次`cargo tree -p picoo-recording -e features -i objc2-core-audio`没有激活路径；没有FFmpeg分发库或新编解码器。应用体积增量仍待正式Receiver接线后测量，不以库文件大小推断。
+
+原生Rust测试使用仓库已验证的AVC/HEVC720p合成fixture，30/60fps各五个AU；AVAssetReader通过现代异步loadTracks API回读，压缩字节及每个微秒PTS精确一致。原生Input必须显式设置mediaTimeScale=1000000。已有文件不覆盖，非IDR/非零段首、重复PTS和u64时间溢出均拒绝。最终化后的.partial文件在测试模拟owner改名为.mp4后可被系统读取，partial不作为已完成可播放结果。
+
+原生最终化通知等待上限10秒；超时失败后的系统取消可能受原生I/O时长影响，只允许在专用录像工作者进行，不能据此宣称任意磁盘卡死下该线程一定在10秒内退出。录像owner的独立状态/超时与资源保留仍须在接线时实现。段适配无未完成像素/GPU工作，不把原生writer的内部资源寿命改成自制引用规则。
