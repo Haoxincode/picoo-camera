@@ -612,3 +612,9 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 
 - REQ-PICOO-MEDIA-038：Android JNI 与 Apple C AU 入口先解析实际图像类型，再核对原生 keyframe hint；AVC/HEVC IDR 可提交，delta 不可冒充随机访问点，CRA/RASL/RADL 在闭合 IDR 合同内明确拒绝。检查在 Core 状态修改前完成；四字节长度输入保留借用，Annex B 仅转换一次。
 - 本地 FFI 13 项测试全部通过，包含真实两 codec IDR、相反提示、伪造 delta 标记和 HEVC leading-picture 拒绝。两目标 FFI Clippy 已通过；不等同原生摄像头完整配置选择或端到端验收。当前 adb devices 为空。
+
+### 2026-09-07：提交前源几何一致性
+
+- REQ-PICOO-MEDIA-039：共同 SPS 解释从 Decoder 移入 CodecConfiguration，复用已有有界 AVC/HEVC 解析；Sender 序列化与 Receiver 状态替换前验证可见尺寸，Decoder 不再维护重复的参数集合遍历。
+- Sender 69、Receiver 106、原生 Mac Decoder 21、bitstream 33 项通过，合计 229 项；Receiver 另 2 项忽略。最初 Receiver 两项镜像/旋转测试使用 720p 参数集配 4×2 声明，被新检查拒绝；改为尺寸匹配的真实 64×64 配置后重跑通过，仍保留实际镜像像素和原生变换描述断言。
+- 相关 all-targets Clippy 和文档检查通过。该检查只证明参数集与声明几何一致，不替代相机实际 fps、颜色与完整硬件 offers 准入。

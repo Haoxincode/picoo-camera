@@ -212,6 +212,35 @@ impl CodecConfiguration {
         Ok(())
     }
 
+    /// All declared SPS must describe the same source before an owner commits it.
+    /// Standard syntax remains in the shared bounded AVC/HEVC parsers.
+    pub fn source_facts(&self) -> Result<crate::VideoSpsFacts, BitstreamError> {
+        let parse = match self.codec {
+            Codec::Avc => crate::VideoSpsFacts::parse_avc,
+            Codec::Hevc => crate::VideoSpsFacts::parse_hevc,
+        };
+        let mut facts = None;
+        for sps in &self.sps {
+            let current = parse(sps)?;
+            if facts.is_some_and(|previous| previous != current) {
+                return Err(BitstreamError::Malformed("conflicting SPS source facts"));
+            }
+            facts = Some(current);
+        }
+        facts.ok_or(BitstreamError::Malformed("missing source SPS"))
+    }
+
+    /// Stream dimensions describe the visible image, including codec padding crop.
+    pub fn validate_visible_size(&self, width: u32, height: u32) -> Result<(), BitstreamError> {
+        let facts = self.source_facts()?;
+        if (facts.visible_width, facts.visible_height) != (width, height) {
+            return Err(BitstreamError::Malformed(
+                "source dimensions differ from SPS",
+            ));
+        }
+        Ok(())
+    }
+
     pub fn profile_idc(&self) -> u8 {
         self.profile_idc
     }

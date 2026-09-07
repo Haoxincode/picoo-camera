@@ -58,3 +58,15 @@ fn valid_picture_of_another_codec_cannot_use_the_committed_record() {
         assert!(config.validate_parameter_sets(&picture).is_err());
     }
 }
+
+#[test]
+fn source_geometry_is_checked_for_both_codecs_without_changing_the_record() {
+    for (codec, record, _) in fixtures() {
+        let config = CodecConfiguration::parse(codec, record.into()).unwrap();
+        config.validate_visible_size(1280, 720).unwrap();
+        for (width, height) in [(1920, 1080), (720, 1280), (0, 720)] {
+            assert!(config.validate_visible_size(width, height).is_err());
+            assert_eq!(config.record().as_ref(), record);
+        }
+    }
+}

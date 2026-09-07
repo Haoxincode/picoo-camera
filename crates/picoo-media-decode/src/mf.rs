@@ -125,7 +125,9 @@ impl MfVideoDecoder {
         let fps = stream_config.map_or(DEFAULT_FPS, |cfg| cfg.fps.max(1));
         let (geometry, sequence_header) = if let Some(config) = stream_config {
             let record = crate::configured_picture::configuration(config)?;
-            let geometry = crate::configured_picture::source_facts(&record)?;
+            let geometry = record
+                .source_facts()
+                .map_err(|error| DecodeError::Platform(error.to_string()))?;
             if (config.width, config.height) != (geometry.visible_width, geometry.visible_height) {
                 return Err(DecodeError::ConfigurationMismatch);
             }

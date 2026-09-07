@@ -24,6 +24,7 @@ impl StreamConfigParams {
             ));
         }
         let configuration = &self.configuration;
+        configuration.validate_visible_size(self.width, self.height)?;
         if configuration.nal_length_size() != picoo_bitstream::NalLengthSize::Four {
             return Err(picoo_bitstream::BitstreamError::Unsupported(
                 "wire requires four-byte NAL lengths",
@@ -96,6 +97,17 @@ mod tests {
             CodecConfiguration::parse(Codec::Hevc, config.codec_configuration.into()).unwrap();
         assert_eq!(&record, source.configuration.as_ref());
         assert_eq!(config.level_idc, u32::from(record.level_idc()));
+    }
+
+    #[test]
+    fn declared_geometry_must_match_native_sps_before_serialization() {
+        let mut source = hevc();
+        source.width = 1280;
+        source.height = 720;
+        assert!(source.to_proto().is_err());
+        source.width = 64;
+        source.height = 64;
+        assert!(source.to_proto().is_ok());
     }
 
     #[test]

@@ -387,8 +387,8 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
 
-    let width = 4u32;
-    let height = 2u32;
+    let width = 64u32;
+    let height = 64u32;
     let mut pattern = vec![128u8; nv12_byte_size(width, height)];
     pattern[0] = 10;
     pattern[1] = 20;
@@ -441,6 +441,7 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
     let cfg = StreamConfigParams {
         width,
         height,
+        configuration: pattern_configuration(),
         mirrored: true,
         stream_epoch: 1,
         ..configured_source()
@@ -482,7 +483,7 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
     {
         assert_eq!(frame.width, width);
         assert_eq!(frame.height, height);
-        let y = &frame.pixel_data.as_ref()[..4];
+        let y = &frame.pixel_data.as_ref()[width as usize - 4..width as usize];
         assert_eq!(
             y,
             &[40, 30, 20, 10],
@@ -503,8 +504,8 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     use picoo_frame_hub::nv12_byte_size;
     use picoo_sender::StreamConfigParams;
 
-    let width = 4u32;
-    let height = 2u32;
+    let width = 64u32;
+    let height = 64u32;
     let pattern = vec![42u8; nv12_byte_size(width, height)];
 
     let mut receiver = ReceiverSession::new();
@@ -553,6 +554,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
     let cfg = StreamConfigParams {
         width,
         height,
+        configuration: pattern_configuration(),
         rotation: 90,
         ..configured_source()
     };
@@ -610,4 +612,13 @@ fn stream_config_rotation_overrides_decoder_rotation() {
         );
         assert_eq!(receiver.ingress_stats().orientation_transform_frames, 0);
     }
+}
+
+// Synthetic output pixels still require a real, dimensionally matching source record.
+fn pattern_configuration() -> std::sync::Arc<picoo_bitstream::CodecConfiguration> {
+    let (sps, pps) =
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_64X64_BT709_IDR).unwrap();
+    picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+        .unwrap()
+        .into()
 }

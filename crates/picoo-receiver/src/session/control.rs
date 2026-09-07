@@ -195,6 +195,11 @@ impl ReceiverSession {
                 "stream identity differs from codec configuration".into(),
             ));
         }
+        record
+            .validate_visible_size(config.width, config.height)
+            .map_err(|error| {
+                ReceiverError::Protocol(format!("invalid source geometry: {error}"))
+            })?;
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         if previous_epoch.is_some_and(|epoch| config.stream_epoch < epoch) {
             return Ok(());
@@ -318,6 +323,8 @@ mod tests {
             level_idc: u32::from(parsed.level_idc()),
             codec_configuration: record.to_vec(),
             stream_epoch: 5,
+            width: 1280,
+            height: 720,
             ..Default::default()
         };
         let mut invalid = Vec::new();
@@ -333,6 +340,11 @@ mod tests {
         });
         invalid.push(StreamConfig {
             level_idc: valid.level_idc + 1,
+            ..valid.clone()
+        });
+        invalid.push(StreamConfig {
+            width: 1920,
+            height: 1080,
             ..valid.clone()
         });
         for mut candidate in invalid {

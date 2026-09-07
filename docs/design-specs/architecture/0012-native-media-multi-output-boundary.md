@@ -105,3 +105,5 @@ Android 编码器回调按自身 generation 保存完整标准配置记录，AU 
 iOS 直接从原生 CMFormatDescription 的 avcC/hvcC atom 获取每张 AU 的配置快照，不提取再拼接 raw 参数。连接和编码器准备只记录用户意图，不提交空配置；源配置只随原生 AU 进入 Core。原码流不因携带配置快照而添加重复参数 NAL。
 
 原生编码器的 keyframe/sync 标志是待核对的提示。进入 Core 的 AU 必须经过共享位流分类，当前闭合序列合同只接纳 AVC/HEVC IDR 为关键帧；提示与实际 picture 不一致、CRA 或 leading-picture 序列在配置暂存和媒体提交前拒绝。平台层不能用系统标志绕过 codec-specific 恢复准入。
+
+CodecConfiguration 的共同源事实由位流层解释，各 SPS 必须一致。Sender 序列化与 Receiver 配置替换前核对声明的可见尺寸与 SPS 裁剪后尺寸；coded padding 不当作显示尺寸。Decoder 复用同一检查，仍独立验证实际原生 allocation 和剩余 crop。该静态一致性不能替代相机帧率、色彩或硬件能力证据。
