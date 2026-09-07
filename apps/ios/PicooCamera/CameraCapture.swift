@@ -169,12 +169,16 @@ final class CameraCaptureModel {
         }
     }
 
-    func switchCamera(streamEpoch: UInt32) async -> Bool {
+    func switchCamera(sourceFormat requestedSourceFormat: VideoSourceFormat, streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
         let targetPosition = position.opposite
         let prepared = await preparedSourceFormats(at: targetPosition)
-        guard !Task.isCancelled, state == .running, prepared.contains(sourceFormat) else { return false }
+        guard !Task.isCancelled, state == .running, prepared.contains(requestedSourceFormat) else { return false }
         let operation = beginOperation()
+        let previousSourceFormat = sourceFormat
+        let previousBitrate = targetBitrateBps
+        sourceFormat = requestedSourceFormat
+        targetBitrateBps = PicooSenderSession.initialBitrate(forHeight: UInt32(requestedSourceFormat.resolution.rawValue))
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
         self.streamEpoch = streamEpoch
@@ -196,6 +200,8 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
+            sourceFormat = previousSourceFormat
+            targetBitrateBps = previousBitrate
             self.streamEpoch = previousEpoch
             encoderGeneration = previousEncoderGeneration
             return false

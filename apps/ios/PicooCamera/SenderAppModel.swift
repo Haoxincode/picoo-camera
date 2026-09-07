@@ -649,13 +649,17 @@ final class SenderAppModel {
     ) async {
         if let position, camera.position == position { return }
         guard let session else { return }
+        guard let targetSource = await preparedCameraSwitchSource() else {
+            errorMessage = "目标镜头与接收端没有共同可用的视频格式。"
+            return
+        }
         suspendMediaSending()
         let epoch = encoderApply.beginLocal(
             session: session,
-            sourceFormat: camera.sourceFormat
+            sourceFormat: targetSource
         )
         guard epoch > 0 else { return }
-        let switched = await camera.switchCamera(streamEpoch: epoch)
+        let switched = await camera.switchCamera(sourceFormat: targetSource, streamEpoch: epoch)
         guard !Task.isCancelled else {
             _ = session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0)
             return
@@ -665,8 +669,8 @@ final class SenderAppModel {
                 directive: nil,
                 streamEpoch: epoch,
                 encoderGeneration: camera.encoderGeneration,
-                sourceFormat: camera.sourceFormat,
-                bitrateBps: activeBitrateBps,
+                sourceFormat: targetSource,
+                bitrateBps: PicooSenderSession.initialBitrate(forHeight: UInt32(targetSource.resolution.rawValue)),
                 session: session
             )
         } else {

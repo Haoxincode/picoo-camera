@@ -134,3 +134,5 @@
 | REQ-PICOO-MEDIA-059 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、005、006、026 | iOS完整SourceFormat贯穿默认请求、原生准备、设置、事务匹配与失败恢复；同一codec/尺寸/fps组合求交，不按最大高度推断，默认明确请求AVC1080p60 | Swift格式匹配、原生准备及事务合同；iOS构建与真机验收 |
 
 | REQ-PICOO-MEDIA-060 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、026 | 手机与电脑触发Android镜头切换共用目标镜头完整准备；按用户明确授权自动选择目标镜头与Receiver交集上限，优先当前codec、其次分辨率、再fps；镜头和格式一次提交，异步准备后核对原会话/方向/源事实，无交集保留原镜头；画质菜单的明确格式请求仍不降级 | 不支持目标保持原镜头，前后摄可准备格式实际切换与fps合同；完整GUI链路验证 |
+
+| REQ-PICOO-MEDIA-061 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、026 | iOS镜头切换按与Android一致的codec、分辨率、fps优先序选择目标完整上限；镜头与完整格式在同一次原生配置中提交，目标码率由实际目标高度派生，失败恢复旧事实 | Swift上限选择与回退合同、iOS构建；iPhone真机切换及持续fps另验 |

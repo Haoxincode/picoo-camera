@@ -6,6 +6,18 @@ import Testing
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("Camera switch selects a complete ceiling and can restore a higher ceiling")
+    func cameraCeilingSelection() {
+        let front = VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30)
+        let fast = VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 60)
+        let hevc = VideoSourceFormat(codec: .hevc, resolution: .p1080, framesPerSecond: 60)
+        #expect(VideoSourceFormat.cameraCeiling([front, fast, hevc], preferredCodec: .avc) == front)
+        #expect(VideoSourceFormat.cameraCeiling([front, fast, hevc], preferredCodec: .hevc) == hevc)
+        #expect(VideoSourceFormat.cameraCeiling([front, .defaultFormat], preferredCodec: .avc) == .defaultFormat)
+        #expect(VideoSourceFormat.cameraCeiling([fast], preferredCodec: .hevc) == fast)
+        #expect(VideoSourceFormat.cameraCeiling([], preferredCodec: .avc) == nil)
+    }
+
     @Test("Source matching rejects a different codec, dimensions, or frame rate")
     func completeSourceMatching() {
         let frame = accessUnit(keyframe: true, pts: 1)

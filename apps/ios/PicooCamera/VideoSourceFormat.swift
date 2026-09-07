@@ -13,6 +13,15 @@ nonisolated struct VideoSourceFormat: Hashable, Sendable {
         }
     }
 
+    static func cameraCeiling(_ candidates: [Self], preferredCodec: NativeVideoCodec) -> Self? {
+        let sameCodec = candidates.filter { $0.codec == preferredCodec }
+        return (sameCodec.isEmpty ? candidates : sameCodec).max {
+            if $0.resolution != $1.resolution { return $0.resolution.rawValue < $1.resolution.rawValue }
+            if $0.framesPerSecond != $1.framesPerSecond { return $0.framesPerSecond < $1.framesPerSecond }
+            return $0.codec.rawValue > $1.codec.rawValue
+        }
+    }
+
     var label: String {
         "\(codec == .avc ? "H.264" : "HEVC") · \(resolution.rawValue)p · \(framesPerSecond) fps"
     }

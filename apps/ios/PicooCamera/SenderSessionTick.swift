@@ -1,6 +1,17 @@
 import Foundation
 
 extension SenderAppModel {
+    func preparedCameraSwitchSource() async -> VideoSourceFormat? {
+        guard let session = senderSession, let remote = session.snapshot.receiverSourceFormats else { return nil }
+        let before = camera.sourceFormat
+        let position = camera.position
+        let epoch = session.snapshot.streamEpoch
+        let local = await camera.preparedSourceFormats(at: position.opposite)
+        guard !Task.isCancelled, camera.position == position, camera.sourceFormat == before,
+              session.snapshot.streamEpoch == epoch, matchesActiveMediaState else { return nil }
+        return VideoSourceFormat.cameraCeiling(local.filter { remote.contains($0) }, preferredCodec: before.codec)
+    }
+
     var availableSourceFormats: [VideoSourceFormat]? {
         guard let local = camera.localSourceFormats else { return nil }
         if senderStatus == .disconnected { return local }
