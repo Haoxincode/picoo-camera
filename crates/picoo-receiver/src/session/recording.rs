@@ -58,6 +58,12 @@ impl ReceiverSession {
         self.recording.as_ref().and_then(RecordingWorker::result)
     }
 
+    pub fn encoded_recording_stalled(&self) -> bool {
+        self.recording
+            .as_ref()
+            .is_some_and(RecordingWorker::stalled)
+    }
+
     pub(super) fn record_assembled_access_unit(&mut self, access_unit: &AssembledAccessUnit) {
         if !self
             .recording

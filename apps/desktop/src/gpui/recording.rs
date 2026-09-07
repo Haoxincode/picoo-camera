@@ -15,6 +15,9 @@ fn active(snapshot: &RecordingSnapshot) -> bool {
         )
 }
 fn status(snapshot: &RecordingSnapshot) -> &'static str {
+    if snapshot.stalled && snapshot.result.is_none() {
+        return "录像写入无响应";
+    }
     if snapshot.stopping {
         return "正在结束录像";
     }
@@ -112,7 +115,9 @@ impl PicooDesktopApp {
                 .result
                 .as_ref()
                 .and_then(|result| result.error.clone())
-        });
+        }).or_else(|| recording.stalled.then(||
+            "录制工作者超过 15 秒未推进，可能仍在等待系统写入。直播不受影响；文件结果将在写入与清理返回后更新。".to_owned()
+        ));
         let message = if self.recording_error.is_some() {
             "录像操作未完成"
         } else {
@@ -219,6 +224,9 @@ mod tests {
         assert_eq!(status(&snapshot), "正在准备录制");
         snapshot.stopping = true;
         assert_eq!(status(&snapshot), "正在结束录像");
+        snapshot.stalled = true;
+        assert_eq!(status(&snapshot), "录像写入无响应");
+        snapshot.stalled = false;
         snapshot.stopping = false;
         snapshot.state = Some(RecordingState::HasGaps);
         assert!(!active(&snapshot));

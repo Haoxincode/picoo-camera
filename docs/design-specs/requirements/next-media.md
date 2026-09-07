@@ -164,3 +164,5 @@
 | REQ-PICOO-MEDIA-074 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | Apple取消原生写入后，从创建时保留的文件句柄恢复被原生删除的partial；不覆盖已有路径，不给未最终化文件签发完成凭据，恢复失败明确返回 | AVC/HEVC原生cancel后字节留存、已有文件不覆盖与I/O失败；可播放性独立于字节留存 |
 
 | REQ-PICOO-MEDIA-075 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021 | 桌面原码流录像使用原生文件夹选择、显式开始/停止与Receiver快照；固定工作区入口跨页面显示准备/录制/收尾/结果，打开已保留目录，不把命令接纳当作保存完成 | 取消选择、重复请求、队列拒绝、收尾状态、完整/缺口/失败呈现及本机界面验证 |
+
+| REQ-PICOO-MEDIA-076 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、028 | Receiver独立观察录制工作者推进时间；原生/磁盘操作超过15秒未返回时显示无响应，仍保留线程资源名额，不伪造完成结果或在UI清理原生对象；已失败入口不再接受AU或请求RAP | 虚拟时间停滞/恢复、最终结果优先、停止与失败入口、慢工作者不阻塞观察；真实存储故障另验 |

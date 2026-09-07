@@ -19,8 +19,10 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 const ARMING_TIMEOUT: Duration = Duration::from_secs(5);
 
 use crate::RecordingResult;
+mod progress;
 
 struct Shared {
+    progress: progress::Progress,
     path: OnceLock<PathBuf>,
     state: AtomicU8,
     refresh: AtomicBool,
@@ -49,6 +51,7 @@ impl RecordingWorker {
         let slot = WorkerSlot;
         let (sender, inbox) = ingress::channel();
         let shared = Arc::new(Shared {
+            progress: progress::Progress::new(),
             path: OnceLock::new(),
             state: AtomicU8::new(0),
             refresh: AtomicBool::new(false),
@@ -101,7 +104,16 @@ impl RecordingWorker {
     }
 
     pub fn is_accepting(&self) -> bool {
-        self.ingress.is_some() && self.shared.result.get().is_none()
+        self.ingress
+            .as_ref()
+            .is_some_and(|ingress| ingress.failure().is_none())
+            && self.shared.result.get().is_none()
+    }
+
+    /// A stalled worker still owns its native resources. Only result() proves
+    /// that finalization/cleanup returned; callers must never join to inspect it.
+    pub fn stalled(&self) -> bool {
+        self.shared.result.get().is_none() && self.shared.progress.stalled()
     }
 
     pub fn terminate(&mut self, failure: ingress::IngressFailure) {
@@ -115,7 +127,7 @@ impl RecordingWorker {
     }
 
     pub fn take_refresh_request(&self) -> bool {
-        self.ingress.is_some() && self.shared.refresh.swap(false, Ordering::AcqRel)
+        self.is_accepting() && self.shared.refresh.swap(false, Ordering::AcqRel)
     }
 
     pub fn result(&self) -> Option<RecordingResult> {
@@ -155,7 +167,9 @@ fn run(parent: PathBuf, mut inbox: RecordingInbox, shared: &Shared) -> Recording
         }
     };
     let _ = shared.path.set(writer.path().to_owned());
+    shared.progress.tick();
     let result = pump(&mut writer, &mut inbox, shared);
+    shared.progress.tick();
     if let Err(error) = &result {
         writer.abort(&error.to_string());
     }
@@ -174,6 +188,7 @@ fn pump(
     let mut reorder = RecordingReorder::new();
     let mut waiting_since = Some(Instant::now());
     loop {
+        shared.progress.tick();
         if writer.take_refresh_request() {
             shared.refresh.store(true, Ordering::Release);
         }
@@ -183,8 +198,10 @@ fn pump(
             Ok(IngressPoll::Gap(reason, source)) => {
                 for input in reorder.drain() {
                     writer.write_ordered(input)?;
+                    shared.progress.tick();
                 }
                 writer.gap(reason, source)?;
+                shared.progress.tick();
                 (Vec::new(), false, false)
             }
             Ok(IngressPoll::Idle) => (reorder.poll(now), false, true),
@@ -197,11 +214,13 @@ fn pump(
         };
         for input in batch {
             writer.write_ordered(input)?;
+            shared.progress.tick();
         }
         shared
             .state
             .store(state_code(writer.state()), Ordering::Release);
         if drained {
+            shared.progress.tick();
             return writer.finish();
         }
         if writer.waiting_for_refresh() {
@@ -275,6 +294,13 @@ mod tests {
 
         let missing = RecordingWorker::start(parent.path().join("missing")).unwrap();
         assert_eq!(wait(&missing).state, RecordingState::Failed);
+
+        let mut terminated = RecordingWorker::start(parent.path().to_owned()).unwrap();
+        terminated.terminate(ingress::IngressFailure::ConfigurationUnavailable);
+        assert!(!terminated.is_accepting());
+        assert!(!terminated.take_refresh_request());
+        assert_eq!(wait(&terminated).state, RecordingState::Failed);
+        assert!(!terminated.stalled());
 
         let arming = RecordingWorker::start(parent.path().to_owned()).unwrap();
         let result = wait(&arming);

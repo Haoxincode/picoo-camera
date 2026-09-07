@@ -26,6 +26,8 @@ use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
+mod recording;
+pub use recording::RecordingSnapshot;
 mod worker;
 #[cfg(feature = "gpui-ui")]
 pub use worker::await_receiver_reply;
@@ -85,14 +87,6 @@ impl ReceiverRuntimeConfig {
             bind_host: "0.0.0.0".into(),
         })
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct RecordingSnapshot {
-    pub available: bool,
-    pub state: Option<picoo_recording::bundle::RecordingState>,
-    pub stopping: bool,
-    pub result: Option<picoo_recording::RecordingResult>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -385,21 +379,7 @@ impl ReceiverRuntime {
         let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
         let (trusted_devices, trusted_identity_replacement) = self.trusted_snapshot();
         ReceiverSnapshot {
-            recording: {
-                #[cfg(target_os = "macos")]
-                {
-                    RecordingSnapshot {
-                        available: true,
-                        state: self.receiver.encoded_recording_state(),
-                        stopping: self.receiver.encoded_recording_stopping(),
-                        result: self.receiver.encoded_recording_result(),
-                    }
-                }
-                #[cfg(not(target_os = "macos"))]
-                {
-                    RecordingSnapshot::default()
-                }
-            },
+            recording: RecordingSnapshot::capture(&self.receiver),
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
             advertise_host: self.advertise_host.clone(),

@@ -67,3 +67,7 @@ macOS生产AVC/HEVC各91个合成AU取消测试：保留句柄与恢复文件逐
 ## 桌面录像交互复用
 
 REQ-PICOO-MEDIA-075复用当前锁定GPUI的prompt_for_paths目录选择、reveal_path系统定位及GPUI Kit Button/AlertDialog；沿用Receiver有界命令与异步reply，无新增UI依赖或自制选择器。操作区只显示简短结果，原生错误通过可键盘操作的详情按钮呈现，避免长路径/错误撑大工作区。取消选择不发送开始命令，队列拒绝明确回复；录制状态来自Core，Windows未接入原生mux时不显示可用入口。
+
+## 原生工作者停滞观察
+
+REQ-PICOO-MEDIA-076复用标准库Instant与AtomicU64记录工作者推进时间，由Receiver快照独立读取；无需增加timer线程、watchdog库或锁。15秒观察阈值大于原生finish回调的10秒等待上限；创建、原生写入、段提交和清理受系统I/O影响时仍可被外部观察。无响应仅是未推进事实，不强杀线程、不发完成凭据；系统调用恢复后的最终结果仍由owner决定。满队列/超龄按既有失败规则处理，已失败入口不再产生RAP需求。实际不可中断I/O的强制退出与进程级隔离不在此观察能力中被假称已解决。
