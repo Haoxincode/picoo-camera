@@ -778,3 +778,9 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - Android77项JVM、完整APK/test APK通过；小米15最终5项准备/八组合硬件/JNI合同通过。后摄横竖持均可准备八组合；前摄竖持1080p60不可准备，横持八组合可准备。此为静态查询结果，不代表前摄实际fps已验。
 - 后摄八组合采集回归首次因CAMERA权限未生效失败；重新授予并确认权限后，完整8组合通过，3秒测量约30.04/60.13fps。最终测试恢复MainActivity，不保留相机图像。
 - bc63498的CI 34082811315已终态：macOS/iOS/Windows/rust-and-docs成功，Android仅前置软件丢包测试失败；77441c5已修正其输入和唯一帧统计。本批推送后重新等待全平台结果。
+
+### 2026-09-07：Android事务完成判断消费完整格式
+
+- REQ-PICOO-MEDIA-055：Android PendingApply与PollResult携带完整VideoSourceFormat，提交判断同时核对Core最后已提交格式、原生profile、epoch与已接纳原生高度。删除使用bitrate activeHeight猜事务已完成的逻辑。
+- 恢复缓存只保存已匹配Core事实的原生profile，不再在首次准备时无条件把当前请求当作旧已提交配置。ViewModel在失败回显时采用Core已提交格式，成功/恢复采用完整结果；完整设置UI仍待接线。
+- Android完整APK/test APK构建与77项JVM通过；Core格式提交/回滚合同已在e10d1d3验证。手机完整网络切换及恢复仍需后续端到端验收。

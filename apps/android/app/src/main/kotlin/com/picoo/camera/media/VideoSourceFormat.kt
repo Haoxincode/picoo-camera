@@ -8,6 +8,10 @@ data class VideoSourceFormat(
 ) {
     init { require(framesPerSecond == 30 || framesPerSecond == 60) }
 
+    fun matches(profile: CaptureProfile): Boolean =
+        codec == profile.codec && framesPerSecond == profile.targetFps &&
+            resolution.width == profile.resolution.width && resolution.height == profile.resolution.height
+
     companion object {
         fun fromWire(codec: Int, height: Int, framesPerSecond: Int): VideoSourceFormat? {
             val nativeCodec = NativeVideoCodec.entries.firstOrNull { it.wireValue == codec } ?: return null

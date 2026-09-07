@@ -20,6 +20,7 @@ import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.EncodedFrameConfiguration
 import com.picoo.camera.media.StreamResolution
+import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.runtime.QuicWifiBindingResult
 import com.picoo.camera.runtime.SenderNativeRuntime
 import com.picoo.camera.ui.SenderHomeState
@@ -218,7 +219,9 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun beginLocalEncoderReconfiguration(targetHeight: Int): Boolean {
-        val epoch = encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, targetHeight)
+        val resolution = StreamResolution.fromHeight(targetHeight) ?: return false
+        val source = VideoSourceFormat(encoder.profile.codec, resolution, encoder.profile.targetFps)
+        val epoch = encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, source)
         if (epoch == 0) {
             uiState.errorText = "正在完成上一项视频调整，请稍后重试"
             return false
@@ -368,19 +371,19 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                     streamConfigDirty.set(false)
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.resolutionLabel =
-                        StreamResolution.fromHeight(senderSnapshot.activeHeight)?.label.orEmpty()
+                        senderSnapshot.lastCommittedSourceFormat?.resolution?.label.orEmpty()
                     ui.errorText = result.message
                 }
                 is EncoderReconfigurationCoordinator.PollResult.Applied -> {
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.adaptiveBitrateBps = result.bitrateBps
-                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight)?.label.orEmpty()
+                    ui.resolutionLabel = result.actualFormat.resolution.label
                     encoder.setTargetBitrateBps(ui.adaptiveBitrateBps)
                 }
                 is EncoderReconfigurationCoordinator.PollResult.Recovered -> {
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.adaptiveBitrateBps = result.bitrateBps
-                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight)?.label.orEmpty()
+                    ui.resolutionLabel = result.actualFormat.resolution.label
                     encoder.setTargetBitrateBps(ui.adaptiveBitrateBps)
                     ui.errorText = "${result.message}；已恢复上一视频配置"
                 }
