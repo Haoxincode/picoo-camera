@@ -26,7 +26,9 @@ fn network_feedback_keeps_source_fixed_and_explicit_changes_still_decode() {
         let yuv = YUVBuffer::from_vec(planes, w, h);
         let mut encoder = Encoder::with_api_config(
             openh264::OpenH264API::from_source(),
-            openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+            openh264::encoder::EncoderConfig::new()
+                .profile(openh264::encoder::Profile::High)
+                .vui(openh264::encoder::VuiConfig::bt709()),
         )
         .expect("encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();

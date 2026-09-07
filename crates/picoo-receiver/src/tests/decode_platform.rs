@@ -35,7 +35,9 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     let yuv = YUVBuffer::from_vec(planes, width, height);
     let mut encoder = Encoder::with_api_config(
         openh264::OpenH264API::from_source(),
-        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
     )
     .expect("openh264 encoder");
     let bitstream = encoder.encode(&yuv).expect("encode");
@@ -548,7 +550,9 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     let yuv = YUVBuffer::from_vec(planes, width, height);
     let mut encoder = Encoder::with_api_config(
         openh264::OpenH264API::from_source(),
-        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
     )
     .expect("openh264 encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();

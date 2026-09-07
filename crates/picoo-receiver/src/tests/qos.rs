@@ -89,7 +89,9 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         let yuv = YUVBuffer::from_vec(planes, width, height);
         let mut encoder = Encoder::with_api_config(
             openh264::OpenH264API::from_source(),
-            openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+            openh264::encoder::EncoderConfig::new()
+                .profile(openh264::encoder::Profile::High)
+                .vui(openh264::encoder::VuiConfig::bt709()),
         )
         .expect("openh264 encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();

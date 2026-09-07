@@ -22,7 +22,9 @@ pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Ve
     let yuv = YUVBuffer::from_vec(planes, width, height);
     let mut encoder = Encoder::with_api_config(
         openh264::OpenH264API::from_source(),
-        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
     )
     .expect("encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
@@ -356,7 +358,9 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     let yuv = YUVBuffer::from_vec(planes.clone(), width, height);
     let mut encoder = Encoder::with_api_config(
         openh264::OpenH264API::from_source(),
-        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
     )
     .expect("openh264 encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
@@ -383,7 +387,9 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     // whose references may include the discarded incomplete access unit.
     let mut recovery_encoder = Encoder::with_api_config(
         openh264::OpenH264API::from_source(),
-        openh264::encoder::EncoderConfig::new().profile(openh264::encoder::Profile::High),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
     )
     .expect("recovery OpenH264 encoder");
     let recovery_au = recovery_encoder
