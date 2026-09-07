@@ -18,14 +18,14 @@ fn protocol_name_cstr() {
 }
 
 #[test]
-fn sender_rejects_offline_ingest_via_ffi() {
+fn sender_rejects_invalid_atomic_encoder_event_via_ffi() {
     assert!(picoo_sender_create(std::ptr::null_mut()).is_null());
     let handle = create_test_sender();
     assert!(!handle.is_null());
     let data = b"test-nalu";
-    let mut out = 0u32;
+    let mut out = PicooEncoderSubmitOutcome::default();
     assert_eq!(
-        picoo_sender_ingest_access_unit(
+        picoo_sender_submit_encoder_event(
             handle,
             data.as_ptr(),
             data.len(),
@@ -33,14 +33,24 @@ fn sender_rejects_offline_ingest_via_ffi() {
             42,
             42,
             1,
+            1,
+            1280,
+            720,
+            30,
+            3_000_000,
+            0,
+            0,
             0,
             1,
-            720,
+            std::ptr::null(),
+            0,
             &mut out,
         ),
         -2
     );
-    assert_eq!(out, 0);
+    assert_eq!(out.encoder_accepted, 0);
+    assert_eq!(out.stream_configured, 0);
+    assert_eq!(out.packet_count, 0);
     assert_eq!(picoo_sender_wait_for_event(handle, 0, 0), 0);
     let mut stats = [0.0f64; 8];
     assert_eq!(
@@ -179,7 +189,7 @@ fn sender_snapshot_is_coherent_before_capabilities() {
 }
 
 #[test]
-fn encoder_started_fact_requires_the_matching_transaction() {
+fn native_request_rollback_requires_the_matching_transaction() {
     let handle = create_test_sender();
     assert!(!handle.is_null());
     let pending = picoo_sender_begin_stream_reconfiguration(handle, 720, 1, 30);
@@ -192,12 +202,12 @@ fn encoder_started_fact_requires_the_matching_transaction() {
     let transaction = picoo_sender_encoder_transaction_id(handle, pending);
     assert!(transaction > 0);
     assert_eq!(
-        picoo_sender_report_encoder_started(handle, transaction, 7, pending + 1, 720),
+        picoo_sender_report_encoder_failed(handle, transaction + 1, 0),
         0
     );
     assert_eq!(
-        picoo_sender_report_encoder_started(handle, transaction, 7, pending, 720),
-        1
+        picoo_sender_encoder_transaction_id(handle, pending),
+        transaction
     );
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);

@@ -673,3 +673,9 @@ ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推�
 - REQ-PICOO-MEDIA-047：MediaCodecVideoEncoder 从该 generation 的 CaptureProfile 获取 codec/尺寸/fps，Core 源请求使用同一 codec/fps；删除旧 MediaCodecH264Encoder/h264Encoder 名称，无别名。
 - 恢复保存并还原完整 CaptureProfile，含镜头与 codec/fps；与 Core 的恢复指令不一致时拒绝。初始界面仍选择 AVC/30，完整原生 offers 和 HEVC/60 用户选择未接线。
 - 完整 assembleDebug/assembleDebugAndroidTest 和新 JNI 构建成功，77 项 JVM 测试全部通过。当前无物理 ADB 设备，不宣称小米原生双 codec/恢复验收完成。
+
+### 2026-09-07：统一移动端公开媒体提交入口
+
+- REQ-PICOO-MEDIA-048：删除没有产品调用方的 C/JNI 独立 ingest、flush、started 及 Kotlin 声明，无兼容别名。保留完整配置快照与 AU 的原子提交、失败上报和恢复控制；Core 内部状态机仍拥有分解事实处理。
+- FFI 13 项回归通过；macOS all-targets 与 Android NDK library Clippy 通过。Android 完整 APK/JNI 构建及 77 项 JVM 测试通过；iOS 完整构建和 Swift 模拟器测试成功。当前三个 Apple 生成头均不再声明被删除 C 入口。
+- 475b5b3 的 CI 34074184001 全平台成功。本批接口清理不代表完整能力探测或真机媒体成功验收。

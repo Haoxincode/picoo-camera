@@ -63,22 +63,6 @@ object PicooNative {
     external fun destroySender(handle: Long)
 
     /**
-     * Packetize one H.264 access unit into PCP FEC-protected VideoPackets.
-     * @return fragment count on success, negative on error.
-     */
-    external fun ingestAccessUnit(
-        handle: Long,
-        data: ByteArray,
-        keyframe: Boolean,
-        ptsUs: Long,
-        encodedAtUs: Long,
-        streamEpoch: Int,
-        transactionId: Long,
-        encoderGeneration: Long,
-        encoderHeight: Int,
-    ): Int
-
-    /**
      * Atomically validates one native encoder generation, optionally stages its StreamConfig,
      * packetizes/flushes the AU, pumps control, and returns explicit outcome facts.
      */
@@ -113,8 +97,6 @@ object PicooNative {
 
     /** User-initiated stop; does not auto-reconnect until the next connect (PUC-005). */
     external fun disconnect(handle: Long): Int
-
-    external fun flushPending(handle: Long): Int
 
     external fun pump(handle: Long): Int
 
@@ -170,15 +152,6 @@ object PicooNative {
 
     /** Resolve the active Rust encoder transaction for [streamEpoch], or zero when committed. */
     external fun encoderTransactionId(handle: Long, streamEpoch: Int): Long
-
-    /** Report the native generation that began producing encoder output. */
-    external fun reportEncoderStarted(
-        handle: Long,
-        transactionId: Long,
-        encoderGeneration: Long,
-        streamEpoch: Int,
-        height: Int,
-    ): Int
 
     /** 0 ignored, 1 rolled back, 2 recovery requested, 3 disconnected. */
     external fun reportEncoderFailed(

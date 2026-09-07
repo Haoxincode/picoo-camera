@@ -307,27 +307,6 @@ pub extern "C" fn picoo_sender_encoder_transaction_id(
         .encoder_transaction_id_for_epoch(stream_epoch)
 }
 
-/// Report that a native encoder generation began producing output.
-#[no_mangle]
-pub extern "C" fn picoo_sender_report_encoder_started(
-    handle: *mut std::ffi::c_void,
-    transaction_id: u64,
-    encoder_generation: u64,
-    stream_epoch: u32,
-    height: u32,
-) -> i32 {
-    if handle.is_null() || encoder_generation == 0 || stream_epoch == 0 || height == 0 {
-        return -1;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    i32::from(inner.session.lock_or_recover().report_encoder_started(
-        transaction_id,
-        encoder_generation,
-        stream_epoch,
-        height,
-    ))
-}
-
 /// Report a native encoder failure; Rust chooses rollback, recovery, or disconnect.
 #[no_mangle]
 pub extern "C" fn picoo_sender_report_encoder_failed(

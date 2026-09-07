@@ -1,8 +1,6 @@
 use crate::handles::{RecoverMutex, SenderInner};
 use picoo_pairing::DeviceIdentity;
-use picoo_sender::{
-    EncoderDirective, NativeEncoderAccessUnit, SenderError, SenderSession, SessionStats,
-};
+use picoo_sender::{EncoderDirective, SenderError, SenderSession, SessionStats};
 use picoo_session::SenderStatus;
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 use std::ffi::CStr;
@@ -133,80 +131,6 @@ pub extern "C" fn picoo_sender_wait_for_event(
     inner
         .event_wake
         .wait_after(after_revision, Duration::from_millis(u64::from(timeout_ms)))
-}
-
-/// Ingest one H.264 picture with four-byte big-endian NAL lengths.
-/// Returns 0 on success, negative on error; malformed framing returns -2.
-#[no_mangle]
-pub extern "C" fn picoo_sender_ingest_access_unit(
-    handle: *mut std::ffi::c_void,
-    data: *const u8,
-    len: usize,
-    is_keyframe: u8,
-    pts_us: u64,
-    encoded_at_us: u64,
-    stream_epoch: u32,
-    transaction_id: u64,
-    encoder_generation: u64,
-    encoder_height: u32,
-    out_packets: *mut u32,
-) -> i32 {
-    if handle.is_null() || data.is_null() || len == 0 {
-        return -1;
-    }
-
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    let Ok(access_unit) = picoo_bitstream::canonical_access_unit(
-        picoo_bitstream::Codec::Avc,
-        picoo_bitstream::NalFormat::LengthPrefixed(picoo_bitstream::NalLengthSize::Four),
-        slice,
-    ) else {
-        return -2;
-    };
-    let mut session = inner.session.lock_or_recover();
-
-    match session.ingest_encoder_access_unit(NativeEncoderAccessUnit {
-        data: access_unit.as_ref(),
-        is_keyframe: is_keyframe != 0,
-        pts_us,
-        encoded_at_us,
-        transaction_id,
-        encoder_generation,
-        stream_epoch,
-        height: encoder_height,
-    }) {
-        Ok(count) => {
-            if !out_packets.is_null() {
-                unsafe {
-                    *out_packets = count as u32;
-                }
-            }
-            0
-        }
-        Err(_) => -2,
-    }
-}
-
-/// Flush pending VideoPackets over QUIC datagrams.
-#[no_mangle]
-pub extern "C" fn picoo_sender_flush(handle: *mut std::ffi::c_void, out_sent: *mut u32) -> i32 {
-    if handle.is_null() {
-        return -1;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    let mut session = inner.session.lock_or_recover();
-    match session.flush_pending() {
-        Ok(sent) => {
-            if !out_sent.is_null() {
-                unsafe {
-                    *out_sent = sent as u32;
-                }
-            }
-            0
-        }
-        Err(_) => -2,
-    }
 }
 
 #[repr(C)]
