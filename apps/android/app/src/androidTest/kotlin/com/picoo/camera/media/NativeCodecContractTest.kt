@@ -28,6 +28,7 @@ class NativeCodecContractTest {
         val request = NativeEncoderFormat(
             kind, size, fps, if (kind == NativeVideoCodec.Hevc) 16_000_000 else 24_000_000,
         )
+        assertTrue("Preparation must admit the same hardware request", NativeVideoEncoder.supports(request))
         val codec = NativeVideoEncoder.create(request).getOrThrow()
         var surface: android.view.Surface? = null
         var compositor: CameraEncodingCompositor? = null

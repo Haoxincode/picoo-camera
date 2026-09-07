@@ -145,3 +145,5 @@ Decoder 能力探测在创建原生 Decoder 的工作线程内执行，同一个
 准备候选只从同一完整 Decoder offer 提取正式 codec/可见尺寸/fps 三元组，不组合不同条目的字段；未知能力与已知但没有匹配项分开表示。平台经同一 Core 锁的状态快照获取候选，再与所选 Camera/Encoder 能力求交集。候选可准备不等于真实输出已准入，最终原生配置仍须命中完整存储/crop/tier/颜色/level 条目。跨语言边界复用现有 cbindgen/C ABI 和官方 JNI/Swift 桥接，不新增序列化协议或版本。
 
 已提交 SourceFormat 来自成功接纳的原生 AU，而非码率控制器的初始高度、用户请求或 prepared 配置。事务准备和失败不覆盖旧完整格式；普通已绑定 encoder generation 的描述属性可更新，但 codec/尺寸/fps 变化必须走明确事务。断连保留最后已提交格式用于恢复，该历史事实与当前传输状态分别表达。此状态复用 Core 事务和 SourceFormat，不新增平台格式推断层。
+
+Android源准备复用实际Camera2输入选择与MediaCodec组件选择规则。候选查询不能另写更宽松的尺寸/fps/profile判据；使用官方CameraCharacteristics、VideoCapabilities与既有CaptureSizeSelector，无新平台依赖。所选镜头和显示方向属于准备输入，变化后重新查询；查询可准备不代表实际输出或长期吞吐已获准入。

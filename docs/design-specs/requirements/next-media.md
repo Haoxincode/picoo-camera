@@ -124,3 +124,5 @@
 | REQ-PICOO-MEDIA-054 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、005 | Core 保留有效能力中的所有选择，即使当前请求不匹配；从同一完整 Decoder offer 提取八种正式源格式的准备候选，未知能力与已知空交集不同；C/JNI/iOS 同锁快照传递完整 codec/height/fps，不能只传最高高度后重建笛卡尔积 | Sender76/FFI14、Android77 JVM与3项真机JNI、iOS构建与Swift/C桥接通过；混合 codec/fps 不借能力、断连未知；本地 Camera+Encoder 交集和设置UI仍待接线 |
 
 | REQ-PICOO-MEDIA-055 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、026 | 完整已提交源格式只来自已接纳原生AU；普通世代不能静默改变codec/尺寸/fps，准备与失败事务保留旧格式；断连保留恢复事实但不表示正在传输 | Sender77项回归与Clippy通过，覆盖初次提交、明确切换、失败保留、同世代变更拒绝与描述属性更新；跨平台快照与UI另验 |
+
+| REQ-PICOO-MEDIA-056 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、005 | Android准备查询与创建复用相同Camera2固定fps/旋转裁剪和MediaCodec硬件Surface/profile/尺寸帧率/码率规则；候选按单条完整SourceFormat与Decoder求交集，不隐式替换请求 | Android77项JVM与5项真机准备/硬件/JNI合同通过；小米后摄八组合采集重跑通过；前摄竖持排除1080p60；准备不代替实际输出记录和持续fps准入 |

@@ -770,3 +770,11 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - REQ-PICOO-MEDIA-055：C/JNI/Swift状态快照在同一Core锁内传递最后已提交的codec/height/fps；尚无提交时明确为空，与准备候选和当前传输状态分别表达。没有使用码率控制器初始1080高度补齐事实。
 - JNI当前固定头包含完整已提交格式；Kotlin严格拒绝旧长度、无codec却含尺寸、非法fps，并测试候选和已提交格式可各自不同。Swift/C固定结构测试覆盖空值及HEVC720p60，与未知能力独立。
 - FFI14项、Android77项JVM通过，完整Android与iOS构建成功；小米15新APK的3项JNI合同通过并恢复MainActivity；iOS Swift/C模拟器测试成功，Clippy/格式/文档通过。手机格式选择和本地Camera/Encoder交集尚未接线，旧activeHeight消费方将在该边界替换。
+
+### 2026-09-07：Android源准备复用平台创建规则
+
+- REQ-PICOO-MEDIA-056：提取既有Camera2镜头、固定fps、最小时长、旋转裁剪选择；实际采集委托同一个入口。未知sensor orientation明确拒绝。MediaCodec查询与创建共用硬件Surface/profile/尺寸fps/码率准入，CBR/VBR两者都缺失不再假设VBR可用。
+- SourcePreparation按每个完整Receiver候选和明确镜头/方向求本地交集；空表、去重和混合组合保持原样，不重新组合字段。只查询官方平台能力，不打开相机或启动编码器；该查询尚未接入设置UI。
+- Android77项JVM、完整APK/test APK通过；小米15最终5项准备/八组合硬件/JNI合同通过。后摄横竖持均可准备八组合；前摄竖持1080p60不可准备，横持八组合可准备。此为静态查询结果，不代表前摄实际fps已验。
+- 后摄八组合采集回归首次因CAMERA权限未生效失败；重新授予并确认权限后，完整8组合通过，3秒测量约30.04/60.13fps。最终测试恢复MainActivity，不保留相机图像。
+- bc63498的CI 34082811315已终态：macOS/iOS/Windows/rust-and-docs成功，Android仅前置软件丢包测试失败；77441c5已修正其输入和唯一帧统计。本批推送后重新等待全平台结果。

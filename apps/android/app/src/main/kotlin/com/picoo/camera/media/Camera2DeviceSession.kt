@@ -508,49 +508,14 @@ internal class Camera2DeviceSession(
         }
     }
 
-    fun findCameraId(facing: LensFacing): String? {
-        val target = when (facing) {
-            LensFacing.Back -> CameraCharacteristics.LENS_FACING_BACK
-            LensFacing.Front -> CameraCharacteristics.LENS_FACING_FRONT
-        }
-        return encoder.cameraManager.cameraIdList.firstOrNull { id ->
-            encoder.cameraManager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == target
-        }
-    }
+    fun findCameraId(facing: LensFacing): String? =
+        CameraCapturePreparation.findCameraId(encoder.cameraManager, facing)
 
-    fun chooseCaptureSize(cameraId: String, target: Size): Size {
-        val characteristics = encoder.cameraManager.getCameraCharacteristics(cameraId)
-        val map = characteristics
-            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?: error("Camera stream configuration is unavailable")
-        val fps = encoder.profile.targetFps
-        require(fps == 30 || fps == 60) { "Unsupported source frame rate" }
-        val fixedRate = Range(fps, fps)
-        check(characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
-            .orEmpty().contains(fixedRate)) { "Camera does not support the requested fixed frame rate" }
-        val maxFrameDurationNanos = 1_000_000_000L / fps
-        val outputSizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
-        val frameRateCapable = outputSizes.filter { size ->
-            val duration = map.getOutputMinFrameDuration(SurfaceTexture::class.java, size)
-            duration > 0L && duration <= maxFrameDurationNanos
-        }
-        val sensorOrientation =
-            characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-        val portraitCrop = StreamOrientation.relativeRotationDegrees(
-            sensorOrientationDegrees = sensorOrientation,
-            displayRotationDegrees = encoder.displayRotationDegrees,
-            frontFacing = encoder.profile.lensFacing == LensFacing.Front,
-        ) % 180 != 0
-        val choices = frameRateCapable
-            .map { CaptureSizeSelector.Dim(it.width, it.height) }
-        val selected = CaptureSizeSelector.select(
-            choices,
-            CaptureSizeSelector.Dim(target.width, target.height),
-            portraitCrop = portraitCrop,
+    fun chooseCaptureSize(cameraId: String, target: Size): Size =
+        CameraCapturePreparation.chooseCaptureSize(
+            encoder.cameraManager.getCameraCharacteristics(cameraId),
+            target, encoder.profile.targetFps, encoder.profile.lensFacing, encoder.displayRotationDegrees,
         )
-        return Size(selected.width, selected.height)
-    }
 
     fun closeCaptureSession() {
         encoder.lifecycle.captureSessionGeneration.incrementAndGet()

@@ -39,18 +39,20 @@ internal object NativeVideoEncoder {
         check(format.containsKey("csd-0")) { "Encoder configuration is missing" }
     }
 
-    fun create(request: NativeEncoderFormat): Result<MediaCodec> = runCatching {
+    private fun candidate(request: NativeEncoderFormat): MediaCodecInfo {
         require(request.framesPerSecond in listOf(30, 60)) { "Unsupported source frame rate" }
         require(request.size in listOf(Size(1280, 720), Size(1920, 1080))) {
             "Unsupported source dimensions"
         }
         require(request.bitrateBps > 0) { "Invalid encoder bitrate" }
-        val candidate = MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstOrNull { info ->
+        return MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos.firstOrNull { info ->
             info.isEncoder && info.isHardwareAccelerated && !info.isAlias &&
                 info.supportedTypes.any { it.equals(request.codec.mime, ignoreCase = true) } &&
                 runCatching {
                     info.getCapabilitiesForType(request.codec.mime).let { caps ->
-                        caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) &&
+                        (caps.encoderCapabilities.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR) ||
+                            caps.encoderCapabilities.isBitrateModeSupported(MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)) &&
+                            caps.colorFormats.contains(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface) &&
                             caps.profileLevels.any { it.profile == request.codec.profile } &&
                             caps.videoCapabilities.bitrateRange.contains(request.bitrateBps) &&
                             caps.videoCapabilities.areSizeAndRateSupported(
@@ -59,6 +61,13 @@ internal object NativeVideoEncoder {
                     }
                 }.getOrDefault(false)
         } ?: error("No hardware encoder for $request")
+    }
+
+    /** Preparation only; configure/output records still require admission (MEDIA-056). */
+    fun supports(request: NativeEncoderFormat): Boolean = runCatching { candidate(request) }.isSuccess
+
+    fun create(request: NativeEncoderFormat): Result<MediaCodec> = runCatching {
+        val candidate = candidate(request)
         val codec = MediaCodec.createByCodecName(candidate.name)
         try {
             check(codec.codecInfo.isHardwareAccelerated) { "Selected encoder is not hardware accelerated" }
