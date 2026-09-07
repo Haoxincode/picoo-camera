@@ -659,3 +659,11 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - 同一生产 Swift 在 M4 上执行八组 codec/尺寸/fps 配置，初次全部为 IDR 但 SPS 无颜色信息；仅给输入设置 attachment 不够。增加输入/目标的 420v BT.709 元数据验证及 VT 压缩颜色属性后，共享 bitstream 检查八组的闭合 IDR、参数集身份、可见尺寸、BT.709 limited 全部通过。未知颜色的合成输入明确拒绝。两 codec 的 1080 实际编码高度均为 1088。
 - 新 harness/检查器及命令保存在 verification/native-media 和 bitstream examples。首次提取 submit 时遗漏 nonisolated，被 iOS 的 MainActor 默认隔离构建拒绝；补充显式隔离与队列断言后，完整 cargo xtask build ios 与 18 项 Swift 模拟器测试通过，bitstream all-targets Clippy 与文档检查通过。
 - 这些是 M4 原生硬件与模拟器证据；不等于 iPhone 相机、持续 60fps 或完整 offers/用户选择。CameraCaptureModel 仍明确选择 AVC/30，正式 UI 选择待完整能力交集接线。
+
+### 2026-09-07：Decoder offers 的存储与可见尺寸
+
+- REQ-PICOO-MEDIA-046：根据同一生产 Swift 的实际 AVC/HEVC 1080p 输出，修正 VideoFormat 对 1920×1088 存储的拒绝。可见图像继续限定正式尺寸；最低 codec level 由编码工作量决定，不能用更小 crop 降低。
+- 请求准备可匹配同一条含 padding 的 offer，最终 Capabilities::supports 仍精确区分存储尺寸与 crop 原点，未放宽完整配置相等规则。Protocol 26、Sender 73 项回归全部通过，all-targets Clippy 与文档检查通过。
+- 这批修正能力模型，不宣称 Receiver 原生 offers 探测或每个实际 SPS 的最终能力准入已接线。
+
+ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推送，新 CI 执行中。

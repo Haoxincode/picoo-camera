@@ -65,15 +65,14 @@ impl VideoFormat {
             .coded_size
             .as_ref()
             .ok_or(MediaFormatError("missing coded size"))?;
-        if !matches!((size.width, size.height), (1280, 720) | (1920, 1080)) {
+        if !matches!((size.width, size.height), (1280, 720) | (1920, 1080 | 1088)) {
             return Err(MediaFormatError("unsupported coded size"));
         }
         let rect = self
             .visible_rect
             .as_ref()
             .ok_or(MediaFormatError("missing visible rect"))?;
-        if rect.width == 0
-            || rect.height == 0
+        if !matches!((rect.width, rect.height), (1280, 720) | (1920, 1080))
             || [rect.x, rect.y, rect.width, rect.height]
                 .iter()
                 .any(|v| v % 2 != 0)
@@ -120,7 +119,11 @@ impl VideoFormat {
         let fps = self.frame_rate.as_ref().unwrap();
         match (
             VideoCodec::try_from(self.codec).unwrap(),
-            size.height,
+            if size.height == 1088 {
+                1080
+            } else {
+                size.height
+            },
             fps.numerator,
         ) {
             (VideoCodec::Avc, 720, 30) => 31,

@@ -154,3 +154,26 @@ fn explicit_request_cannot_combine_dimensions_rate_or_color_from_other_offers() 
     );
     assert_eq!(session.last_allocated_stream_epoch, INITIAL_STREAM_EPOCH);
 }
+
+#[test]
+fn preparation_matches_visible_size_without_guessing_native_storage_padding() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    let mut caps = decoder_capabilities(&[(1920, 1080)]);
+    caps.offers[0]
+        .format
+        .as_mut()
+        .unwrap()
+        .coded_size
+        .as_mut()
+        .unwrap()
+        .height = 1088;
+    assert!(session.apply_capabilities_for_test(caps));
+    assert!(
+        session.begin_stream_reconfiguration(crate::SourceFormat {
+            codec: picoo_bitstream::Codec::Avc,
+            height: 1080,
+            fps: 30,
+        }) > INITIAL_STREAM_EPOCH
+    );
+    assert_eq!(session.receiver_max_height(), 1080);
+}

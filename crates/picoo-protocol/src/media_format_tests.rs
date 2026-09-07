@@ -143,3 +143,58 @@ fn offer_count_duplicates_and_access_unit_budgets_are_bounded() {
     caps.offers[0].format = None;
     assert!(caps.validate().is_err());
 }
+
+#[test]
+fn padded_coded_geometry_is_distinct_from_the_formal_visible_image() {
+    for codec in [VideoCodec::Avc, VideoCodec::Hevc] {
+        let mut padded = offer(codec, 1080, 60);
+        padded
+            .format
+            .as_mut()
+            .unwrap()
+            .coded_size
+            .as_mut()
+            .unwrap()
+            .height = 1088;
+        let caps = Capabilities {
+            offers: vec![padded],
+        };
+        assert!(caps.validate().is_ok());
+        let exact = caps.offers[0].format.unwrap();
+        assert!(caps.supports(&exact, padded.max_level_idc, 1024));
+        let unpadded = offer(codec, 1080, 60).format.unwrap();
+        assert!(!caps.supports(&unpadded, padded.max_level_idc, 1024));
+        let mut different_crop = exact;
+        different_crop.visible_rect.as_mut().unwrap().y = 8;
+        assert!(different_crop.validate().is_ok());
+        assert!(!caps.supports(&different_crop, padded.max_level_idc, 1024));
+        let mut padding_as_image = exact;
+        padding_as_image.visible_rect.as_mut().unwrap().height = 1088;
+        assert!(padding_as_image.validate().is_err());
+    }
+}
+
+#[test]
+fn cropped_visible_image_does_not_lower_the_coded_level_requirement() {
+    let mut entry = offer(VideoCodec::Avc, 1080, 30);
+    entry
+        .format
+        .as_mut()
+        .unwrap()
+        .coded_size
+        .as_mut()
+        .unwrap()
+        .height = 1088;
+    entry.format.as_mut().unwrap().visible_rect = Some(VisibleRect {
+        x: 0,
+        y: 0,
+        width: 1280,
+        height: 720,
+    });
+    entry.max_level_idc = 31;
+    assert!(Capabilities {
+        offers: vec![entry]
+    }
+    .validate()
+    .is_err());
+}

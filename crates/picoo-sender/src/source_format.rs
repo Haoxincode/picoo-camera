@@ -35,9 +35,27 @@ impl SourceFormat {
             },
             ColorRange::Limited,
         );
-        caps.offers
-            .iter()
-            .any(|offer| offer.format.as_ref() == Some(&format))
+        // A request names the visible camera format. Storage padding and crop
+        // origin are native facts; final Capabilities::supports still requires
+        // their exact record-derived values, without combining different offers.
+        caps.offers.iter().any(|offer| {
+            let Some(candidate) = offer.format else {
+                return false;
+            };
+            let Some(crop) = candidate.visible_rect else {
+                return false;
+            };
+            let requested = VideoFormat {
+                coded_size: candidate.coded_size,
+                visible_rect: Some(picoo_protocol::control::VisibleRect {
+                    width: format.visible_rect.unwrap().width,
+                    height: self.height,
+                    ..crop
+                }),
+                ..format
+            };
+            candidate == requested
+        })
     }
 
     pub fn matches(self, config: &crate::StreamConfigParams) -> bool {

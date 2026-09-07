@@ -119,3 +119,5 @@ Encoder 请求以显式 SourceFormat 表达 codec、正式可见尺寸和 fps，
 能力消息先于源选择时仅保存已验证 offers，不猜测 AVC 或 30fps，也不捏造可用最大高度。明确请求优先于旧已提交配置，能力查询按其 codec/fps 与既定 SDR 色彩匹配。已收到 Decoder offers 的新请求必须命中单个完整条目；拒绝不消耗 epoch 或事务 ID，后续合法请求可继续执行。此准备门禁不替代原生相机/编码器 offers、实际参数集 level 和每 AU 预算的完成准入。
 
 iOS 编码配置必须带 codec；VideoToolbox session/profile 与每输入快照均由该值派生，输出原生 atom 的 codec 必须一致。HEVC 明确关闭 Open GOP，同时关闭帧重排；原生 sync 标记仍接受位流 IDR 校验。压缩颜色属性不能只依赖输入 attachment 隐式传播：逐帧确认 420v、BT.709 primaries/transfer/matrix 后显式配置对应 VUI；未知输入或转换目标颜色拒绝，不通过篡改输入标签使其满足契约。
+
+Decoder offer 分开表达原生编码存储与正式可见图像：1080p 可对应 1920×1080 或 1920×1088 存储，可见尺寸仍是 1920×1080。codec level 准入按编码工作量，不能因裁剪变小而降低；最终 supports 对存储和 crop 位置仍严格相等。准备请求只指定尚未取得参数集的可见尺寸，因此可选择含合法存储 padding 的同一条 offer，不从 codec 名称猜测 SPS 裁剪。
