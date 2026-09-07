@@ -855,7 +855,7 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 ### 2026-09-07：macOS原生MP4段适配
 
-- 新picoo-recording的AppleSegment为专用录像工作者提供AVAssetWriter压缩直通，不拥有Receiver状态或UI。独立CoreMedia模块创建标准配置描述、带源PTS/帧时长与NotSync标记的压缩sample；段首IDR、参数集、时间戳及原生状态均显式校验，Busy不消费输入，finalize失败保留partial。
+- 新picoo-recording的AppleSegment为专用录像工作者提供AVAssetWriter压缩直通，不拥有Receiver状态或UI。独立CoreMedia模块创建标准配置描述、带源PTS/帧时长与NotSync标记的压缩sample；段首IDR、参数集、时间戳及原生状态均显式校验，Busy不消费输入，finalize失败不登记完成；后续故障测试确认原生cancelWriting可能删除partial，不能保证取消后的未完成文件留存。
 - M4原生两项测试通过，覆盖AVC/HEVC720p×30/60fps的系统逐AU回读和精确微秒时间戳，以及覆盖文件/非法段首/重复PTS/溢出拒绝；Clippy和文档检查通过。测试binary复制到/tmp/picoo-recording-suite隔离运行，结果results.log；cargo xtask test macos已加入同一原生套件，CI不能用Linux空模块测试代替。
 - 此提交只完成REQ-PICOO-MEDIA-066的平台段边界；Recorder的有界事件队列、入口、分段/gap/manifest、Windows适配与产品按钮尚未完成。iOS方向和原生输入清理bdca1de的CI34094321195已全平台通过。
 
@@ -869,3 +869,9 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 - REQ-PICOO-MEDIA-068提供16项标准库有界通道，try_send不等待磁盘或消费者；每项绑定连接、StreamConfig、原始AssembledAccessUnit，共享Bytes；限制AU/配置尺寸及250ms队列年龄。正常停止排空，容量/年龄/输入身份错误进入粘性失败。
 - 13项macOS隔离测试与Clippy通过，新增正常排空、抵达次序、共享载荷、满队列、超龄与消费者退出回归。通道不负责重排，也尚未接入Receiver，不能据此宣布产品录像可用。
+
+### 2026-09-07：有序原码流分段状态机
+
+- REQ-PICOO-MEDIA-069将原生段和bundle串联为专用工作者内部EncodedWriter：真实IDR启动（不信wire hint），配置/世代变化切段，缺AU或超过三帧周期的PTS空档记录gap，10秒IDR切段及主动refresh意图，写入Busy至多重试250ms。段内PTS从零开始，manifest保留源范围和镜像意图。
+- 19项macOS隔离测试、Clippy通过，新增双codec切段、302个合成AU跨10秒边界、缺口、时间空档、Arming与错误后有效前缀保留。输入被明确要求已排序；独立重排、线程owner、关键帧控制、Receiver与UI仍待接入，CRA仍明确不支持。
+- 故障测试纠正此前partial表述：AVAssetWriter cancelWriting可能删除未完成输出。逻辑输入错误时先尝试最终化已接受的有效前缀，整体保持Failed；原生最终化本身失败时尚不能保证取消后的partial留存，须继续补齐，不能以bundle文件系统测试冒充此原生行为。

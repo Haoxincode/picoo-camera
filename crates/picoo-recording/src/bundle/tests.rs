@@ -15,6 +15,7 @@ fn metadata() -> SegmentMetadata {
         height: 720,
         fps: 30,
         rotation: 0,
+        mirrored: false,
         configuration_sha256: "0".repeat(64),
     }
 }

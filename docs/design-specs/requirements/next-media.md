@@ -150,3 +150,5 @@
 | REQ-PICOO-MEDIA-067 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | 录制bundle独占创建；manifest原子替换，段文件最终化及同步后才登记完成；gap和失败状态不可被后续成功覆盖，段/gap数量有上限，保留未完成partial | 原子落盘、既有路径不覆盖、粘性结果、段文件摘要、容量上限与I/O失败回归 |
 
 | REQ-PICOO-MEDIA-068 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | 完整AU通过独立有界非阻塞通道交给录制工作者，携带连接/配置/源身份；容量及年龄超限终止录像并保留明确错误，正常停止可排空已接受AU；不依赖live恢复队列 | 满队列、超龄、正常停止排空、压缩Bytes共享及终态粘性；Receiver接线另验 |
+
+| REQ-PICOO-MEDIA-069 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、020、021、022 | 专用工作者的原码流写入状态机等待经验证IDR开始；有序AU缺口、配置/世代变化与约10秒RAP切段，PTS按段首归零且保留源映射；Busy限时重试，错误保持Failed | 合成AU的开始、主动RAP请求、跨codec/世代分段、缺口、非法AU与最终化结果；线程及Receiver接线另验 |

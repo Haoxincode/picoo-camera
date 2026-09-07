@@ -157,7 +157,7 @@ impl AppleSegment {
         })
     }
 
-    /// Wait only on the dedicated writer thread. Failure leaves a partial file.
+    /// Wait only on the dedicated writer thread. Failure never grants promotion.
     pub fn finish(self) -> Result<FinalizedSegment, RecordingError> {
         if self.last_pts_us.is_none() {
             return Err(RecordingError::InvalidInput("empty segment"));
@@ -188,7 +188,7 @@ impl AppleSegment {
 impl Drop for AppleSegment {
     fn drop(&mut self) {
         // SAFETY: No application append is concurrent with destruction. Native
-        // cancellation owns draining its internal work; partial files are retained.
+        // cancellation owns draining its internal work and may remove unfinished output.
         unsafe {
             if self.writer.status() == AVAssetWriterStatus::Writing {
                 self.writer.cancelWriting();
@@ -207,4 +207,4 @@ fn writer_error(writer: &AVAssetWriter) -> RecordingError {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

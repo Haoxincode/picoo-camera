@@ -4,6 +4,8 @@
 #[cfg(target_os = "macos")]
 pub mod apple;
 pub mod bundle;
+#[cfg(target_os = "macos")]
+pub mod encoded;
 pub mod ingress;
 
 #[derive(Debug, thiserror::Error)]

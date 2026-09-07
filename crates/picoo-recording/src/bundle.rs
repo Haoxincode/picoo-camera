@@ -45,6 +45,7 @@ pub struct SegmentMetadata {
     pub height: u32,
     pub fps: u32,
     pub rotation: u32,
+    pub mirrored: bool,
     pub configuration_sha256: String,
 }
 

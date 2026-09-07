@@ -9,7 +9,7 @@ use std::{ptr::NonNull, time::Instant};
 
 type ReadFrames = Result<Vec<(Vec<u8>, i64)>, String>;
 
-fn fixtures() -> Vec<(CodecConfiguration, Vec<u8>)> {
+pub(crate) fn fixtures() -> Vec<(CodecConfiguration, Vec<u8>)> {
     let avc = include_bytes!("../../../picoo-testkit/fixtures/avc-1280x720-bt709-idr.h264");
     let picture = AccessUnit::parse(Codec::Avc, NalFormat::AnnexB, avc).unwrap();
     let sps = picture.nals().iter().find(|nal| nal[0] & 31 == 7).unwrap();
@@ -188,6 +188,7 @@ fn native_finalization_bundle_promotion_and_system_readback() {
                     height: 720,
                     fps: 30,
                     rotation: 0,
+                    mirrored: false,
                     configuration_sha256: format!("{:x}", Sha256::digest(b"fixture configuration")),
                 },
             )

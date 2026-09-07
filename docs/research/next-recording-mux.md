@@ -45,3 +45,7 @@ REQ-PICOO-MEDIA-067复用仓库已有serde/serde_json、sha2 0.10及tempfile 3�
 ## 完整AU入口队列
 
 REQ-PICOO-MEDIA-068复用std::sync::mpsc::sync_channel及try_send，沿用FrameBus已有标准库通道实践；不新增crossbeam或自研无锁队列。单生产者Receiver、单消费者录制工作者没有多消费者需求。通道固定16项、每AU最大2MiB、配置最大64KiB，最坏待处理载荷约33MiB；250ms入口年龄上限由工作者检查。年龄超限和容量耗尽显式终止本次录像，正常关闭排空已接纳输入。排序/依赖链由录制工作者另外负责，通道只保留抵达次序。
+
+## 原生取消的故障发现
+
+EncodedWriter故障注入显示，AVAssetWriter cancelWriting可能删除尚未最终化输出；此前“finalize失败必定保留partial”不成立。正常输入被拒绝时，仍健康的writer先最终化有效前缀并登记段，整体结果再标Failed。原生writer失败后的partial留存仍需独立实现与故障验证。进程直接退出probe留下的fragment结果不能代替主动cancel路径。
