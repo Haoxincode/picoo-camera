@@ -122,3 +122,5 @@
 | REQ-PICOO-MEDIA-052 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、009、025 | 原生 Decoder owner 内逐项 probe，只有实际原生输出与原始 token 成立才生成完整 offer；探测图像不外泄，每项 reset，无软件替代，reset/身份失败中止整份结果 | M4 实际11条完整offer、25项Decoder回归、最多三次输入的延迟输出原始身份、全拒绝不继承样本能力与reset失败停止；Receiver能力发送接线及持续吞吐另验 |
 | REQ-PICOO-MEDIA-053 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025 | Receiver 工作线程在直播前完成原生探测，owner 仅发送该实例的完整能力；配置以实际记录精确准入，探测期间最多暂存一个绑定连接的配置，断连清理；致命解码器失败作废能力，不静默重建并沿用证据 | Mac Receiver116/Sender75、Linux Receiver121/Sender75、FFI13回归；Apple/小米16组合经真实probe与QUIC解码；线程归属、早到配置/断连隔离、失败后停止；Windows和持续真机另验 |
 | REQ-PICOO-MEDIA-054 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、005 | Core 保留有效能力中的所有选择，即使当前请求不匹配；从同一完整 Decoder offer 提取八种正式源格式的准备候选，未知能力与已知空交集不同；C/JNI/iOS 同锁快照传递完整 codec/height/fps，不能只传最高高度后重建笛卡尔积 | Sender76/FFI14、Android77 JVM与3项真机JNI、iOS构建与Swift/C桥接通过；混合 codec/fps 不借能力、断连未知；本地 Camera+Encoder 交集和设置UI仍待接线 |
+
+| REQ-PICOO-MEDIA-055 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、026 | 完整已提交源格式只来自已接纳原生AU；普通世代不能静默改变codec/尺寸/fps，准备与失败事务保留旧格式；断连保留恢复事实但不表示正在传输 | Sender77项回归与Clippy通过，覆盖初次提交、明确切换、失败保留、同世代变更拒绝与描述属性更新；跨平台快照与UI另验 |

@@ -204,6 +204,14 @@ impl<T: PicooTransport> SenderSession<T> {
                 stream_epoch: self.current_stream_epoch,
             });
         }
+        if self.pending_stream_config.as_ref().is_some_and(|config| {
+            self.committed_source_format
+                .is_some_and(|format| !format.matches(config))
+        }) {
+            return Err(SenderError::Protocol(
+                "source format change requires an explicit encoder transaction".into(),
+            ));
+        }
         let fec = self.fec_protection_for(is_keyframe);
         self.observe_media_clock(stream_epoch, encoded_at_us);
         let packets = self.pipeline.ingest_timed_access_unit(
@@ -214,6 +222,9 @@ impl<T: PicooTransport> SenderSession<T> {
             stream_epoch,
             fec,
         )?;
+        if let Some(config) = &self.pending_stream_config {
+            self.committed_source_format = Some(config.source_format());
+        }
         if is_keyframe {
             self.keyframe_requested = false;
         }
@@ -265,6 +276,23 @@ impl<T: PicooTransport> SenderSession<T> {
             return Err(SenderError::Protocol(
                 "initial or transactional stream configuration requires a keyframe".into(),
             ));
+        }
+        // REQ-PICOO-MEDIA-055: capabilities permit preparation, not a silent
+        // source change inside an already bound encoder generation.
+        if !self.encoder_apply_state.is_applying() && self.committed_encoder_generation != 0 {
+            let bound_format = self.committed_source_format.or_else(|| {
+                self.pending_stream_config
+                    .as_ref()
+                    .map(|config| config.source_format())
+            });
+            if stream_config
+                .as_ref()
+                .is_some_and(|config| bound_format.is_some_and(|format| !format.matches(config)))
+            {
+                return Err(SenderError::Protocol(
+                    "source format change requires an explicit encoder transaction".into(),
+                ));
+            }
         }
         let stream_configured = stream_config.is_some();
         // REQ-PICOO-MEDIA-051: a visible request does not admit actual

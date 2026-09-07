@@ -15,6 +15,12 @@ use crate::stream_config::StreamConfigParams;
 use crate::SenderError;
 
 impl<T: PicooTransport> SenderSession<T> {
+    /// Last admitted native format. Retained across disconnects for recovery;
+    /// this does not claim that a connection is currently streaming.
+    pub fn committed_source_format(&self) -> Option<crate::SourceFormat> {
+        self.committed_source_format
+    }
+
     pub fn encoder_transaction_id_for_epoch(&self, stream_epoch: u32) -> u64 {
         self.encoder_apply_state
             .transaction_id_for_epoch(stream_epoch)
@@ -194,6 +200,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.media_clock_anchor = None;
         self.committed_encoder_height = actual_height;
         self.committed_encoder_generation = encoder_generation;
+        self.committed_source_format = Some(committed_config.source_format());
         self.pending_stream_config = Some(committed_config);
         self.stream_config_sent = true;
         self.media_blocked_for_stream_config = false;
@@ -304,6 +311,7 @@ impl<T: PicooTransport> SenderSession<T> {
         debug_assert_eq!(committed_config.stream_epoch, self.current_stream_epoch);
         self.committed_encoder_height = actual_height;
         self.committed_encoder_generation = encoder_generation;
+        self.committed_source_format = Some(committed_config.source_format());
         self.pending_stream_config = Some(committed_config);
         self.stream_config_sent = true;
         self.media_blocked_for_stream_config = false;

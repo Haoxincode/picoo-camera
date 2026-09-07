@@ -17,6 +17,14 @@ pub struct StreamConfigParams {
 }
 
 impl StreamConfigParams {
+    pub fn source_format(&self) -> crate::SourceFormat {
+        crate::SourceFormat {
+            codec: self.configuration.codec(),
+            height: self.height,
+            fps: self.fps,
+        }
+    }
+
     pub fn to_proto(&self) -> Result<StreamConfig, picoo_bitstream::BitstreamError> {
         if !matches!(self.fps, 30 | 60) || !matches!(self.rotation, 0 | 90 | 180 | 270) {
             return Err(picoo_bitstream::BitstreamError::Unsupported(

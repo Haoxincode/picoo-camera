@@ -141,6 +141,8 @@ pub struct SenderSession<T: PicooTransport> {
     last_allocated_stream_epoch: u32,
     /// Zero until the platform reports its first actual encoder output.
     committed_encoder_height: u32,
+    /// Last source format committed by an admitted native AU, never a request.
+    committed_source_format: Option<crate::SourceFormat>,
     /// Native generation bound by EncoderStarted; zero until the first encoder starts.
     committed_encoder_generation: u64,
     /// A committed epoch must not emit media until its matching StreamConfig
@@ -203,6 +205,7 @@ impl<T: PicooTransport> SenderSession<T> {
             current_stream_epoch: INITIAL_STREAM_EPOCH,
             last_allocated_stream_epoch: INITIAL_STREAM_EPOCH,
             committed_encoder_height: 0,
+            committed_source_format: None,
             committed_encoder_generation: 0,
             media_blocked_for_stream_config: false,
             pending_camera_command: None,

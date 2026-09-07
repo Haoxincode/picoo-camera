@@ -39,6 +39,7 @@ fn native_au(
 
 mod abr;
 mod capability_selection;
+mod committed_source;
 mod configuration_admission;
 mod epoch;
 mod pairing;

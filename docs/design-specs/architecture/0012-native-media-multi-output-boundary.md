@@ -143,3 +143,5 @@ Decoder 能力探测在创建原生 Decoder 的工作线程内执行，同一个
 原生 Decoder 在自己的工作线程创建并探测，网络 owner 只接收完整 offers，不获取探测图像。配置按标准记录核对实际源格式后，必须命中该 Decoder 实例的完整条目。探测尚未结束时，只保留一个绑定 transport session 和 control generation 的待准入配置；断连销毁它。线程致命失败或 reset 失败即终止该实例并作废能力，不能自动换实例后继续使用旧证据；新实例须重新探测后才能接纳直播。现有 bounded worker 与平台 SDK 已覆盖此边界，无需引入任务运行时或另写媒体后端。
 
 准备候选只从同一完整 Decoder offer 提取正式 codec/可见尺寸/fps 三元组，不组合不同条目的字段；未知能力与已知但没有匹配项分开表示。平台经同一 Core 锁的状态快照获取候选，再与所选 Camera/Encoder 能力求交集。候选可准备不等于真实输出已准入，最终原生配置仍须命中完整存储/crop/tier/颜色/level 条目。跨语言边界复用现有 cbindgen/C ABI 和官方 JNI/Swift 桥接，不新增序列化协议或版本。
+
+已提交 SourceFormat 来自成功接纳的原生 AU，而非码率控制器的初始高度、用户请求或 prepared 配置。事务准备和失败不覆盖旧完整格式；普通已绑定 encoder generation 的描述属性可更新，但 codec/尺寸/fps 变化必须走明确事务。断连保留最后已提交格式用于恢复，该历史事实与当前传输状态分别表达。此状态复用 Core 事务和 SourceFormat，不新增平台格式推断层。
