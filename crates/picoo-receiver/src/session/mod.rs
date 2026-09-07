@@ -97,6 +97,8 @@ pub struct ReceiverSession {
     current_stream_config: Option<Arc<StreamConfig>>,
     #[cfg(target_os = "macos")]
     recording: Option<picoo_recording::worker::RecordingWorker>,
+    #[cfg(target_os = "macos")]
+    recording_configuration_wait: picoo_recording::configuration_wait::ConfigurationWait,
     config_revision: u64,
     admitted_access_unit_budget: Option<u32>,
     /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
@@ -173,6 +175,8 @@ impl ReceiverSession {
             current_stream_config: None,
             #[cfg(target_os = "macos")]
             recording: None,
+            #[cfg(target_os = "macos")]
+            recording_configuration_wait: Default::default(),
             config_revision: 0,
             admitted_access_unit_budget: None,
             waiting_for_stream_config_epoch: None,

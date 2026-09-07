@@ -4,10 +4,12 @@ use crate::ReceiverError;
 use picoo_packet::AssembledAccessUnit;
 use picoo_recording::{
     bundle::{GapReason, RecordingState},
-    ingress::RecordingInput,
+    ingress::IngressFailure,
     worker::{RecordingResult, RecordingWorker},
 };
-use std::{path::PathBuf, sync::Arc};
+#[cfg(test)]
+use std::sync::Arc;
+use std::{path::PathBuf, time::Instant};
 
 impl ReceiverSession {
     pub fn start_encoded_recording(&mut self, parent: PathBuf) -> Result<(), ReceiverError> {
@@ -26,11 +28,17 @@ impl ReceiverSession {
             ));
         }
         self.recording = Some(RecordingWorker::start(parent)?);
+        self.recording_configuration_wait.clear();
         Ok(())
     }
 
     pub fn stop_encoded_recording(&mut self) {
+        self.resolve_recording_configuration();
         if let Some(worker) = &mut self.recording {
+            if !self.recording_configuration_wait.is_empty() {
+                worker.terminate(IngressFailure::ConfigurationUnavailable);
+                self.recording_configuration_wait.clear();
+            }
             worker.stop();
         }
     }
@@ -44,19 +52,55 @@ impl ReceiverSession {
     }
 
     pub(super) fn record_assembled_access_unit(&mut self, access_unit: &AssembledAccessUnit) {
-        let (Some(worker), Some(configuration), Some(connection_generation)) = (
+        if !self
+            .recording
+            .as_ref()
+            .is_some_and(RecordingWorker::is_accepting)
+        {
+            return;
+        }
+        self.resolve_recording_configuration();
+        let (Some(configuration), Some(generation)) =
+            (&self.current_stream_config, self.control_generation)
+        else {
+            return;
+        };
+        if let Err(failure) = self.recording_configuration_wait.push(
+            generation,
+            access_unit.clone(),
+            configuration,
+            Instant::now(),
+        ) {
+            if let Some(worker) = &mut self.recording {
+                worker.terminate(failure);
+            }
+            self.recording_configuration_wait.clear();
+        }
+        self.resolve_recording_configuration();
+    }
+
+    fn resolve_recording_configuration(&mut self) {
+        let (Some(worker), Some(configuration), Some(generation)) = (
             &mut self.recording,
             &self.current_stream_config,
             self.control_generation,
         ) else {
             return;
         };
-        // Queue failure belongs only to the recorder and is sticky in its result.
-        let _ = worker.offer(RecordingInput {
-            connection_generation,
-            configuration: Arc::clone(configuration),
-            access_unit: access_unit.clone(),
-        });
+        match self
+            .recording_configuration_wait
+            .resolve(generation, configuration, Instant::now())
+        {
+            Ok(ready) => {
+                for input in ready {
+                    let _ = worker.offer(input);
+                }
+            }
+            Err(failure) => {
+                worker.terminate(failure);
+                self.recording_configuration_wait.clear();
+            }
+        }
     }
 
     pub(super) fn report_recording_gap(&mut self, reason: GapReason) {
@@ -66,6 +110,7 @@ impl ReceiverSession {
     }
 
     pub(super) fn pump_recording_control(&mut self) {
+        self.resolve_recording_configuration();
         let requested = self
             .recording
             .as_ref()
@@ -136,23 +181,49 @@ mod tests {
             .start_encoded_recording(parent.path().to_owned())
             .unwrap();
         for id in [2, 1] {
-            receiver
-                .queue_assembled_access_unit(AssembledAccessUnit {
-                    data: data.clone().into(),
-                    frame_id: id,
-                    pts_us: (id - 1) * 33_333,
-                    encoded_at_us: 0,
-                    keyframe: true,
-                    discardable: false,
-                    stream_epoch: 1,
-                    fragment_count: 1,
-                    first_fragment_at: Instant::now(),
-                })
-                .unwrap();
+            let au = AssembledAccessUnit {
+                data: data.clone().into(),
+                frame_id: id,
+                pts_us: (id - 1) * 33_333,
+                encoded_at_us: 0,
+                keyframe: true,
+                discardable: false,
+                stream_epoch: 1,
+                fragment_count: 1,
+                first_fragment_at: Instant::now(),
+            };
+            receiver.record_assembled_access_unit(&au);
+            receiver.queue_assembled_access_unit(au).unwrap();
         }
         receiver
             .enter_decoder_recovery(super::super::recovery::RecoveryReason::ManualRepair, true)
             .unwrap();
+        // Both complete future-epoch AUs survive live recovery while the
+        // reliable configuration has not arrived yet (including non-IDR hints).
+        for id in [2, 1] {
+            receiver.record_assembled_access_unit(&AssembledAccessUnit {
+                data: data.clone().into(),
+                frame_id: id,
+                pts_us: (id - 1) * 33_333,
+                encoded_at_us: 0,
+                keyframe: false,
+                discardable: false,
+                stream_epoch: 2,
+                fragment_count: 1,
+                first_fragment_at: Instant::now(),
+            });
+        }
+        assert!(!receiver.recording_configuration_wait.is_empty());
+        let mut next = receiver
+            .current_stream_config
+            .as_ref()
+            .unwrap()
+            .as_ref()
+            .clone();
+        next.stream_epoch = 2;
+        receiver.current_stream_config = Some(Arc::new(next));
+        receiver.resolve_recording_configuration();
+        assert!(receiver.recording_configuration_wait.is_empty());
         receiver.report_recording_gap(GapReason::NetworkLoss);
         receiver.stop_encoded_recording();
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -168,5 +239,6 @@ mod tests {
         assert!(stored.contains("\"first_au\": 1"));
         assert!(stored.contains("\"last_au\": 2"));
         assert!(stored.contains("NetworkLoss"));
+        assert!(stored.contains("\"stream_epoch\": 2"));
     }
 }

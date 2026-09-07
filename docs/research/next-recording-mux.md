@@ -53,3 +53,7 @@ EncodedWriter故障注入显示，AVAssetWriter cancelWriting可能删除尚未�
 ## 录制短时重排
 
 REQ-PICOO-MEDIA-070使用标准库BTreeMap持有最多16项完整AU，50ms从各项首次进入重排计时，不随轮询或后续包重置。已有picoo-jitter包含live播放期限和参考帧丢弃语义，不能复用于要求保留已收到完整AU的录制；保留的自研范围仅为AU顺序与世代排空这一Picoo边界。缺号后仍输出所有可用完整AU，由EncodedWriter报告依赖链缺口并等IDR。
+
+## 跨通道早到的完整AU
+
+REQ-PICOO-MEDIA-073采用标准库VecDeque建立独立于live单IDR缓存的配置等待门禁。最多16项，每项2MiB，配置64KiB，250ms期限从首次接收完整AU计时；后续配置与轮询不重置期限。每项绑定连接代际和stream epoch，已知配置以Arc保留；未知配置阻挡后续项直到解析身份匹配，不能借用当前旧配置。停止仍有未知配置或超限时终止录像，不把丢弃记为普通成功。此暂存预算独立于worker通道/重排，需纳入尚待完成的全局预算。

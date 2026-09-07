@@ -128,6 +128,8 @@ impl ReceiverSession {
         }
         match reassembly_result {
             Ok(Some(access_unit)) => {
+                #[cfg(target_os = "macos")]
+                self.record_assembled_access_unit(&access_unit);
                 if defer_until_config {
                     if access_unit.keyframe
                         && self.waiting_for_stream_config_epoch == Some(access_unit.stream_epoch)

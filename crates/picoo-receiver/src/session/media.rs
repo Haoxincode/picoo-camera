@@ -52,8 +52,6 @@ impl ReceiverSession {
         &mut self,
         access_unit: AssembledAccessUnit,
     ) -> Result<(), ReceiverError> {
-        #[cfg(target_os = "macos")]
-        self.record_assembled_access_unit(&access_unit);
         if access_unit.keyframe
             && self
                 .reassembly

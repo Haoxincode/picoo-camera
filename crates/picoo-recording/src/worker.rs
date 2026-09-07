@@ -105,6 +105,16 @@ impl RecordingWorker {
             .report_gap(reason, source)
     }
 
+    pub fn is_accepting(&self) -> bool {
+        self.ingress.is_some() && self.shared.result.get().is_none()
+    }
+
+    pub fn terminate(&mut self, failure: ingress::IngressFailure) {
+        if let Some(ingress) = &self.ingress {
+            ingress.terminate(failure);
+        }
+    }
+
     pub fn stop(&mut self) {
         self.ingress = None;
     }

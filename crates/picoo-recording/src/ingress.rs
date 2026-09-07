@@ -25,6 +25,7 @@ pub enum IngressFailure {
     TooOld,
     InvalidInput,
     WorkerStopped,
+    ConfigurationUnavailable,
 }
 
 enum Event {
@@ -116,6 +117,10 @@ impl RecordingIngress {
             return Err(*self.failure.get().expect("failure set"));
         }
         Ok(())
+    }
+
+    pub fn terminate(&self, failure: IngressFailure) {
+        let _ = self.failure.set(failure);
     }
 
     pub fn failure(&self) -> Option<IngressFailure> {

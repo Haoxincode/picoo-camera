@@ -158,3 +158,5 @@
 | REQ-PICOO-MEDIA-071 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | 单个专用录制工作者拥有原生mux、重排和文件状态，接收侧非阻塞提交/停止/读取结果；Arming有期限，关键帧请求合并，线程退出前不允许新工作者绕过资源上限 | 合成输入跨线程最终化、停止排空、启动失败、Arming超时及资源独占；Receiver与UI另验 |
 
 | REQ-PICOO-MEDIA-072 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | Receiver把当前已准入配置的完整AU交给独立Recorder再进入live恢复/调度；重组确认丢失与断连向录像报告，录像RAP请求不清理Decoder状态，录制失败不传播为直播失败 | Receiver入口隔离与尾部丢失回归；跨通道早到配置AU、产品UI和Windows接线另验 |
+
+| REQ-PICOO-MEDIA-073 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、025 | 完整AU早于对应配置时，录像独立暂存最多16项/250ms，不使用live的单IDR暂存；配置匹配后按抵达次序交给录制重排，停止或超限仍缺配置时明确失败 | 早到配置、源身份、固定期限、停止缺配置及live隔离回归 |

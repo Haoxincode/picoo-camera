@@ -4,6 +4,7 @@
 #[cfg(target_os = "macos")]
 pub mod apple;
 pub mod bundle;
+pub mod configuration_wait;
 #[cfg(target_os = "macos")]
 pub mod encoded;
 pub mod ingress;
