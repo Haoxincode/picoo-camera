@@ -489,7 +489,35 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.05);
-    let (au, sps, pps) = openh264_au(1280, 720, 17);
+    // A real 30fps prediction chain, not the same IDR mislabeled as delta.
+    use openh264::encoder::{Encoder, EncoderConfig, FrameRate, FrameType, Profile, VuiConfig};
+    use openh264::formats::YUVBuffer;
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        EncoderConfig::new()
+            .profile(Profile::High)
+            .vui(VuiConfig::bt709())
+            .max_frame_rate(FrameRate::from_hz(30.0))
+            .skip_frames(false),
+    )
+    .expect("encoder");
+    let input = YUVBuffer::from_vec(vec![128; 1280 * 720 * 3 / 2], 1280, 720);
+    let mut frames = Vec::new();
+    let mut parameters = None;
+    for frame in 0..120 {
+        if frame % 5 == 0 {
+            encoder.force_intra_frame();
+        }
+        let encoded = encoder.encode(&input).expect("encode");
+        let keyframe = encoded.frame_type() == FrameType::IDR;
+        assert_eq!(keyframe, frame % 5 == 0);
+        let annex = encoded.to_vec();
+        if parameters.is_none() {
+            parameters = picoo_bitstream::avc::extract_sps_pps(&annex);
+        }
+        frames.push((super::wire_avc(&annex), keyframe));
+    }
+    let (sps, pps) = parameters.expect("SPS/PPS");
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -556,21 +584,29 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     }
 
     let mut frames_seen = 0u64;
+    let mut last_frame = 0;
     let mut backpressure_events = 0u64;
     let mut last_au = receiver.ingress_stats().access_units;
     let mut stalled = 0u32;
-    for frame_id in 1..=120u64 {
-        let is_key = frame_id % 5 == 1;
-        if !video_send_accepted(sender.ingest_and_flush(&au, is_key, frame_id, 1)) {
+    for (index, (au, is_key)) in frames.iter().enumerate() {
+        // Pace at the declared source rate. A burst at hundreds of fps tests
+        // scheduler overload, not the product's 5% network-loss contract.
+        let deadline = Instant::now() + Duration::from_secs_f64(1.0 / 30.0);
+        let frame_id = index as u64 + 1;
+        if !video_send_accepted(sender.ingest_and_flush(au, *is_key, frame_id * 33_333, 1)) {
             backpressure_events += 1;
         }
-        for _ in 0..16 {
-            receiver.pump().ok();
-            sender.pump().ok();
+        while Instant::now() < deadline {
+            receiver.pump().expect("receiver pump");
+            sender.pump().expect("sender pump");
+            if let Some(frame) = receiver.latest_frame() {
+                let id = super::source_frame_id(frame);
+                if id > last_frame {
+                    last_frame = id;
+                    frames_seen += 1;
+                }
+            }
             std::thread::sleep(Duration::from_micros(100));
-        }
-        if receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0) {
-            frames_seen += 1;
         }
         let au_n = receiver.ingress_stats().access_units;
         if au_n == last_au {
