@@ -51,9 +51,12 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_submitEncoderAccess
         return -1;
     }
     // Explicit MediaCodec byte-buffer framing is adapted before Core staging.
-    let Ok(data) =
-        picoo_bitstream::canonical_access_unit(codec, picoo_bitstream::NalFormat::AnnexB, &data)
-    else {
+    let Ok(data) = crate::encoder_input::canonical(
+        codec,
+        picoo_bitstream::NalFormat::AnnexB,
+        &data,
+        keyframe == JNI_TRUE,
+    ) else {
         return -2;
     };
     let configuration = if configure_stream == JNI_TRUE {

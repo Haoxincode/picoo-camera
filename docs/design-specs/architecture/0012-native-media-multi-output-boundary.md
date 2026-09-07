@@ -103,3 +103,5 @@ Sender 的原生配置快照必须持有已验证 CodecConfiguration，codec/pro
 Android 编码器回调按自身 generation 保存完整标准配置记录，AU 入队时连同该记录快照交接；媒体工作者不从全局最新参数集反推旧 AU 的配置。Android UI 仅提出配置请求并请求关键帧，不单独写入 Core 的源配置；配置记录随匹配 AU 原子提交，不能越过队列中的旧世代媒体。MediaCodec 的 CSD→标准 record 转换在原生适配处完成，JNI 不把 record 再拆成 raw 参数返回 Kotlin。
 
 iOS 直接从原生 CMFormatDescription 的 avcC/hvcC atom 获取每张 AU 的配置快照，不提取再拼接 raw 参数。连接和编码器准备只记录用户意图，不提交空配置；源配置只随原生 AU 进入 Core。原码流不因携带配置快照而添加重复参数 NAL。
+
+原生编码器的 keyframe/sync 标志是待核对的提示。进入 Core 的 AU 必须经过共享位流分类，当前闭合序列合同只接纳 AVC/HEVC IDR 为关键帧；提示与实际 picture 不一致、CRA 或 leading-picture 序列在配置暂存和媒体提交前拒绝。平台层不能用系统标志绕过 codec-specific 恢复准入。

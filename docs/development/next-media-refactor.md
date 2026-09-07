@@ -607,3 +607,8 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - 这些是模拟器与原生 API 边界证据，不是 iPhone 摄像头 HEVC、60fps 或热稳态验收；VideoToolbox 生产编码器仍请求当前 AVC，双 codec 选择继续待办。
 
 最终 iOS device/simulator/App 重建成功；生成的 C 头已移除旧 setter/extractor。Swift result bundle 报告 15 passed / 0 failed / 0 skipped；删除已废弃 extractor 测试后，Rust FFI 10 项通过。
+
+### 2026-09-07：原生关键帧提示准入
+
+- REQ-PICOO-MEDIA-038：Android JNI 与 Apple C AU 入口先解析实际图像类型，再核对原生 keyframe hint；AVC/HEVC IDR 可提交，delta 不可冒充随机访问点，CRA/RASL/RADL 在闭合 IDR 合同内明确拒绝。检查在 Core 状态修改前完成；四字节长度输入保留借用，Annex B 仅转换一次。
+- 本地 FFI 13 项测试全部通过，包含真实两 codec IDR、相反提示、伪造 delta 标记和 HEVC leading-picture 拒绝。两目标 FFI Clippy 已通过；不等同原生摄像头完整配置选择或端到端验收。当前 adb devices 为空。

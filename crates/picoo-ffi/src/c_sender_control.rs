@@ -58,10 +58,11 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
         _ => return -2,
     };
     let data = unsafe { std::slice::from_raw_parts(data, len) };
-    let Ok(data) = picoo_bitstream::canonical_access_unit(
+    let Ok(data) = crate::encoder_input::canonical(
         codec,
         picoo_bitstream::NalFormat::LengthPrefixed(picoo_bitstream::NalLengthSize::Four),
         data,
+        is_keyframe != 0,
     ) else {
         return -2;
     };
