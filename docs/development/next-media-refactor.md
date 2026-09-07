@@ -784,3 +784,11 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - REQ-PICOO-MEDIA-055：Android PendingApply与PollResult携带完整VideoSourceFormat，提交判断同时核对Core最后已提交格式、原生profile、epoch与已接纳原生高度。删除使用bitrate activeHeight猜事务已完成的逻辑。
 - 恢复缓存只保存已匹配Core事实的原生profile，不再在首次准备时无条件把当前请求当作旧已提交配置。ViewModel在失败回显时采用Core已提交格式，成功/恢复采用完整结果；完整设置UI仍待接线。
 - Android完整APK/test APK构建与77项JVM通过；Core格式提交/回滚合同已在e10d1d3验证。手机完整网络切换及恢复仍需后续端到端验收。
+
+### 2026-09-07：按产品起始码率补齐实际Decoder探测
+
+- REQ-PICOO-MEDIA-052：发现高码率样本不能代表实际产品记录。小米HEVC在720p 3 Mbps、1080p 6 Mbps时使用Main tier，而16 Mbps对照使用High tier；736行720p Main tier原先未被probe覆盖，严格准入正确拒绝它。
+- NativeCodecContractTest、相机合同和源准备合同改用Core的实际初始码率。新增八组Canvas合成资产；复用已有bitstream/check_native_encoder的显式Annex B转换与闭合IDR/参数身份/尺寸/颜色检查，不添加第二个解析器。24个候选分别实际解码、reset并合并完整offers，不从High tier推导Main tier。
+- Mac Decoder25项、Receiver116项（另2忽略）、Clippy通过；真实PCP→QUIC→VideoToolbox网络合同扩为Apple/小米高码率/小米产品码率各8组，共24组全部通过。诊断check_native_formats也要求先命中本实例实际probe结果。
+- 小米实际初始码率硬件编码8组合通过；准备与后摄横持相机8组合合同通过（2项instrumentation，约37秒），输出PTS短窗约30/60fps。所有持久化资产仅Canvas合成输入；不代表前摄或持续热稳态已验。
+- 6902c17的CI 34084293529已全平台成功，包含修正后的软件诊断丢包合同。

@@ -13,6 +13,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("missing fixture directory")?,
     );
     let mut decoder = create_platform_decoder();
+    let capabilities = picoo_media_decode::probe_capabilities(decoder.as_mut())?;
     let mut identity = 0;
     for (wire, codec, profile) in [
         (VideoCodec::Avc, Codec::Avc, VideoProfile::AvcHigh),
@@ -38,6 +39,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
                 let format = config.validated_video_format()?;
                 let data = std::fs::read(directory.join(format!("{stem}.au")))?;
+                if !capabilities.supports(&format, config.level_idc, u32::try_from(data.len())?) {
+                    return Err(format!(
+                        "{stem}: actual source has no probed decoder offer: {format:?}"
+                    )
+                    .into());
+                }
                 let token = Arc::new(DecodeToken {
                     timeline: AccessUnitTimeline {
                         connection_generation: 1,

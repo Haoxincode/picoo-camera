@@ -10,6 +10,7 @@ import org.junit.Test
 /** MEDIA-056: actual platform queries, no camera images or guessed capability products. */
 class SourcePreparationContractTest {
     @Test fun preparationKeepsCompleteCandidatesAndExplicitLensAndOrientation() {
+        assertTrue(com.picoo.camera.jni.PicooNative.ensureLoaded())
         val context = ApplicationProvider.getApplicationContext<Context>()
         val manager = context.getSystemService(CameraManager::class.java)
         val formats = NativeVideoCodec.entries.flatMap { codec ->
@@ -22,7 +23,7 @@ class SourcePreparationContractTest {
             for (rotation in listOf(0, 90)) {
                 fun prepare(candidates: List<VideoSourceFormat>) = SourcePreparation.candidates(
                     manager, facing, rotation, candidates,
-                ) { if (it.codec == NativeVideoCodec.Hevc) 16_000_000 else 24_000_000 }.getOrThrow()
+                ) { com.picoo.camera.jni.PicooNative.bitrateInitialForHeight(it.resolution.height) }.getOrThrow()
                 val admitted = prepare(formats)
                 assertTrue("$facing rotation=$rotation has no usable source", admitted.isNotEmpty())
                 assertTrue(admitted.all { it in formats })

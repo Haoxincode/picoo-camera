@@ -47,6 +47,14 @@ const CANDIDATES: &[Candidate] = &[
     candidate!("xiaomi-native-formats", Hevc, "2-720-60", 720, 60),
     candidate!("xiaomi-native-formats", Hevc, "2-1080-30", 1080, 30),
     candidate!("xiaomi-native-formats", Hevc, "2-1080-60", 1080, 60),
+    candidate!("xiaomi-product-formats", Avc, "1-720-30", 720, 30),
+    candidate!("xiaomi-product-formats", Avc, "1-720-60", 720, 60),
+    candidate!("xiaomi-product-formats", Avc, "1-1080-30", 1080, 30),
+    candidate!("xiaomi-product-formats", Avc, "1-1080-60", 1080, 60),
+    candidate!("xiaomi-product-formats", Hevc, "2-720-30", 720, 30),
+    candidate!("xiaomi-product-formats", Hevc, "2-720-60", 720, 60),
+    candidate!("xiaomi-product-formats", Hevc, "2-1080-30", 1080, 30),
+    candidate!("xiaomi-product-formats", Hevc, "2-1080-60", 1080, 60),
 ];
 
 /// Probe the supplied backend on its creating thread before accepting live media.

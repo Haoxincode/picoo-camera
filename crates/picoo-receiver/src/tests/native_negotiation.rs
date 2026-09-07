@@ -44,6 +44,7 @@ fn native_offers_admit_apple_and_xiaomi_complete_formats_over_quic() {
     }
     family!("apple-native-formats");
     family!("xiaomi-native-formats");
+    family!("xiaomi-product-formats");
 }
 
 fn run_format(codec: Codec, height: u32, fps: u32, record: &'static [u8], au: &[u8]) {

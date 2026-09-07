@@ -26,7 +26,7 @@ class NativeCodecContractTest {
     private fun verify(mime: String, size: Size, fps: Int) {
         val kind = if (mime == MediaFormat.MIMETYPE_VIDEO_AVC) NativeVideoCodec.Avc else NativeVideoCodec.Hevc
         val request = NativeEncoderFormat(
-            kind, size, fps, if (kind == NativeVideoCodec.Hevc) 16_000_000 else 24_000_000,
+            kind, size, fps, com.picoo.camera.jni.PicooNative.bitrateInitialForHeight(size.height),
         )
         assertTrue("Preparation must admit the same hardware request", NativeVideoEncoder.supports(request))
         val codec = NativeVideoEncoder.create(request).getOrThrow()

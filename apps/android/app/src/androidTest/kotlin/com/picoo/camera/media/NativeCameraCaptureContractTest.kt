@@ -64,7 +64,7 @@ class NativeCameraCaptureContractTest {
         val encoder = Camera2MediaEncoder(
             context = ApplicationProvider.getApplicationContext(),
             initialProfile = profile,
-            initialBitrateBps = if (codec == NativeVideoCodec.Hevc) 16_000_000 else 24_000_000,
+            initialBitrateBps = com.picoo.camera.jni.PicooNative.bitrateInitialForHeight(height),
             initialStreamEpoch = 1,
             frameListener = { frame ->
                 synchronized(timestamps) {
