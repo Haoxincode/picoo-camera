@@ -148,3 +148,5 @@
 | REQ-PICOO-MEDIA-066 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、022 | macOS原生MP4段适配使用AVAssetWriter直通标准AVC/HEVC AU，保留源时间与同步标记，有界等待最终化；不重新编码、覆盖已有文件或把失败段当作完成 | 双codec真实系统回读、字节/PTS一致、非RAP段首拒绝、写入繁忙/最终化失败合同；完整Recorder接线另验 |
 
 | REQ-PICOO-MEDIA-067 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | 录制bundle独占创建；manifest原子替换，段文件最终化及同步后才登记完成；gap和失败状态不可被后续成功覆盖，段/gap数量有上限，保留未完成partial | 原子落盘、既有路径不覆盖、粘性结果、段文件摘要、容量上限与I/O失败回归 |
+
+| REQ-PICOO-MEDIA-068 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | 完整AU通过独立有界非阻塞通道交给录制工作者，携带连接/配置/源身份；容量及年龄超限终止录像并保留明确错误，正常停止可排空已接受AU；不依赖live恢复队列 | 满队列、超龄、正常停止排空、压缩Bytes共享及终态粘性；Receiver接线另验 |

@@ -864,3 +864,8 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - REQ-PICOO-MEDIA-067：独占私有bundle、manifest原子替换、完成凭据与无覆盖段提升、流式SHA-256、4096段/gap上限；文件提交失败和gap容量耗尽保持Failed，已有gap保持HasGaps，未完成partial保留。
 - macOS隔离执行9项测试通过，含AVC/HEVC原生最终化→bundle提交→AVAssetReader回读集成、文件覆盖/manifest故障/容量及权限合同；Clippy通过。合成fixture测试不保存真实相机内容。测试产物位于外置盘Worktrees/research/picoo-camera/recording-suite。
 - 尚未接入Receiver录制队列、产品录像按钮或Windows mux；本地结果不替代Windows断电耐久性与全平台CI。
+
+### 2026-09-07：独立压缩AU通道
+
+- REQ-PICOO-MEDIA-068提供16项标准库有界通道，try_send不等待磁盘或消费者；每项绑定连接、StreamConfig、原始AssembledAccessUnit，共享Bytes；限制AU/配置尺寸及250ms队列年龄。正常停止排空，容量/年龄/输入身份错误进入粘性失败。
+- 13项macOS隔离测试与Clippy通过，新增正常排空、抵达次序、共享载荷、满队列、超龄与消费者退出回归。通道不负责重排，也尚未接入Receiver，不能据此宣布产品录像可用。

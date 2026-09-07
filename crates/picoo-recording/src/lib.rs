@@ -4,6 +4,7 @@
 #[cfg(target_os = "macos")]
 pub mod apple;
 pub mod bundle;
+pub mod ingress;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordingError {

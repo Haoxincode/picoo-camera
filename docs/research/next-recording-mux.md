@@ -41,3 +41,7 @@ picoo-recording复用同一官方AVAssetWriter接口和objc2-av-foundation0.3.2�
 ## Bundle文件操作复用
 
 REQ-PICOO-MEDIA-067复用仓库已有serde/serde_json、sha2 0.10及tempfile 3生态，不自行实现随机命名、JSON或SHA-256。tempfile采用MIT/Apache-2.0，支持Windows/macOS及当前Rust工具链；使用独占目录、NamedTempFile原子替换和TempPath.persist_noclobber，不引入媒体runtime。摘要以64KiB缓冲流式计算，段/gap各限4096项。Unix目录0700、manifest0600；文件sync_all和Unix目录sync配合，Windows目录持久性与断电仍需原生环境验证，不能由macOS文件系统测试替代。所有操作属于专用录制工作者，不能在Receiver或UI事件循环调用。
+
+## 完整AU入口队列
+
+REQ-PICOO-MEDIA-068复用std::sync::mpsc::sync_channel及try_send，沿用FrameBus已有标准库通道实践；不新增crossbeam或自研无锁队列。单生产者Receiver、单消费者录制工作者没有多消费者需求。通道固定16项、每AU最大2MiB、配置最大64KiB，最坏待处理载荷约33MiB；250ms入口年龄上限由工作者检查。年龄超限和容量耗尽显式终止本次录像，正常关闭排空已接纳输入。排序/依赖链由录制工作者另外负责，通道只保留抵达次序。

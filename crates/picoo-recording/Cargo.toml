@@ -7,6 +7,8 @@ license.workspace = true
 
 [dependencies]
 picoo-bitstream.workspace = true
+picoo-packet.workspace = true
+picoo-protocol.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
