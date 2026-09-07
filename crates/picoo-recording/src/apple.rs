@@ -16,6 +16,7 @@ use picoo_bitstream::{
     AccessUnit, CodecConfiguration, NalFormat, NalLengthSize, PictureKind, RandomAccessPoint,
 };
 use std::{path::Path, sync::mpsc, time::Duration};
+mod partial;
 mod sample;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,6 +30,7 @@ pub enum AppendOutcome {
 /// the recording owner after successful finish, never this platform adapter.
 pub struct AppleSegment {
     path: std::path::PathBuf,
+    partial: partial::RetainedPartial,
     writer: Retained<AVAssetWriter>,
     input: Retained<AVAssetWriterInput>,
     format: CFRetained<CMFormatDescription>,
@@ -96,7 +98,9 @@ impl AppleSegment {
             writer.startSessionAtSourceTime(sample::time(0)?);
             (writer, input)
         };
+        let partial = partial::RetainedPartial::open(Path::new(path))?;
         Ok(Self {
+            partial,
             path: std::path::PathBuf::from(path),
             writer,
             input,
@@ -158,9 +162,25 @@ impl AppleSegment {
     }
 
     /// Wait only on the dedicated writer thread. Failure never grants promotion.
-    pub fn finish(self) -> Result<FinalizedSegment, RecordingError> {
+    pub fn finish(mut self) -> Result<FinalizedSegment, RecordingError> {
+        let result = self.finish_native();
+        if let Err(error) = &result {
+            if let Err(preservation) = self.cancel_preserving_partial() {
+                return Err(RecordingError::Platform(format!(
+                    "{error}; partial preservation: {preservation}"
+                )));
+            }
+        }
+        result
+    }
+
+    fn finish_native(&mut self) -> Result<FinalizedSegment, RecordingError> {
         if self.last_pts_us.is_none() {
             return Err(RecordingError::InvalidInput("empty segment"));
+        }
+        // SAFETY: A cancelled/failed writer cannot accept finishWriting.
+        if unsafe { self.writer.status() } != AVAssetWriterStatus::Writing {
+            return Err(writer_error(&self.writer));
         }
         let (sender, receiver) = mpsc::sync_channel(1);
         let completion = block2::RcBlock::new(move || {
@@ -183,17 +203,26 @@ impl AppleSegment {
             path: self.path.clone(),
         })
     }
-}
-
-impl Drop for AppleSegment {
-    fn drop(&mut self) {
-        // SAFETY: No application append is concurrent with destruction. Native
-        // cancellation owns draining its internal work and may remove unfinished output.
+    /// Explicit failure cleanup on the recording worker. Never promotes a file.
+    pub fn cancel_preserving_partial(&mut self) -> Result<(), RecordingError> {
+        // SAFETY: This owner serializes appends and finalization. Native cancel
+        // stops writing before the retained file is copied to a missing path.
         unsafe {
             if self.writer.status() == AVAssetWriterStatus::Writing {
                 self.writer.cancelWriting();
             }
+            if self.writer.status() != AVAssetWriterStatus::Completed {
+                self.partial.restore()?;
+            }
         }
+        Ok(())
+    }
+}
+
+impl Drop for AppleSegment {
+    fn drop(&mut self) {
+        // Explicit finish/cancel report errors; Drop is best-effort cleanup.
+        let _ = self.cancel_preserving_partial();
     }
 }
 

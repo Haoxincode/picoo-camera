@@ -199,3 +199,34 @@ fn native_finalization_bundle_promotion_and_system_readback() {
         assert_eq!(read_completed(&path.with_extension("mp4")), vec![(au, 0)]);
     }
 }
+
+#[test]
+fn native_cancellation_preserves_avc_and_hevc_written_bytes() {
+    use std::io::Read;
+    for (configuration, au) in fixtures() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cancelled.partial");
+        let mut writer = AppleSegment::new(&path, configuration, 30).unwrap();
+        let mut original = std::fs::File::open(&path).unwrap();
+        for frame in 0..91 {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while writer.append(&au, frame * 1_000_000 / 30).unwrap() == AppendOutcome::Busy {
+                assert!(Instant::now() < deadline);
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while original.metadata().unwrap().len() == 0 {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        writer.cancel_preserving_partial().unwrap();
+        let mut expected = Vec::new();
+        original.read_to_end(&mut expected).unwrap();
+        assert!(!expected.is_empty());
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+        assert!(!path.with_extension("mp4").exists());
+        assert!(writer.finish().is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), expected);
+    }
+}

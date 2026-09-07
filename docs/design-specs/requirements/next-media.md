@@ -160,3 +160,5 @@
 | REQ-PICOO-MEDIA-072 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | Receiver把当前已准入配置的完整AU交给独立Recorder再进入live恢复/调度；重组确认丢失与断连向录像报告，录像RAP请求不清理Decoder状态，录制失败不传播为直播失败 | Receiver入口隔离与尾部丢失回归；跨通道早到配置AU、产品UI和Windows接线另验 |
 
 | REQ-PICOO-MEDIA-073 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、025 | 完整AU早于对应配置时，录像独立暂存最多16项/250ms，不使用live的单IDR暂存；配置匹配后按抵达次序交给录制重排，停止或超限仍缺配置时明确失败 | 早到配置、源身份、固定期限、停止缺配置及live隔离回归 |
+
+| REQ-PICOO-MEDIA-074 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | Apple取消原生写入后，从创建时保留的文件句柄恢复被原生删除的partial；不覆盖已有路径，不给未最终化文件签发完成凭据，恢复失败明确返回 | AVC/HEVC原生cancel后字节留存、已有文件不覆盖与I/O失败；可播放性独立于字节留存 |
