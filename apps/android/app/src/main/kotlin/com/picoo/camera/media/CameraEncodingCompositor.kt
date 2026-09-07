@@ -42,8 +42,7 @@ internal class CameraEncodingCompositor private constructor(
     private val released = AtomicBoolean(false)
     private val runtimeErrorReported = AtomicBoolean(false)
 
-    @Volatile
-    private var requestedRotationDegrees = initialRotationDegrees
+    private val requestedRotationDegrees = initialRotationDegrees
 
     @Volatile
     private var inputSurface: Surface? = null
@@ -77,10 +76,6 @@ internal class CameraEncodingCompositor private constructor(
 
     val cameraInputSurface: Surface
         get() = checkNotNull(inputSurface) { "compositor is not initialized" }
-
-    fun updateRotation(rotationDegrees: Int) {
-        requestedRotationDegrees = rotationDegrees
-    }
 
     override fun close() {
         if (!released.compareAndSet(false, true)) return

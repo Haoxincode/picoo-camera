@@ -801,3 +801,10 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - Android JNI快照删除已无调用方的activeHeight/receiverMaxHeight；不保留旧数组长度或读取默认值。C/Swift现有调用方另行替换，不把旧高度作为Android提交依据。
 - Android完整APK/test APK与76项JVM通过；隔离只读Android模拟器12项Compose/JNI合同通过，覆盖完整选择回调、未知/空表和直播控制。小米4项状态/JNI合同通过；手机UI套件遭厂商测试应用启动确认拦截，未记为整套真机UI通过，已终止并恢复MainActivity。手机正常主页的语义树包含设置入口，未停留在空白测试Activity。
 - 产品码率相机8组合与24组原生网络格式合同见上一批记录。本批不声称完整手机到Mac的选择/重连、方向变化输入重准备或长期热稳态已验收；iOS完整选择仍待实现。
+
+### 2026-09-07：Android方向输入事务
+
+- REQ-PICOO-MEDIA-058：显示方向进入完整CaptureProfile；直播方向意图等待本地准备后，通过Core源事务重建Camera2输入与MediaCodec世代。删除运行中直接更新compositor旋转矩阵的入口；恢复使用旧方向、镜头和完整源格式。一次拒绝消费一次方向意图，不由每次UI轮询无限重试。
+- Camera2选择及compositor创建捕获同一次准备的输入尺寸和方向；普通码率更新不覆盖待提交事务的目标码率。Core非恢复指令也应用完整源格式后启动原生准备。
+- Android完整APK/test APK构建及76项JVM通过；小米15相机八组合回归和新增动态方向合同共2项通过。后摄AVC1080p60横持1920×1080/epoch1 → 竖持2448×2448/epoch2 → 恢复横持1920×1080/epoch1，原生世代分别1/3/5，短窗约60.13/60.10/60.13fps。恢复调用生产restoreCommittedConfiguration；仅记录时间戳与配置，不持久化相机图像，测试后恢复MainActivity。
+- 本项未证明完整手机GUI到Mac的方向事务、双Camera2预览目标或长期热稳态；真实Core失败后的端到端恢复仍需独立验收。上一批2f46952的CI 34087471366全平台成功。

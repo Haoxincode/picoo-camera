@@ -71,6 +71,9 @@ class EncoderReconfigurationCoordinator {
             streamEpoch = directive.streamEpoch,
             targetFormat = checkNotNull(VideoSourceFormat.fromWire(directive.targetCodec, directive.targetHeight, directive.targetFps)),
         )
+        encoder.setTargetBitrateBps(directive.targetBitrateBps)
+        encoder.setSourceFormat(checkNotNull(pending).targetFormat)
+        encoder.startPreview()
         return true
     }
 

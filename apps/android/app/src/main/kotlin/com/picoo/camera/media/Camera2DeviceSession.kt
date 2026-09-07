@@ -143,13 +143,14 @@ internal class Camera2DeviceSession(
                 encoder.fail("Camera permission is required")
                 return
             }
-            val cameraId = findCameraId(encoder.profile.lensFacing) ?: run {
+            val profile = encoder.profile
+            val cameraId = findCameraId(profile.lensFacing) ?: run {
                 encoder.fail("No camera for ${encoder.profile.lensFacing}")
                 return
             }
             encoder.selectedCameraId = cameraId
             encoder.activePhysicalCameraId = null
-            encoder.captureSize = chooseCaptureSize(cameraId, encoder.profile.resolution)
+            encoder.captureSize = chooseCaptureSize(cameraId, profile)
             refreshPreviewTransformInfo()
             synchronized(encoder.lifecycle.outputSurfaceLock) {
                 val surfaceTexture = encoder.previewSurfaceTexture
@@ -504,17 +505,16 @@ internal class Camera2DeviceSession(
             lensFacing = facing,
         ).also {
             encoder.previewTransformInfo = it
-            encoder.encodingCompositor?.updateRotation(encoder.currentEncodingRotationDegrees())
         }
     }
 
     fun findCameraId(facing: LensFacing): String? =
         CameraCapturePreparation.findCameraId(encoder.cameraManager, facing)
 
-    fun chooseCaptureSize(cameraId: String, target: Size): Size =
+    fun chooseCaptureSize(cameraId: String, profile: CaptureProfile): Size =
         CameraCapturePreparation.chooseCaptureSize(
             encoder.cameraManager.getCameraCharacteristics(cameraId),
-            target, encoder.profile.targetFps, encoder.profile.lensFacing, encoder.displayRotationDegrees,
+            profile.resolution, profile.targetFps, profile.lensFacing, profile.displayRotationDegrees,
         )
 
     fun closeCaptureSession() {

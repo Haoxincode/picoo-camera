@@ -63,7 +63,8 @@ class Camera2MediaEncoder(
     @Volatile internal var encodingCompositor: CameraEncodingCompositor? = null
     @Volatile internal var selectedCameraId: String? = null
     @Volatile internal var activePhysicalCameraId: String? = null
-    @Volatile internal var displayRotationDegrees: Int = 0
+    internal val displayRotationDegrees: Int
+        get() = profile.displayRotationDegrees
     internal var captureSize: Size = profile.resolution
 
     internal var frameCount = 0
@@ -103,7 +104,6 @@ class Camera2MediaEncoder(
     override fun prepareStreamEpoch(epoch: Int) {
         require(epoch > 0) { "stream epoch must come from Rust" }
         streamEpoch = epoch
-        deviceSession.restartOpeningPreviewIfCameraOpened()
     }
 
     override fun requestKeyFrame() {
@@ -128,8 +128,9 @@ class Camera2MediaEncoder(
     fun setDisplayRotationDegrees(rotationDegrees: Int) {
         val normalized = ((rotationDegrees % 360) + 360) % 360
         if (displayRotationDegrees == normalized) return
-        displayRotationDegrees = normalized
-        encodingCompositor?.updateRotation(currentEncodingRotationDegrees())
+        // The owner starts a source transaction before rebuilding live capture.
+        // Never rotate the old input while its pixel coverage is insufficient.
+        profile = profile.copy(displayRotationDegrees = normalized)
     }
 
     override fun bindPreviewSurface(surfaceTexture: SurfaceTexture) {
@@ -189,6 +190,7 @@ class Camera2MediaEncoder(
         when (lifecycle.state) {
             CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
             CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()
+            CaptureState.Error -> stopPreview()
             else -> Unit
         }
         videoEncoder.requestSyncFrame()
@@ -229,13 +231,6 @@ class Camera2MediaEncoder(
 
     fun refreshPreviewTransformInfo(): PreviewTransformInfo =
         deviceSession.refreshPreviewTransformInfo()
-
-    internal fun currentEncodingRotationDegrees(): Int =
-        StreamOrientation.relativeRotationDegrees(
-            sensorOrientationDegrees = previewTransformInfo.sensorOrientationDegrees,
-            displayRotationDegrees = displayRotationDegrees,
-            frontFacing = previewTransformInfo.lensFacing == LensFacing.Front,
-        )
 
     internal fun fail(message: String) {
         Log.e(TAG, message)

@@ -16,7 +16,10 @@ data class CaptureProfile(
     val targetFps: Int = 30,
     val lensFacing: LensFacing = LensFacing.Back,
     val codec: NativeVideoCodec = NativeVideoCodec.Avc,
-)
+    val displayRotationDegrees: Int = 0,
+) {
+    init { require(displayRotationDegrees in listOf(0, 90, 180, 270)) }
+}
 
 /** Camera buffer geometry needed by the UI-only TextureView transform. */
 data class PreviewTransformInfo(

@@ -17,7 +17,15 @@ import java.util.concurrent.TimeUnit
 /** REQ-PICOO-MEDIA-050: real Camera2/compositor/encoder timestamps, no image persistence. */
 class NativeCameraCaptureContractTest {
     @Test
-    fun backCameraDeliversRequestedNativeFormats() {
+    fun backCameraDeliversRequestedNativeFormats() = withProbeActivity {
+        for (codec in NativeVideoCodec.entries) {
+            for (height in listOf(720, 1080)) {
+                for (fps in listOf(30, 60)) verify(codec, height, fps)
+            }
+        }
+    }
+
+    private fun withProbeActivity(block: () -> Unit) {
         assertTrue("Rust JNI must load", com.picoo.camera.jni.PicooNative.ensureLoaded())
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val activity = AtomicReference<MediaProbeActivity>()
@@ -39,14 +47,69 @@ class NativeCameraCaptureContractTest {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(descriptor).use { it.readBytes() }
             }
             assertTrue("diagnostic Activity did not resume", resumed.await(5, TimeUnit.SECONDS))
-            for (codec in NativeVideoCodec.entries) {
-                for (height in listOf(720, 1080)) {
-                    for (fps in listOf(30, 60)) verify(codec, height, fps)
-                }
-            }
+            block()
         } finally {
             monitor.removeLifecycleCallback(callback)
             instrumentation.runOnMainSync { activity.get()?.finish() }
+        }
+    }
+
+    /** REQ-PICOO-MEDIA-058: orientation rebuilds input coverage and restores full facts. */
+    @Test
+    fun orientationRebuildsInputAndRestoresCommittedProfile() = withProbeActivity {
+        val original = CaptureProfile(Size(1920, 1080), 60, LensFacing.Back,
+            NativeVideoCodec.Avc, displayRotationDegrees = 90)
+        data class Fact(val epoch: Int, val generation: Long, val pts: Long,
+            val codec: NativeVideoCodec, val height: Int, val fps: Int)
+        val facts = java.util.concurrent.LinkedBlockingQueue<Fact>()
+        val bitrate = com.picoo.camera.jni.PicooNative.bitrateInitialForHeight(1080)
+        val encoder = Camera2MediaEncoder(
+            context = ApplicationProvider.getApplicationContext(),
+            initialProfile = original, initialBitrateBps = bitrate, initialStreamEpoch = 1,
+            frameListener = { frame -> facts.offer(Fact(frame.streamEpoch,
+                frame.encoderGeneration, frame.presentationTimeUs, frame.configuration.codec,
+                frame.configuration.height, frame.configuration.framesPerSecond)) },
+        )
+        fun sample(epoch: Int, afterGeneration: Long): Long {
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15)
+            val samples = ArrayList<Fact>()
+            while (samples.size < 240 && System.nanoTime() < deadline) {
+                val fact = facts.poll(500, TimeUnit.MILLISECONDS) ?: continue
+                if (fact.generation <= afterGeneration) continue
+                assertEquals("new generation must preserve its epoch", epoch, fact.epoch)
+                assertEquals(NativeVideoCodec.Avc, fact.codec)
+                assertEquals(1080, fact.height)
+                assertEquals(60, fact.fps)
+                samples += fact
+            }
+            assertEquals("capture failed: ${encoder.lastError}", 240, samples.size)
+            assertEquals(1, samples.map { it.generation }.distinct().size)
+            val steady = samples.drop(60)
+            assertTrue(steady.zipWithNext().all { (a, b) -> b.pts > a.pts })
+            val fps = (steady.size - 1) * 1_000_000.0 / (steady.last().pts - steady.first().pts)
+            Log.i("PicooCameraProbe", "orientation=${encoder.profile.displayRotationDegrees}; epoch=$epoch; generation=${samples.first().generation}; capture=${encoder.captureSize}; fps=$fps")
+            assertTrue("actual fps=$fps", fps in 57.0..63.0)
+            return samples.first().generation
+        }
+        try {
+            encoder.startPreview()
+            val first = sample(1, 0)
+            val originalInput = encoder.captureSize
+            encoder.prepareStreamEpoch(2)
+            encoder.setDisplayRotationDegrees(0)
+            encoder.setSourceFormat(VideoSourceFormat.Default)
+            val second = sample(2, first)
+            assertEquals(0, encoder.profile.displayRotationDegrees)
+            assertTrue("portrait crop must have enough native pixels: ${encoder.captureSize}",
+                encoder.captureSize.height >= 1920)
+            encoder.restoreCommittedConfiguration(original, 1, bitrate)
+            sample(1, second)
+            assertEquals(original, encoder.profile)
+            assertEquals(originalInput, encoder.captureSize)
+        } finally {
+            encoder.close()
+            encoder.cameraHandler.looper.thread.join(2_000)
+            encoder.codecHandler.looper.thread.join(2_000)
         }
     }
 
@@ -56,6 +119,7 @@ class NativeCameraCaptureContractTest {
             targetFps = fps,
             lensFacing = LensFacing.Back,
             codec = codec,
+            displayRotationDegrees = 90,
         )
         val targetCount = fps * 4
         val timestamps = ArrayList<Long>(targetCount)
@@ -81,7 +145,6 @@ class NativeCameraCaptureContractTest {
         )
         try {
             // Landscape sensor presentation avoids an unrelated portrait crop requirement.
-            encoder.setDisplayRotationDegrees(90)
             encoder.startPreview()
             val delivered = completed.await(12, TimeUnit.SECONDS)
             assertTrue("$profile did not produce frames: ${encoder.lastError}", delivered)

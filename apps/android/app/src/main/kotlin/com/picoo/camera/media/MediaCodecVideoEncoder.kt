@@ -19,6 +19,13 @@ internal class MediaCodecVideoEncoder(
     fun setupEncoderAndSession(camera: CameraDevice, cameraGenerationSnapshot: Long) {
         val profile = encoder.profile
         val encodeSize = profile.resolution
+        val captureSize = encoder.captureSize
+        val sensorOrientation = encoder.previewTransformInfo.sensorOrientationDegrees
+        val rotation = StreamOrientation.relativeRotationDegrees(
+            sensorOrientationDegrees = sensorOrientation,
+            displayRotationDegrees = profile.displayRotationDegrees,
+            frontFacing = profile.lensFacing == LensFacing.Front,
+        )
         val requestedBitrate = encoder.targetBitrateBps
         val request = NativeEncoderFormat(profile.codec, encodeSize, profile.targetFps, requestedBitrate)
         val generationEpoch = encoder.streamEpoch
@@ -56,9 +63,9 @@ internal class MediaCodecVideoEncoder(
                 inputSurface = codec.createInputSurface()
                 compositor = CameraEncodingCompositor.create(
                     encoderSurface = inputSurface,
-                    cameraBufferSize = encoder.captureSize,
+                    cameraBufferSize = captureSize,
                     outputSize = encodeSize,
-                    initialRotationDegrees = encoder.currentEncodingRotationDegrees(),
+                    initialRotationDegrees = rotation,
                     onError = { message ->
                         reportCodecStartFailure(
                             generation,

@@ -79,7 +79,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
 
     private val sourceSelection = SenderSourceSelection(encoder.cameraManager, viewModelScope, uiState, preferences)
     private val pendingConnectionSource = AtomicReference<VideoSourceFormat?>(null)
-    private var displayRotationDegrees: Int = 0
+    private var requestedDisplayRotationDegrees: Int = 0
+    private var pendingDisplayRotation: Int? = null
     private var cameraGranted: Boolean = false
     private var previousStatus: Int = PicooNative.STATUS_DISCONNECTED
     private var thermalWarningShown = false
@@ -88,7 +89,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
 
     init {
         encoderRef.set(encoder)
-        sourceSelection.refresh(encoder.profile.lensFacing, displayRotationDegrees)
+        sourceSelection.refresh(encoder.profile.lensFacing, requestedDisplayRotationDegrees)
         uiState.previewTransformInfo = encoder.previewTransformInfo
         val senderHandle = runtime.senderHandle
         if (senderHandle != 0L) {
@@ -214,6 +215,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val bitrate = PicooNative.bitrateInitialForHeight(source.resolution.height)
         PicooNative.setPreferredHeight(runtime.senderHandle, source.resolution.height)
         encoder.setTargetBitrateBps(bitrate)
+        encoder.setDisplayRotationDegrees(requestedDisplayRotationDegrees)
+        pendingDisplayRotation = null
         encoder.setSourceFormat(source)
         applyStreamConfig()
         if (cameraGranted) encoder.startPreview()
@@ -230,13 +233,21 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun setDisplayRotationDegrees(degrees: Int) {
-        displayRotationDegrees = degrees
-        encoder.setDisplayRotationDegrees(degrees)
-        sourceSelection.refresh(encoder.profile.lensFacing, degrees)
+        val normalized = ((degrees % 360) + 360) % 360
+        require(normalized in listOf(0, 90, 180, 270))
+        requestedDisplayRotationDegrees = normalized
+        sourceSelection.refresh(encoder.profile.lensFacing, normalized)
+        if (!isLiveSession() || pendingConnectionSource.get() != null) {
+            encoder.setDisplayRotationDegrees(normalized)
+            pendingDisplayRotation = null
+        } else if (encoder.displayRotationDegrees != normalized) {
+            pendingDisplayRotation = normalized
+        } else {
+            pendingDisplayRotation = null
+        }
     }
 
     fun applyStreamConfig() {
-        encoder.setDisplayRotationDegrees(displayRotationDegrees)
         // Configuration commits belong to native AU submission, never a UI-side
         // setter that can overtake queued frames from the previous generation.
         streamConfigDirty.set(true)
@@ -372,7 +383,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             ui.senderStatus = senderSnapshot.status
             ui.committedSourceFormat = senderSnapshot.lastCommittedSourceFormat
             ui.receiverSourceFormats = senderSnapshot.receiverSourceFormats
-            sourceSelection.refresh(encoder.profile.lensFacing, displayRotationDegrees)
+            sourceSelection.refresh(encoder.profile.lensFacing, requestedDisplayRotationDegrees)
             val requested = pendingConnectionSource.get()
             if (requested != null && ui.sourcePreparationError != null) {
                 ui.errorText = ui.sourcePreparationError
@@ -434,6 +445,15 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
                 null -> Unit
             }
+            if (pendingDisplayRotation != null && !encoderReconfiguration.isPending &&
+                ui.availableSourceFormats != null && cameraGranted &&
+                ui.senderStatus in setOf(PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE)
+            ) {
+                // Consume this orientation intent once. A rejected pose needs
+                // another user action, not a retry/recovery loop on every tick.
+                pendingDisplayRotation = null
+                senderSnapshot.lastCommittedSourceFormat?.let(::requestSourceFormat)
+            }
             ui.pairingCode = PicooNative.getPairingShortCode(senderHandle)
             ui.connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
             ui.connectedReceiverName =
@@ -444,7 +464,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             val bps = senderSnapshot.currentBitrateBps
             if (bps > 0) {
                 ui.adaptiveBitrateBps = bps
-                encoder.setTargetBitrateBps(bps)
+                if (!encoderReconfiguration.isPending) encoder.setTargetBitrateBps(bps)
             }
             val link = PicooNative.getLinkStats(senderHandle)
             ui.linkQualityChip = if (link != null && link.size >= 6) {
