@@ -59,58 +59,11 @@ pub fn probe_capabilities(
     decoder.reset()?;
     let mut offers: Vec<DecoderOffer> = Vec::new();
     for (index, candidate) in CANDIDATES.iter().enumerate() {
-        let config = candidate.configuration()?;
+        let mut config = candidate.configuration()?;
+        config.stream_epoch = index as u32 + 1;
         let format = config.validated_video_format().map_err(probe_error)?;
         let level = config.level_idc;
-        let token = Arc::new(DecodeToken {
-            timeline: AccessUnitTimeline {
-                connection_generation: 0,
-                stream_generation: index as u64 + 1,
-                frame_id: index as u64 + 1,
-                source_pts_us: index as u64 * 1_000_000,
-                encoded_at_us: 0,
-                received_at_us: 0,
-                decode_submitted_at_us: 0,
-                kind: FrameKind::Key,
-            },
-            decoder_generation: 0,
-            config_revision: index as u64 + 1,
-            stream_config: Some(Arc::new(config)),
-        });
-        let result = decoder.submit(DecodeSubmission {
-            access_unit: candidate.access_unit,
-            token: token.clone(),
-        });
-        let accepted = match result {
-            Ok(outcome) => {
-                if outcome
-                    .frames
-                    .iter()
-                    .any(|output| !Arc::ptr_eq(&output.token, &token))
-                {
-                    return Err(probe_error("probe output lost original token"));
-                }
-                let valid_image = outcome.frames.len() == 1
-                    && outcome.frames.iter().all(|output| {
-                        #[cfg(any(target_os = "macos", windows))]
-                        {
-                            let rect = output.frame.description().native_format.visible_rect;
-                            rect.width == if candidate.height == 720 { 1280 } else { 1920 }
-                                && rect.height == candidate.height
-                        }
-                        #[cfg(not(any(target_os = "macos", windows)))]
-                        {
-                            let _ = output;
-                            false
-                        }
-                    });
-                outcome.refresh_accepted && valid_image
-            }
-            Err(error) => {
-                tracing::debug!(?format, %error, "native decoder candidate unavailable");
-                false
-            }
-        };
+        let accepted = probe_candidate(decoder, candidate, index, Arc::new(config))?;
         // Drop native outputs before reset, and never retain a probe image in an offer.
         decoder.reset()?;
         if accepted {
@@ -128,6 +81,78 @@ pub fn probe_capabilities(
     let capabilities = Capabilities { offers };
     capabilities.validate().map_err(probe_error)?;
     Ok(capabilities)
+}
+
+/// A synchronous MFT may prime without returning the first picture. Keep three
+/// original submissions so a delayed output is checked against its own token.
+fn probe_candidate(
+    decoder: &mut dyn AccessUnitDecoder,
+    candidate: &Candidate,
+    index: usize,
+    config: Arc<StreamConfig>,
+) -> Result<bool, DecodeError> {
+    let mut submitted = Vec::with_capacity(3);
+    let mut returned = [false; 3];
+    let mut refresh_accepted = false;
+    for sequence in 0..3 {
+        let token = Arc::new(DecodeToken {
+            timeline: AccessUnitTimeline {
+                connection_generation: 0,
+                stream_generation: index as u64 + 1,
+                frame_id: index as u64 * 3 + sequence + 1,
+                source_pts_us: index as u64 * 1_000_000
+                    + sequence * 1_000_000 / u64::from(candidate.fps),
+                encoded_at_us: 0,
+                received_at_us: 0,
+                decode_submitted_at_us: 0,
+                kind: FrameKind::Key,
+            },
+            decoder_generation: 0,
+            config_revision: index as u64 + 1,
+            stream_config: Some(config.clone()),
+        });
+        submitted.push(token.clone());
+        let outcome = match decoder.submit(DecodeSubmission {
+            access_unit: candidate.access_unit,
+            token,
+        }) {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                tracing::debug!(codec = ?candidate.codec, height = candidate.height, fps = candidate.fps,
+                    %error, "native decoder candidate unavailable");
+                return Ok(false);
+            }
+        };
+        refresh_accepted |= outcome.refresh_accepted;
+        for output in outcome.frames {
+            let identity = submitted
+                .iter()
+                .position(|token| Arc::ptr_eq(token, &output.token))
+                .ok_or_else(|| probe_error("probe output lost original token"))?;
+            if returned[identity] {
+                return Err(probe_error("probe output repeated a completed token"));
+            }
+            returned[identity] = true;
+            if !native_geometry_matches(&output, candidate) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(refresh_accepted && returned.iter().any(|value| *value))
+}
+
+fn native_geometry_matches(output: &crate::DecodedOutput, candidate: &Candidate) -> bool {
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        let rect = output.frame.description().native_format.visible_rect;
+        rect.width == if candidate.height == 720 { 1280 } else { 1920 }
+            && rect.height == candidate.height
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = (output, candidate);
+        false
+    }
 }
 
 impl Candidate {
@@ -234,5 +259,40 @@ mod tests {
             format.coded_size.unwrap().height == 736
                 && format.tier == picoo_protocol::control::VideoTier::HevcHigh as i32
         }));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn priming_output_keeps_the_original_submission_identity() {
+        struct DelayedDecoder {
+            inner: Box<dyn AccessUnitDecoder>,
+            pending: Option<DecodeOutcome>,
+        }
+        impl AccessUnitDecoder for DelayedDecoder {
+            fn submit(
+                &mut self,
+                input: DecodeSubmission<'_>,
+            ) -> Result<DecodeOutcome, DecodeError> {
+                let output = self.inner.submit(input)?;
+                Ok(self
+                    .pending
+                    .replace(output)
+                    .unwrap_or_else(|| DecodeOutcome::accepted_without_frame(true)))
+            }
+            fn reset(&mut self) -> Result<(), DecodeError> {
+                self.pending = None;
+                self.inner.reset()
+            }
+        }
+        let mut decoder = DelayedDecoder {
+            inner: crate::create_platform_decoder(),
+            pending: None,
+        };
+        let caps = probe_capabilities(&mut decoder).unwrap();
+        assert!(!caps.offers.is_empty());
+        assert!(
+            decoder.pending.is_none(),
+            "last queued probe must be discarded by reset"
+        );
     }
 }
