@@ -726,3 +726,17 @@ b5cf956 的 CI 34076167154 全平台成功。
 860cd08 的 CI 34077474767：Windows、macOS、iOS 成功；Rust与Android job在共享Linux Receiver测试中失败，9项旧OpenH264样本没有VUI色彩，严格Sender门禁报 missing source color。读取两个失败job的原始日志后，使用已锁定OpenH264 0.9官方 EncoderConfig::vui(VuiConfig::bt709()) 给7处测试编码器显式配置颜色；不放宽生产校验。修复单独提交922bfc4并在上一轮终态后推送，等待新CI。
 
 本机已有Docker Linux服务，已启动隔离ARM64 Rust容器复核Receiver Linux测试；仓库只读挂载，构建缓存使用本任务专有volume，不替代GitHub Actions。
+
+
+### 2026-09-07：Receiver 原生能力接线与双 codec 网络准入
+
+- REQ-PICOO-MEDIA-053：原生 worker 创建实例后先 probe，再处理直播队列；owner 只收完整能力，探测不增加直播解码计数或发布源帧。Pending/Ready/Unavailable 明确区分；早到配置经实际记录验证后最多保留一个，绑定 transport session/control generation，旧 epoch 不覆盖新等待项，断连清除。Ready 才发送真实 offers，删除硬编码 AVC/30 与未探测的尺寸声明。
+- StreamConfig 复用完整实际格式校验，AVC/HEVC、coded padding、crop、tier/level、色彩/fps 必须匹配同一条 offer；只在准入成功后修改 revision、clock/recovery 与源配置。每 AU 另受该条目的字节预算限制。reset/线程 panic 后停止该实例并作废证据，清理连接与输出，不静默换 Decoder 沿用旧能力；自动重新探测/设备恢复仍属独立工作。
+- Sender 每次连接等待新能力后发送预存配置；不支持的预存格式保留为显式请求，不能先发给 Receiver 再被断连。完整原生事件在证据未到达前不能绑定 generation、暂存配置或发送媒体。重连回归明确覆盖新证据，不添加兼容路径。
+- 测试注入的 Decoder 使用独立完整测试 offers，只在 test/显式 loopback diagnostic 下编译；生产调用原生 factory。新增 Mac 完整网络合同使用真实 factory/probe，Apple/小米各八组合经过 PCP offers、完整 NativeEncoderEvent、QUIC、原生 VideoToolbox 与 FrameBus，16组合全部通过；不把探测帧当网络帧。
+- macOS Receiver116项（另2忽略）、Sender75项、FFI13项通过；Linux隔离ARM64容器Receiver121项（另2忽略）、Sender75项通过，Mac/Linux相关Clippy通过。旧160×120/64×64与480p网络fixture改为正式720p/1080p；合成空间复杂度固定为有限色块，镜像测试只传四个标记字节，保留原像素语义与延迟/丢包阈值。零填充的伪filler会在Annex-B规范化时消失，改成真实filler RBSP并断言规范化后仍足以超出FEC恢复能力。旧HEVC level3.1样本不能冒称60fps，事务测试改用实际720p60原生记录。
+- macOS Receiver/Camera Extension构建与打包、Android完整APK/JNI/JVM、iOS完整构建与Swift/C ABI测试成功。GUI启动后本机采样显示正在等待系统Keychain授权，已请用户在系统界面允许；本批不据此声称新包手机到Mac直播已验收。未完成Windows原生HEVC设备、持续fps、热稳态、完整手机配置选择或全部NEXT验收。
+
+922bfc4 的 CI 34078499965、2d8d9ab 的 CI 34079517343 全平台成功。本批等待提交后的CI；不以本机结果替代对应runner。
+
+本批最终小米15安装新APK后，NativeCodecContractTest/EncoderSubmitContractTest/SourceHeightContractTest共5项通过（硬件编码合同含8组合），结束恢复MainActivity。第一次JNI合同发现“等待能力”被误报为Error；改为Core正常未接受结果，既不绑定/发送，也保持JNI Rejected与真实Error的区分。Sender75项回归和Clippy继续通过。构造器panic另有终态与队列关闭回归，最终Mac Receiver116、Linux Receiver121项通过。

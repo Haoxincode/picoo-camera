@@ -78,8 +78,8 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         use picoo_bitstream::avc::extract_sps_pps;
         use picoo_sender::StreamConfigParams;
 
-        let width = 160usize;
-        let height = 120usize;
+        let width = 1280usize;
+        let height = 720usize;
         let mut planes = vec![128u8; width * height * 3 / 2];
         for y in 0..height {
             for x in 0..width {
@@ -489,7 +489,7 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.05);
-    let (au, sps, pps) = openh264_au(160, 120, 17);
+    let (au, sps, pps) = openh264_au(1280, 720, 17);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -535,8 +535,8 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 1280,
+        height: 720,
         fps: 30,
         bitrate_bps: 400_000,
         stream_epoch: 1,
@@ -601,7 +601,7 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
     use picoo_transport::{Endpoint, QuicSenderTransport};
     use std::time::Instant;
 
-    let (au, sps, pps) = openh264_au(160, 120, 21);
+    let (au, sps, pps) = openh264_au(1280, 720, 21);
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
@@ -644,8 +644,8 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
         std::thread::sleep(Duration::from_millis(2));
     }
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 1280,
+        height: 720,
         fps: 30,
         bitrate_bps: 400_000,
         stream_epoch: 1,

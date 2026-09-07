@@ -15,6 +15,20 @@ impl ReceiverSession {
     /// Inject a synthetic decoder without adding fallback behavior to builds.
     pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder + Send>) {
         self.decoder_worker = DecoderWorker::with_decoder(decoder);
+        self.decoder_readiness = Default::default();
+        self.receiver_capabilities_sent = None;
+    }
+
+    /// Exercise the production native preparation and owner negotiation path.
+    #[cfg(target_os = "macos")]
+    pub fn set_native_decoder_for_test(&mut self) {
+        self.decoder_worker = DecoderWorker::with_preparation(
+            picoo_media_decode::create_platform_decoder,
+            picoo_media_decode::probe_capabilities,
+            self.runtime_wake.clone(),
+        );
+        self.decoder_readiness = Default::default();
+        self.receiver_capabilities_sent = None;
     }
 
     /// Publish a recovery fixture without constructing a network timeline.

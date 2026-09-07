@@ -304,6 +304,11 @@ impl<T: PicooTransport> SenderSession<T> {
             ));
         }
 
+        // REQ-PICOO-MEDIA-053: no native generation or AU is admitted before
+        // fresh decoder evidence arrives for this connection.
+        if self.receiver_capabilities.is_none() {
+            return Ok(EncoderEventOutcome::default());
+        }
         let mut config_staged = false;
         // A complete first callback can atomically establish its own shape;
         // all rejection checks still happen before pending config is mutated.

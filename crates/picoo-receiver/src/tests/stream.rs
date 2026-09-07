@@ -391,13 +391,12 @@ fn stream_epoch_bump_requests_keyframe() {
 #[test]
 fn remote_mirrored_flips_latest_frame_store_nv12() {
     // REQ-PICOO-MEDIA-004 — remote StreamConfig.mirrored applied before LatestFrameStore.
-    use picoo_frame_hub::nv12_byte_size;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
 
-    let width = 64u32;
-    let height = 64u32;
-    let mut pattern = vec![128u8; nv12_byte_size(width, height)];
+    let width = 1280u32;
+    let height = 720u32;
+    let mut pattern = vec![128u8; 4];
     pattern[0] = 10;
     pattern[1] = 20;
     pattern[2] = 30;
@@ -509,12 +508,11 @@ fn remote_mirrored_flips_latest_frame_store_nv12() {
 #[test]
 fn stream_config_rotation_overrides_decoder_rotation() {
     // REQ-PICOO-MEDIA-009 / PUC-005: LatestFrameStore publishes Sender StreamConfig.rotation.
-    use picoo_frame_hub::nv12_byte_size;
     use picoo_sender::StreamConfigParams;
 
-    let width = 64u32;
-    let height = 64u32;
-    let pattern = vec![42u8; nv12_byte_size(width, height)];
+    let width = 1280u32;
+    let height = 720u32;
+    let pattern = vec![42u8; 4];
 
     let mut receiver = ReceiverSession::new();
     use_stub_decoder(&mut receiver);
@@ -625,7 +623,7 @@ fn stream_config_rotation_overrides_decoder_rotation() {
 // Synthetic output pixels still require a real, dimensionally matching source record.
 fn pattern_configuration() -> std::sync::Arc<picoo_bitstream::CodecConfiguration> {
     let (sps, pps) =
-        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_64X64_BT709_IDR).unwrap();
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
     picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
         .unwrap()
         .into()

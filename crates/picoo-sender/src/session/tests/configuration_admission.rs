@@ -200,7 +200,7 @@ fn matching_height_and_generation_cannot_commit_another_codec_or_frame_rate() {
     desired.configuration = picoo_bitstream::CodecConfiguration::parse(
         picoo_bitstream::Codec::Hevc,
         bytes::Bytes::from_static(include_bytes!(
-            "../../../../picoo-testkit/fixtures/hevc-1280x720-bt709-config.bin"
+            "../../../../picoo-media-decode/probes/apple-native-formats/2-720-60.config"
         )),
     )
     .unwrap()
@@ -230,6 +230,7 @@ fn matching_height_and_generation_cannot_commit_another_codec_or_frame_rate() {
         assert_eq!(session.next_control_message_id, control);
         assert_eq!(session.pending_packets(), 0);
     }
+    assert!(session.apply_capabilities_for_test(super::exact_capabilities(&desired)));
     let outcome = session
         .submit_encoder_event(crate::NativeEncoderEvent {
             data: b"matching-native-idr",
@@ -245,4 +246,35 @@ fn matching_height_and_generation_cannot_commit_another_codec_or_frame_rate() {
         .unwrap();
     assert!(outcome.encoder_accepted && outcome.stream_configured);
     assert_eq!(session.current_stream_epoch(), epoch);
+}
+
+#[test]
+fn encoder_event_before_capabilities_cannot_bind_or_send_media() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .unwrap();
+    session.force_status_for_test(SenderStatus::Streaming);
+    let control = session.next_control_message_id;
+    let outcome = session.submit_encoder_event(crate::NativeEncoderEvent {
+        data: b"early-native-idr",
+        is_keyframe: true,
+        pts_us: 1,
+        encoded_at_us: 2,
+        encoder_generation: 10,
+        stream_epoch: session.current_stream_epoch(),
+        width: 1280,
+        height: 720,
+        stream_config: Some(super::source_configuration(720)),
+    });
+    let outcome = outcome.expect("waiting for capability evidence is a normal rejection");
+    assert!(!outcome.encoder_accepted);
+    assert!(!outcome.stream_configured);
+    assert_eq!(session.committed_encoder_generation, 0);
+    assert!(session.pending_stream_config.is_none());
+    assert_eq!(session.next_control_message_id, control);
+    assert_eq!(session.pending_packets(), 0);
 }

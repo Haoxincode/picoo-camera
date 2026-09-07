@@ -13,10 +13,15 @@ pub(super) fn openh264_au(width: usize, height: usize, seed: u8) -> (Vec<u8>, Ve
     use openh264::formats::YUVBuffer;
     use picoo_bitstream::avc::extract_sps_pps;
 
+    // Bound synthetic spatial complexity independently of negotiated resolution.
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
         for x in 0..width {
-            planes[y * width + x] = ((x as u8).wrapping_mul(seed).wrapping_add(y as u8)) % 200 + 20;
+            planes[y * width + x] = (((x * 8 / width) as u8)
+                .wrapping_mul(seed)
+                .wrapping_add((y * 8 / height) as u8))
+                % 200
+                + 20;
         }
     }
     let yuv = YUVBuffer::from_vec(planes, width, height);
@@ -193,7 +198,7 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
 #[test]
 fn midstream_resolution_change_openh264_updates_latest_frame_store() {
-    // REQ-PICOO-MEDIA-002/010: mid-stream 480p → 720p with new SPS/PPS.
+    // REQ-PICOO-MEDIA-002/010: mid-stream 720p → 1080p with new SPS/PPS.
     use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
@@ -201,8 +206,8 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
     use picoo_transport::{Endpoint, QuicSenderTransport};
     use std::time::Instant;
 
-    let (au_lo, sps_lo, pps_lo) = openh264_au(854, 480, 5);
-    let (au_hi, sps_hi, pps_hi) = openh264_au(1280, 720, 11);
+    let (au_lo, sps_lo, pps_lo) = openh264_au(1280, 720, 5);
+    let (au_hi, sps_hi, pps_hi) = openh264_au(1920, 1080, 11);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -247,8 +252,8 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
     }
 
     sender.set_stream_config(StreamConfigParams {
-        width: 854,
-        height: 480,
+        width: 1280,
+        height: 720,
         fps: 30,
         bitrate_bps: 400_000,
         stream_epoch: 1,
@@ -272,23 +277,23 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
     for _ in 0..200 {
         receiver.pump().expect("rx");
         sender.pump().ok();
-        if receiver.latest_frame().is_some_and(|f| f.width == 854) {
+        if receiver.latest_frame().is_some_and(|f| f.width == 1280) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_eq!(receiver.latest_frame().map(|f| f.width), Some(854));
+    assert_eq!(receiver.latest_frame().map(|f| f.width), Some(1280));
 
     let t0 = Instant::now();
     let next_epoch = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
         codec: picoo_bitstream::Codec::Avc,
-        height: 720,
+        height: 1080,
         fps: 30,
     });
     assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
-        width: 1280,
-        height: 720,
+        width: 1920,
+        height: 1080,
         fps: 30,
         bitrate_bps: 1_200_000,
         stream_epoch: next_epoch,
@@ -301,13 +306,13 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
         .into(),
     });
     let transaction_id = sender.encoder_transaction_id_for_epoch(next_epoch);
-    assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 720));
+    assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 1080));
     sender
         .ingest_encoder_access_unit(super::native_au(
             &au_hi,
             true,
             2,
-            (transaction_id, 2, next_epoch, 720),
+            (transaction_id, 2, next_epoch, 1080),
         ))
         .expect("commit higher resolution generation");
     sender.flush_pending().expect("send higher resolution IDR");
@@ -316,8 +321,8 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
         receiver.pump().expect("rx");
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == 1280 && frame.height == 720 {
-                assert_eq!(frame.pixel_data.len(), nv12_byte_size(1280, 720));
+            if frame.width == 1920 && frame.height == 1080 {
+                assert_eq!(frame.pixel_data.len(), nv12_byte_size(1920, 1080));
                 ok = true;
                 break;
             }
@@ -326,7 +331,7 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
     }
     let elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0;
     eprintln!("resolution_switch recovery_ms={elapsed_ms:.2} ok={ok}");
-    assert!(ok, "LatestFrameStore did not update to 1280x720");
+    assert!(ok, "LatestFrameStore did not update to 1920x1080");
     assert!(
         elapsed_ms < 3_000.0,
         "resolution switch {elapsed_ms}ms exceeds 3s budget"
@@ -347,12 +352,12 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     use picoo_testkit::DropKeyframeTailTransport;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 160usize;
-    let height = 120usize;
+    let width = 1280usize;
+    let height = 720usize;
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
         for x in 0..width {
-            planes[y * width + x] = ((x * 7 + y * 11) % 200 + 20) as u8;
+            planes[y * width + x] = if x < width / 2 { 40 } else { 180 };
         }
     }
     let yuv = YUVBuffer::from_vec(planes.clone(), width, height);
@@ -367,10 +372,12 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
     assert!(annex.len() > 32);
 
-    // Pad with filler NAL so the AU spans ≥2 QUIC video fragments (~1124 B payload).
+    // Valid filler RBSP survives Annex-B canonicalization and exceeds FEC repair capacity.
     let mut large_key = annex.clone();
     large_key.extend_from_slice(&[0, 0, 0, 1, 0x0c]);
-    large_key.resize(large_key.len() + 1_300, 0x00);
+    large_key.resize(large_key.len() + 8_000, 0xff);
+    large_key.push(0x80);
+    assert!(super::wire_avc(&large_key).len() > 8_000);
     assert!(
         large_key.len() > 1_200,
         "padded AU must exceed one datagram payload"
@@ -379,7 +386,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
     let mut recovery_planes = planes;
     for y in 0..height {
         for x in 0..width {
-            recovery_planes[y * width + x] = ((x * 13 + y * 17) % 180 + 30) as u8;
+            recovery_planes[y * width + x] = if y < height / 2 { 70 } else { 150 };
         }
     }
     let recovery_yuv = YUVBuffer::from_vec(recovery_planes, width, height);
@@ -470,7 +477,7 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    // Baseline IDR (single-fragment) — tails not armed yet.
+    // Baseline IDR: tails are not armed yet.
     sender
         .ingest_and_flush(&super::wire_avc(&annex), true, 1, 1)
         .expect("baseline");

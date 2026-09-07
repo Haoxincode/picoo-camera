@@ -315,3 +315,14 @@ pub(super) fn source_configuration(height: u32) -> StreamConfigParams {
         rotation: 0,
     }
 }
+
+fn exact_capabilities(config: &StreamConfigParams) -> Capabilities {
+    let wire = config.to_proto().unwrap();
+    Capabilities {
+        offers: vec![picoo_protocol::control::DecoderOffer {
+            format: Some(wire.validated_video_format().unwrap()),
+            max_level_idc: wire.level_idc,
+            max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
+        }],
+    }
+}

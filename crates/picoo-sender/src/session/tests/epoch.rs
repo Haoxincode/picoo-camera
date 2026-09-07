@@ -11,6 +11,11 @@ fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
     let epoch = session.current_stream_epoch();
+    assert!(
+        session.apply_capabilities_for_test(super::exact_capabilities(
+            &super::source_configuration(1080)
+        ))
+    );
 
     let outcome = session
         .submit_encoder_event(crate::NativeEncoderEvent {
@@ -70,6 +75,8 @@ fn rejected_complete_encoder_event_does_not_mutate_staged_configuration() {
     let mut session = SenderSession::new(MemoryTransport::new());
     let original = session.pending_stream_config().cloned();
     let stale_epoch = session.current_stream_epoch() + 1;
+    assert!(session
+        .apply_capabilities_for_test(super::exact_capabilities(&super::source_configuration(720))));
 
     let outcome = session
         .submit_encoder_event(crate::NativeEncoderEvent {

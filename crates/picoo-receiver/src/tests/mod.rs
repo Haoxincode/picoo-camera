@@ -54,6 +54,8 @@ mod connect;
 mod control_gate;
 mod decode_platform;
 mod decoder;
+#[cfg(target_os = "macos")]
+mod native_negotiation;
 mod pairing;
 mod pairing_trust;
 mod qos;

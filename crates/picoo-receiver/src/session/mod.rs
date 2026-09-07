@@ -4,6 +4,7 @@
 
 mod clock;
 mod control;
+mod decoder_capabilities;
 mod decoder_worker;
 mod health;
 mod lifecycle;
@@ -93,6 +94,7 @@ pub struct ReceiverSession {
     last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
     config_revision: u64,
+    admitted_access_unit_budget: Option<u32>,
     /// Newer-epoch datagrams may beat StreamConfig across QUIC channels.
     waiting_for_stream_config_epoch: Option<u32>,
     /// At most one complete future-generation IDR is retained until its
@@ -100,6 +102,8 @@ pub struct ReceiverSession {
     pending_stream_config_idr: Option<AssembledAccessUnit>,
     receiver_capabilities_sent: Option<()>,
     decoder_worker: DecoderWorker,
+    decoder_readiness: decoder_capabilities::DecoderReadiness,
+    pending_decoder_configuration: Option<decoder_capabilities::PendingConfiguration>,
     /// Monotonic Worker completion revision used by deterministic tests and diagnostics.
     decoder_completions: u64,
     /// After peer disconnect, keep last frame this long before placeholder (REQ-PICOO-FRAME-005).
@@ -164,9 +168,12 @@ impl ReceiverSession {
             last_shared_ring_error: None,
             current_stream_config: None,
             config_revision: 0,
+            admitted_access_unit_budget: None,
             waiting_for_stream_config_epoch: None,
             pending_stream_config_idr: None,
             receiver_capabilities_sent: None,
+            decoder_readiness: Default::default(),
+            pending_decoder_configuration: None,
             decoder_worker: DecoderWorker::with_event_wake(runtime_wake),
             decoder_completions: 0,
             last_frame_hold: Duration::from_millis(500),

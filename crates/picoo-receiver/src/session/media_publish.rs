@@ -36,6 +36,15 @@ impl ReceiverSession {
     pub(super) fn drain_decoder_events(&mut self) -> Result<(), ReceiverError> {
         while let Some(event) = self.decoder_worker.poll_event() {
             match event {
+                DecoderEvent::Capabilities(result) => {
+                    self.receiver_capabilities_sent = None;
+                    self.decoder_readiness = match result {
+                        Ok(caps) => super::decoder_capabilities::DecoderReadiness::Ready(caps),
+                        Err(error) => {
+                            super::decoder_capabilities::DecoderReadiness::Unavailable(error)
+                        }
+                    };
+                }
                 DecoderEvent::Started => {
                     self.ingress.decode_invocations =
                         self.ingress.decode_invocations.saturating_add(1);
@@ -61,13 +70,16 @@ impl ReceiverSession {
                     }
                     self.handle_decoder_result(timeline, decoded_at, result)?;
                 }
-                DecoderEvent::ResetFailed(error) => {
-                    tracing::warn!(%error, "decoder reset failed; worker rebuilt platform decoder");
-                    self.last_media_error = Some(format!("decoder reset failed: {error}"));
+                DecoderEvent::Unavailable(error) => {
+                    tracing::warn!(%error, "decoder failed; worker stopped and capability evidence invalidated");
+                    self.last_media_error = Some(format!("native decoder failed: {error}"));
+                    self.decoder_readiness =
+                        super::decoder_capabilities::DecoderReadiness::Unavailable(error);
+                    self.receiver_capabilities_sent = None;
                 }
             }
         }
-        Ok(())
+        self.finish_decoder_negotiation()
     }
 
     pub(super) fn decoder_timeline_is_current(&self, timeline: AccessUnitTimeline) -> bool {

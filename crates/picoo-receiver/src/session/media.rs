@@ -235,6 +235,14 @@ impl ReceiverSession {
     ) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
         if self
+            .admitted_access_unit_budget
+            .is_some_and(|budget| access_unit.data.len() > budget as usize)
+        {
+            return Err(ReceiverError::Protocol(
+                "access unit exceeds admitted decoder budget".into(),
+            ));
+        }
+        if self
             .current_stream_config
             .as_ref()
             .is_some_and(|config| u64::from(config.stream_epoch) != access_unit.stream_generation)

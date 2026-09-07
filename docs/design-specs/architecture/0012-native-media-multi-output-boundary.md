@@ -137,3 +137,7 @@ Sender 获得 Receiver offers 后，完整编码事件在绑定 generation、暂
 完整 VideoFormat 显式区分 AVC、HEVC Main tier 与 HEVC High tier；缺省 tier 非法，不把 Main profile 当作 Main tier。hvcC 的 profile/tier/level 与每个 SPS 必须一致，header 声明不能降低源事实。准备请求尚无原生 tier 时可匹配任一合法条目，最终提交按实际 tier 精确比较；High tier 不存在 level4 以下的合法能力。
 
 Decoder 能力探测在创建原生 Decoder 的工作线程内执行，同一个实例逐个提交有界的自有合成闭合 IDR 与标准记录。只有实际返回原始 token 和合法原生图像的候选才能成为 offer；每项后 reset，失败不借另一候选能力，不发布探测图像到 FrameBus。资产只是输入，不能作为运行设备支持证据；禁用、缺失或失败的原生 backend 不通过软件替代。能力结果包含真实存储/crop/tier/level，AU预算取本实现的有界准入上限；配置/吞吐/热稳态仍分别验收。探测错误导致该项不可用；reset或内部不变量失败使整份结果失败，不能混合重建前后的设备证据。
+
+### Decoder 能力证据的生命周期
+
+原生 Decoder 在自己的工作线程创建并探测，网络 owner 只接收完整 offers，不获取探测图像。配置按标准记录核对实际源格式后，必须命中该 Decoder 实例的完整条目。探测尚未结束时，只保留一个绑定 transport session 和 control generation 的待准入配置；断连销毁它。线程致命失败或 reset 失败即终止该实例并作废能力，不能自动换实例后继续使用旧证据；新实例须重新探测后才能接纳直播。现有 bounded worker 与平台 SDK 已覆盖此边界，无需引入任务运行时或另写媒体后端。

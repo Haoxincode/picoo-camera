@@ -24,8 +24,8 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     use picoo_session::ReceiverStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 160usize;
-    let height = 120usize;
+    let width = 1280usize;
+    let height = 720usize;
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
         for x in 0..width {
@@ -161,13 +161,13 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
-    use picoo_testkit::AVC_64X64_BT709_IDR as H264_64X64_RED_IDR;
+    use picoo_testkit::AVC_1280X720_BT709_IDR as H264_SOURCE_IDR;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 64usize;
-    let height = 64usize;
-    let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).expect("sps/pps");
-    let avcc = annex_b_to_length_prefixed(H264_64X64_RED_IDR).expect("avcc wrap");
+    let width = 1280usize;
+    let height = 720usize;
+    let (sps, pps) = extract_sps_pps(H264_SOURCE_IDR).expect("sps/pps");
+    let avcc = annex_b_to_length_prefixed(H264_SOURCE_IDR).expect("avcc wrap");
     assert!(is_length_prefixed_access_unit(&avcc));
 
     let mut receiver = ReceiverSession::new();
@@ -539,8 +539,8 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     use picoo_session::ReceiverStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 160usize;
-    let height = 120usize;
+    let width = 1280usize;
+    let height = 720usize;
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
         for x in 0..width {

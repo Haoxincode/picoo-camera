@@ -374,6 +374,19 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     assert_eq!(session.status(), SenderStatus::Streaming);
     assert_eq!(session.connected_receiver_id(), Some(receiver.device_id()));
     assert_eq!(session.connected_receiver_display_name(), Some("Desktop"));
+    assert!(
+        !session.stream_config_sent(),
+        "each connection waits for fresh receiver evidence"
+    );
+    let source = super::source_configuration(1080).to_proto().unwrap();
+    assert!(session.apply_capabilities_for_test(Capabilities {
+        offers: vec![picoo_protocol::control::DecoderOffer {
+            format: Some(source.validated_video_format().unwrap()),
+            max_level_idc: source.level_idc,
+            max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
+        }]
+    }));
+    session.pump().expect("send admitted configuration");
     assert!(session.stream_config_sent());
     assert!(session.take_keyframe_request());
 
@@ -394,6 +407,19 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     session.pump().expect("pump streaming");
 
     assert_eq!(session.status(), SenderStatus::Streaming);
+    assert!(
+        !session.stream_config_sent(),
+        "each connection waits for fresh receiver evidence"
+    );
+    let source = super::source_configuration(1080).to_proto().unwrap();
+    assert!(session.apply_capabilities_for_test(Capabilities {
+        offers: vec![picoo_protocol::control::DecoderOffer {
+            format: Some(source.validated_video_format().unwrap()),
+            max_level_idc: source.level_idc,
+            max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
+        }]
+    }));
+    session.pump().expect("send admitted configuration");
     assert!(session.stream_config_sent());
     let cfg = session.pending_stream_config().expect("config");
     assert_eq!(cfg.width, 1920);

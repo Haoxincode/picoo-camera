@@ -27,9 +27,11 @@ impl ReceiverSession {
         self.last_decoded_fps = 0;
         self.last_media_error = None;
         self.current_stream_config = None;
+        self.admitted_access_unit_budget = None;
         self.waiting_for_stream_config_epoch = None;
         self.pending_stream_config_idr = None;
         self.receiver_capabilities_sent = None;
+        self.pending_decoder_configuration = None;
         self.decoder_recovery.reset_session();
         self.control_generation = None;
         self.next_control_message_id = 1;
@@ -57,6 +59,9 @@ impl ReceiverSession {
                         ReceiverCloseReason::Local => CloseReason::LocalClose,
                         ReceiverCloseReason::InvalidControl => {
                             CloseReason::Error("invalid PCP control message".into())
+                        }
+                        ReceiverCloseReason::DecoderUnavailable => {
+                            CloseReason::Error("native decoder unavailable".into())
                         }
                         ReceiverCloseReason::PairingExpired => {
                             CloseReason::Error("pairing challenge expired".into())

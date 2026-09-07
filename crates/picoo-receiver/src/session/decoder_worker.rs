@@ -8,8 +8,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use bytes::Bytes;
-use picoo_media_decode::{create_platform_decoder, AccessUnitDecoder, DecodeError, DecodeOutcome};
-use picoo_protocol::control::StreamConfig;
+use picoo_media_decode::{AccessUnitDecoder, DecodeError, DecodeOutcome};
+use picoo_protocol::control::{Capabilities, StreamConfig};
 
 use crate::media_scheduler::DecoderAdmission;
 
@@ -233,6 +233,7 @@ pub(super) enum DecodeSubmitOutcome {
 }
 
 pub(super) enum DecoderEvent {
+    Capabilities(Result<Capabilities, String>),
     Started,
     Completed {
         timeline: AccessUnitTimeline,
@@ -241,7 +242,7 @@ pub(super) enum DecoderEvent {
         decode_time_us: u64,
         result: Result<DecodeOutcome, DecodeError>,
     },
-    ResetFailed(String),
+    Unavailable(String),
 }
 
 pub(super) struct DecoderWorker {
@@ -264,12 +265,34 @@ impl DecoderWorker {
             not(target_vendor = "apple"),
             any(not(windows), feature = "windows-mf")
         )))]
-        let factory = create_platform_decoder;
-        Self::with_decoder_factory(factory, event_wake)
+        let factory = picoo_media_decode::create_platform_decoder;
+        #[cfg(test)]
+        {
+            Self::with_decoder_factory(factory, event_wake)
+        }
+        #[cfg(not(test))]
+        {
+            Self::with_preparation(factory, picoo_media_decode::probe_capabilities, event_wake)
+        }
     }
 
+    #[cfg(any(test, feature = "loopback-diagnostics"))]
     fn with_decoder_factory(
         factory: impl FnOnce() -> Box<dyn AccessUnitDecoder> + Send + 'static,
+        event_wake: picoo_transport::TransportEventWake,
+    ) -> Self {
+        Self::with_preparation(
+            factory,
+            |_| Ok(super::decoder_capabilities::synthetic_capabilities()),
+            event_wake,
+        )
+    }
+
+    pub(super) fn with_preparation(
+        factory: impl FnOnce() -> Box<dyn AccessUnitDecoder> + Send + 'static,
+        prepare: impl FnOnce(&mut dyn AccessUnitDecoder) -> Result<Capabilities, DecodeError>
+            + Send
+            + 'static,
         event_wake: picoo_transport::TransportEventWake,
     ) -> Self {
         let queue = Arc::new(WorkQueue::new());
@@ -277,7 +300,42 @@ impl DecoderWorker {
         let (event_sender, events) = mpsc::channel();
         let thread = thread::Builder::new()
             .name("picoo-decoder".into())
-            .spawn(move || run_worker(factory(), worker_queue, event_sender, event_wake))
+            .spawn(move || {
+                let initialized = catch_unwind(AssertUnwindSafe(|| -> Result<_, DecodeError> {
+                    let mut decoder = factory();
+                    let prepare = || prepare(decoder.as_mut());
+                    #[cfg(target_os = "macos")]
+                    let prepare = || objc2::rc::autoreleasepool(|_| prepare());
+                    let capabilities = prepare()?;
+                    Ok((decoder, capabilities))
+                }))
+                .unwrap_or_else(|_| {
+                    Err(DecodeError::Platform("decoder preparation panicked".into()))
+                });
+                let (decoder, capabilities) = match initialized {
+                    Ok(ready) => ready,
+                    Err(error) => {
+                        worker_queue.shutdown();
+                        let _ = send_decoder_event(
+                            &event_sender,
+                            &event_wake,
+                            DecoderEvent::Capabilities(Err(error.to_string())),
+                        );
+                        return;
+                    }
+                };
+                if send_decoder_event(
+                    &event_sender,
+                    &event_wake,
+                    DecoderEvent::Capabilities(Ok(capabilities)),
+                )
+                .is_err()
+                {
+                    worker_queue.shutdown();
+                    return;
+                }
+                run_worker(decoder, worker_queue, event_sender, event_wake)
+            })
             .expect("start decoder worker");
         Self {
             queue,
@@ -356,6 +414,7 @@ fn run_worker(
         #[cfg(not(target_os = "macos"))]
         let should_stop = process_work_item(item, &mut decoder, &events, &event_wake);
         if should_stop {
+            queue.shutdown();
             return;
         }
     }
@@ -388,10 +447,14 @@ fn process_work_item(
             let result = match decode {
                 Ok(result) => result,
                 Err(_) => {
-                    *decoder = create_platform_decoder();
-                    Err(DecodeError::Platform(
-                        "platform decoder panicked on worker thread".into(),
-                    ))
+                    let _ = send_decoder_event(
+                        events,
+                        event_wake,
+                        DecoderEvent::Unavailable(
+                            "platform decoder panicked on worker thread".into(),
+                        ),
+                    );
+                    return true;
                 }
             };
             let decoded_at = Instant::now();
@@ -418,9 +481,9 @@ fn process_work_item(
                 let _ = send_decoder_event(
                     events,
                     event_wake,
-                    DecoderEvent::ResetFailed(error.to_string()),
+                    DecoderEvent::Unavailable(error.to_string()),
                 );
-                *decoder = create_platform_decoder();
+                return true;
             }
             false
         }
@@ -439,210 +502,5 @@ fn send_decoder_event(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
-
-    struct BlockingDecoder {
-        started: Arc<AtomicBool>,
-        release: Arc<AtomicBool>,
-    }
-
-    impl AccessUnitDecoder for BlockingDecoder {
-        fn submit(
-            &mut self,
-            submission: picoo_media_decode::DecodeSubmission<'_>,
-        ) -> Result<DecodeOutcome, DecodeError> {
-            let _access_unit = submission.access_unit;
-            let _stream_config = submission.token.stream_config.as_deref();
-
-            self.started.store(true, Ordering::Release);
-            while !self.release.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_millis(1));
-            }
-            Ok(DecodeOutcome::accepted_without_frame(false))
-        }
-
-        fn reset(&mut self) -> Result<(), DecodeError> {
-            Ok(())
-        }
-    }
-
-    fn unit(frame_id: u64, kind: FrameKind) -> EncodedAccessUnit {
-        EncodedAccessUnit {
-            connection_generation: 1,
-            stream_generation: 1,
-            frame_id,
-            source_pts_us: frame_id,
-            encoded_at_us: frame_id,
-            received_at_us: frame_id,
-            decode_submitted_at_us: frame_id,
-            kind,
-            data: Bytes::from_static(b"au"),
-        }
-    }
-
-    #[test]
-    fn thread_affine_decoder_is_created_used_and_dropped_on_its_worker() {
-        struct AffineDecoder {
-            owner: thread::ThreadId,
-            // Intentionally !Send: represents apartment-bound native state.
-            _affinity: std::rc::Rc<()>,
-            events: Sender<(&'static str, thread::ThreadId)>,
-        }
-        impl AccessUnitDecoder for AffineDecoder {
-            fn submit(
-                &mut self,
-                _submission: picoo_media_decode::DecodeSubmission<'_>,
-            ) -> Result<DecodeOutcome, DecodeError> {
-                assert_eq!(thread::current().id(), self.owner);
-                self.events.send(("decode", self.owner)).unwrap();
-                Ok(DecodeOutcome {
-                    frames: Vec::new(),
-                    refresh_accepted: false,
-                })
-            }
-            fn reset(&mut self) -> Result<(), DecodeError> {
-                assert_eq!(thread::current().id(), self.owner);
-                self.events.send(("reset", self.owner)).unwrap();
-                Ok(())
-            }
-        }
-        impl Drop for AffineDecoder {
-            fn drop(&mut self) {
-                assert_eq!(thread::current().id(), self.owner);
-                self.events.send(("drop", self.owner)).unwrap();
-            }
-        }
-        let caller = thread::current().id();
-        let (events, received) = mpsc::channel();
-        let worker = DecoderWorker::with_decoder_factory(
-            move || {
-                let owner = thread::current().id();
-                events.send(("create", owner)).unwrap();
-                Box::new(AffineDecoder {
-                    owner,
-                    _affinity: std::rc::Rc::new(()),
-                    events,
-                })
-            },
-            picoo_transport::TransportEventWake::default(),
-        );
-        let (event, owner) = received.recv_timeout(Duration::from_secs(3)).unwrap();
-        assert_eq!(event, "create");
-        assert_ne!(owner, caller);
-        assert_eq!(
-            worker.submit(unit(1, FrameKind::Key), None, 0),
-            DecodeSubmitOutcome::Queued
-        );
-        assert_eq!(
-            received.recv_timeout(Duration::from_secs(3)).unwrap(),
-            ("decode", owner)
-        );
-        worker.reset();
-        assert_eq!(
-            received.recv_timeout(Duration::from_secs(3)).unwrap(),
-            ("reset", owner)
-        );
-        drop(worker);
-        assert_eq!(
-            received.recv_timeout(Duration::from_secs(3)).unwrap(),
-            ("drop", owner)
-        );
-    }
-
-    #[test]
-    fn queue_is_bounded_and_drops_discardable_before_reference_media() {
-        let release = Arc::new(AtomicBool::new(false));
-        let started = Arc::new(AtomicBool::new(false));
-        let worker = DecoderWorker::with_decoder(Box::new(BlockingDecoder {
-            started: Arc::clone(&started),
-            release: Arc::clone(&release),
-        }));
-        assert_eq!(
-            worker.submit(unit(1, FrameKind::Key), None, 0),
-            DecodeSubmitOutcome::Queued
-        );
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while !started.load(Ordering::Acquire) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert!(started.load(Ordering::Acquire), "decoder did not start");
-        assert_eq!(
-            worker.submit(unit(2, FrameKind::DiscardableDelta), None, 0),
-            DecodeSubmitOutcome::Queued
-        );
-        assert_eq!(
-            worker.submit(unit(3, FrameKind::ReferenceDelta), None, 0),
-            DecodeSubmitOutcome::Queued
-        );
-        assert_eq!(
-            worker.admission(FrameKind::ReferenceDelta),
-            DecoderAdmission::Ready,
-            "queued discardable AU remains replaceable"
-        );
-        assert_eq!(
-            worker.submit(unit(4, FrameKind::ReferenceDelta), None, 0),
-            DecodeSubmitOutcome::Queued,
-            "reference AU replaces the queued discardable AU"
-        );
-        assert_eq!(
-            worker.admission(FrameKind::ReferenceDelta),
-            DecoderAdmission::WaitForCapacity
-        );
-        assert_eq!(
-            worker.admission(FrameKind::DiscardableDelta),
-            DecoderAdmission::DropDiscardable
-        );
-        assert_eq!(worker.admission(FrameKind::Key), DecoderAdmission::Ready);
-        assert_eq!(
-            worker.submit(unit(5, FrameKind::DiscardableDelta), None, 0),
-            DecodeSubmitOutcome::Dropped {
-                requires_refresh: false
-            }
-        );
-        assert_eq!(
-            worker.submit(unit(6, FrameKind::ReferenceDelta), None, 0),
-            DecodeSubmitOutcome::Dropped {
-                requires_refresh: true
-            }
-        );
-        release.store(true, Ordering::Release);
-    }
-
-    #[test]
-    fn reset_invalidates_an_active_decode_generation() {
-        let release = Arc::new(AtomicBool::new(false));
-        let started = Arc::new(AtomicBool::new(false));
-        let worker = DecoderWorker::with_decoder(Box::new(BlockingDecoder {
-            started: Arc::clone(&started),
-            release: Arc::clone(&release),
-        }));
-        assert_eq!(
-            worker.submit(unit(1, FrameKind::Key), None, 0),
-            DecodeSubmitOutcome::Queued
-        );
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while !started.load(Ordering::Acquire) && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert!(started.load(Ordering::Acquire), "decoder did not start");
-
-        worker.reset();
-        release.store(true, Ordering::Release);
-
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while Instant::now() < deadline {
-            if let Some(DecoderEvent::Completed {
-                decoder_generation, ..
-            }) = worker.poll_event()
-            {
-                assert!(!worker.is_current_generation(decoder_generation));
-                return;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        panic!("active decode did not complete");
-    }
-}
+#[path = "decoder_worker_tests.rs"]
+mod tests;

@@ -7,8 +7,7 @@ use super::ReceiverSession;
 use crate::ReceiverError;
 use picoo_protocol::control::{
     camera_command, control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
-    ColorRange, DecoderOffer, EncoderCommand, FrameRate, Resolution, SenderStats as SenderStatsMsg,
-    SessionError, StreamConfig, VideoCodec, VideoFormat,
+    EncoderCommand, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
 };
 use picoo_protocol::{receiver_payload_allowed, ReceiverControlPhase};
 use picoo_session::StreamState;
@@ -164,42 +163,56 @@ impl ReceiverSession {
         self.send_control_payload(session, ControlPayload::CameraCommand(command))
     }
 
-    fn handle_stream_config(
+    pub(super) fn handle_stream_config(
         &mut self,
         session: SessionId,
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
-        // REQ-PICOO-PROTOCOL-016: do not submit a different/unknown codec to
-        // the current AVC-only adapter or mutate its committed configuration.
-        if config.codec != VideoCodec::Avc as i32 {
-            return Err(ReceiverError::Protocol("unsupported stream codec".into()));
-        }
-        // REQ-PICOO-PROTOCOL-018: reject before replacing the snapshot, advancing
-        // revision, invalidating output, or releasing future-epoch media.
-        let record = picoo_bitstream::CodecConfiguration::parse(
-            picoo_bitstream::Codec::Avc,
-            bytes::Bytes::copy_from_slice(&config.codec_configuration),
-        )
-        .map_err(|error| {
-            ReceiverError::Protocol(format!("invalid codec configuration: {error}"))
-        })?;
-        if record.nal_length_size() != picoo_bitstream::NalLengthSize::Four {
-            return Err(ReceiverError::Protocol(
-                "stream configuration requires four-byte NAL lengths".into(),
-            ));
-        }
-        if config.profile != picoo_protocol::control::VideoProfile::AvcHigh as i32
-            || config.level_idc != u32::from(record.level_idc())
-        {
-            return Err(ReceiverError::Protocol(
-                "stream identity differs from codec configuration".into(),
-            ));
-        }
-        record
-            .validate_visible_size(config.width, config.height)
-            .map_err(|error| {
-                ReceiverError::Protocol(format!("invalid source geometry: {error}"))
-            })?;
+        // Validate actual source before retaining any untrusted pending configuration.
+        let format = config
+            .validated_video_format()
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
+        let budget = match &self.decoder_readiness {
+            super::decoder_capabilities::DecoderReadiness::Pending => {
+                if self
+                    .pending_decoder_configuration
+                    .as_ref()
+                    .is_some_and(|pending| {
+                        pending.session == session
+                            && pending.control_generation == self.control_generation
+                            && pending.config.stream_epoch > config.stream_epoch
+                    })
+                {
+                    return Ok(());
+                }
+                self.pending_decoder_configuration =
+                    Some(super::decoder_capabilities::PendingConfiguration {
+                        session,
+                        control_generation: self.control_generation,
+                        config,
+                    });
+                return Ok(());
+            }
+            super::decoder_capabilities::DecoderReadiness::Unavailable(error) => {
+                return Err(ReceiverError::Decode(
+                    picoo_media_decode::DecodeError::Platform(error.clone()),
+                ));
+            }
+            super::decoder_capabilities::DecoderReadiness::Ready(caps) => {
+                if config.height > self.advertised_max_height
+                    || !caps.supports(&format, config.level_idc, 1)
+                {
+                    return Err(ReceiverError::Protocol(
+                        "source format was not admitted by native decoder".into(),
+                    ));
+                }
+                caps.offers
+                    .iter()
+                    .find(|offer| offer.format.as_ref() == Some(&format))
+                    .expect("admitted offer")
+                    .max_access_unit_bytes
+            }
+        };
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         if previous_epoch.is_some_and(|epoch| config.stream_epoch < epoch) {
             return Ok(());
@@ -210,6 +223,7 @@ impl ReceiverSession {
             ReceiverError::Protocol("source configuration revision exhausted".into())
         })?;
         self.current_stream_config = Some(std::sync::Arc::new(config));
+        self.admitted_access_unit_budget = Some(budget);
         #[cfg(any(target_os = "macos", windows))]
         if let Some(output) = &self.shared_ring {
             output.invalidate();
@@ -256,27 +270,25 @@ impl ReceiverSession {
         Ok(())
     }
 
-    fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
-        // This adapter currently implements AVC/30. Do not advertise HEVC/60
-        // until the native decoder adapters have been integrated and validated.
-        let offers = [(1280, 720), (1920, 1080)]
-            .into_iter()
-            .filter(|(_, height)| *height <= self.advertised_max_height)
-            .map(|(width, height)| DecoderOffer {
-                format: Some(VideoFormat::sdr_709(
-                    VideoCodec::Avc,
-                    Resolution { width, height },
-                    FrameRate {
-                        numerator: 30,
-                        denominator: 1,
-                    },
-                    ColorRange::Limited,
-                )),
-                max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
-                max_level_idc: 42,
-            })
-            .collect();
-        let capabilities = Capabilities { offers };
+    pub(super) fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        let super::decoder_capabilities::DecoderReadiness::Ready(caps) = &self.decoder_readiness
+        else {
+            return Ok(());
+        };
+        let capabilities = Capabilities {
+            offers: caps
+                .offers
+                .iter()
+                .filter(|offer| {
+                    offer
+                        .format
+                        .as_ref()
+                        .and_then(|format| format.visible_rect.as_ref())
+                        .is_some_and(|rect| rect.height <= self.advertised_max_height)
+                })
+                .cloned()
+                .collect(),
+        };
         self.send_control_payload(session, ControlPayload::Capabilities(capabilities))
     }
 
@@ -307,6 +319,7 @@ impl ReceiverSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use picoo_protocol::control::VideoCodec;
     use std::sync::Arc;
 
     #[test]
@@ -378,7 +391,7 @@ mod tests {
         });
         receiver.current_stream_config = Some(committed.clone());
         receiver.waiting_for_stream_config_epoch = Some(6);
-        for codec in [0, -1, 99, VideoCodec::Hevc as i32] {
+        for codec in [0, -1, 99] {
             let result = receiver.handle_stream_config(
                 SessionId(1),
                 StreamConfig {
@@ -388,7 +401,7 @@ mod tests {
                 },
             );
             assert!(
-                matches!(result, Err(ReceiverError::Protocol(message)) if message == "unsupported stream codec")
+                matches!(result, Err(ReceiverError::Protocol(message)) if message.contains("unknown stream codec"))
             );
             assert!(Arc::ptr_eq(
                 receiver.current_stream_config.as_ref().unwrap(),

@@ -201,12 +201,30 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn send_pending_stream_config(&mut self) -> Result<(), SenderError> {
-        if self.stream_config_sent || self.encoder_apply_state.is_applying() {
+        if self.stream_config_sent
+            || self.encoder_apply_state.is_applying()
+            || self.receiver_capabilities.is_none()
+        {
             return Ok(());
         }
         let Some(config) = self.pending_stream_config.clone() else {
             return Ok(());
         };
+        let wire = config.to_proto().map_err(SenderError::CodecConfiguration)?;
+        let format = wire
+            .validated_video_format()
+            .map_err(|error| SenderError::Protocol(error.to_string()))?;
+        if !self
+            .receiver_capabilities
+            .as_ref()
+            .expect("checked capabilities")
+            .supports(&format, wire.level_idc, 1)
+        {
+            // Keep the explicit source request available for a platform selection;
+            // never transmit an unsupported configuration during negotiation.
+            self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
+            return Ok(());
+        }
         if self.media_blocked_for_stream_config && config.height != self.committed_encoder_height {
             self.last_session_error = Some("STREAM_CONFIG_HEIGHT_MISMATCH".into());
             return Err(SenderError::StreamConfigHeightMismatch {
