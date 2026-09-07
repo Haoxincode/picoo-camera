@@ -12,6 +12,11 @@ use crate::ReceiverError;
 
 impl ReceiverSession {
     fn reset_session_resources(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            self.report_recording_gap(picoo_recording::bundle::GapReason::SourceStopped);
+            self.stop_encoded_recording();
+        }
         self.decoder_worker.reset();
         #[cfg(not(any(target_os = "macos", windows)))]
         self.frame_buffer_pool.clear();

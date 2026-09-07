@@ -220,6 +220,10 @@ impl EncodedWriter {
         reason: GapReason,
         source: Option<SourceRange>,
     ) -> Result<(), RecordingError> {
+        // Before actual start there is no recorded prediction chain to lose.
+        if self.state() == RecordingState::Arming {
+            return Ok(());
+        }
         let result = (|| {
             self.close_segment()?;
             self.bundle.record_gap(reason, source)?;

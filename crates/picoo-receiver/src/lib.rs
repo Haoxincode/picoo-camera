@@ -32,6 +32,9 @@ pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]
 pub enum ReceiverError {
+    #[cfg(target_os = "macos")]
+    #[error("recording: {0}")]
+    Recording(#[from] picoo_recording::RecordingError),
     #[error("transport: {0}")]
     Transport(#[from] TransportError),
     #[cfg(any(test, feature = "loopback-diagnostics"))]

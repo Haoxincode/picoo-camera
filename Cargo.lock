@@ -5800,6 +5800,7 @@ dependencies = [
  "picoo-packet",
  "picoo-pairing",
  "picoo-protocol",
+ "picoo-recording",
  "picoo-sender",
  "picoo-session",
  "picoo-testkit",

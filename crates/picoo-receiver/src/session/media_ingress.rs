@@ -26,6 +26,8 @@ impl ReceiverSession {
                     packet.flags,
                 )
             {
+                #[cfg(target_os = "macos")]
+                self.report_recording_gap(picoo_recording::bundle::GapReason::NetworkLoss);
                 self.ingress.receive_queue_expired_access_units = self
                     .ingress
                     .receive_queue_expired_access_units
@@ -118,6 +120,12 @@ impl ReceiverSession {
                     .whole_access_unit_gap_drop_count()
                     .saturating_sub(gap_drops_before),
             );
+        #[cfg(target_os = "macos")]
+        if self.reassembly.partial_access_unit_drop_count() > partial_drops_before
+            || self.reassembly.whole_access_unit_gap_drop_count() > gap_drops_before
+        {
+            self.report_recording_gap(picoo_recording::bundle::GapReason::NetworkLoss);
+        }
         match reassembly_result {
             Ok(Some(access_unit)) => {
                 if defer_until_config {

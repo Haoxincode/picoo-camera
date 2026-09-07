@@ -1,5 +1,6 @@
 //! Independent compressed ingress — REQ-PICOO-MEDIA-068.
 //! This channel preserves arrival order; dependency reordering belongs to the worker.
+use crate::bundle::{GapReason, SourceRange};
 use picoo_packet::AssembledAccessUnit;
 use picoo_protocol::{control::StreamConfig, MAX_MEDIA_ACCESS_UNIT_BYTES};
 use std::{
@@ -26,8 +27,12 @@ pub enum IngressFailure {
     WorkerStopped,
 }
 
+enum Event {
+    Input(RecordingInput),
+    Gap(GapReason, Option<SourceRange>),
+}
 struct Queued {
-    input: RecordingInput,
+    event: Event,
     accepted_at: Instant,
 }
 
@@ -46,6 +51,7 @@ pub struct RecordingInbox {
 #[derive(Debug)]
 pub enum IngressPoll {
     Input(RecordingInput),
+    Gap(GapReason, Option<SourceRange>),
     Idle,
     Drained,
 }
@@ -79,22 +85,35 @@ impl RecordingIngress {
             || input.configuration.codec_configuration.len() > MAX_CONFIGURATION_BYTES
             || input.configuration.codec_configuration.is_empty()
             || input.configuration.stream_epoch != input.access_unit.stream_epoch;
-        let result = if invalid {
-            Err(IngressFailure::InvalidInput)
-        } else {
-            self.sender
-                .try_send(Queued {
-                    input,
-                    accepted_at: now,
-                })
-                .map_err(|error| match error {
-                    mpsc::TrySendError::Full(_) => IngressFailure::Capacity,
-                    mpsc::TrySendError::Disconnected(_) => IngressFailure::WorkerStopped,
-                })
-        };
-        if let Err(failure) = result {
+        if invalid {
+            let _ = self.failure.set(IngressFailure::InvalidInput);
+            return Err(*self.failure.get().expect("failure set"));
+        }
+        self.offer_event(Event::Input(input), now)
+    }
+
+    pub fn report_gap(
+        &self,
+        reason: GapReason,
+        source: Option<SourceRange>,
+    ) -> Result<(), IngressFailure> {
+        self.offer_event(Event::Gap(reason, source), Instant::now())
+    }
+
+    fn offer_event(&self, event: Event, now: Instant) -> Result<(), IngressFailure> {
+        if let Some(failure) = self.failure.get() {
+            return Err(*failure);
+        }
+        if let Err(error) = self.sender.try_send(Queued {
+            event,
+            accepted_at: now,
+        }) {
+            let failure = match error {
+                mpsc::TrySendError::Full(_) => IngressFailure::Capacity,
+                mpsc::TrySendError::Disconnected(_) => IngressFailure::WorkerStopped,
+            };
             let _ = self.failure.set(failure);
-            return Err(*self.failure.get().expect("failure was set"));
+            return Err(*self.failure.get().expect("failure set"));
         }
         Ok(())
     }
@@ -126,7 +145,10 @@ impl RecordingInbox {
                     self.receiver = None;
                     return Err(failure);
                 }
-                Ok(IngressPoll::Input(queued.input))
+                Ok(match queued.event {
+                    Event::Input(input) => IngressPoll::Input(input),
+                    Event::Gap(reason, source) => IngressPoll::Gap(reason, source),
+                })
             }
             Err(mpsc::TryRecvError::Empty) => Ok(IngressPoll::Idle),
             Err(mpsc::TryRecvError::Disconnected) => {

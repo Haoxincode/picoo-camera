@@ -112,11 +112,13 @@ fn arming_ignores_a_non_idr_hint_and_records_the_actual_start() {
     delta.access_unit.data = vec![0, 0, 0, 2, 0x41, 0x80].into();
     delta.access_unit.keyframe = true;
     writer.write_ordered(delta).unwrap();
+    writer.gap(GapReason::NetworkLoss, None).unwrap();
     assert_eq!(writer.state(), RecordingState::Arming);
     assert!(!writer.path().join("segments/000001.partial").exists());
     writer.write_ordered(input(0, 1, 2, 33_333)).unwrap();
     writer.finish().unwrap();
     assert_eq!(manifest(&writer)["actual_start_pts_us"], 33_333);
+    assert_eq!(writer.state(), RecordingState::Complete);
 }
 
 #[test]

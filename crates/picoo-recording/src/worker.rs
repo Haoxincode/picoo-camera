@@ -94,12 +94,23 @@ impl RecordingWorker {
             .offer(input)
     }
 
+    pub fn report_gap(
+        &mut self,
+        reason: crate::bundle::GapReason,
+        source: Option<crate::bundle::SourceRange>,
+    ) -> Result<(), ingress::IngressFailure> {
+        self.ingress
+            .as_ref()
+            .ok_or(ingress::IngressFailure::WorkerStopped)?
+            .report_gap(reason, source)
+    }
+
     pub fn stop(&mut self) {
         self.ingress = None;
     }
 
     pub fn take_refresh_request(&self) -> bool {
-        self.shared.refresh.swap(false, Ordering::AcqRel)
+        self.ingress.is_some() && self.shared.refresh.swap(false, Ordering::AcqRel)
     }
 
     pub fn result(&self) -> Option<RecordingResult> {
@@ -164,6 +175,13 @@ fn pump(
         let now = Instant::now();
         let (batch, drained, idle) = match inbox.poll() {
             Ok(IngressPoll::Input(input)) => (reorder.push(input, now)?, false, false),
+            Ok(IngressPoll::Gap(reason, source)) => {
+                for input in reorder.drain() {
+                    writer.write_ordered(input)?;
+                }
+                writer.gap(reason, source)?;
+                (Vec::new(), false, false)
+            }
             Ok(IngressPoll::Idle) => (reorder.poll(now), false, true),
             Ok(IngressPoll::Drained) => (reorder.drain(), true, false),
             Err(failure) => {
@@ -239,6 +257,16 @@ mod tests {
         .unwrap();
         assert_eq!(manifest["segments"][0]["metadata"]["source"]["first_au"], 1);
         assert_eq!(manifest["segments"][0]["metadata"]["source"]["last_au"], 2);
+
+        let mut tail_loss = RecordingWorker::start(parent.path().to_owned()).unwrap();
+        tail_loss
+            .offer(crate::encoded::tests::input(0, 1, 1, 0))
+            .unwrap();
+        tail_loss
+            .report_gap(crate::bundle::GapReason::NetworkLoss, None)
+            .unwrap();
+        tail_loss.stop();
+        assert_eq!(wait(&tail_loss).state, RecordingState::HasGaps);
 
         let missing = RecordingWorker::start(parent.path().join("missing")).unwrap();
         assert_eq!(wait(&missing).state, RecordingState::Failed);
