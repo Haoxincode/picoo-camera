@@ -679,3 +679,12 @@ ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推�
 - REQ-PICOO-MEDIA-048：删除没有产品调用方的 C/JNI 独立 ingest、flush、started 及 Kotlin 声明，无兼容别名。保留完整配置快照与 AU 的原子提交、失败上报和恢复控制；Core 内部状态机仍拥有分解事实处理。
 - FFI 13 项回归通过；macOS all-targets 与 Android NDK library Clippy 通过。Android 完整 APK/JNI 构建及 77 项 JVM 测试通过；iOS 完整构建和 Swift 模拟器测试成功。当前三个 Apple 生成头均不再声明被删除 C 入口。
 - 475b5b3 的 CI 34074184001 全平台成功。本批接口清理不代表完整能力探测或真机媒体成功验收。
+
+### 2026-09-07：实际配置映射与小米原生跨设备验证
+
+- REQ-PICOO-MEDIA-049：协议层复用现有 bitstream 有界解析器，把真实记录转换为完整 VideoFormat；StreamConfig 声明与实际记录逐项核对，缺失颜色拒绝。protocol → bitstream 是单向依赖，不引入平台或新的 codec 库。
+- 28 项初始协议回归中，“所有 avcC 截断都非法”的测试假设不成立：尾部可选扩展省略后仍是合法记录。改成真实缺失颜色样本的拒绝断言。新样本验证尺寸/crop、颜色、标签冲突、精确 offer 与 AU 预算。
+- 小米 15（24129PN74C / Android 16）ADB 真机重装调试包后，NativeCodecContractTest 和 FFI/source 合同共 5 项通过；测试包新增仅保存 Canvas 合成样本，独立再跑硬件合同通过。AVC/HEVC × 720/1080 × 30/60 共八组，实际组件 c2.qti.avc.encoder / c2.qti.hevc.encoder，三张不同 PTS 输出，原生 profile/尺寸/fps/BT.709 limited 与 JNI 标准记录检查通过。
+- 八组小米码流全部通过共享位流 IDR/颜色/几何核对；首次 Mac 验证在 HEVC 720p 遇到实际 1280×736 存储，被原格式表误拒绝。支持有界 736 存储后，将最低 level 从可见档位表改成 H.264 Annex A macroblock / H.265 Annex A luma 工作量计算，保留 AVC 736 超出 level 3.1 的回归。协议最终 30 项通过。
+- Mac 生产 Decoder 成功解码 Apple 和小米各八组样本；每张确认原始 token、可见图像与原生 NV12 输出，HEVC 736 和 1080 的 1088 padding 均正确。样本含来源记录，保存在 picoo-testkit；不作为其他运行设备能力证据。
+- 完整 Android APK/JNI/JVM 构建成功；Protocol/Bitstream/Decoder all-targets Clippy、文档与格式检查通过。仍不宣称实际 Camera2 采集、持续 60fps、热稳态、网络全链路或产品 offers 广告已完成。

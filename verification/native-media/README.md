@@ -20,3 +20,16 @@ cargo run -p picoo-bitstream --example check_native_encoder -- target/verificati
 harness 直接编译生产 Swift，检查未知色彩输入拒绝、八种 codec/尺寸/fps 请求的原生硬件输出和输入快照；Rust 检查器复用正式位流解析器验证 avcC/hvcC、闭合 IDR、可见尺寸和 BT.709 limited。生成文件是合成画面的诊断产物，可删除。CPU mapping 仅用于初始化测试像素。
 
 关联 REQ-PICOO-MEDIA-045。这不是 iPhone 摄像头、持续帧率、画质、热稳态或四组合验收；完整边界和已记录结果见 [Apple 原生媒体研究](../../docs/research/next-apple-gpu.md)。
+
+## 小米合成编码样本与 Mac 原生解码
+
+在连接的 Android 真机安装当前 debug App 与 instrumentation 包，运行 `com.picoo.camera.media.NativeCodecContractTest`。八种配置每组保存三张合成输出中的第一张 sync AU 与标准记录到 App 私有 `files/native-codec-probe`；只包含 Canvas 色块，无相机影像。用 `adb exec-out run-as com.picoo.camera.debug cat files/native-codec-probe/<文件名>` 取得 `.config` 和 `.native-au` 后运行：
+
+```sh
+cargo run -p picoo-bitstream --example check_native_encoder -- /tmp/picoo-xiaomi-native-output --annex-b
+cargo run -p picoo-media-decode --example check_native_formats -- /tmp/picoo-xiaomi-native-output
+```
+
+第一条显式解释 Android Annex B，检查实际位流并写入规范 `.au`；没有格式猜测。第二条使用正式平台 Decoder，验证八组实际参数、原生图像及原始 token。Windows 需加 `--features windows-mf` 并在 Windows 原生环境运行。Apple harness 的输出目录可直接传给第二条。
+
+REQ-PICOO-MEDIA-049：这些合成输入证明原生 API 与完整参数事实，不证明摄像头、网络、持续帧率、画质或热稳态；程序不自动发布任何 Decoder offers。历史样本保存在 picoo-testkit 的 apple-native-formats/xiaomi-native-formats，不能替代运行设备的探测。

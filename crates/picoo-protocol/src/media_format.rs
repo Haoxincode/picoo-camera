@@ -65,7 +65,10 @@ impl VideoFormat {
             .coded_size
             .as_ref()
             .ok_or(MediaFormatError("missing coded size"))?;
-        if !matches!((size.width, size.height), (1280, 720) | (1920, 1080 | 1088)) {
+        if !matches!(
+            (size.width, size.height),
+            (1280, 720 | 736) | (1920, 1080 | 1088)
+        ) {
             return Err(MediaFormatError("unsupported coded size"));
         }
         let rect = self
@@ -117,24 +120,36 @@ impl VideoFormat {
         // Called only after validate(): geometry/rate/codec are present and bounded.
         let size = self.coded_size.as_ref().unwrap();
         let fps = self.frame_rate.as_ref().unwrap();
-        match (
-            VideoCodec::try_from(self.codec).unwrap(),
-            if size.height == 1088 {
-                1080
-            } else {
-                size.height
-            },
-            fps.numerator,
-        ) {
-            (VideoCodec::Avc, 720, 30) => 31,
-            (VideoCodec::Avc, 720, 60) => 32,
-            (VideoCodec::Avc, 1080, 30) => 40,
-            (VideoCodec::Avc, 1080, 60) => 42,
-            (VideoCodec::Hevc, 720, 30) => 93,
-            (VideoCodec::Hevc, 720, 60) | (VideoCodec::Hevc, 1080, 30) => 120,
-            (VideoCodec::Hevc, 1080, 60) => 123,
-            _ => unreachable!("validated product format"),
-        }
+        // ITU-T H.264 Annex A uses macroblocks; H.265 Annex A uses luma samples.
+        // Count the actual coded workload, including storage padding.
+        let (picture, limits): (u64, &[(u32, u64, u64)]) =
+            match VideoCodec::try_from(self.codec).unwrap() {
+                VideoCodec::Avc => (
+                    u64::from(size.width.div_ceil(16)) * u64::from(size.height.div_ceil(16)),
+                    &[
+                        (31, 3600, 108_000),
+                        (32, 5120, 216_000),
+                        (40, 8192, 245_760),
+                        (42, 8704, 522_240),
+                    ],
+                ),
+                VideoCodec::Hevc => (
+                    u64::from(size.width) * u64::from(size.height),
+                    &[
+                        (93, 983_040, 33_177_600),
+                        (120, 2_228_224, 66_846_720),
+                        (123, 2_228_224, 133_693_440),
+                    ],
+                ),
+                VideoCodec::Unspecified => unreachable!("validated codec"),
+            };
+        limits
+            .iter()
+            .find(|(_, max_picture, max_rate)| {
+                picture <= *max_picture && picture * u64::from(fps.numerator) <= *max_rate
+            })
+            .expect("bounded product coded size/rate")
+            .0
     }
 
     fn accepts_level(&self, level: u32) -> bool {

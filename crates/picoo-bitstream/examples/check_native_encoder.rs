@@ -5,11 +5,16 @@ use picoo_bitstream::{
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let directory = PathBuf::from(
-        std::env::args_os()
-            .nth(1)
-            .ok_or("missing output directory")?,
-    );
+    let mut arguments = std::env::args_os().skip(1);
+    let directory = PathBuf::from(arguments.next().ok_or("missing output directory")?);
+    let annex_b = match arguments.next() {
+        None => false,
+        Some(flag) if flag == "--annex-b" => true,
+        Some(_) => return Err("expected --annex-b or no framing flag".into()),
+    };
+    if arguments.next().is_some() {
+        return Err("unexpected argument".into());
+    }
     for (wire, codec, rap) in [
         (1, Codec::Avc, RandomAccessPoint::AvcIdr),
         (2, Codec::Hevc, RandomAccessPoint::HevcIdr),
@@ -22,7 +27,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     std::fs::read(directory.join(format!("{stem}.config")))?.into(),
                 )?;
                 record.validate_visible_size(width, height)?;
-                let bytes = std::fs::read(directory.join(format!("{stem}.au")))?;
+                let bytes = if annex_b {
+                    picoo_bitstream::canonical_access_unit(
+                        codec,
+                        NalFormat::AnnexB,
+                        &std::fs::read(directory.join(format!("{stem}.native-au")))?,
+                    )?
+                    .into_owned()
+                } else {
+                    std::fs::read(directory.join(format!("{stem}.au")))?
+                };
                 let picture = AccessUnit::parse(
                     codec,
                     NalFormat::LengthPrefixed(NalLengthSize::Four),
@@ -44,6 +58,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return Err(
                         format!("{stem}: missing or conflicting BT.709 limited color").into(),
                     );
+                }
+                if annex_b {
+                    std::fs::write(directory.join(format!("{stem}.au")), &bytes)?;
                 }
                 println!(
                     "PASS {stem} coded={}x{} color={:?}",

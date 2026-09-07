@@ -198,3 +198,29 @@ fn cropped_visible_image_does_not_lower_the_coded_level_requirement() {
     .validate()
     .is_err());
 }
+
+#[test]
+fn padding_counts_toward_macroblock_level_limits() {
+    let mut entry = offer(VideoCodec::Avc, 720, 30);
+    entry
+        .format
+        .as_mut()
+        .unwrap()
+        .coded_size
+        .as_mut()
+        .unwrap()
+        .height = 736;
+    // 80 * 46 = 3680 macroblocks exceeds level 3.1's 3600, even at 30 fps.
+    entry.max_level_idc = 31;
+    assert!(Capabilities {
+        offers: vec![entry]
+    }
+    .validate()
+    .is_err());
+    entry.max_level_idc = 32;
+    assert!(Capabilities {
+        offers: vec![entry]
+    }
+    .validate()
+    .is_ok());
+}

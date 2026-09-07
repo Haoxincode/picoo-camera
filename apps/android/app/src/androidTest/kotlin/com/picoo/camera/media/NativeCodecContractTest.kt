@@ -5,6 +5,8 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.util.Log
 import android.util.Size
+import androidx.test.core.app.ApplicationProvider
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,6 +45,7 @@ class NativeCodecContractTest {
             assertTrue(codec.codecInfo.isHardwareAccelerated)
             val info = MediaCodec.BufferInfo()
             val timestamps = mutableListOf<Long>()
+            var firstSyncAu: ByteArray? = null
             var actual: MediaFormat? = null
             repeat(3) { frame ->
                 // Diagnostic fixture only: GPU compositor then MediaCodec InputSurface.
@@ -57,6 +60,12 @@ class NativeCodecContractTest {
                         try {
                             if (info.size > 0 && info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG == 0) {
                                 timestamps += info.presentationTimeUs
+                                if (firstSyncAu == null && info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0) {
+                                    val bytes = codec.getOutputBuffer(ix)!!.duplicate()
+                                    bytes.position(info.offset)
+                                    bytes.limit(info.offset + info.size)
+                                    firstSyncAu = ByteArray(bytes.remaining()).also { bytes.get(it) }
+                                }
                             }
                         } finally { codec.releaseOutputBuffer(ix, false) }
                     }
@@ -87,6 +96,15 @@ class NativeCodecContractTest {
             assertEquals(1, record[0].toInt())
             val lengthField = if (kind == NativeVideoCodec.Avc) 4 else 21
             assertEquals(3, record[lengthField].toInt() and 3)
+            // Only this synthetic Canvas fixture is persisted, never camera images.
+            // Desktop verification checks real SPS facts and native decode independently.
+            val directory = File(
+                ApplicationProvider.getApplicationContext<android.content.Context>().filesDir,
+                "native-codec-probe",
+            ).also { check(it.isDirectory || it.mkdirs()) }
+            val stem = "${kind.wireValue}-${size.height}-$fps"
+            File(directory, "$stem.config").writeBytes(record)
+            File(directory, "$stem.native-au").writeBytes(firstSyncAu ?: error("No native sync AU"))
             Log.i("PicooNativeProbe", "codec=${codec.name}; mime=$mime; size=$size; requested_fps=$fps; " +
                 "hardware=true; unique_aus=${timestamps.size}; actual=$output; steady_state_fps=not_measured")
         } finally {

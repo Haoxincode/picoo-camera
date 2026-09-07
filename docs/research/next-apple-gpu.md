@@ -60,3 +60,11 @@ Mac Decoder 不再复制源 NV12 plane。原生 adapter 从有界 SPS 提取真�
 修正后 AVC/HEVC × 720p/1080p × 30/60 八组都返回 AU/avcC/hvcC，实际产物经 [共享位流检查器](../../crates/picoo-bitstream/examples/check_native_encoder.rs) 解析，闭合 IDR、参数集身份、可见尺寸与 BT.709 limited 均通过；两 codec 的 1080p 实际 coded height 都是 1088，不能从 codec 名称猜测存储高度。另验证缺失颜色的输入被拒绝。harness 的 CPU 锁定只用于创建合成测试像素；生产输入检查只读元数据。
 
 这证明同一生产 Swift 编码实现的 Apple 原生硬件 API 路径，不能替代 iPhone camera offers、实际采集 fps、持续吞吐、热稳态或网络/Receiver 全链路。手机界面仍明确选已有 AVC/30，双 codec 配置选择继续以完整 offers 为准。
+
+## 真实编码存储与 level 工作量
+
+2026-09-07 小米 15 官方 MediaCodec（高通 c2.qti 硬件组件）经既有原生 compositor 输出的 HEVC 720p，实际 SPS 存储为 1280×736；Apple 对应为 1280×720。不能通过 codec/可见分辨率推断存储。协议复用已锁定 Scuffle/h264-reader 的 source facts，不另写 parser 或引入媒体框架；增加 protocol 对已存在 bitstream 的单向依赖。
+
+最低几何/速率 level 采用 H.264 Annex A Table A-1 的 MaxFS/MaxMBPS 与 H.265 Annex A Table A.8 的 MaxLumaPs/MaxLumaSr；这些只验证对应工作量下限，不替代 bitrate/DPB/tier/HRD 或完整硬件准入。AVC 1280×736 的 3680 宏块大于 level 3.1 的 3600，不能把高度取整为720后继续宣称 level 3.1。
+
+正式 Mac Decoder 对 Apple 与小米各八组合样本均返回原 token 与合法原生图像；工具直接调用产品工厂，无测试软件 Decoder。只是原生解码合同证据，不发布能力、不证明持续吞吐。

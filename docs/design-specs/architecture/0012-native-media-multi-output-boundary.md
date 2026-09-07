@@ -125,3 +125,7 @@ Decoder offer 分开表达原生编码存储与正式可见图像：1080p 可对
 Android 每个编码 generation 从不可变 CaptureProfile 取得 codec、尺寸、fps 和镜头意图，MediaCodec 请求与 Core 配置请求使用相同字段。恢复持有完整旧 CaptureProfile，并校验 codec/fps/尺寸与 Core 恢复指令一致；不能只还原高度而保留失败候选的 codec、帧率或镜头。原生 CSD 与 AU 仍由该 generation 的回调快照携带，硬件能力准入独立执行。
 
 移动端公开 FFI 只通过带配置快照的完整编码事件提交 AU；不提供独立 ingest、flush 或 started 入口，避免调用方绕过配置与媒体的事务边界。Core 内部状态机仍可分解事实处理，失败与恢复控制独立于媒体提交。
+
+实际配置到协议 VideoFormat 的映射由协议层统一拥有，复用 bitstream 的有界源事实，不另写 SPS 解析器。映射保留 coded size、visible crop 和明确 VUI 色彩；缺失或不支持事实拒绝，不能从请求标签补齐。StreamConfig 的 codec/profile/level/可见尺寸/色彩声明必须与记录一致；该映射用于能力比较，不产生原生支持证据。依赖方向为 protocol → bitstream，bitstream 不依赖协议或平台。
+
+720p HEVC 可使用 1280×736 编码存储，正式可见高度仍为 720。允许的有界存储高度包含 720/736 和 1080/1088；AVC level 按 coded macroblock 数与每秒 macroblock 数计算，HEVC 按 coded luma samples 与每秒速率计算，不能简单把补齐高度归回可见档位。最终能力成员比较仍精确区分存储/crop。

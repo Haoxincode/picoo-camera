@@ -5726,6 +5726,7 @@ version = "0.1.1"
 dependencies = [
  "bitflags 2.13.1",
  "bytes",
+ "picoo-bitstream",
  "proptest",
  "prost",
  "prost-build",
