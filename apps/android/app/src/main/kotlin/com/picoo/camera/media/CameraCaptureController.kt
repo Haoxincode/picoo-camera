@@ -52,7 +52,7 @@ interface CameraCaptureController {
     fun switchCamera()
     /** Switch to a specific lens (desktop CameraCommand SWITCH_FRONT/BACK). */
     fun setLensFacing(facing: LensFacing)
-    fun setResolution(width: Int, height: Int)
+    fun setSourceFormat(source: VideoSourceFormat)
     fun setTargetBitrateBps(bitrateBps: Int)
     fun requestKeyFrame()
     /** Clamp and apply AE exposure compensation (PUC-005). */

@@ -11,6 +11,7 @@ import com.picoo.camera.media.CaptureState
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LocalPreviewMirror
 import com.picoo.camera.media.PreviewTransformInfo
+import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.ui.screens.WaitOutcome
 
 /**
@@ -41,8 +42,15 @@ class SenderHomeState {
     var suppressAutoConnect by mutableStateOf(false)
     var remoteMirrored by mutableStateOf(false)
     var localPreviewMirrored by mutableStateOf(LocalPreviewMirror.defaultFor(LensFacing.Back))
-    var resolutionLabel by mutableStateOf("720p")
-    var preferredResolutionLabel by mutableStateOf("1080p")
+    var committedSourceFormat by mutableStateOf<VideoSourceFormat?>(null)
+    var preferredSourceFormat by mutableStateOf(VideoSourceFormat.Default)
+    var localSourceFormats by mutableStateOf<List<VideoSourceFormat>?>(null)
+    var receiverSourceFormats by mutableStateOf<List<VideoSourceFormat>?>(null)
+    var sourcePreparationError by mutableStateOf<String?>(null)
+    val availableSourceFormats: List<VideoSourceFormat>?
+        get() = if (senderStatus != PicooNative.STATUS_DISCONNECTED && receiverSourceFormats == null) {
+            null
+        } else localSourceFormats?.filter { receiverSourceFormats?.contains(it) != false }
     var powerHint by mutableStateOf("")
     var thermalLimited by mutableStateOf(false)
     var linkQualityChip by mutableStateOf("")

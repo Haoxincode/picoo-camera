@@ -126,3 +126,5 @@
 | REQ-PICOO-MEDIA-055 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、026 | 完整已提交源格式只来自已接纳原生AU；普通世代不能静默改变codec/尺寸/fps，准备与失败事务保留旧格式；断连保留恢复事实但不表示正在传输 | Sender77项回归与Clippy通过，覆盖初次提交、明确切换、失败保留、同世代变更拒绝与描述属性更新；跨平台快照与UI另验 |
 
 | REQ-PICOO-MEDIA-056 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、005 | Android准备查询与创建复用相同Camera2固定fps/旋转裁剪和MediaCodec硬件Surface/profile/尺寸帧率/码率规则；候选按单条完整SourceFormat与Decoder求交集，不隐式替换请求 | Android77项JVM与5项真机准备/硬件/JNI合同通过；小米后摄八组合采集重跑通过；前摄竖持排除1080p60；准备不代替实际输出记录和持续fps准入 |
+
+| REQ-PICOO-MEDIA-057 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、005、026 | Android设置和直播选择显式完整源格式；默认请求AVC1080p60经本地与远端准入后使用，不可用明确提示；准备查询由ViewModel生命周期持有，按镜头/方向更新，界面不乐观显示请求为已提交 | Android76项JVM、模拟器12项UI/JNI、真机4项状态/JNI合同；完整手机到桌面切换、方向变化输入重准备、重连和长期fps另验 |

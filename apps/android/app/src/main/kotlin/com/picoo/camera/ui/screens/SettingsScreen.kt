@@ -50,9 +50,8 @@ import androidx.compose.ui.text.font.FontWeight
 import com.picoo.camera.BuildConfig
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.R
-import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
-import com.picoo.camera.ui.ResolutionSheetOptions
+import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooSheet
 import com.picoo.camera.ui.components.PicooSheetRow
@@ -70,15 +69,17 @@ fun SettingsScreen(
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
     autoConnectEnabled: Boolean,
-    defaultResolutionLabel: String,
+    preferredSourceFormat: VideoSourceFormat,
+    sourceCandidates: List<VideoSourceFormat>?,
     onBack: () -> Unit,
     onCheckPermissions: () -> Unit,
     onOpenPairedDevices: () -> Unit,
     onToggleAutoConnect: () -> Unit,
-    onSelectDefaultResolution: (String) -> Unit,
+    onSelectDefaultSource: (VideoSourceFormat) -> Unit,
     modifier: Modifier = Modifier,
     pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
     errorText: String? = null,
+    sourcePreparationError: String? = null,
     onRemovePaired: (PicooNative.TrustedDevice) -> Unit = {},
 ) {
     var showPairedSheet by rememberSaveable { mutableStateOf(false) }
@@ -143,8 +144,8 @@ fun SettingsScreen(
                         SettingsDivider()
                         SettingsValueRow(
                             title = "默认初始画质",
-                            description = "新连接建立时的起步分辨率",
-                            value = defaultResolutionLabel,
+                            description = "新连接的编码格式、分辨率与帧率",
+                            value = preferredSourceFormat.label,
                             onClick = { showResolutionSheet = true },
                             leadingContent = {
                                 SettingsIconContainer { QualityGlyph() }
@@ -228,11 +229,13 @@ fun SettingsScreen(
         )
     }
     if (showResolutionSheet) {
-        DefaultResolutionSheet(
-            selectedLabel = defaultResolutionLabel,
+        SourceFormatSheet(
+            selected = preferredSourceFormat,
+            candidates = sourceCandidates,
+            preparationError = sourcePreparationError,
             onDismiss = { showResolutionSheet = false },
             onSelect = { label ->
-                onSelectDefaultResolution(label)
+                onSelectDefaultSource(label)
                 showResolutionSheet = false
             },
         )
@@ -531,30 +534,6 @@ private fun PairedDevicesSheet(
             )
         }
         PicooSheetRow(title = "在设备列表中管理", onClick = onFallback)
-        PicooSheetRow(title = "取消", onClick = onDismiss)
-    }
-}
-
-@Composable
-private fun DefaultResolutionSheet(
-    selectedLabel: String,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit,
-) {
-    val selected = StreamResolution.fromLabel(selectedLabel)
-    PicooSheet(
-        title = "发送画质规格",
-        description = "新连接建立时的起步分辨率。推流中仍可即时切换。",
-        onDismiss = onDismiss,
-    ) {
-        ResolutionSheetOptions.all.forEach { option ->
-            PicooSheetRow(
-                title = option.title,
-                subtitle = option.subtitle,
-                selected = option.resolution == selected,
-                onClick = { onSelect(option.resolution.label) },
-            )
-        }
         PicooSheetRow(title = "取消", onClick = onDismiss)
     }
 }

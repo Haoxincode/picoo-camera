@@ -281,8 +281,6 @@ object PicooNative {
     data class SenderSnapshot(
         val status: Int,
         val currentBitrateBps: Int,
-        val activeHeight: Int,
-        val receiverMaxHeight: Int,
         val streamEpoch: Int,
         val reconnectAttempt: Int,
         val reconnectDelayMs: Long,
@@ -293,24 +291,22 @@ object PicooNative {
     ) {
         companion object {
             internal fun fromNative(values: LongArray): SenderSnapshot {
-                check(values.size in 11..35 && (values.size - 11) % 3 == 0) { "Invalid native sender snapshot" }
-                check(values[7] == 0L || values[7] == 1L) { "Invalid native capability state" }
-                check(values[7] == 1L || values.size == 11) { "Unknown capabilities cannot contain candidates" }
-                val sourceFormats = if (values[7] == 0L) null else (11 until values.size step 3).map { index ->
+                check(values.size in 9..33 && (values.size - 9) % 3 == 0) { "Invalid native sender snapshot" }
+                check(values[5] == 0L || values[5] == 1L) { "Invalid native capability state" }
+                check(values[5] == 1L || values.size == 9) { "Unknown capabilities cannot contain candidates" }
+                val sourceFormats = if (values[5] == 0L) null else (9 until values.size step 3).map { index ->
                     checkNotNull(VideoSourceFormat.fromWire(values[index].toInt(), values[index + 1].toInt(), values[index + 2].toInt()))
                 }
-                val committed = if (values[8] == 0L) {
-                    check(values[9] == 0L && values[10] == 0L) { "Invalid absent committed format" }
+                val committed = if (values[6] == 0L) {
+                    check(values[7] == 0L && values[8] == 0L) { "Invalid absent committed format" }
                     null
-                } else checkNotNull(VideoSourceFormat.fromWire(values[8].toInt(), values[9].toInt(), values[10].toInt()))
+                } else checkNotNull(VideoSourceFormat.fromWire(values[6].toInt(), values[7].toInt(), values[8].toInt()))
                 return SenderSnapshot(
                     status = values[0].toInt(),
                     currentBitrateBps = values[1].toInt(),
-                    activeHeight = values[2].toInt(),
-                    receiverMaxHeight = values[3].toInt(),
-                    streamEpoch = values[4].toInt(),
-                    reconnectAttempt = values[5].toInt(),
-                    reconnectDelayMs = values[6],
+                    streamEpoch = values[2].toInt(),
+                    reconnectAttempt = values[3].toInt(),
+                    reconnectDelayMs = values[4],
                     receiverSourceFormats = sourceFormats,
                     lastCommittedSourceFormat = committed,
                 )

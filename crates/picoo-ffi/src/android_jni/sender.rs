@@ -294,14 +294,12 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getSenderSnapshot(
 ) -> jlongArray {
     let values = with_sender(handle, |inner| {
         let Ok(session) = inner.session.lock() else {
-            return vec![0; 11];
+            return vec![0; 9];
         };
         let snapshot = sender_snapshot(&session);
         let mut values = vec![
             snapshot.status as jlong,
             snapshot.current_bitrate_bps as jlong,
-            snapshot.active_height as jlong,
-            snapshot.receiver_max_height as jlong,
             snapshot.stream_epoch as jlong,
             snapshot.reconnect_attempt as jlong,
             snapshot.reconnect_delay_ms as jlong,
@@ -323,7 +321,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getSenderSnapshot(
         }
         values
     })
-    .unwrap_or_else(|| vec![0; 11]);
+    .unwrap_or_else(|| vec![0; 9]);
     let Ok(result) = env.new_long_array(values.len() as i32) else {
         return ptr::null_mut();
     };

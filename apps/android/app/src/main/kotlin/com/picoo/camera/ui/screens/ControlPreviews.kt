@@ -43,12 +43,13 @@ private fun SettingsScreenPreview() {
             nearbyWifiGranted = true,
             notificationsGranted = false,
             autoConnectEnabled = true,
-            defaultResolutionLabel = "1080P",
+            preferredSourceFormat = com.picoo.camera.media.VideoSourceFormat.Default,
+            sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
             onBack = {},
             onCheckPermissions = {},
             onOpenPairedDevices = {},
             onToggleAutoConnect = {},
-            onSelectDefaultResolution = {},
+            onSelectDefaultSource = {},
         )
     }
 }
@@ -154,7 +155,7 @@ private fun StreamingScreenPreview() {
             cameraPermissionPermanentlyDenied = false,
             receiverName = "Picoo Camera",
             linkQualityChip = "稳定 · 63ms",
-            resolutionLabel = "720p",
+            sourceLabel = "H.264 · 720p · 60 fps",
             bitrateMbps = "1.9 Mbps",
             localPreviewMirrored = false,
             thermalLimited = false,
@@ -163,7 +164,7 @@ private fun StreamingScreenPreview() {
             packetLossLabel = "0% 丢包",
             onRequestCamera = {},
             onFlipCamera = {},
-            onToggleResolution = {},
+            onChooseSourceFormat = {},
             onToggleMirror = {},
             onCycleExposure = {},
             exposureEv = 0,

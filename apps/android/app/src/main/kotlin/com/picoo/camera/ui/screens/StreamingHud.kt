@@ -38,11 +38,11 @@ internal fun ConnectionHud(
     receiverName: String,
     linkQualityChip: String,
     bitrateMbps: String,
-    resolutionLabel: String,
+    sourceLabel: String,
     packetLossLabel: String,
     thermalLimited: Boolean,
     enabled: Boolean,
-    onToggleResolution: () -> Unit,
+    onChooseSourceFormat: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dimensions = PicooTheme.dimensions
@@ -89,10 +89,10 @@ internal fun ConnectionHud(
             TelemetryText(text = bitrateMbps)
             TelemetrySeparator()
             ResolutionMetric(
-                resolutionLabel = resolutionLabel,
+                sourceLabel = sourceLabel,
                 thermalLimited = thermalLimited,
                 enabled = enabled,
-                onClick = onToggleResolution,
+                onClick = onChooseSourceFormat,
             )
         }
     }
@@ -118,7 +118,7 @@ internal fun TelemetrySeparator() {
 
 @Composable
 internal fun ResolutionMetric(
-    resolutionLabel: String,
+    sourceLabel: String,
     thermalLimited: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -129,7 +129,7 @@ internal fun ResolutionMetric(
             .height(dimensions.touchTarget)
             .alpha(if (enabled) 1f else PicooCameraDimensions.DisabledAlpha)
             .semantics {
-                contentDescription = "切换画质，当前 $resolutionLabel 30fps"
+                contentDescription = "切换画质，当前 $sourceLabel"
                 stateDescription = if (thermalLimited) "设备偏热，可手动切换" else "可切换"
                 role = Role.Button
                 if (!enabled) disabled()
@@ -147,18 +147,8 @@ internal fun ResolutionMetric(
             )
         }
         Text(
-            text = resolutionLabel.lowercase(),
+            text = sourceLabel,
             color = if (thermalLimited) PicooCameraColors.Warning else PicooCameraColors.ContentMuted,
-            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
-        )
-        Text(
-            text = "/",
-            color = PicooCameraColors.Selected,
-            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
-        )
-        Text(
-            text = "30fps",
-            color = PicooCameraColors.ContentMuted,
             style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
         )
     }

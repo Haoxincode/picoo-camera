@@ -2,6 +2,8 @@ package com.picoo.camera.ui
 
 import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -10,11 +12,11 @@ import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.ExposureCompensation
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LocalPreviewMirror
-import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
 import com.picoo.camera.ui.screens.DevicesScreen
 import com.picoo.camera.ui.screens.PairingScreen
 import com.picoo.camera.ui.screens.SettingsScreen
+import com.picoo.camera.ui.screens.SourceFormatSheet
 import com.picoo.camera.ui.screens.StreamingScreen
 import com.picoo.camera.ui.screens.WaitOutcome
 import com.picoo.camera.ui.screens.WaitScreen
@@ -48,8 +50,7 @@ internal fun SenderTabContent(
     var autoConnectEnabled by uiState::autoConnectEnabled
     var suppressAutoConnect by uiState::suppressAutoConnect
     var localPreviewMirrored by uiState::localPreviewMirrored
-    var resolutionLabel by uiState::resolutionLabel
-    var preferredResolutionLabel by uiState::preferredResolutionLabel
+    var showSourceSheet by rememberSaveable { mutableStateOf(false) }
     var powerHint by uiState::powerHint
     var thermalLimited by uiState::thermalLimited
     var linkQualityChip by uiState::linkQualityChip
@@ -152,7 +153,9 @@ internal fun SenderTabContent(
             nearbyWifiGranted = nearbyWifiGranted,
             notificationsGranted = notificationsGranted,
             autoConnectEnabled = autoConnectEnabled,
-            defaultResolutionLabel = preferredResolutionLabel,
+            preferredSourceFormat = uiState.preferredSourceFormat,
+            sourceCandidates = uiState.availableSourceFormats,
+            sourcePreparationError = uiState.sourcePreparationError,
             onBack = { senderTab = SenderTab.Devices },
             onCheckPermissions = {
                 onRequestNearbyWifi()
@@ -172,9 +175,7 @@ internal fun SenderTabContent(
             onToggleAutoConnect = {
                 sessionModel.setAutoConnectEnabled(!autoConnectEnabled)
             },
-            onSelectDefaultResolution = { label ->
-                StreamResolution.fromLabel(label)?.let(sessionModel::setPreferredResolution)
-            },
+            onSelectDefaultSource = sessionModel::setPreferredSourceFormat,
         )
         SenderTab.Pairing -> PairingScreen(
             receiverName = pairingDisplayName,
@@ -233,7 +234,7 @@ internal fun SenderTabContent(
             cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
             receiverName = pairingDisplayName,
             linkQualityChip = linkQualityChip,
-            resolutionLabel = resolutionLabel,
+            sourceLabel = uiState.committedSourceFormat?.label ?: "等待源格式提交",
             bitrateMbps = bitrateMbps,
             previewBufferWidth = previewTransformInfo.bufferSize.width,
             previewBufferHeight = previewTransformInfo.bufferSize.height,
@@ -269,27 +270,7 @@ internal fun SenderTabContent(
                     sessionModel.streamConfigDirty.set(true)
                 }
             },
-            onToggleResolution = {
-                val current = StreamResolution.fromLabel(resolutionLabel)
-                    ?: return@StreamingScreen
-                val next = StreamResolution.next(current)
-                val maxH = PicooNative.readSenderSnapshot(senderHandle).receiverMaxHeight
-                if (maxH in 1 until next.height) {
-                    errorText = "接收端最高 ${maxH}p — 无法切换至 ${next.label}"
-                    return@StreamingScreen
-                }
-                val bitrate = PicooNative.bitrateInitialForHeight(next.height)
-                if (sessionModel.beginLocalEncoderReconfiguration(next.height)) {
-                    resolutionLabel = next.label
-                    PicooNative.setPreferredHeight(senderHandle, next.height)
-                    encoder.setTargetBitrateBps(bitrate)
-                    encoder.setResolution(next.width, next.height)
-                    previewTransformInfo = encoder.previewTransformInfo
-                    encoderState = encoder.state
-                    sessionModel.streamConfigDirty.set(true)
-                    errorText = null
-                }
-            },
+            onChooseSourceFormat = { showSourceSheet = true },
             onToggleMirror = { localPreviewMirrored = !localPreviewMirrored },
             onCycleExposure = {
                 val range = encoder.exposureCompensationRange
@@ -329,4 +310,16 @@ internal fun SenderTabContent(
             },
         )
     }
+    if (showSourceSheet && senderTab == SenderTab.Streaming) {
+        SourceFormatSheet(
+            selected = uiState.committedSourceFormat,
+            candidates = uiState.availableSourceFormats,
+            preparationError = uiState.sourcePreparationError,
+            onDismiss = { showSourceSheet = false },
+            onSelect = { source ->
+                if (sessionModel.requestSourceFormat(source)) showSourceSheet = false
+            },
+        )
+    }
+
 }

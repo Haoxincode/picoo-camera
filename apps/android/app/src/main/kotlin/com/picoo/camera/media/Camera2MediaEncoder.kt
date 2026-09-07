@@ -180,9 +180,12 @@ class Camera2MediaEncoder(
         videoEncoder.requestSyncFrame()
     }
 
-    override fun setResolution(width: Int, height: Int) {
-        val next = Size(width, height)
-        profile = profile.copy(resolution = next)
+    override fun setSourceFormat(source: VideoSourceFormat) {
+        profile = profile.copy(
+            resolution = Size(source.resolution.width, source.resolution.height),
+            codec = source.codec,
+            targetFps = source.framesPerSecond,
+        )
         when (lifecycle.state) {
             CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
             CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()

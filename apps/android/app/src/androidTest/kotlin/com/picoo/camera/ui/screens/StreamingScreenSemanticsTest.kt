@@ -100,10 +100,10 @@ class StreamingScreenSemanticsTest {
     @Test
     fun thermalWarningKeepsExplicitResolutionControlAvailable() {
         var changes = 0
-        setConnectedContent(thermalLimited = true, onToggleResolution = { changes += 1 })
+        setConnectedContent(thermalLimited = true, onChooseSourceFormat = { changes += 1 })
         composeRule.onNodeWithText("设备温度较高，请注意散热或停止推流")
             .assertTextEquals("设备温度较高，请注意散热或停止推流")
-        composeRule.onNodeWithContentDescription("切换画质，当前 720p 30fps")
+        composeRule.onNodeWithContentDescription("切换画质，当前 H.264 · 720p · 60 fps")
             .assertIsEnabled().performClick()
         composeRule.runOnIdle { assertEquals(1, changes) }
     }
@@ -120,7 +120,7 @@ class StreamingScreenSemanticsTest {
         onRequestCamera: () -> Unit = {},
         onDisconnect: () -> Unit = {},
         thermalLimited: Boolean = false,
-        onToggleResolution: () -> Unit = {},
+        onChooseSourceFormat: () -> Unit = {},
     ) {
         composeRule.setContent {
             PicooCameraTheme {
@@ -129,7 +129,7 @@ class StreamingScreenSemanticsTest {
                     cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
                     receiverName = "Studio PC",
                     linkQualityChip = "稳定 · 63ms",
-                    resolutionLabel = "720p",
+                    sourceLabel = "H.264 · 720p · 60 fps",
                     bitrateMbps = "1.9 Mbps",
                     localPreviewMirrored = false,
                     thermalLimited = thermalLimited,
@@ -138,7 +138,7 @@ class StreamingScreenSemanticsTest {
                     packetLossLabel = "0% 丢包",
                     onRequestCamera = onRequestCamera,
                     onFlipCamera = {},
-                    onToggleResolution = onToggleResolution,
+                    onChooseSourceFormat = onChooseSourceFormat,
                     onToggleMirror = {},
                     onCycleExposure = {},
                     exposureEv = 0,

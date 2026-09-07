@@ -147,3 +147,5 @@ Decoder 能力探测在创建原生 Decoder 的工作线程内执行，同一个
 已提交 SourceFormat 来自成功接纳的原生 AU，而非码率控制器的初始高度、用户请求或 prepared 配置。事务准备和失败不覆盖旧完整格式；普通已绑定 encoder generation 的描述属性可更新，但 codec/尺寸/fps 变化必须走明确事务。断连保留最后已提交格式用于恢复，该历史事实与当前传输状态分别表达。此状态复用 Core 事务和 SourceFormat，不新增平台格式推断层。
 
 Android源准备复用实际Camera2输入选择与MediaCodec组件选择规则。候选查询不能另写更宽松的尺寸/fps/profile判据；使用官方CameraCharacteristics、VideoCapabilities与既有CaptureSizeSelector，无新平台依赖。所选镜头和显示方向属于准备输入，变化后重新查询；查询可准备不代表实际输出或长期吞吐已获准入。
+
+Android设置与直播选择使用完整VideoSourceFormat；持久化默认请求与Core最后提交事实分开。准备查询由ViewModel作用域持有，在后台按镜头/方向更新，Compose只渲染不可变候选与触发回调。新连接先等待摄像头权限、本地准备及认证后的完整Decoder能力，再创建明确源事务；此前的本地预览AU不能自行绑定该连接。默认请求不可用时保留能力供用户明确选择，不替换为另一个源格式。原生失败不由界面轮询无限重启；恢复仍由Core事务驱动。界面复用既有PicooSheet和官方Compose组件，无新增UI或媒体依赖。

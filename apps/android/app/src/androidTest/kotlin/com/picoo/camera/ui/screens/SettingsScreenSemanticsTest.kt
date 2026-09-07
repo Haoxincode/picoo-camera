@@ -29,12 +29,13 @@ class SettingsScreenSemanticsTest {
                     nearbyWifiGranted = true,
                     notificationsGranted = true,
                     autoConnectEnabled = autoConnect,
-                    defaultResolutionLabel = "1080p",
+                    preferredSourceFormat = com.picoo.camera.media.VideoSourceFormat.Default,
+                    sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
                     onBack = {},
                     onCheckPermissions = {},
                     onOpenPairedDevices = {},
                     onToggleAutoConnect = { autoConnect = !autoConnect },
-                    onSelectDefaultResolution = {},
+                    onSelectDefaultSource = {},
                 )
             }
         }
