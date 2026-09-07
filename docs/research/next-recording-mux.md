@@ -49,3 +49,7 @@ REQ-PICOO-MEDIA-068复用std::sync::mpsc::sync_channel及try_send，沿用FrameB
 ## 原生取消的故障发现
 
 EncodedWriter故障注入显示，AVAssetWriter cancelWriting可能删除尚未最终化输出；此前“finalize失败必定保留partial”不成立。正常输入被拒绝时，仍健康的writer先最终化有效前缀并登记段，整体结果再标Failed。原生writer失败后的partial留存仍需独立实现与故障验证。进程直接退出probe留下的fragment结果不能代替主动cancel路径。
+
+## 录制短时重排
+
+REQ-PICOO-MEDIA-070使用标准库BTreeMap持有最多16项完整AU，50ms从各项首次进入重排计时，不随轮询或后续包重置。已有picoo-jitter包含live播放期限和参考帧丢弃语义，不能复用于要求保留已收到完整AU的录制；保留的自研范围仅为AU顺序与世代排空这一Picoo边界。缺号后仍输出所有可用完整AU，由EncodedWriter报告依赖链缺口并等IDR。

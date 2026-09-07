@@ -875,3 +875,8 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - REQ-PICOO-MEDIA-069将原生段和bundle串联为专用工作者内部EncodedWriter：真实IDR启动（不信wire hint），配置/世代变化切段，缺AU或超过三帧周期的PTS空档记录gap，10秒IDR切段及主动refresh意图，写入Busy至多重试250ms。段内PTS从零开始，manifest保留源范围和镜像意图。
 - 19项macOS隔离测试、Clippy通过，新增双codec切段、302个合成AU跨10秒边界、缺口、时间空档、Arming与错误后有效前缀保留。输入被明确要求已排序；独立重排、线程owner、关键帧控制、Receiver与UI仍待接入，CRA仍明确不支持。
 - 故障测试纠正此前partial表述：AVAssetWriter cancelWriting可能删除未完成输出。逻辑输入错误时先尝试最终化已接受的有效前缀，整体保持Failed；原生最终化本身失败时尚不能保证取消后的partial留存，须继续补齐，不能以bundle文件系统测试冒充此原生行为。
+
+### 2026-09-07：录制独立AU重排
+
+- REQ-PICOO-MEDIA-070：最多16项的标准库BTreeMap，50ms从最早到达完整AU计时，轮询或新AU不能重置期限；缺号保持源ID交给EncodedWriter识别gap。世代变化和正常停止按序排空已接收完整AU，无live恢复清空入口。
+- 23项macOS隔离测试通过，新增初始/持续乱序补齐、期限、世代与停止排空、容量/重复/旧源拒绝。独立线程、Receiver入口和产品录像仍未接线。
