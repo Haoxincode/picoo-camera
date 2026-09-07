@@ -40,6 +40,7 @@ class EncoderSubmitContractTest {
             sender = PicooNative.createSender(identity)
             assertTrue(sender != 0L)
             assertNull(PicooNative.readSenderSnapshot(sender).receiverSourceFormats)
+            assertNull(PicooNative.readSenderSnapshot(sender).lastCommittedSourceFormat)
             val result = PicooNative.submitEncoderAccessUnit(
                 handle = sender,
                 data = byteArrayOf(0, 0, 0, 1, 0x65, 0x80.toByte()),

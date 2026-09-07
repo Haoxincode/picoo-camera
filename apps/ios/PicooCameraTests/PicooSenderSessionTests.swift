@@ -6,6 +6,15 @@ import Testing
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("Committed native source remains independent from preparation candidates")
+    func committedSourceSnapshot() {
+        var value = PicooSenderSnapshot()
+        #expect(PicooSenderSession.committedSourceFormat(from: value) == nil)
+        value.last_committed_source_format = PicooSourceFormat(codec: 2, height: 720, fps: 60)
+        #expect(PicooSenderSession.committedSourceFormat(from: value) == VideoSourceFormat(codec: 2, height: 720, framesPerSecond: 60))
+        #expect(PicooSenderSession.sourceFormats(from: value) == nil)
+    }
+
     @Test("C fixed-array candidates preserve codec and frame rate")
     func decoderCandidatesCrossSnapshotBoundary() throws {
         var value = PicooSenderSnapshot()

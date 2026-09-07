@@ -288,15 +288,21 @@ object PicooNative {
         val reconnectDelayMs: Long,
         /** Null means decoder evidence has not arrived; empty means no matching product request. */
         val receiverSourceFormats: List<VideoSourceFormat>?,
+        /** Last admitted native format, retained for recovery even when disconnected. */
+        val lastCommittedSourceFormat: VideoSourceFormat?,
     ) {
         companion object {
             internal fun fromNative(values: LongArray): SenderSnapshot {
-                check(values.size in 8..32 && (values.size - 8) % 3 == 0) { "Invalid native sender snapshot" }
+                check(values.size in 11..35 && (values.size - 11) % 3 == 0) { "Invalid native sender snapshot" }
                 check(values[7] == 0L || values[7] == 1L) { "Invalid native capability state" }
-                check(values[7] == 1L || values.size == 8) { "Unknown capabilities cannot contain candidates" }
-                val sourceFormats = if (values[7] == 0L) null else (8 until values.size step 3).map { index ->
+                check(values[7] == 1L || values.size == 11) { "Unknown capabilities cannot contain candidates" }
+                val sourceFormats = if (values[7] == 0L) null else (11 until values.size step 3).map { index ->
                     checkNotNull(VideoSourceFormat.fromWire(values[index].toInt(), values[index + 1].toInt(), values[index + 2].toInt()))
                 }
+                val committed = if (values[8] == 0L) {
+                    check(values[9] == 0L && values[10] == 0L) { "Invalid absent committed format" }
+                    null
+                } else checkNotNull(VideoSourceFormat.fromWire(values[8].toInt(), values[9].toInt(), values[10].toInt()))
                 return SenderSnapshot(
                     status = values[0].toInt(),
                     currentBitrateBps = values[1].toInt(),
@@ -306,6 +312,7 @@ object PicooNative {
                     reconnectAttempt = values[5].toInt(),
                     reconnectDelayMs = values[6],
                     receiverSourceFormats = sourceFormats,
+                    lastCommittedSourceFormat = committed,
                 )
             }
         }

@@ -189,6 +189,8 @@ pub struct PicooSenderSnapshot {
     pub stream_epoch: u32,
     pub reconnect_attempt: u32,
     pub reconnect_delay_ms: u64,
+    /// Zero codec means no native source has been committed. Retained when disconnected.
+    pub last_committed_source_format: PicooSourceFormat,
     pub receiver_capabilities_known: bool,
     pub receiver_source_format_count: u32,
     pub receiver_source_formats: [PicooSourceFormat; 8],
@@ -203,6 +205,10 @@ pub(crate) fn sender_snapshot(session: &SenderSession<QuicSenderTransport>) -> P
         }
     }
     PicooSenderSnapshot {
+        last_committed_source_format: session
+            .committed_source_format()
+            .map(Into::into)
+            .unwrap_or_default(),
         receiver_capabilities_known: candidates.is_some(),
         receiver_source_format_count: candidates.as_ref().map_or(0, |values| values.len() as u32),
         receiver_source_formats,

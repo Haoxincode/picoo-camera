@@ -120,6 +120,8 @@ nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
     let reconnectDelayMs: UInt64
     /// nil means no decoder evidence; [] means no formal preparation candidates.
     let receiverSourceFormats: [VideoSourceFormat]?
+    /// Last admitted source, retained across disconnects; separate from streaming status.
+    let lastCommittedSourceFormat: VideoSourceFormat?
 }
 
 nonisolated struct TrustedReceiverSummary: Identifiable, Equatable, Sendable {
@@ -185,7 +187,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
                 streamEpoch: Self.initialStreamEpoch,
                 reconnectAttempt: 0,
                 reconnectDelayMs: 0,
-                receiverSourceFormats: nil
+                receiverSourceFormats: nil,
+                lastCommittedSourceFormat: nil
             )
         }
         return SenderSessionSnapshot(
@@ -196,8 +199,21 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             streamEpoch: value.stream_epoch,
             reconnectAttempt: value.reconnect_attempt,
             reconnectDelayMs: value.reconnect_delay_ms,
-            receiverSourceFormats: Self.sourceFormats(from: value)
+            receiverSourceFormats: Self.sourceFormats(from: value),
+            lastCommittedSourceFormat: Self.committedSourceFormat(from: value)
         )
+    }
+
+    static func committedSourceFormat(from value: PicooSenderSnapshot) -> VideoSourceFormat? {
+        let format = value.last_committed_source_format
+        if format.codec == 0 {
+            precondition(format.height == 0 && format.fps == 0, "Invalid absent committed source")
+            return nil
+        }
+        guard let source = VideoSourceFormat(codec: format.codec, height: format.height, framesPerSecond: format.fps) else {
+            preconditionFailure("Invalid native committed source")
+        }
+        return source
     }
 
     static func sourceFormats(from value: PicooSenderSnapshot) -> [VideoSourceFormat]? {

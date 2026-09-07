@@ -71,6 +71,10 @@ fn sender_rejects_invalid_atomic_encoder_event_via_ffi() {
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
     assert_eq!(snapshot.status, SenderStatus::Disconnected.as_code());
     assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
+    assert_eq!(
+        snapshot.last_committed_source_format,
+        PicooSourceFormat::default()
+    );
     picoo_sender_destroy(handle);
 }
 
@@ -214,6 +218,10 @@ fn native_request_rollback_requires_the_matching_transaction() {
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
     assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
+    assert_eq!(
+        snapshot.last_committed_source_format,
+        PicooSourceFormat::default()
+    );
     assert_eq!(
         picoo_sender_report_encoder_failed(handle, transaction, 0),
         1
