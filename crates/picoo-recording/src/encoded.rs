@@ -50,6 +50,9 @@ impl EncodedWriter {
     pub fn state(&self) -> RecordingState {
         self.bundle.state()
     }
+    pub fn waiting_for_refresh(&self) -> bool {
+        self.active.is_none()
+    }
 
     /// Consume the request once; a worker forwards it through Receiver control.
     pub fn take_refresh_request(&mut self) -> bool {
@@ -256,4 +259,4 @@ impl EncodedWriter {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

@@ -2,7 +2,7 @@ use super::*;
 use picoo_packet::AssembledAccessUnit;
 use picoo_protocol::control::VideoFormat;
 
-fn input(codec_index: usize, epoch: u32, id: u64, pts_us: u64) -> RecordingInput {
+pub(crate) fn input(codec_index: usize, epoch: u32, id: u64, pts_us: u64) -> RecordingInput {
     let (configuration, bytes) = crate::apple::tests::fixtures().remove(codec_index);
     let format = VideoFormat::from_codec_configuration(&configuration, 30).unwrap();
     RecordingInput {

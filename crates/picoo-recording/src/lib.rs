@@ -8,6 +8,8 @@ pub mod bundle;
 pub mod encoded;
 pub mod ingress;
 pub mod reorder;
+#[cfg(target_os = "macos")]
+pub mod worker;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordingError {

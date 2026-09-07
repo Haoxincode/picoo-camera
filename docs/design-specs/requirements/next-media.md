@@ -154,3 +154,5 @@
 | REQ-PICOO-MEDIA-069 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、020、021、022 | 专用工作者的原码流写入状态机等待经验证IDR开始；有序AU缺口、配置/世代变化与约10秒RAP切段，PTS按段首归零且保留源映射；Busy限时重试，错误保持Failed | 合成AU的开始、主动RAP请求、跨codec/世代分段、缺口、非法AU与最终化结果；线程及Receiver接线另验 |
 
 | REQ-PICOO-MEDIA-070 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | Recorder在独立工作者内按AU ID短时重排，最多16项/50ms；世代变化和正常停止先排空已接受完整AU，真实缺号由分段状态机记录gap，不被live恢复清空 | 乱序补齐、等待期限不重置、缺号、世代排空、容量、重复与停止合同；完整线程接线另验 |
+
+| REQ-PICOO-MEDIA-071 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、024 | 单个专用录制工作者拥有原生mux、重排和文件状态，接收侧非阻塞提交/停止/读取结果；Arming有期限，关键帧请求合并，线程退出前不允许新工作者绕过资源上限 | 合成输入跨线程最终化、停止排空、启动失败、Arming超时及资源独占；Receiver与UI另验 |
