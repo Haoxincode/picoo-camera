@@ -15,6 +15,7 @@ pub struct CodecConfiguration {
     nal_length_size: NalLengthSize,
     profile_idc: u8,
     level_idc: u8,
+    high_tier: bool,
     record: Bytes,
     vps: Vec<Bytes>,
     sps: Vec<Bytes>,
@@ -37,6 +38,7 @@ impl CodecConfiguration {
             nal_length_size: NalLengthSize::Four,
             profile_idc: 0,
             level_idc: 0,
+            high_tier: false,
             record: record.clone(),
             vps: Vec::new(),
             sps: Vec::new(),
@@ -88,6 +90,7 @@ impl CodecConfiguration {
                 }
                 config.profile_idc = hevc.general_profile_idc;
                 config.level_idc = hevc.general_level_idc;
+                config.high_tier = hevc.general_tier_flag;
                 config.nal_length_size = length_size(hevc.length_size_minus_one)?;
                 for array in hevc.arrays {
                     match u8::from(array.nal_unit_type) {
@@ -215,13 +218,22 @@ impl CodecConfiguration {
     /// All declared SPS must describe the same source before an owner commits it.
     /// Standard syntax remains in the shared bounded AVC/HEVC parsers.
     pub fn source_facts(&self) -> Result<crate::VideoSpsFacts, BitstreamError> {
-        let parse = match self.codec {
-            Codec::Avc => crate::VideoSpsFacts::parse_avc,
-            Codec::Hevc => crate::VideoSpsFacts::parse_hevc,
-        };
         let mut facts = None;
         for sps in &self.sps {
-            let current = parse(sps)?;
+            let current = match self.codec {
+                Codec::Avc => crate::VideoSpsFacts::parse_avc(sps)?,
+                Codec::Hevc => {
+                    let (parsed, facts) = crate::hevc_facts::parse_source(sps)?;
+                    let profile = &parsed.profile_tier_level.general_profile;
+                    if profile.profile_idc != self.profile_idc
+                        || profile.tier_flag != self.high_tier
+                        || profile.level_idc != Some(self.level_idc)
+                    {
+                        return Err(BitstreamError::Malformed("hvcC identity differs from SPS"));
+                    }
+                    facts
+                }
+            };
             if facts.is_some_and(|previous| previous != current) {
                 return Err(BitstreamError::Malformed("conflicting SPS source facts"));
             }
@@ -246,6 +258,11 @@ impl CodecConfiguration {
     }
     pub fn level_idc(&self) -> u8 {
         self.level_idc
+    }
+
+    /// AVC has no HEVC tier and always returns false.
+    pub fn is_high_tier(&self) -> bool {
+        self.high_tier
     }
 
     pub fn codec(&self) -> Codec {

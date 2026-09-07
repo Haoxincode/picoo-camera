@@ -114,6 +114,7 @@ fn xiaomi_hevc_720_preserves_736_storage_and_720_presentation() {
     ] {
         let config = source(Codec::Hevc, bytes, 720, fps);
         let format = config.validated_video_format().unwrap();
+        assert_eq!(format.tier, crate::control::VideoTier::HevcHigh as i32);
         assert_eq!(
             format.coded_size.unwrap(),
             Resolution {
@@ -141,5 +142,18 @@ fn xiaomi_hevc_720_preserves_736_storage_and_720_presentation() {
         let mut unpadded = format;
         unpadded.coded_size.as_mut().unwrap().height = 720;
         assert!(!caps.supports(&unpadded, config.level_idc, 1024));
+    }
+}
+
+#[test]
+fn hevc_record_cannot_lie_about_sps_tier_or_level() {
+    let bytes =
+        include_bytes!("../../picoo-testkit/fixtures/xiaomi-native-formats/2-720-30.config");
+    for (index, mask) in [(1, 0x20), (12, 1)] {
+        let mut changed = bytes.to_vec();
+        changed[index] ^= mask;
+        let record = CodecConfiguration::parse(Codec::Hevc, changed.into()).unwrap();
+        assert!(record.source_facts().is_err());
+        assert!(VideoFormat::from_codec_configuration(&record, 30).is_err());
     }
 }

@@ -2,7 +2,8 @@
 
 use crate::control::{
     Capabilities, ColorDescription, ColorMatrix, ColorPrimaries, ColorRange, ColorTransfer,
-    FrameRate, Resolution, VideoChroma, VideoCodec, VideoFormat, VideoProfile, VisibleRect,
+    FrameRate, Resolution, VideoChroma, VideoCodec, VideoFormat, VideoProfile, VideoTier,
+    VisibleRect,
 };
 
 pub const MAX_DECODER_OFFERS: usize = 16;
@@ -27,6 +28,11 @@ impl VideoFormat {
                 VideoCodec::Avc => VideoProfile::AvcHigh,
                 VideoCodec::Hevc => VideoProfile::HevcMain,
                 VideoCodec::Unspecified => VideoProfile::Unspecified,
+            } as i32,
+            tier: match codec {
+                VideoCodec::Avc => VideoTier::Avc,
+                VideoCodec::Hevc => VideoTier::HevcMain,
+                VideoCodec::Unspecified => VideoTier::Unspecified,
             } as i32,
             bit_depth: 8,
             chroma: VideoChroma::Yuv420 as i32,
@@ -57,6 +63,16 @@ impl VideoFormat {
             (VideoCodec::Avc, VideoProfile::AvcHigh) | (VideoCodec::Hevc, VideoProfile::HevcMain)
         ) {
             return Err(MediaFormatError("codec/profile combination"));
+        }
+        if !matches!(
+            (codec, VideoTier::try_from(self.tier)),
+            (VideoCodec::Avc, Ok(VideoTier::Avc))
+                | (
+                    VideoCodec::Hevc,
+                    Ok(VideoTier::HevcMain | VideoTier::HevcHigh)
+                )
+        ) {
+            return Err(MediaFormatError("codec/tier combination"));
         }
         if self.bit_depth != 8 || self.chroma != VideoChroma::Yuv420 as i32 {
             return Err(MediaFormatError("requires 8-bit 4:2:0"));
@@ -158,7 +174,9 @@ impl VideoFormat {
             Ok(VideoCodec::Hevc) => matches!(level, 93 | 120 | 123 | 150 | 153 | 156),
             _ => false,
         };
-        known && level >= self.minimum_level_idc()
+        known
+            && level >= self.minimum_level_idc()
+            && (self.tier != VideoTier::HevcHigh as i32 || level >= 120)
     }
 }
 

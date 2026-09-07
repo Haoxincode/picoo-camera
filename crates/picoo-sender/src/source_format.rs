@@ -47,6 +47,7 @@ impl SourceFormat {
             };
             let requested = VideoFormat {
                 coded_size: candidate.coded_size,
+                tier: candidate.tier,
                 visible_rect: Some(picoo_protocol::control::VisibleRect {
                     width: format.visible_rect.unwrap().width,
                     height: self.height,

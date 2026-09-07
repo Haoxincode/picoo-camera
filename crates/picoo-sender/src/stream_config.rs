@@ -25,6 +25,14 @@ impl StreamConfigParams {
         }
         let configuration = &self.configuration;
         configuration.validate_visible_size(self.width, self.height)?;
+        let color = configuration.source_facts()?.color.ok_or(
+            picoo_bitstream::BitstreamError::Unsupported("missing source color"),
+        )?;
+        if (color.primaries, color.transfer, color.matrix) != (1, 1, 1) {
+            return Err(picoo_bitstream::BitstreamError::Unsupported(
+                "source is not BT.709 SDR",
+            ));
+        }
         if configuration.nal_length_size() != picoo_bitstream::NalLengthSize::Four {
             return Err(picoo_bitstream::BitstreamError::Unsupported(
                 "wire requires four-byte NAL lengths",
@@ -50,7 +58,11 @@ impl StreamConfigParams {
             bitrate: self.bitrate_bps,
             rotation: self.rotation,
             mirrored: self.mirrored,
-            color_range: picoo_protocol::control::ColorRange::Limited as i32,
+            color_range: if color.full_range {
+                picoo_protocol::control::ColorRange::Full
+            } else {
+                picoo_protocol::control::ColorRange::Limited
+            } as i32,
             codec_configuration: configuration.record().to_vec(),
             stream_epoch: self.stream_epoch,
         })

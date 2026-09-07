@@ -131,3 +131,7 @@ Android 每个编码 generation 从不可变 CaptureProfile 取得 codec、尺�
 720p HEVC 可使用 1280×736 编码存储，正式可见高度仍为 720。允许的有界存储高度包含 720/736 和 1080/1088；AVC level 按 coded macroblock 数与每秒 macroblock 数计算，HEVC 按 coded luma samples 与每秒速率计算，不能简单把补齐高度归回可见档位。最终能力成员比较仍精确区分存储/crop。
 
 Android 相机输入必须来自同一个 Camera2 stream map，具有可满足所选固定 fps 的已知最小时长及固定 AE fps range；未知时长或空候选不猜测可用。输入在既定旋转裁剪后足以覆盖已请求图像，禁止隐式放大或把源请求改成 720p。不能满足的指定配置明确失败，由源事务处理，采集适配器不修改 CaptureProfile 来掩盖失败。
+
+Sender 获得 Receiver offers 后，完整编码事件在绑定 generation、暂存配置或发送数据前，按实际源 VideoFormat/record level/本 AU 字节数验证同一条能力；不从准备请求匹配推导提交成功。缺少配置不能越过门禁。序列化的色彩范围来自明确 BT.709 VUI，不能用默认 limited 标签覆盖未知或 full-range 源事实。
+
+完整 VideoFormat 显式区分 AVC、HEVC Main tier 与 HEVC High tier；缺省 tier 非法，不把 Main profile 当作 Main tier。hvcC 的 profile/tier/level 与每个 SPS 必须一致，header 声明不能降低源事实。准备请求尚无原生 tier 时可匹配任一合法条目，最终提交按实际 tier 精确比较；High tier 不存在 level4 以下的合法能力。

@@ -267,8 +267,32 @@ impl<T: PicooTransport> SenderSession<T> {
             ));
         }
         let stream_configured = stream_config.is_some();
-        if let Some(config) = &stream_config {
+        // REQ-PICOO-MEDIA-051: a visible request does not admit actual
+        // storage/crop/tier/level/color or each AU's memory budget.
+        if let Some(config) = stream_config
+            .as_ref()
+            .or(self.pending_stream_config.as_ref())
+        {
             config.to_proto().map_err(SenderError::CodecConfiguration)?;
+            if let Some(caps) = &self.receiver_capabilities {
+                let format = picoo_protocol::control::VideoFormat::from_codec_configuration(
+                    &config.configuration,
+                    config.fps,
+                )
+                .map_err(|error| SenderError::Protocol(error.to_string()))?;
+                let bytes = u32::try_from(data.len()).map_err(|_| {
+                    SenderError::Protocol("native access unit exceeds offer budget".into())
+                })?;
+                if !caps.supports(&format, u32::from(config.configuration.level_idc()), bytes) {
+                    return Err(SenderError::Protocol(
+                        "actual native event has no matching decoder offer".into(),
+                    ));
+                }
+            }
+        } else if self.receiver_capabilities.is_some() {
+            return Err(SenderError::Protocol(
+                "native event has no source configuration".into(),
+            ));
         }
         if stream_config.as_ref().is_some_and(|config| {
             self.encoder_apply_state

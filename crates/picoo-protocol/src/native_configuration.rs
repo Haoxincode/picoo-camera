@@ -45,6 +45,9 @@ impl VideoFormat {
                 ColorRange::Limited
             },
         );
+        if configuration.is_high_tier() {
+            format.tier = crate::control::VideoTier::HevcHigh as i32;
+        }
         format.visible_rect = Some(VisibleRect {
             x: facts.visible_x,
             y: facts.visible_y,

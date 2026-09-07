@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn actual_offer_rejection_preserves_generation_configuration_and_control_identity() {
+    use picoo_protocol::control::{ColorRange, DecoderOffer};
+    let mut source = super::source_configuration(720);
+    source.fps = 30;
+    source.configuration = picoo_bitstream::CodecConfiguration::parse(
+        picoo_bitstream::Codec::Hevc,
+        Bytes::from_static(include_bytes!(
+            "../../../../picoo-testkit/fixtures/xiaomi-native-formats/2-720-30.config"
+        )),
+    )
+    .unwrap()
+    .into();
+    let wire = source.to_proto().unwrap();
+    let exact = DecoderOffer {
+        format: Some(wire.validated_video_format().unwrap()),
+        max_level_idc: wire.level_idc,
+        max_access_unit_bytes: 1024,
+    };
+    let mut wrong_storage = exact;
+    wrong_storage
+        .format
+        .as_mut()
+        .unwrap()
+        .coded_size
+        .as_mut()
+        .unwrap()
+        .height = 720;
+    let mut wrong_color = exact;
+    wrong_color
+        .format
+        .as_mut()
+        .unwrap()
+        .color
+        .as_mut()
+        .unwrap()
+        .range = ColorRange::Full as i32;
+    let mut too_small = exact;
+    too_small.max_access_unit_bytes = 4;
+    let mut wrong_tier = exact;
+    wrong_tier.format.as_mut().unwrap().tier = picoo_protocol::control::VideoTier::HevcMain as i32;
+    assert_ne!(wrong_tier.format, exact.format);
+    for offers in [
+        vec![wrong_storage],
+        vec![wrong_storage, wrong_color],
+        vec![too_small],
+        vec![wrong_tier],
+    ] {
+        let mut session = SenderSession::new(MemoryTransport::new());
+        session
+            .connect(Endpoint {
+                host: "127.0.0.1".into(),
+                port: 4433,
+            })
+            .unwrap();
+        session.force_status_for_test(SenderStatus::Streaming);
+        let caps = Capabilities { offers };
+        caps.validate().unwrap();
+        assert!(session.apply_capabilities_for_test(caps));
+        let epoch = session.current_stream_epoch();
+        let control = session.next_control_message_id;
+        let attempt = |session: &mut SenderSession<MemoryTransport>| {
+            session.submit_encoder_event(crate::NativeEncoderEvent {
+                data: b"native-idr",
+                is_keyframe: true,
+                pts_us: 1,
+                encoded_at_us: 2,
+                encoder_generation: 10,
+                stream_epoch: epoch,
+                width: 1280,
+                height: 720,
+                stream_config: Some(source.clone()),
+            })
+        };
+        assert!(attempt(&mut session).is_err());
+        assert_eq!(session.current_stream_epoch(), epoch);
+        assert_eq!(session.committed_encoder_generation, 0);
+        assert!(session.pending_stream_config.is_none());
+        assert_eq!(session.next_control_message_id, control);
+        assert_eq!(session.pending_packets(), 0);
+        // A rejected native fact does not poison a later exact offer.
+        assert!(session.apply_capabilities_for_test(Capabilities {
+            offers: vec![exact]
+        }));
+        assert!(attempt(&mut session).unwrap().encoder_accepted);
+    }
+}
+
+#[test]
 fn invalid_configuration_cannot_send_control_or_commit_matching_idr() {
     // REQ-PICOO-PROTOCOL-019: a native refresh fact cannot make invalid
     // source attributes authoritative, even when its transaction identity matches.

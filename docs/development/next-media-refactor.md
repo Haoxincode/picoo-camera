@@ -703,3 +703,14 @@ ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推�
 - 用户指出测试入口白屏，已添加中文测试提示和保持亮屏，仅 debug source set；测试结束自动关闭，并已恢复手机正式 MainActivity。最后构建覆盖提示修改；无需因文字修改重测硬件。前摄/竖持、长时间热稳态、网络以及完整产品 offers 仍待验。
 
 9832582 的 CI 34075347404 全平台成功；b5cf956 已推送，CI 34076167154 执行中。
+
+### 2026-09-07：实际编码事件完整准入与 HEVC tier
+
+- REQ-PICOO-MEDIA-051：Sender 获取 Decoder offers 后，在绑定 generation、暂存配置或发包前，按实际 VideoFormat 和 record level/本 AU 大小匹配同一条目；准备请求命中不等于实际提交准入。已有 CodecConfiguration 直接映射格式，不重新复制/解析 hvcC。色彩序列化明确来自 BT.709 VUI，不能把 unknown/full 源一律标成 limited。
+- 小米 HEVC 720p 的实际 profile 是 Main，但 tier 为 High。给 VideoFormat 增加显式 AVC/HEVC Main tier/HEVC High tier，缺省非法；SourceFormat 准备时允许同一候选的合法 tier，提交时严格相等。High tier 的 level 下限为4。bitstream 复用既有有界 Scuffle SPS parser，逐个核对 hvcC profile/tier/level，伪造 header 被拒绝。
+- Bitstream 33、Protocol 31、Sender 74、Receiver 106、Mac Decoder 21、FFI 13 项通过，Receiver另2项忽略。新增实际存储/色彩/tier/AU预算拒绝保持 generation、配置和控制序号，合法精确重试成功；SPS与header tier/level冲突回归通过。首次正向重试测试漏建 MemoryTransport 连接，返回 NotConnected；补上真实内存连接后通过，未改变产品逻辑绕过连接。
+- 全部相关 Clippy、文档/格式检查及最终 Android完整APK/JNI、iOS完整构建成功。当前 Receiver 仍使用待替换的保守能力声明，尚未以完整原生探测结果广告，也不宣称产品 HEVC/60 网络入口已开放。
+
+b5cf956 的 CI 34076167154 全平台成功。
+
+本批最终 `cargo xtask test ios` 成功；Swift/C ABI 模拟器回归继续通过。

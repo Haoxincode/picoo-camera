@@ -92,6 +92,13 @@ enum VideoProfile {
   VIDEO_PROFILE_HEVC_MAIN = 2;
 }
 
+enum VideoTier {
+  VIDEO_TIER_UNSPECIFIED = 0;
+  VIDEO_TIER_AVC = 1;
+  VIDEO_TIER_HEVC_MAIN = 2;
+  VIDEO_TIER_HEVC_HIGH = 3;
+}
+
 enum VideoChroma {
   VIDEO_CHROMA_UNSPECIFIED = 0;
   VIDEO_CHROMA_YUV420 = 1;
@@ -146,6 +153,7 @@ message VideoFormat {
   VisibleRect visible_rect = 6;
   FrameRate frame_rate = 7;
   ColorDescription color = 8;
+  VideoTier tier = 9;
 }
 
 message DecoderOffer {

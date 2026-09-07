@@ -47,6 +47,7 @@ fn sender_does_not_borrow_height_from_another_codec_or_frame_rate() {
     hevc.max_level_idc = 123;
     let format = hevc.format.as_mut().unwrap();
     format.codec = VideoCodec::Hevc as i32;
+    format.tier = picoo_protocol::control::VideoTier::HevcMain as i32;
     format.profile = VideoProfile::HevcMain as i32;
     assert!(session.apply_capabilities_for_test(caps.clone()));
     assert_eq!(session.receiver_max_height(), 720);
@@ -80,6 +81,7 @@ fn capabilities_before_source_selection_do_not_invent_avc_or_thirty_fps() {
     caps.offers[0].max_level_idc = 123;
     let format = caps.offers[0].format.as_mut().unwrap();
     format.codec = VideoCodec::Hevc as i32;
+    format.tier = picoo_protocol::control::VideoTier::HevcMain as i32;
     format.profile = VideoProfile::HevcMain as i32;
     format.frame_rate.as_mut().unwrap().numerator = 60;
     assert!(session.apply_capabilities_for_test(caps));
