@@ -126,6 +126,15 @@ impl<T: PicooTransport> SenderSession<T> {
         if !target_format.is_product_format() {
             return 0;
         }
+        if self
+            .receiver_capabilities
+            .as_ref()
+            .is_some_and(|caps| !target_format.is_offered_by(caps))
+        {
+            self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
+            return 0;
+        }
+
         let id = self.next_encoder_directive_id;
         let Some(next_id) = id.checked_add(1) else {
             self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
@@ -149,6 +158,9 @@ impl<T: PicooTransport> SenderSession<T> {
         }
         self.next_encoder_directive_id = next_id;
         self.keyframe_requested = true;
+        if self.last_session_error.as_deref() == Some("NO_MATCHING_DECODER_OFFER") {
+            self.last_session_error = None;
+        }
         epoch
     }
 

@@ -646,3 +646,9 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - Android 完整 APK/JNI/JVM 构建成功，77 项 JVM 通过。只读 API 36 ARM64 AVD 的提交结果、显式源参数准入和尺寸合同共 4 项 instrumentation 通过；首次新增测试同样误期待本地 apply 作为新 effect 返回，修正后通过。测试后关闭 AVD。macOS 与 NDK FFI all-target/library Clippy 通过，文档检查通过。
 
 74e9fcf 的 CI 34071472188 全平台成功；799705a、57b9f62、ba609a8 已推送，新 CI 执行中。
+
+### 2026-09-07：能力匹配不再猜测 AVC/30
+
+- REQ-PICOO-MEDIA-044：能力可先于源请求到达；没有源格式时保留已验证 offers，最大高度为未知 0。显式待处理请求优先于旧源快照，按同一完整条目匹配 codec、尺寸、fps、profile、8-bit 420 与既定 BT.709 limited；新请求不匹配时不消耗身份，合法重试清除对应错误。
+- 能力测试按职责从 epoch 测试文件移出。Sender 72、Receiver 106 项通过，Receiver 另 2 项忽略；相关 all-targets Clippy 与文档检查通过。覆盖仅 HEVC/60 的先到能力、跨尺寸/帧率/色彩借用拒绝和合法显式请求。
+- 本批完成准备请求的 Decoder offer 匹配，不宣称相机/编码器原生 offers、实际 SPS level/颜色/每 AU 预算的完整提交准入已完成。

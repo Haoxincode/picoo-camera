@@ -13,24 +13,34 @@ impl<T: PicooTransport> SenderSession<T> {
             .map_or(0, |caps| self.matching_decoder_height(caps))
     }
 
-    fn matching_decoder_height(&self, caps: &Capabilities) -> u32 {
-        // The current native Sender adapter is AVC. Dual-codec selection will
-        // replace this adapter constraint when its native offers are available.
-        let fps = self
-            .pending_stream_config
-            .as_ref()
-            .map_or(30, |config| config.fps);
-        caps.offers
-            .iter()
-            .filter_map(|offer| offer.format.as_ref())
-            .filter(|format| format.codec == picoo_protocol::control::VideoCodec::Avc as i32)
-            .filter(|format| {
-                format
-                    .frame_rate
+    fn requested_source_format(&self) -> Option<crate::SourceFormat> {
+        self.encoder_apply_state
+            .directive()
+            .map(|directive| directive.target_format)
+            .or_else(|| {
+                self.pending_stream_config
                     .as_ref()
-                    .is_some_and(|rate| rate.numerator == fps && rate.denominator == 1)
+                    .map(|config| crate::SourceFormat {
+                        codec: config.configuration.codec(),
+                        height: config.height,
+                        fps: config.fps,
+                    })
             })
-            .filter_map(|format| format.coded_size.as_ref().map(|size| size.height))
+    }
+
+    fn matching_decoder_height(&self, caps: &Capabilities) -> u32 {
+        let Some(requested) = self.requested_source_format() else {
+            return 0;
+        };
+        [720, 1080]
+            .into_iter()
+            .filter(|height| {
+                crate::SourceFormat {
+                    height: *height,
+                    ..requested
+                }
+                .is_offered_by(caps)
+            })
             .max()
             .unwrap_or(0)
     }
@@ -118,7 +128,9 @@ impl<T: PicooTransport> SenderSession<T> {
             self.last_session_error = Some("INVALID_DECODER_CAPABILITIES".into());
             return false;
         }
-        if self.matching_decoder_height(&capabilities) == 0 {
+        if self.requested_source_format().is_some()
+            && self.matching_decoder_height(&capabilities) == 0
+        {
             self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
             return false;
         }
