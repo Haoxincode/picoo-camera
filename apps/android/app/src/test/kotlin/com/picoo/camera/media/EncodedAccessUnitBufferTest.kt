@@ -19,8 +19,7 @@ class EncodedAccessUnitBufferTest {
         encodedAtUs = id.toLong(),
         streamEpoch = 1,
         encoderGeneration = 1,
-        encoderWidth = 1280,
-        encoderHeight = 720,
+        configuration = EncodedFrameConfiguration(NativeVideoCodec.Avc, 1280, 720, 30, byteArrayOf(1)),
         enqueuedAtNanos = enqueuedAtNanos,
     )
 
@@ -63,5 +62,32 @@ class EncodedAccessUnitBufferTest {
         assertFalse(work.recoveryRequired)
         assertTrue(work.accessUnit!!.isKeyFrame)
         assertNull(buffer.take(0))
+    }
+    @Test
+    fun queuedGenerationsRetainTheirOwnConfiguration() {
+        val buffer = EncodedAccessUnitBuffer()
+        val first = accessUnit(1, keyFrame = true)
+        val changed = first.configuration.copy(codec = NativeVideoCodec.Hevc,
+            framesPerSecond = 60, record = byteArrayOf(2, 3))
+        val second = accessUnit(2, keyFrame = true).copy(encoderGeneration = 2,
+            configuration = changed)
+        buffer.offer(first, 0)
+        buffer.offer(second, 0)
+        val old = buffer.take(0)!!.accessUnit!!
+        val new = buffer.take(0)!!.accessUnit!!
+        assertEquals(NativeVideoCodec.Avc, old.configuration.codec)
+        assertEquals(30, old.configuration.framesPerSecond)
+        assertEquals(1, old.configuration.record[0].toInt())
+        assertEquals(NativeVideoCodec.Hevc, new.configuration.codec)
+        assertEquals(60, new.configuration.framesPerSecond)
+        assertEquals(2, new.configuration.record[0].toInt())
+    }
+
+    @Test
+    fun configurationBytesArePartOfTheQueueBudget() {
+        val buffer = EncodedAccessUnitBuffer(maxBytes = 8)
+        val frame = accessUnit(1, keyFrame = true, bytes = 4)
+        assertFalse(buffer.offer(frame.copy(configuration = frame.configuration.copy(record = ByteArray(5))), 0).accepted)
+        assertEquals(0, buffer.queuedByteCount())
     }
 }

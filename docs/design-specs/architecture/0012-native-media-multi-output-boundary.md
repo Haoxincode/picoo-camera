@@ -99,3 +99,5 @@ VideoToolbox 的闭合 HEVC 解码合同仅接纳 IDR 随机访问序列；CRA�
 Windows Decoder 的 AVC/HEVC 配置切换通过新的同步原生 MFT 准备和提交，保留源 D3D11 设备身份；禁止在已工作的 transform 上试探另一 codec 后再回滚。HEVC 组件必须来自系统枚举并提供同设备原生 NV12 输出；组件缺失或 DXVA 准入失败使该配置不可用。同步驱动不接纳需要事件循环的异步 MFT。
 
 Sender 的原生配置快照必须持有已验证 CodecConfiguration，codec/profile/level 由该记录派生；不得保存可独立互相矛盾的 raw SPS/PPS 与 codec 标签，也不存在空参数集的默认有效配置。平台适配器负责原生 CSD 的显式 framing 转换和失败返回，Core 不猜测输入是 raw NAL 还是 Annex B。配置快照自身的几何、帧率、方向和时间世代继续由源配置事务验证。
+
+Android 编码器回调按自身 generation 保存完整标准配置记录，AU 入队时连同该记录快照交接；媒体工作者不从全局最新参数集反推旧 AU 的配置。Android UI 仅提出配置请求并请求关键帧，不单独写入 Core 的源配置；配置记录随匹配 AU 原子提交，不能越过队列中的旧世代媒体。MediaCodec 的 CSD→标准 record 转换在原生适配处完成，JNI 不把 record 再拆成 raw 参数返回 Kotlin。

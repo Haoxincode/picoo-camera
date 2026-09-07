@@ -92,8 +92,9 @@ object PicooNative {
         encoderHeight: Int,
         configureStream: Boolean,
         mirrored: Boolean,
-        sps: ByteArray?,
-        pps: ByteArray?,
+        codec: Int,
+        fps: Int,
+        codecConfiguration: ByteArray?,
     ): Int
 
     /** [accessUnits, packets, bytes, sentDatagrams, pendingPackets] */
@@ -135,18 +136,6 @@ object PicooNative {
     external fun sendPairingConfirm(handle: Long, receiverId: String): Int
 
     external fun getPairingShortCode(handle: Long): String
-
-    external fun setStreamConfig(
-        handle: Long,
-        width: Int,
-        height: Int,
-        fps: Int,
-        bitrateBps: Int,
-        mirrored: Boolean,
-        rotation: Int = 0,
-        sps: ByteArray? = null,
-        pps: ByteArray? = null,
-    ): Int
 
     /**
      * Latest ReceiverStats feedback for Streaming metrics (PUC-005).
@@ -204,10 +193,10 @@ object PicooNative {
     external fun setThermalHold(handle: Long, hold: Boolean): Int
 
     /**
-     * Validate MediaCodec AVC Annex B codec-config and return raw SPS/PPS.
-     * @return `[sps, pps]` or null when extraction fails.
+     * Validate explicitly selected MediaCodec AVC/HEVC Annex B codec-config.
+     * @return Standard avcC/hvcC record, or null when native CSD is rejected.
      */
-    external fun parseAvcCodecConfig(data: ByteArray): Array<ByteArray>?
+    external fun parseCodecConfiguration(codec: Int, data: ByteArray): ByteArray?
 
     /** Canonical Rust validation for Android NSD TXT bytes. */
     external fun parseDiscoveryTxt(keys: Array<String>, values: Array<ByteArray>): Array<String>?

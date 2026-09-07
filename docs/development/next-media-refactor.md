@@ -589,3 +589,12 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 该批 Sender/Receiver/FFI all-targets Clippy 通过；Android aarch64 JNI library 使用本机 NDK 28.2 的官方 Clang/AR 编译检查通过。首次直接 cargo check 未指定 NDK 编译器失败，随后配置工具路径重跑成功。配置快照使用 Arc 共享不可变已解析记录，避免在事务枚举和每次快照克隆中复制参数集合。
 
 原生 Decoder 提交 fdfda46 的 CI 34067849022 全平台成功；Windows 的系统 HEVC 诊断仍为显式忽略项，不能把该 CI 结果当作 Windows HEVC 实测通过。配置适配提交 01a560a 已推送，CI 34068821610 执行中。
+
+### 2026-09-07：Android 配置随原生 AU 交接
+
+- REQ-PICOO-MEDIA-036：MediaCodec callback 按自身 generation 持有 codec/fps/尺寸/标准记录，AU 在回调时携带该快照进入有界队列。删除全局 raw 参数集和单独的 Android setStreamConfig JNI；UI 配置请求等待原生关键帧提交，不能抢先覆盖排队媒体的历史配置。
+- JNI 的 parseCodecConfiguration 接纳显式 AVC/HEVC Annex B CSD，返回 avcC/hvcC；submit 接受显式 codec/fps/record。传入 JNI 和从 MediaCodec 复制前限制 AU 2 MiB、CSD 64 KiB；队列 byte budget 包含配置记录。每个 generation 的首次配置提交不依赖 UI dirty flag 是否已被旧 AU 消耗。
+- Android 80 项 JVM 测试通过；instrumentation 编译通过，真实硬件 CSD 测试已扩展到两 codec，但 ADB 当前无设备，未运行真机。NDK 28.2 JNI all-library Clippy 通过。assembleDebug / assembleDebugAndroidTest 包含重新构建的 release JNI，完整构建成功；符号检查确认新 parseCodecConfiguration 和 submit 存在，旧 parseAvcCodecConfig / setStreamConfig JNI 不再导出。
+- 生产 MediaCodec 选择仍为当前 AVC 请求；这批完成配置载体和所有权，不宣称 HEVC/60fps 全链路已启用。iOS 原生回调、Receiver 双 codec 配置准入和 offer 选择继续待办。
+
+同批 macOS FFI all-targets Clippy 通过；01a560a 的 CI 34068821610 全平台成功。

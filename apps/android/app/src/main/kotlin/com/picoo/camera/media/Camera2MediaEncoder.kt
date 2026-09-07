@@ -20,7 +20,6 @@ class Camera2MediaEncoder(
     initialBitrateBps: Int,
     initialStreamEpoch: Int,
     internal val frameListener: EncodedFrameListener = EncodedFrameListener.NOOP,
-    internal val parameterSetsListener: ParameterSetsListener = ParameterSetsListener.NOOP,
 ) : CameraCaptureController, Closeable {
     internal val appContext = context.applicationContext
     internal val cameraManager = appContext.getSystemService(CameraManager::class.java)
@@ -93,11 +92,6 @@ class Camera2MediaEncoder(
 
     @Volatile
     var lastError: String? = null
-        internal set
-
-    var lastSps: ByteArray? = null
-        internal set
-    var lastPps: ByteArray? = null
         internal set
 
     override fun setTargetBitrateBps(bitrateBps: Int) {

@@ -18,7 +18,7 @@ import com.picoo.camera.media.EncoderReconfigurationCoordinator
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
-import com.picoo.camera.media.ParameterSetsListener
+import com.picoo.camera.media.EncodedFrameConfiguration
 import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.runtime.QuicWifiBindingResult
 import com.picoo.camera.runtime.SenderNativeRuntime
@@ -52,8 +52,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             ?: StreamResolution.P1080.label
         manualEndpointText = preferences.getString(KEY_LAST_MANUAL_ENDPOINT, "").orEmpty()
     }
-    val parameterSetsRef = AtomicReference<Pair<ByteArray, ByteArray>?>(null)
     val streamConfigDirty = AtomicBoolean(false)
+    private val configurationKeyframeRequested = AtomicBoolean(false)
     private val remoteMirroredRef = AtomicBoolean(false)
     val runtime = SenderNativeRuntime(application)
     val encoderReconfiguration = EncoderReconfigurationCoordinator()
@@ -61,38 +61,23 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     private val senderMediaThread = HandlerThread("picoo-sender-media").apply { start() }
     private val senderMediaHandler = Handler(senderMediaThread.looper)
     private val encodedAccessUnits = EncodedAccessUnitBuffer()
+    // Owned only by the serial media worker; UI dirty flags cannot acknowledge
+    // a new encoder generation whose IDR has not reached Core yet.
+    private var configuredMediaGeneration = 0L
+    private var configuredMediaSource: EncodedFrameConfiguration? = null
     val encoder = Camera2MediaEncoder(
         context = application,
         initialBitrateBps = PicooNative.bitrateInitialForHeight(StreamResolution.P720.height),
         initialStreamEpoch = PicooNative.readSenderSnapshot(runtime.senderHandle).streamEpoch,
-        frameListener = EncodedFrameListener {
-                data,
-                isKeyFrame,
-                ptsUs,
-                encodedAtUs,
-                streamEpoch,
-                encoderGeneration,
-                encoderWidth,
-                encoderHeight,
-            ->
-            enqueueEncodedAccessUnit(
-                EncodedAccessUnitHandoff(
-                    data = data,
-                    isKeyFrame = isKeyFrame,
-                    presentationTimeUs = ptsUs,
-                    encodedAtUs = encodedAtUs,
-                    streamEpoch = streamEpoch,
-                    encoderGeneration = encoderGeneration,
-                    encoderWidth = encoderWidth,
-                    encoderHeight = encoderHeight,
-                    enqueuedAtNanos = System.nanoTime(),
-                ),
-            )
+        frameListener = EncodedFrameListener { frame ->
+            enqueueEncodedAccessUnit(EncodedAccessUnitHandoff(
+                data = frame.data, isKeyFrame = frame.isKeyFrame,
+                presentationTimeUs = frame.presentationTimeUs, encodedAtUs = frame.encodedAtUs,
+                streamEpoch = frame.streamEpoch, encoderGeneration = frame.encoderGeneration,
+                configuration = frame.configuration, enqueuedAtNanos = System.nanoTime(),
+            ))
         },
-        parameterSetsListener = ParameterSetsListener { sps, pps ->
-            parameterSetsRef.set(sps to pps)
-            streamConfigDirty.set(true)
-        },
+
     )
 
     private var displayRotationDegrees: Int = 0
@@ -146,8 +131,12 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun submitEncodedAccessUnit(accessUnit: EncodedAccessUnitHandoff) {
-        val configureStream = accessUnit.isKeyFrame && streamConfigDirty.getAndSet(false)
-        val parameterSets = if (configureStream) parameterSetsRef.get() else null
+        val configuration = accessUnit.configuration
+        val configureStream = accessUnit.isKeyFrame && (
+            streamConfigDirty.getAndSet(false) ||
+                configuredMediaGeneration != accessUnit.encoderGeneration ||
+                configuredMediaSource !== configuration
+            )
         val result = PicooNative.submitEncoderAccessUnit(
             handle = runtime.senderHandle,
             data = accessUnit.data,
@@ -156,18 +145,22 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             encodedAtUs = accessUnit.encodedAtUs,
             streamEpoch = accessUnit.streamEpoch,
             encoderGeneration = accessUnit.encoderGeneration,
-            encoderWidth = accessUnit.encoderWidth,
-            encoderHeight = accessUnit.encoderHeight,
+            encoderWidth = accessUnit.configuration.width,
+            encoderHeight = accessUnit.configuration.height,
             configureStream = configureStream,
             mirrored = remoteMirroredRef.get(),
-            sps = parameterSets?.first,
-            pps = parameterSets?.second,
+            codec = configuration.codec.wireValue,
+            fps = configuration.framesPerSecond,
+            codecConfiguration = if (configureStream) configuration.record else null,
         )
         val outcome = EncoderSubmitOutcome.fromNative(result)
         if (outcome is EncoderSubmitOutcome.Failure) {
             // JNI failures have no success-side effects. In particular, a
             // negative two's-complement value must never be read as flags.
-            if (configureStream) streamConfigDirty.set(true)
+            if (configureStream) {
+                streamConfigDirty.set(true)
+                configurationKeyframeRequested.set(false)
+            }
             return
         }
         outcome as EncoderSubmitOutcome.Success
@@ -175,12 +168,17 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             // A stale generation must not consume the active generation's config.
             streamConfigDirty.set(true)
         }
+        if (outcome.encoderAccepted && outcome.streamConfigured) {
+            configuredMediaGeneration = accessUnit.encoderGeneration
+            configuredMediaSource = configuration
+            configurationKeyframeRequested.set(false)
+        }
         if (outcome.encoderAccepted) {
             encoder.recordAcceptedFrame(
                 accessUnit.data.size,
                 accessUnit.isKeyFrame,
                 accessUnit.streamEpoch,
-                accessUnit.encoderHeight,
+                accessUnit.configuration.height,
             )
         }
         if (outcome.keyframeRequested) {
@@ -212,31 +210,12 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
 
     fun applyStreamConfig() {
         encoder.setDisplayRotationDegrees(displayRotationDegrees)
-        val size = encoder.profile.resolution
-        stageStreamConfig(size.width, size.height)
-    }
-
-    private fun stageStreamConfig(width: Int, height: Int) {
-        val rustBitrate = PicooNative.readSenderSnapshot(runtime.senderHandle).currentBitrateBps
-        val bitrate = if (rustBitrate > 0) {
-            rustBitrate
-        } else {
-            PicooNative.bitrateInitialForHeight(height)
+        // Configuration commits belong to native AU submission, never a UI-side
+        // setter that can overtake queued frames from the previous generation.
+        streamConfigDirty.set(true)
+        if (configurationKeyframeRequested.compareAndSet(false, true)) {
+            encoder.requestKeyFrame()
         }
-        val sets = parameterSetsRef.get()
-        PicooNative.setStreamConfig(
-            runtime.senderHandle,
-            width = width,
-            height = height,
-            fps = 30,
-            bitrateBps = bitrate,
-            mirrored = remoteMirroredRef.get(),
-            // Android compositor already emits upright landscape pixels.
-            rotation = 0,
-            sps = sets?.first,
-            pps = sets?.second,
-        )
-        streamConfigDirty.set(false)
     }
 
     fun beginLocalEncoderReconfiguration(targetHeight: Int): Boolean {

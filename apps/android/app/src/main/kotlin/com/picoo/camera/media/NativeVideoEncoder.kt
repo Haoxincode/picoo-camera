@@ -6,9 +6,9 @@ import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.Size
 
-internal enum class NativeVideoCodec(val mime: String, val profile: Int) {
-    Avc(MediaFormat.MIMETYPE_VIDEO_AVC, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh),
-    Hevc(MediaFormat.MIMETYPE_VIDEO_HEVC, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain),
+enum class NativeVideoCodec(val wireValue: Int, val mime: String, val profile: Int) {
+    Avc(1, MediaFormat.MIMETYPE_VIDEO_AVC, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh),
+    Hevc(2, MediaFormat.MIMETYPE_VIDEO_HEVC, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain),
 }
 
 /** Immutable request owned by one encoder generation. */

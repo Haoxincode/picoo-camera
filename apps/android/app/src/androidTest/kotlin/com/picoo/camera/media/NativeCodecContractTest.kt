@@ -77,19 +77,16 @@ class NativeCodecContractTest {
             assertEquals(size.width, output.getInteger(MediaFormat.KEY_WIDTH))
             assertEquals(size.height, output.getInteger(MediaFormat.KEY_HEIGHT))
             assertTrue("Missing codec configuration", output.containsKey("csd-0"))
-            if (kind == NativeVideoCodec.Avc) {
-                // REQ-PICOO-MEDIA-033: admit actual hardware CSD through production JNI.
-                val csd = listOf("csd-0", "csd-1").flatMap { key ->
-                    output.getByteBuffer(key)?.duplicate()?.let { buffer ->
-                        ByteArray(buffer.remaining()).also { buffer.get(it) }.toList()
-                    } ?: emptyList()
-                }.toByteArray()
-                val parameters = com.picoo.camera.jni.PicooNative.parseAvcCodecConfig(csd)
-                    ?: error("Hardware AVC CSD rejected")
-                assertEquals(2, parameters.size)
-                assertEquals(7, parameters[0][0].toInt() and 31)
-                assertEquals(8, parameters[1][0].toInt() and 31)
-            }
+            val csd = listOf("csd-0", "csd-1").flatMap { key ->
+                output.getByteBuffer(key)?.duplicate()?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }.toList()
+                } ?: emptyList()
+            }.toByteArray()
+            val record = com.picoo.camera.jni.PicooNative.parseCodecConfiguration(kind.wireValue, csd)
+                ?: error("Hardware $mime CSD rejected")
+            assertEquals(1, record[0].toInt())
+            val lengthField = if (kind == NativeVideoCodec.Avc) 4 else 21
+            assertEquals(3, record[lengthField].toInt() and 3)
             Log.i("PicooNativeProbe", "codec=${codec.name}; mime=$mime; size=$size; requested_fps=$fps; " +
                 "hardware=true; unique_aus=${timestamps.size}; actual=$output; steady_state_fps=not_measured")
         } finally {

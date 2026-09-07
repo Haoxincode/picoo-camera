@@ -1,34 +1,28 @@
 package com.picoo.camera.media
 
-/**
- * Callback for encoded H.264 access units from MediaCodec (REQ-PICOO-MEDIA-001).
- *
- * Raw YUV must not cross JNI; only encoded AU bytes are forwarded toward Rust/QUIC.
- */
+/** One native encoder generation's validated standard configuration record. */
+data class EncodedFrameConfiguration(
+    val codec: NativeVideoCodec,
+    val width: Int,
+    val height: Int,
+    val framesPerSecond: Int,
+    val record: ByteArray,
+)
+
+/** Detached compressed bytes and the original generation's configuration. */
+data class EncodedFrame(
+    val data: ByteArray,
+    val isKeyFrame: Boolean,
+    val presentationTimeUs: Long,
+    val encodedAtUs: Long,
+    val streamEpoch: Int,
+    val encoderGeneration: Long,
+    val configuration: EncodedFrameConfiguration,
+)
+
 fun interface EncodedFrameListener {
-    fun onEncodedFrame(
-        data: ByteArray,
-        isKeyFrame: Boolean,
-        presentationTimeUs: Long,
-        encodedAtUs: Long,
-        streamEpoch: Int,
-        encoderGeneration: Long,
-        encoderWidth: Int,
-        encoderHeight: Int,
-    )
-
-    companion object {
-        val NOOP = EncodedFrameListener { _, _, _, _, _, _, _, _ -> }
-    }
-}
-
-/** Notified when MediaCodec emits SPS/PPS (codec config) for StreamConfig. */
-fun interface ParameterSetsListener {
-    fun onParameterSets(sps: ByteArray, pps: ByteArray)
-
-    companion object {
-        val NOOP = ParameterSetsListener { _, _ -> }
-    }
+    fun onEncodedFrame(frame: EncodedFrame)
+    companion object { val NOOP = EncodedFrameListener { } }
 }
 
 data class EncoderStats(

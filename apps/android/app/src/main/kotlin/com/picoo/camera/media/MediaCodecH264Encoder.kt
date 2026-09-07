@@ -163,6 +163,20 @@ internal class MediaCodecH264Encoder(
         request: NativeEncoderFormat,
     ) = object : MediaCodec.Callback() {
         private var formatAccepted = false
+        private var configuration: EncodedFrameConfiguration? = null
+
+        private fun handleCodecConfig(data: ByteArray): Boolean {
+            val record = runCatching {
+                com.picoo.camera.jni.PicooNative.parseCodecConfiguration(request.codec.wireValue, data)
+            }.getOrNull() ?: run {
+                encoder.fail("Native codec configuration rejected")
+                return false
+            }
+            val source = EncodedFrameConfiguration(request.codec, generationWidth, generationHeight,
+                request.framesPerSecond, record)
+            configuration = source
+            return true
+        }
 
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
             // InputSurface mode: the EGL compositor feeds the encoder.
@@ -188,6 +202,12 @@ internal class MediaCodecH264Encoder(
                 runCatching { codec.releaseOutputBuffer(index, false) }
                 return
             }
+            val maxBytes = if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) 64 * 1024 else 2 * 1024 * 1024
+            if (info.size > maxBytes) {
+                runCatching { codec.releaseOutputBuffer(index, false) }
+                encoder.fail("Encoded access unit exceeds supported size")
+                return
+            }
             val data = ByteArray(info.size)
             buffer.position(info.offset)
             buffer.limit(info.offset + info.size)
@@ -200,16 +220,14 @@ internal class MediaCodecH264Encoder(
             }
 
             val keyFrame = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
-            encoder.frameListener.onEncodedFrame(
-                data,
-                keyFrame,
-                info.presentationTimeUs,
-                System.nanoTime() / 1_000L,
-                generationEpoch,
-                generation,
-                generationWidth,
-                generationHeight,
-            )
+            val source = configuration ?: return
+            encoder.frameListener.onEncodedFrame(EncodedFrame(
+                data = data, isKeyFrame = keyFrame,
+                presentationTimeUs = info.presentationTimeUs,
+                encodedAtUs = System.nanoTime() / 1_000L,
+                streamEpoch = generationEpoch, encoderGeneration = generation,
+                configuration = source,
+            ))
         }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
@@ -230,13 +248,20 @@ internal class MediaCodecH264Encoder(
                 encoder.fail("Native encoder contract rejected: ${error.message}")
                 return
             }
-            formatAccepted = true
-            val csd0 = format.getByteBuffer("csd-0") ?: return
+            formatAccepted = false
+            val csd0 = format.getByteBuffer("csd-0") ?: run {
+                encoder.fail("Native codec configuration missing")
+                return
+            }
+            val csd1 = format.getByteBuffer("csd-1")
+            if (csd0.remaining().toLong() + (csd1?.remaining() ?: 0) > 64 * 1024) {
+                encoder.fail("Native codec configuration exceeds supported size")
+                return
+            }
             val copy = ByteArray(csd0.remaining())
             csd0.mark()
             csd0.get(copy)
             csd0.reset()
-            val csd1 = format.getByteBuffer("csd-1")
             if (csd1 != null) {
                 val pps = ByteArray(csd1.remaining())
                 csd1.mark()
@@ -270,25 +295,6 @@ internal class MediaCodecH264Encoder(
             encoder.keyFrameCount,
             encoder.stats.lastBitrateEstimateKbps,
         )
-    }
-
-    private fun handleCodecConfig(data: ByteArray): Boolean {
-        // H.264 parameter-set parsing is protocol behavior and has one Rust implementation.
-        val extracted = runCatching {
-            com.picoo.camera.jni.PicooNative.parseAvcCodecConfig(data)
-        }.getOrNull()
-        if (extracted != null && extracted.size == 2) {
-            publishParameterSets(extracted[0], extracted[1])
-            return true
-        }
-        encoder.fail("Native AVC codec configuration rejected")
-        return false
-    }
-
-    private fun publishParameterSets(sps: ByteArray, pps: ByteArray) {
-        encoder.lastSps = sps
-        encoder.lastPps = pps
-        encoder.parameterSetsListener.onParameterSets(sps, pps)
     }
 
     private fun updateBitrateEstimate() {

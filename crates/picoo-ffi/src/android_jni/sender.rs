@@ -3,10 +3,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use jni::objects::{JByteArray, JIntArray, JObject, JString};
-use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jobjectArray, jstring, JNI_TRUE};
+use jni::sys::{jboolean, jdoubleArray, jint, jlong, jlongArray, jstring, JNI_TRUE};
 use jni::JNIEnv;
 use picoo_rate_control::BitrateLadder;
-use picoo_sender::{EncoderFailureOutcome, SenderError, SenderSession, StreamConfigParams};
+use picoo_sender::{EncoderFailureOutcome, SenderError, SenderSession};
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 
 use super::{identities, java_string, new_java_string, senders, with_sender};
@@ -483,60 +483,6 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getPairingShortCode
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
-    env: JNIEnv<'_>,
-    _this: JObject<'_>,
-    handle: jlong,
-    width: jint,
-    height: jint,
-    fps: jint,
-    bitrate_bps: jint,
-    mirrored: jboolean,
-    rotation: jint,
-    sps: JByteArray<'_>,
-    pps: JByteArray<'_>,
-) -> jint {
-    let sps = if sps.is_null() {
-        Vec::new()
-    } else {
-        match env.convert_byte_array(sps) {
-            Ok(bytes) => bytes,
-            Err(_) => return -1,
-        }
-    };
-    let pps = if pps.is_null() {
-        Vec::new()
-    } else {
-        match env.convert_byte_array(pps) {
-            Ok(bytes) => bytes,
-            Err(_) => return -1,
-        }
-    };
-    let Ok(configuration) =
-        picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
-    else {
-        return -2;
-    };
-    with_sender(handle, |inner| {
-        let Ok(mut session) = inner.session.lock() else {
-            return -1;
-        };
-        session.set_stream_config(StreamConfigParams {
-            width: width as u32,
-            height: height as u32,
-            fps: fps as u32,
-            bitrate_bps: bitrate_bps as u32,
-            stream_epoch: 0,
-            mirrored: mirrored == JNI_TRUE,
-            rotation: rotation as u32,
-            configuration: configuration.into(),
-        });
-        0
-    })
-    .unwrap_or(-1)
-}
-
-#[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getLinkStats(
     env: JNIEnv<'_>,
     _this: JObject<'_>,
@@ -670,36 +616,45 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setThermalHold(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseAvcCodecConfig(
-    mut env: JNIEnv<'_>,
+pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseCodecConfiguration(
+    env: JNIEnv<'_>,
     _this: JObject<'_>,
+    codec: jint,
     data: JByteArray<'_>,
-) -> jobjectArray {
+) -> jni::sys::jbyteArray {
+    let Some(codec) = native_codec(codec) else {
+        return ptr::null_mut();
+    };
+    let Ok(length) = env.get_array_length(&data) else {
+        return ptr::null_mut();
+    };
+    if !(1..=65536).contains(&length) {
+        return ptr::null_mut();
+    }
     let Ok(data) = env.convert_byte_array(data) else {
         return ptr::null_mut();
     };
-    let Ok(configuration) = picoo_bitstream::CodecConfiguration::from_avc_annex_b(&data) else {
+    let configuration = match codec {
+        picoo_bitstream::Codec::Avc => picoo_bitstream::CodecConfiguration::from_avc_annex_b(&data),
+        picoo_bitstream::Codec::Hevc => {
+            picoo_bitstream::CodecConfiguration::from_hevc_annex_b(&data)
+        }
+    };
+    let Ok(configuration) = configuration else {
         return ptr::null_mut();
     };
-    let (sps, pps) = (&configuration.sps()[0], &configuration.pps()[0]);
-    let Ok(byte_array_class) = env.find_class("[B") else {
-        return ptr::null_mut();
-    };
-    let Ok(result) = env.new_object_array(2, byte_array_class, JObject::null()) else {
-        return ptr::null_mut();
-    };
-    let (Ok(sps), Ok(pps)) = (
-        env.byte_array_from_slice(sps),
-        env.byte_array_from_slice(pps),
-    ) else {
-        return ptr::null_mut();
-    };
-    if env.set_object_array_element(&result, 0, sps).is_err()
-        || env.set_object_array_element(&result, 1, pps).is_err()
-    {
-        return ptr::null_mut();
+    env.byte_array_from_slice(configuration.record())
+        .map(|array| array.into_raw())
+        .unwrap_or(ptr::null_mut())
+}
+
+fn native_codec(value: jint) -> Option<picoo_bitstream::Codec> {
+    use picoo_protocol::control::VideoCodec;
+    match VideoCodec::try_from(value).ok()? {
+        VideoCodec::Avc => Some(picoo_bitstream::Codec::Avc),
+        VideoCodec::Hevc => Some(picoo_bitstream::Codec::Hevc),
+        _ => None,
     }
-    result.into_raw()
 }
 
 #[no_mangle]

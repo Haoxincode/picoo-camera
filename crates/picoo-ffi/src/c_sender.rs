@@ -386,7 +386,7 @@ pub extern "C" fn picoo_sender_last_session_error(
     let bytes = code.as_bytes();
     let copy = bytes.len().min(out_len.saturating_sub(1));
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), copy);
         *out.add(copy) = 0;
     }
     copy as i32
