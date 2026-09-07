@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 架构、无版本协议、旧路径删除 | 主要边界已调整 | 各功能替换时继续删除剩余旧实现 |
 | Windows/macOS 原生帧、GPU 预览、按需 CPU 输出 | 已接线，相关原生 CI 成功 | 真实显卡画质、全局预算、完整多 sink 验收 |
-| AVC/HEVC 与四种正式配置 | 部分完成，Apple HEVC 解码已本地验证，Windows 接入待原生验收 | 移动端接线、配置事务、Windows HEVC 实测、真实 1080p60 链路 |
+| AVC/HEVC 与四种正式配置 | 双移动端已接线完整格式与事务；小米八组合原生合同及Android→Mac正式1080p60链路已验证 | iPhone真机、Windows HEVC实际设备、跨端画质与持续性能 |
 | 两平台 VCam 双后端 | 尚未完成 | GpuNative/CpuBridge、SampleClock、切换和真实系统 sample |
 | 两种录像 | 主要工作尚未完成 | 原码流/处理后录像、分段、失败语义与独立时间线 |
 | 四组合发布验收 | 尚未完成 | 真机矩阵、画质、延迟、热稳态、设备丢失及隐私期限 |
@@ -847,3 +847,8 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - REQ-PICOO-MEDIA-065删除VTPixelTransferSession、隐式Trim和根据输入横竖推断目标尺寸的路径。AVFoundation已选择精确输入，生产编码前核对真实CVPixelBuffer尺寸与颜色，直接提交同一原生图像；不匹配时走原生失败，不放大、裁剪或另建转换池。
 - 生产硬件harness验证过小/过大/转置三类输入被拒绝且没有AU，八种精确配置、0→90→0世代合同及未知颜色拒绝均通过；最终iOS模拟器套件通过。日志/tmp/picoo-ios-direct-input-native.log、/tmp/picoo-ios-direct-input-final-test.log。
 - 预览/连接修复提交675cadd对应CI34092696031，Rust、Android、Windows、iOS、macOS全部成功；该CI不包含之后的iOS方向与输入清理，后者另等新一轮验证。
+
+### 2026-09-07：Apple原码流mux风险验证
+
+- 已核对平台mux与mp4-rust/Scuffle/FFmpeg候选，继续采用产品已对齐的AVAssetWriter/MF平台adapter；详见next-recording-mux研究。新增合成AU专用apple-mux-probe，未接入真实手机录像，也未将Recorder标记完成。
+- 八种AVC/HEVC×720p/1080p×30/60文件经AVAssetReader逐AU字节和PTS回读一致；FFprobe独立解码计数、尺寸、帧率、BT.709一致。AVC/HEVC720p30均故意在finalize前退出probe：91帧中90帧/3秒可读，尾帧丢失；验证了必须保留partial与不完整结果。日志/tmp/picoo-apple-mux-probe-4.log，合成输出/tmp/picoo-mux-probe-output-4；部分文件使用独立interrupted目录。

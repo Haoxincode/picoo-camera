@@ -44,3 +44,18 @@ REQ-PICOO-MEDIA-049：这些合成输入证明原生 API 与完整参数事实�
 ## 当前原生 Decoder 能力探测
 
 `cargo run -p picoo-media-decode --example probe_native_decoder` 在调用线程创建正式 native factory，逐个探测自有合成码流；Windows 加 `--features windows-mf`。结果包含每条实际成功的存储/crop/tier/level/fps，不从样本静态生成能力，不启用软件 fallback。没有成功项或 reset 失败返回错误。REQ-PICOO-MEDIA-052；不作为持续帧率或热稳态结果。
+
+## Apple原码流MP4封装与中断探针
+
+先运行上面的生产编码器harness生成合成AU，再执行（每次使用不存在的新输出目录）：
+
+```sh
+xcrun swiftc -parse-as-library -swift-version 6 -default-isolation MainActor \
+  -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macosx15.0 \
+  verification/native-media/apple-mux-probe.swift -o target/verification/apple-mux-probe
+target/verification/apple-mux-probe target/verification/ios-encoder-output target/verification/mux-complete
+target/verification/apple-mux-probe target/verification/ios-encoder-output target/verification/mux-interrupted-avc --interrupt-avc
+target/verification/apple-mux-probe target/verification/ios-encoder-output target/verification/mux-interrupted-hevc --interrupt-hevc
+```
+
+正常模式逐AU核对AVAssetReader回读的压缩字节和PTS；中断模式只退出当前探针进程，故意跳过finalize，留下合成部分文件供ffprobe检查。该目录不冒充产品录制结果；生产必须区分partial与完成文件。选型、实际结果和限制见[录像封装研究](../../docs/research/next-recording-mux.md)。
