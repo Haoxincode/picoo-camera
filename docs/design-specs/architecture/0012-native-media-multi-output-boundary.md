@@ -101,3 +101,5 @@ Windows Decoder 的 AVC/HEVC 配置切换通过新的同步原生 MFT 准备和�
 Sender 的原生配置快照必须持有已验证 CodecConfiguration，codec/profile/level 由该记录派生；不得保存可独立互相矛盾的 raw SPS/PPS 与 codec 标签，也不存在空参数集的默认有效配置。平台适配器负责原生 CSD 的显式 framing 转换和失败返回，Core 不猜测输入是 raw NAL 还是 Annex B。配置快照自身的几何、帧率、方向和时间世代继续由源配置事务验证。
 
 Android 编码器回调按自身 generation 保存完整标准配置记录，AU 入队时连同该记录快照交接；媒体工作者不从全局最新参数集反推旧 AU 的配置。Android UI 仅提出配置请求并请求关键帧，不单独写入 Core 的源配置；配置记录随匹配 AU 原子提交，不能越过队列中的旧世代媒体。MediaCodec 的 CSD→标准 record 转换在原生适配处完成，JNI 不把 record 再拆成 raw 参数返回 Kotlin。
+
+iOS 直接从原生 CMFormatDescription 的 avcC/hvcC atom 获取每张 AU 的配置快照，不提取再拼接 raw 参数。连接和编码器准备只记录用户意图，不提交空配置；源配置只随原生 AU 进入 Core。原码流不因携带配置快照而添加重复参数 NAL。

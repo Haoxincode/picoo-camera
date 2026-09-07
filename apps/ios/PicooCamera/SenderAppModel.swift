@@ -297,7 +297,6 @@ final class SenderAppModel {
                 forHeight: UInt32(preferredResolution.rawValue)
             )
             try session.setPreferredHeight(UInt32(preferredResolution.rawValue))
-            try session.setStreamConfiguration(initialStreamConfiguration)
             try session.connect(to: endpoint, wifiInterfaceIndex: wifiInterface.index)
             return true
         } catch PicooSenderSessionError.networkBindingFailed {
@@ -488,19 +487,7 @@ final class SenderAppModel {
             targetHeight: UInt32(initialResolution.rawValue)
         )
         guard streamEpoch > 0 else { return }
-        if !selectedInitialResolution {
-            do {
-                try await mediaPipeline.prime(
-                    resolution: initialResolution,
-                    bitrateBps: activeBitrateBps,
-                    streamEpoch: streamEpoch,
-                    mirrored: remoteMirrored
-                )
-            } catch {
-                errorMessage = "无法准备视频传输参数。"
-                return
-            }
-        }
+        await mediaPipeline.setMirrored(remoteMirrored)
 
         guard !Task.isCancelled else {
             _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
@@ -632,11 +619,8 @@ final class SenderAppModel {
             await applyResolution(resolution)
         case let .setMirror(mirrored):
             remoteMirrored = mirrored
-            do {
-                try await mediaPipeline?.setMirrored(mirrored)
-            } catch {
-                errorMessage = "无法更新远端镜像设置。"
-            }
+            await mediaPipeline?.setMirrored(mirrored)
+            await camera.requestKeyframe()
         }
     }
 

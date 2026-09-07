@@ -598,3 +598,12 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - 生产 MediaCodec 选择仍为当前 AVC 请求；这批完成配置载体和所有权，不宣称 HEVC/60fps 全链路已启用。iOS 原生回调、Receiver 双 codec 配置准入和 offer 选择继续待办。
 
 同批 macOS FFI all-targets Clippy 通过；01a560a 的 CI 34068821610 全平台成功。
+
+### 2026-09-07：iOS 原生记录与空配置删除
+
+- REQ-PICOO-MEDIA-037：直接携带 CoreMedia 的 avcC/hvcC atom，原 AU 不再重复追加 SPS/PPS；C 回调接纳显式 codec/record。删除连接前的空配置、prime 空参数、独立配置 setter，以及无产品调用方的 raw 参数提取 C ABI。
+- SenderMediaPipeline 只保存已成功提交的配置和 encoder generation；镜像是待提交意图，新 generation 即使 record 字节相同仍需要配置提交。Core 状态变更前校验原生记录和 AU 的字节容量。
+- cargo xtask build ios 成功：device/simulator Rust staticlib、C ABI smoke 链接、XCFramework、ARM64 Simulator App。cargo xtask test ios 成功：Swift/C handle、Keychain 与现有场景回归，以及 CoreMedia format atom codec/record 配对与缺失配置拒绝。新增 Swift 断言首次触发冗余 require 编译错误，修正后通过。
+- 这些是模拟器与原生 API 边界证据，不是 iPhone 摄像头 HEVC、60fps 或热稳态验收；VideoToolbox 生产编码器仍请求当前 AVC，双 codec 选择继续待办。
+
+最终 iOS device/simulator/App 重建成功；生成的 C 头已移除旧 setter/extractor。Swift result bundle 报告 15 passed / 0 failed / 0 skipped；删除已废弃 extractor 测试后，Rust FFI 10 项通过。

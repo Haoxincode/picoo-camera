@@ -82,8 +82,7 @@ nonisolated struct SenderStreamConfiguration: Equatable, Sendable {
     let streamEpoch: UInt32
     let mirrored: Bool
     let rotation: UInt32
-    let sequenceParameterSet: Data
-    let pictureParameterSet: Data
+    let codecConfiguration: EncodedCodecConfiguration
 }
 
 nonisolated enum SenderCameraCommand: Equatable, Sendable {
@@ -257,69 +256,34 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         try check(picoo_sender_disconnect(sender), operation: "sender_disconnect")
     }
 
-    func setStreamConfiguration(_ configuration: SenderStreamConfiguration) throws {
-        let code = configuration.sequenceParameterSet.withUnsafeBytes { sequenceBytes in
-            configuration.pictureParameterSet.withUnsafeBytes { pictureBytes in
-                picoo_sender_set_stream_config(
-                    sender,
-                    configuration.width,
-                    configuration.height,
-                    configuration.framesPerSecond,
-                    configuration.bitrateBps,
-                    configuration.mirrored ? 1 : 0,
-                    configuration.rotation,
-                    sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
-                    UInt(sequenceBytes.count),
-                    pictureBytes.bindMemory(to: UInt8.self).baseAddress,
-                    UInt(pictureBytes.count)
-                )
-            }
-        }
-        try check(code, operation: "sender_set_stream_config")
-    }
-
     func send(
         _ accessUnit: EncodedAccessUnit,
         streamConfiguration: SenderStreamConfiguration?
     ) throws -> EncoderSubmitResult {
-        let configuration = streamConfiguration ?? SenderStreamConfiguration(
-            width: accessUnit.width,
-            height: accessUnit.height,
-            framesPerSecond: accessUnit.framesPerSecond,
-            bitrateBps: accessUnit.bitrateBps,
-            streamEpoch: accessUnit.streamEpoch,
-            mirrored: false,
-            rotation: accessUnit.rotation,
-            sequenceParameterSet: Data(),
-            pictureParameterSet: Data()
-        )
         var outcome = PicooEncoderSubmitOutcome()
         let submitCode = accessUnit.data.withUnsafeBytes { accessUnitBytes in
-            configuration.sequenceParameterSet.withUnsafeBytes { sequenceBytes in
-                configuration.pictureParameterSet.withUnsafeBytes { pictureBytes in
-                    picoo_sender_submit_encoder_event(
-                        sender,
-                        accessUnitBytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(accessUnitBytes.count),
-                        accessUnit.isKeyframe ? 1 : 0,
-                        accessUnit.presentationTimeUs,
-                        accessUnit.encodedAtUs,
-                        accessUnit.streamEpoch,
-                        accessUnit.encoderGeneration,
-                        accessUnit.width,
-                        accessUnit.height,
-                        accessUnit.framesPerSecond,
-                        accessUnit.bitrateBps,
-                        configuration.mirrored ? 1 : 0,
-                        accessUnit.rotation,
-                        streamConfiguration == nil ? 0 : 1,
-                        sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(sequenceBytes.count),
-                        pictureBytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(pictureBytes.count),
-                        &outcome
-                    )
-                }
+            accessUnit.codecConfiguration.record.withUnsafeBytes { recordBytes in
+                picoo_sender_submit_encoder_event(
+                    sender,
+                    accessUnitBytes.bindMemory(to: UInt8.self).baseAddress,
+                    UInt(accessUnitBytes.count),
+                    accessUnit.isKeyframe ? 1 : 0,
+                    accessUnit.presentationTimeUs,
+                    accessUnit.encodedAtUs,
+                    accessUnit.streamEpoch,
+                    accessUnit.encoderGeneration,
+                    accessUnit.width,
+                    accessUnit.height,
+                    accessUnit.framesPerSecond,
+                    accessUnit.bitrateBps,
+                    streamConfiguration?.mirrored == true ? 1 : 0,
+                    accessUnit.rotation,
+                    streamConfiguration == nil ? 0 : 1,
+                    accessUnit.codecConfiguration.codec,
+                    recordBytes.bindMemory(to: UInt8.self).baseAddress,
+                    UInt(recordBytes.count),
+                    &outcome
+                )
             }
         }
         try check(submitCode, operation: "sender_submit_encoder_event")

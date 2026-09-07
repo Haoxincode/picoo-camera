@@ -51,9 +51,9 @@ nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {
     }
 }
 
-nonisolated struct H264ParameterSets: Equatable, Sendable {
-    let sequence: Data
-    let picture: Data
+nonisolated struct EncodedCodecConfiguration: Equatable, Sendable {
+    let codec: UInt32
+    let record: Data
 }
 
 nonisolated struct EncodedAccessUnit: Equatable, Sendable {
@@ -68,7 +68,7 @@ nonisolated struct EncodedAccessUnit: Equatable, Sendable {
     let streamEpoch: UInt32
     let encoderGeneration: UInt64
     let rotation: UInt32
-    let parameterSets: H264ParameterSets?
+    let codecConfiguration: EncodedCodecConfiguration
 }
 
 nonisolated enum VideoEncoderEvent: Sendable {

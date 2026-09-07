@@ -167,34 +167,6 @@ fn identity_load_roundtrip_via_ffi() {
 }
 
 #[test]
-fn extract_sps_pps_via_ffi() {
-    let sps = [0x67u8, 0x42, 0x00, 0x0a];
-    let pps = [0x68u8, 0xce, 0x3c, 0x80];
-    let mut annex = Vec::new();
-    annex.extend_from_slice(&[0, 0, 0, 1]);
-    annex.extend_from_slice(&sps);
-    annex.extend_from_slice(&[0, 0, 0, 1]);
-    annex.extend_from_slice(&pps);
-    let mut sps_out = [0u8; 64];
-    let mut pps_out = [0u8; 64];
-    let mut sps_len = sps_out.len();
-    let mut pps_len = pps_out.len();
-    assert_eq!(
-        picoo_h264_extract_sps_pps(
-            annex.as_ptr(),
-            annex.len(),
-            sps_out.as_mut_ptr(),
-            &mut sps_len,
-            pps_out.as_mut_ptr(),
-            &mut pps_len,
-        ),
-        0
-    );
-    assert_eq!(&sps_out[..sps_len], &sps);
-    assert_eq!(&pps_out[..pps_len], &pps);
-}
-
-#[test]
 fn sender_snapshot_is_coherent_before_capabilities() {
     let handle = create_test_sender();
     assert!(!handle.is_null());

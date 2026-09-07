@@ -1,4 +1,5 @@
 import Foundation
+import CoreMedia
 import Testing
 @testable import PicooCamera
 
@@ -212,6 +213,29 @@ struct PicooSenderSessionTests {
         }
     }
 
+    @Test("Native format codec and record remain paired in the callback snapshot")
+    func nativeConfigurationSnapshot() throws {
+        for (codec, wire, atom) in [(kCMVideoCodecType_H264, UInt32(1), "avcC"),
+                                    (kCMVideoCodecType_HEVC, UInt32(2), "hvcC")] {
+            let record = Data([1, 2, 3, 4])
+            var format: CMFormatDescription?
+            let extensions = [kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: [atom: record]] as CFDictionary
+            let status = CMVideoFormatDescriptionCreate(allocator: nil, codecType: codec,
+                width: 64, height: 64, extensions: extensions, formatDescriptionOut: &format)
+            #expect(status == noErr)
+            let snapshot = try CompressionCallbackContext.codecConfiguration(from: format)
+            #expect(snapshot.codec == wire)
+            #expect(snapshot.record == record)
+        }
+    }
+
+    @Test("Missing native format never produces an empty source configuration")
+    func missingNativeConfigurationIsRejected() {
+        #expect(throws: (any Error).self) {
+            try CompressionCallbackContext.codecConfiguration(from: nil)
+        }
+    }
+
     private func accessUnit(keyframe: Bool, pts: UInt64) -> EncodedAccessUnit {
         EncodedAccessUnit(
             data: Data([0, 0, 0, 1, keyframe ? 0x65 : 0x41]),
@@ -225,7 +249,7 @@ struct PicooSenderSessionTests {
             streamEpoch: 1,
             encoderGeneration: 1,
             rotation: 0,
-            parameterSets: nil
+            codecConfiguration: EncodedCodecConfiguration(codec: 1, record: Data([1]))
         )
     }
 }

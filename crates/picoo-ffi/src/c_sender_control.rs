@@ -1,6 +1,6 @@
 //! Native Sender control ABI — REQ-PICOO-MEDIA-016/022.
 
-use crate::c_media::configuration_from_raw_avc;
+use crate::c_media::configuration_from_record;
 use crate::c_sender::PicooEncoderDirective;
 use crate::handles::{copy_str_to_buf, RecoverMutex, SenderInner};
 use picoo_sender::{EncoderFailureOutcome, NativeEncoderEvent, StreamConfigParams};
@@ -17,7 +17,7 @@ pub struct PicooEncoderSubmitOutcome {
 }
 
 /// Submit one complete native encoder callback under the Rust-owned operation order.
-/// AVC picture bytes use four-byte big-endian NAL lengths (VideoToolbox contract).
+/// AVC/HEVC picture bytes use four-byte big-endian NAL lengths (VideoToolbox contract).
 /// Malformed framing returns -2 before changing encoder or configuration state.
 #[no_mangle]
 pub extern "C" fn picoo_sender_submit_encoder_event(
@@ -36,15 +36,15 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
     mirrored: u8,
     rotation: u32,
     configure_stream: u8,
-    sps: *const u8,
-    sps_len: usize,
-    pps: *const u8,
-    pps_len: usize,
+    codec: u32,
+    codec_configuration: *const u8,
+    codec_configuration_len: usize,
     out_outcome: *mut PicooEncoderSubmitOutcome,
 ) -> i32 {
     if handle.is_null()
         || data.is_null()
         || len == 0
+        || len > 2 * 1024 * 1024
         || stream_epoch == 0
         || encoder_generation == 0
         || encoder_width == 0
@@ -52,16 +52,23 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
     {
         return -1;
     }
+    let codec = match picoo_protocol::control::VideoCodec::try_from(codec as i32) {
+        Ok(picoo_protocol::control::VideoCodec::Avc) => picoo_bitstream::Codec::Avc,
+        Ok(picoo_protocol::control::VideoCodec::Hevc) => picoo_bitstream::Codec::Hevc,
+        _ => return -2,
+    };
     let data = unsafe { std::slice::from_raw_parts(data, len) };
     let Ok(data) = picoo_bitstream::canonical_access_unit(
-        picoo_bitstream::Codec::Avc,
+        codec,
         picoo_bitstream::NalFormat::LengthPrefixed(picoo_bitstream::NalLengthSize::Four),
         data,
     ) else {
         return -2;
     };
     let stream_config = if configure_stream != 0 {
-        let Ok(configuration) = configuration_from_raw_avc(sps, sps_len, pps, pps_len) else {
+        let Ok(configuration) =
+            configuration_from_record(codec, codec_configuration, codec_configuration_len)
+        else {
             return -2;
         };
         Some(StreamConfigParams {
@@ -161,48 +168,6 @@ pub extern "C" fn picoo_sender_pairing_short_code(
         Some(code) => copy_str_to_buf(code, out, out_len),
         None => 0,
     }
-}
-
-/// Configure stream parameters before/at streaming (PUC-005 / REQ-PICOO-PROTOCOL-005).
-///
-/// `sps`/`pps` may be null/0 when unknown. Prefer NAL payloads without start codes;
-/// Annex-B blobs are also accepted when both parameter sets are present in one buffer
-/// passed via `sps` (with `pps` empty) — see `picoo_h264_extract_sps_pps`.
-#[no_mangle]
-pub extern "C" fn picoo_sender_set_stream_config(
-    handle: *mut std::ffi::c_void,
-    width: u32,
-    height: u32,
-    fps: u32,
-    bitrate_bps: u32,
-    mirrored: u8,
-    rotation: u32,
-    sps: *const u8,
-    sps_len: usize,
-    pps: *const u8,
-    pps_len: usize,
-) -> i32 {
-    if handle.is_null() {
-        return -1;
-    }
-    let Ok(configuration) = configuration_from_raw_avc(sps, sps_len, pps, pps_len) else {
-        return -2;
-    };
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    inner
-        .session
-        .lock_or_recover()
-        .set_stream_config(StreamConfigParams {
-            width,
-            height,
-            fps,
-            bitrate_bps,
-            stream_epoch: 0,
-            mirrored: mirrored != 0,
-            rotation,
-            configuration: configuration.into(),
-        });
-    0
 }
 
 /// Returns 1 if receiver requested an IDR (consumes the flag). REQ-PICOO-SESSION-003.

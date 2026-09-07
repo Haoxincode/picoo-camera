@@ -37,20 +37,6 @@ extension SenderAppModel {
         disconnectImmediately()
     }
 
-    var initialStreamConfiguration: SenderStreamConfiguration {
-        SenderStreamConfiguration(
-            width: UInt32(preferredResolution.width),
-            height: UInt32(preferredResolution.height),
-            framesPerSecond: 30,
-            bitrateBps: activeBitrateBps,
-            streamEpoch: camera.streamEpoch,
-            mirrored: remoteMirrored,
-            rotation: 0,
-            sequenceParameterSet: Data(),
-            pictureParameterSet: Data()
-        )
-    }
-
     func toggleResolution() async {
         let target: VideoResolution = switch camera.resolution {
         case .p1080: .p720

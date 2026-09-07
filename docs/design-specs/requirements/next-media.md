@@ -104,3 +104,4 @@
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-MEDIA-035 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025、026 | Sender 配置必须持有已验证 CodecConfiguration，无空参数默认配置、raw SPS/PPS 猜测或独立 codec/profile 标签；原生适配在 Core 状态变更前拒绝无效参数，非法帧率/方向不取整 | HEVC 原生记录序列化、配置事务非法属性拒绝、FFI 缺失/Annex B 冒充 raw/超长输入；完整双 codec 配置协商另验 |
 | REQ-PICOO-MEDIA-036 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、011、025、026 | Android 每个 AU 在回调时携带原生 generation 的标准配置快照；JNI 接纳显式 codec/fps/record，不拆回 SPS/PPS；删除 UI 独立配置写入，队列预算含配置数据，分配前限制 AU/CSD | 不同 codec/帧率世代排队回归、配置预算、Kotlin/JNI 编译、真实 CSD instrumentation；真机执行和完整 HEVC 配置协商另验 |
+| REQ-PICOO-MEDIA-037 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、011、025、026 | iOS 每张 AU 携带 CoreMedia 原生 avcC/hvcC atom；删除空配置 prime、独立 C setStreamConfig 和 raw SPS/PPS FFI；原始 AU 不追加参数；新 encoder generation 即使 record 相同也重新确认配置 | device/simulator Core、App 和 Swift/C 测试；原生 format atom codec/record 保留与缺失拒绝、C record 边界；真实 iPhone 链路另验 |
