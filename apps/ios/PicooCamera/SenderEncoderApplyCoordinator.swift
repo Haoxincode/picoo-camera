@@ -4,13 +4,13 @@ struct PendingEncoderApply {
     let transactionID: UInt64
     let streamEpoch: UInt32
     let encoderGeneration: UInt64
-    let targetHeight: UInt32
+    let targetFormat: VideoSourceFormat
     let targetBitrateBps: UInt32
     let recoveryMessage: String?
 }
 
 struct CommittedEncoderState {
-    let resolution: VideoResolution
+    let sourceFormat: VideoSourceFormat
     let position: CameraPosition
     let streamEpoch: UInt32
     let bitrateBps: UInt32
@@ -36,7 +36,7 @@ final class SenderEncoderApplyCoordinator {
         directive: SenderEncoderDirective?,
         streamEpoch: UInt32,
         encoderGeneration: UInt64,
-        height: UInt32,
+        sourceFormat: VideoSourceFormat,
         bitrateBps: UInt32,
         session: PicooSenderSession
     ) {
@@ -46,16 +46,16 @@ final class SenderEncoderApplyCoordinator {
             transactionID: transactionID,
             streamEpoch: streamEpoch,
             encoderGeneration: encoderGeneration,
-            targetHeight: height,
+            targetFormat: sourceFormat,
             targetBitrateBps: bitrateBps,
             recoveryMessage: nil
         )
     }
 
-    func beginLocal(session: PicooSenderSession, targetHeight: UInt32) -> UInt32 {
+    func beginLocal(session: PicooSenderSession, sourceFormat: VideoSourceFormat) -> UInt32 {
         recoveryTask?.cancel()
         recoveryTask = nil
-        return session.beginStreamReconfiguration(targetHeight: targetHeight, codec: 1, framesPerSecond: 30)
+        return session.beginStreamReconfiguration(targetHeight: UInt32(sourceFormat.resolution.rawValue), codec: sourceFormat.codec.rawValue, framesPerSecond: sourceFormat.framesPerSecond)
     }
 
     func accepts(_ accessUnit: EncodedAccessUnit) -> Bool {
@@ -63,15 +63,14 @@ final class SenderEncoderApplyCoordinator {
         return accessUnit.isKeyframe
             && accessUnit.streamEpoch == pending.streamEpoch
             && accessUnit.encoderGeneration == pending.encoderGeneration
-            && accessUnit.height == pending.targetHeight
+            && pending.targetFormat.matches(accessUnit)
     }
 
     func didCommit(_ accessUnit: EncodedAccessUnit, host: SenderAppModel) {
         guard let pending,
               accessUnit.streamEpoch == pending.streamEpoch,
               accessUnit.encoderGeneration == pending.encoderGeneration,
-              accessUnit.height == pending.targetHeight,
-              let resolution = VideoResolution.supported(forRequestedHeight: accessUnit.height)
+              pending.targetFormat.matches(accessUnit)
         else {
             return
         }
@@ -80,7 +79,7 @@ final class SenderEncoderApplyCoordinator {
             recoveryMessage: pending.recoveryMessage
         )
         committed = CommittedEncoderState(
-            resolution: resolution,
+            sourceFormat: pending.targetFormat,
             position: host.camera.position,
             streamEpoch: accessUnit.streamEpoch,
             bitrateBps: pending.targetBitrateBps
@@ -204,7 +203,7 @@ final class SenderEncoderApplyCoordinator {
         pending = nil
         guard let committed,
               committed.streamEpoch == directive.streamEpoch,
-              UInt32(committed.resolution.rawValue) == directive.targetHeight
+              committed.sourceFormat == VideoSourceFormat(codec: directive.targetCodec, height: directive.targetHeight, framesPerSecond: directive.targetFps)
         else {
             _ = host.senderSession?.reportEncoderFailed(
                 transactionID: directive.id,
@@ -217,7 +216,7 @@ final class SenderEncoderApplyCoordinator {
         recoveryTask = Task { [weak host, weak self] in
             guard let host, let self else { return }
             let restored = await host.camera.restoreCommittedConfiguration(
-                resolution: committed.resolution,
+                sourceFormat: committed.sourceFormat,
                 position: committed.position,
                 bitrateBps: directive.targetBitrateBps,
                 streamEpoch: directive.streamEpoch
@@ -236,7 +235,7 @@ final class SenderEncoderApplyCoordinator {
                 transactionID: directive.id,
                 streamEpoch: directive.streamEpoch,
                 encoderGeneration: host.camera.encoderGeneration,
-                targetHeight: directive.targetHeight,
+                targetFormat: committed.sourceFormat,
                 targetBitrateBps: directive.targetBitrateBps,
                 recoveryMessage: message
             )

@@ -428,18 +428,19 @@ private struct LiveCameraView: View {
 
                 Spacer()
 
-                Button {
-                    Task { await model.toggleResolution() }
+                Menu {
+                    ForEach(model.availableSourceFormats ?? [], id: \.self) { source in
+                        Button(source.label) { Task { await model.applySourceFormat(source) } }
+                    }
                 } label: {
-                    Text(model.resolutionLabel)
+                    Text(model.sourceFormatLabel)
                         .font(.caption.weight(.bold).monospaced())
                         .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
                         .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
                         .background(PicooCameraColor.hudOverlay, in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .disabled(model.camera.state != .running)
-                .accessibilityLabel("切换视频分辨率")
+                .accessibilityLabel("选择视频格式")
             }
             .foregroundStyle(PicooCameraColor.content)
             .padding(.horizontal, PicooCameraLayout.safeHorizontalInset)
@@ -643,9 +644,9 @@ private struct SettingsSheet: View {
             Form {
                 Section("连接") {
                     Toggle("打开 App 自动直连", isOn: $model.autoConnectEnabled)
-                    Picker("默认初始画质", selection: $model.preferredResolution) {
-                        ForEach(VideoResolution.allCases, id: \.self) { resolution in
-                            Text("\(resolution.rawValue)P · 30 FPS").tag(resolution)
+                    Picker("默认初始画质", selection: $model.preferredSourceFormat) {
+                        ForEach(model.camera.localSourceFormats ?? [], id: \.self) { source in
+                            Text(source.label).tag(source)
                         }
                     }
                 }

@@ -130,3 +130,5 @@
 | REQ-PICOO-MEDIA-057 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、005、026 | Android设置和直播选择显式完整源格式；默认请求AVC1080p60经本地与远端准入后使用，不可用明确提示；准备查询由ViewModel生命周期持有，按镜头/方向更新，界面不乐观显示请求为已提交 | Android76项JVM、模拟器12项UI/JNI、真机4项状态/JNI合同；完整手机到桌面切换、方向变化输入重准备、重连和长期fps另验 |
 
 | REQ-PICOO-MEDIA-058 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、026 | Android方向请求通过原生输入事务重新选择足够像素且满足fps的Camera2输入；方向属于完整CaptureProfile并随已提交事实恢复，不仅修改正在使用的GPU矩阵；不可准备的方向请求不自动降低格式或无限重试 | 横竖转换的原生世代/epoch隔离、输入覆盖与fps，失败恢复保留完整profile；真机验证 |
+
+| REQ-PICOO-MEDIA-059 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、005、006、026 | iOS完整SourceFormat贯穿默认请求、原生准备、设置、事务匹配与失败恢复；同一codec/尺寸/fps组合求交，不按最大高度推断，默认明确请求AVC1080p60 | Swift格式匹配、原生准备及事务合同；iOS构建与真机验收 |

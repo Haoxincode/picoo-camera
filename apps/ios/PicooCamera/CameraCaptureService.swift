@@ -91,6 +91,20 @@ actor CameraCaptureService {
         encoderConfiguration = initialConfiguration
     }
 
+    // MEDIA-059: official AVFoundation + actual required-hardware VT preparation.
+    // No capture is started; each temporary encoder is invalidated before returning.
+    func preparedSourceFormats(at position: CameraPosition) -> [VideoSourceFormat] {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,
+            for: .video, position: position.capturePosition) else { return [] }
+        return VideoSourceFormat.productFormats.filter { source in
+            guard (try? Self.captureFormat(from: device.formats,
+                resolution: source.resolution, framesPerSecond: source.framesPerSecond)) != nil
+            else { return false }
+            return VideoEncoderPipeline.canPrepare(source,
+                bitrateBps: PicooSenderSession.initialBitrate(forHeight: UInt32(source.resolution.rawValue)))
+        }
+    }
+
     func start(
         at requestedPosition: CameraPosition,
         configuration: VideoEncoderConfiguration
@@ -133,8 +147,7 @@ actor CameraCaptureService {
         )
     }
 
-    func setResolution(
-        _ resolution: VideoResolution,
+    func setSourceConfiguration(
         configuration: VideoEncoderConfiguration
     ) async throws {
         let operation = beginOperation()

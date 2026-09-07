@@ -144,27 +144,56 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             configuration: actualConfiguration,
             eventHandler: eventHandler
         )
+        let session = try Self.createPreparedSession(
+            configuration: actualConfiguration,
+            callback: Self.outputCallback,
+            refcon: Unmanaged.passUnretained(context).toOpaque()
+        )
+
+        compressionContext = context
+        compressionSession = session
+        return session
+    }
+
+    /// Preparation uses the same required hardware session and properties as live encoding.
+    static func canPrepare(_ source: VideoSourceFormat, bitrateBps: UInt32) -> Bool {
+        let configuration = EncodedFrameConfiguration(
+            codec: source.codec, width: UInt32(source.resolution.width),
+            height: UInt32(source.resolution.height), framesPerSecond: source.framesPerSecond,
+            bitrateBps: bitrateBps, streamEpoch: 1, encoderGeneration: 1, rotation: 0
+        )
+        guard let session = try? createPreparedSession(configuration: configuration,
+            callback: nil, refcon: nil) else { return false }
+        VTCompressionSessionInvalidate(session)
+        return true
+    }
+
+    private static func createPreparedSession(
+        configuration: EncodedFrameConfiguration,
+        callback: VTCompressionOutputCallback?,
+        refcon: UnsafeMutableRawPointer?
+    ) throws -> VTCompressionSession {
         var session: VTCompressionSession?
         let encoderSpecification: CFDictionary = [
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
         ] as CFDictionary
         let imageBufferAttributes: CFDictionary = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            kCVPixelBufferWidthKey: outputWidth,
-            kCVPixelBufferHeightKey: outputHeight,
+            kCVPixelBufferWidthKey: configuration.width,
+            kCVPixelBufferHeightKey: configuration.height,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
         ] as CFDictionary
 
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
-            width: outputWidth,
-            height: outputHeight,
+            width: Int32(configuration.width),
+            height: Int32(configuration.height),
             codecType: configuration.codec.mediaType,
             encoderSpecification: encoderSpecification,
             imageBufferAttributes: imageBufferAttributes,
             compressedDataAllocator: nil,
-            outputCallback: Self.outputCallback,
-            refcon: Unmanaged.passUnretained(context).toOpaque(),
+            outputCallback: callback,
+            refcon: refcon,
             compressionSessionOut: &session
         )
         guard status == noErr, let session else {
@@ -172,14 +201,12 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         }
 
         do {
-            try Self.configure(session, configuration: actualConfiguration)
+            try Self.configure(session, configuration: configuration)
         } catch {
             VTCompressionSessionInvalidate(session)
             throw error
         }
 
-        compressionContext = context
-        compressionSession = session
         return session
     }
 

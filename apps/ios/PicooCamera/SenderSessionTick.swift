@@ -1,16 +1,15 @@
 import Foundation
 
 extension SenderAppModel {
-    var preferredResolutionLabel: String {
-        "\(preferredResolution.rawValue)P · 30 FPS"
+    var availableSourceFormats: [VideoSourceFormat]? {
+        guard let local = camera.localSourceFormats else { return nil }
+        if senderStatus == .disconnected { return local }
+        guard let remote = receiverSourceFormats else { return nil }
+        return local.filter { remote.contains($0) }
     }
 
-    func setPreferredResolution(_ resolution: VideoResolution) {
-        preferredResolution = resolution
-    }
-
-    var resolutionLabel: String {
-        "\(camera.resolution.rawValue)P · 30"
+    var sourceFormatLabel: String {
+        senderSession?.snapshot.lastCommittedSourceFormat?.label ?? "等待视频提交"
     }
 
     var formattedPairingCode: String {
@@ -35,14 +34,6 @@ extension SenderAppModel {
 
     func cancelConnection() {
         disconnectImmediately()
-    }
-
-    func toggleResolution() async {
-        let target: VideoResolution = switch camera.resolution {
-        case .p1080: .p720
-        case .p720: .p1080
-        }
-        await applyResolution(target)
     }
 
     func applySessionTick() {

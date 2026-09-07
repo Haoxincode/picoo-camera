@@ -6,6 +6,33 @@ import Testing
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("Source matching rejects a different codec, dimensions, or frame rate")
+    func completeSourceMatching() {
+        let frame = accessUnit(keyframe: true, pts: 1)
+        let expected = VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 30)
+        #expect(expected.matches(frame))
+        #expect(!VideoSourceFormat(codec: .hevc, resolution: .p720, framesPerSecond: 30).matches(frame))
+        #expect(!VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30).matches(frame))
+        #expect(!VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 60).matches(frame))
+        #expect(Set(VideoSourceFormat.productFormats).count == 8)
+        #expect(VideoSourceFormat.defaultFormat == VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 60))
+    }
+
+    @MainActor
+    @Test("iOS transaction request retains HEVC and 60 fps in the Core directive")
+    func completeSourceTransaction() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Source Transaction")
+        let coordinator = SenderEncoderApplyCoordinator()
+        let requested = VideoSourceFormat(codec: .hevc, resolution: .p720, framesPerSecond: 60)
+        let epoch = coordinator.beginLocal(session: session, sourceFormat: requested)
+        #expect(epoch > PicooSenderSession.initialStreamEpoch)
+        coordinator.waitForApply(directive: nil, streamEpoch: epoch, encoderGeneration: 1,
+            sourceFormat: requested, bitrateBps: 3_000_000, session: session)
+        // An AVC 720p30 AU cannot satisfy the HEVC 720p60 transaction.
+        #expect(!coordinator.accepts(accessUnit(keyframe: true, pts: 1)))
+        #expect(session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0) == .rolledBack)
+    }
+
     @Test("Committed native source remains independent from preparation candidates")
     func committedSourceSnapshot() {
         var value = PicooSenderSnapshot()
@@ -198,6 +225,7 @@ struct PicooSenderSessionTests {
         let configuration = VideoEncoderConfiguration(
             codec: .avc,
             resolution: .p1080,
+            framesPerSecond: 60,
             bitrateBps: canonicalBitrate,
             streamEpoch: 7,
             encoderGeneration: 11,

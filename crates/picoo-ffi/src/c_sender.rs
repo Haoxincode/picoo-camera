@@ -184,8 +184,6 @@ impl From<picoo_sender::SourceFormat> for PicooSourceFormat {
 pub struct PicooSenderSnapshot {
     pub status: i32,
     pub current_bitrate_bps: u32,
-    pub active_height: u32,
-    pub receiver_max_height: u32,
     pub stream_epoch: u32,
     pub reconnect_attempt: u32,
     pub reconnect_delay_ms: u64,
@@ -214,8 +212,6 @@ pub(crate) fn sender_snapshot(session: &SenderSession<QuicSenderTransport>) -> P
         receiver_source_formats,
         status: sender_status_code(session.status()),
         current_bitrate_bps: session.current_bitrate_bps(),
-        active_height: session.bitrate_active_height(),
-        receiver_max_height: session.receiver_max_height(),
         stream_epoch: session.current_stream_epoch(),
         reconnect_attempt: session.reconnect_attempt(),
         reconnect_delay_ms: session.last_scheduled_reconnect_delay_ms().unwrap_or(0),

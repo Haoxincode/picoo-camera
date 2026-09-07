@@ -113,8 +113,6 @@ nonisolated enum SenderEncoderFailureOutcome: Int32, Sendable {
 nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
     let status: PicooSenderStatus
     let currentBitrateBps: UInt32
-    let activeHeight: UInt32
-    let receiverMaxHeight: UInt32
     let streamEpoch: UInt32
     let reconnectAttempt: UInt32
     let reconnectDelayMs: UInt64
@@ -182,8 +180,6 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             return SenderSessionSnapshot(
                 status: .disconnected,
                 currentBitrateBps: 0,
-                activeHeight: 0,
-                receiverMaxHeight: 0,
                 streamEpoch: Self.initialStreamEpoch,
                 reconnectAttempt: 0,
                 reconnectDelayMs: 0,
@@ -194,8 +190,6 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         return SenderSessionSnapshot(
             status: PicooSenderStatus(code: value.status),
             currentBitrateBps: value.current_bitrate_bps,
-            activeHeight: value.active_height,
-            receiverMaxHeight: value.receiver_max_height,
             streamEpoch: value.stream_epoch,
             reconnectAttempt: value.reconnect_attempt,
             reconnectDelayMs: value.reconnect_delay_ms,

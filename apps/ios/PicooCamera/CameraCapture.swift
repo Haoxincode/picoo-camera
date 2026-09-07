@@ -8,7 +8,9 @@ import UIKit
 final class CameraCaptureModel {
     private(set) var state: CameraCaptureState = .idle
     private(set) var position: CameraPosition = .back
-    private(set) var resolution: VideoResolution = .p1080
+    private(set) var localSourceFormats: [VideoSourceFormat]?
+    private(set) var sourceFormat: VideoSourceFormat = .defaultFormat
+    var resolution: VideoResolution { sourceFormat.resolution }
     private(set) var streamEpoch: UInt32
     private(set) var encoderGeneration: UInt64
     private(set) var previewLayer: AVCaptureVideoPreviewLayer?
@@ -30,8 +32,9 @@ final class CameraCaptureModel {
         let sessionReference = CaptureSessionReference()
         let eventBuffer = VideoEncoderEventBuffer()
         let initialConfiguration = VideoEncoderConfiguration(
-            codec: .avc,
-            resolution: .p1080,
+            codec: VideoSourceFormat.defaultFormat.codec,
+            resolution: VideoSourceFormat.defaultFormat.resolution,
+            framesPerSecond: VideoSourceFormat.defaultFormat.framesPerSecond,
             bitrateBps: initialBitrateBps,
             streamEpoch: initialStreamEpoch,
             encoderGeneration: 1
@@ -53,8 +56,19 @@ final class CameraCaptureModel {
         )
     }
 
+    func refreshSourceFormats() async {
+        let requestedPosition = position
+        let formats = await service.preparedSourceFormats(at: requestedPosition)
+        guard !Task.isCancelled, position == requestedPosition else { return }
+        localSourceFormats = formats
+    }
+
+    func preparedSourceFormats(at position: CameraPosition? = nil) async -> [VideoSourceFormat] {
+        await service.preparedSourceFormats(at: position ?? self.position)
+    }
+
     func start(
-        resolution requestedResolution: VideoResolution? = nil,
+        sourceFormat requestedSourceFormat: VideoSourceFormat? = nil,
         bitrateBps: UInt32,
         streamEpoch: UInt32
     ) async -> Bool {
@@ -86,8 +100,8 @@ final class CameraCaptureModel {
         let previousEncoderGeneration = encoderGeneration
         encoderGeneration &+= 1
         do {
-            if let requestedResolution {
-                resolution = requestedResolution
+            if let requestedSourceFormat {
+                sourceFormat = requestedSourceFormat
             }
             targetBitrateBps = bitrateBps
             try await service.start(
@@ -140,8 +154,7 @@ final class CameraCaptureModel {
         self.streamEpoch = streamEpoch
         encoderGeneration &+= 1
         do {
-            try await service.setResolution(
-                resolution,
+            try await service.setSourceConfiguration(
                 configuration: encoderConfiguration
             )
             guard operation == operationGeneration else { return false }
@@ -158,6 +171,9 @@ final class CameraCaptureModel {
 
     func switchCamera(streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
+        let targetPosition = position.opposite
+        let prepared = await preparedSourceFormats(at: targetPosition)
+        guard !Task.isCancelled, state == .running, prepared.contains(sourceFormat) else { return false }
         let operation = beginOperation()
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
@@ -171,6 +187,8 @@ final class CameraCaptureModel {
             await service.updateBitrate(targetBitrateBps)
             guard operation == operationGeneration else { return false }
             position = switchedPosition
+            localSourceFormats = nil
+            await refreshSourceFormats()
             if let previewLayer {
                 updatePreviewMirroring(previewLayer)
                 startRotationUpdates(previewLayer: previewLayer)
@@ -184,24 +202,23 @@ final class CameraCaptureModel {
         }
     }
 
-    func setResolution(
-        _ requestedResolution: VideoResolution,
+    func setSourceFormat(
+        _ requestedSourceFormat: VideoSourceFormat,
         bitrateBps: UInt32,
         streamEpoch: UInt32
     ) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
-        let previousResolution = resolution
+        let previousSourceFormat = sourceFormat
         let previousBitrate = targetBitrateBps
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
-        resolution = requestedResolution
+        sourceFormat = requestedSourceFormat
         targetBitrateBps = bitrateBps
         self.streamEpoch = streamEpoch
         encoderGeneration &+= 1
         do {
-            try await service.setResolution(
-                requestedResolution,
+            try await service.setSourceConfiguration(
                 configuration: encoderConfiguration
             )
             guard operation == operationGeneration else { return false }
@@ -210,7 +227,7 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
-            resolution = previousResolution
+            sourceFormat = previousSourceFormat
             targetBitrateBps = previousBitrate
             self.streamEpoch = previousEpoch
             encoderGeneration = previousEncoderGeneration
@@ -222,20 +239,20 @@ final class CameraCaptureModel {
     /// Recovery is complete only after the caller observes the first matching
     /// IDR from this generation.
     func restoreCommittedConfiguration(
-        resolution committedResolution: VideoResolution,
+        sourceFormat committedSourceFormat: VideoSourceFormat,
         position committedPosition: CameraPosition,
         bitrateBps committedBitrateBps: UInt32,
         streamEpoch committedStreamEpoch: UInt32
     ) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
-        let previousResolution = resolution
+        let previousSourceFormat = sourceFormat
         let previousPosition = position
         let previousBitrate = targetBitrateBps
         let previousEpoch = streamEpoch
         let previousEncoderGeneration = encoderGeneration
 
-        resolution = committedResolution
+        sourceFormat = committedSourceFormat
         targetBitrateBps = committedBitrateBps
         streamEpoch = committedStreamEpoch
         encoderGeneration &+= 1
@@ -251,8 +268,7 @@ final class CameraCaptureModel {
                 }
                 position = restoredPosition
             } else {
-                try await service.setResolution(
-                    committedResolution,
+                try await service.setSourceConfiguration(
                     configuration: encoderConfiguration
                 )
                 guard operation == operationGeneration else {
@@ -270,7 +286,7 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
-            resolution = previousResolution
+            sourceFormat = previousSourceFormat
             position = previousPosition
             targetBitrateBps = previousBitrate
             streamEpoch = previousEpoch
@@ -313,8 +329,9 @@ final class CameraCaptureModel {
 
     private var encoderConfiguration: VideoEncoderConfiguration {
         VideoEncoderConfiguration(
-            codec: .avc,
-            resolution: resolution,
+            codec: sourceFormat.codec,
+            resolution: sourceFormat.resolution,
+            framesPerSecond: sourceFormat.framesPerSecond,
             bitrateBps: targetBitrateBps,
             streamEpoch: streamEpoch,
             encoderGeneration: encoderGeneration

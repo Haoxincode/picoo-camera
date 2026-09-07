@@ -26,7 +26,7 @@ nonisolated enum VideoResolution: Int, CaseIterable, Hashable, Sendable {
 
 }
 
-nonisolated enum NativeVideoCodec: UInt32, CaseIterable, Sendable {
+nonisolated enum NativeVideoCodec: UInt32, CaseIterable, Hashable, Sendable {
     case avc = 1
     case hevc = 2
 
@@ -54,7 +54,7 @@ nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {
     init(
         codec: NativeVideoCodec,
         resolution: VideoResolution,
-        framesPerSecond: UInt32 = 30,
+        framesPerSecond: UInt32,
         bitrateBps: UInt32,
         streamEpoch: UInt32,
         encoderGeneration: UInt64,

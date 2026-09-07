@@ -808,3 +808,11 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - Camera2选择及compositor创建捕获同一次准备的输入尺寸和方向；普通码率更新不覆盖待提交事务的目标码率。Core非恢复指令也应用完整源格式后启动原生准备。
 - Android完整APK/test APK构建及76项JVM通过；小米15相机八组合回归和新增动态方向合同共2项通过。后摄AVC1080p60横持1920×1080/epoch1 → 竖持2448×2448/epoch2 → 恢复横持1920×1080/epoch1，原生世代分别1/3/5，短窗约60.13/60.10/60.13fps。恢复调用生产restoreCommittedConfiguration；仅记录时间戳与配置，不持久化相机图像，测试后恢复MainActivity。
 - 本项未证明完整手机GUI到Mac的方向事务、双Camera2预览目标或长期热稳态；真实Core失败后的端到端恢复仍需独立验收。上一批2f46952的CI 34087471366全平台成功。
+
+### 2026-09-07：iOS完整源格式与原生准备
+
+- REQ-PICOO-MEDIA-059：相机模型、编码配置、事务目标与恢复缓存传递完整VideoSourceFormat；删除硬编码AVC/30fps事务和编码器隐式fps参数。默认请求AVC1080p60，旧高度偏好不迁移；设置Picker与直播Menu选择完整候选，HUD采用Core最后提交事实。
+- 准备在CameraCaptureService actor内顺序查询同一AVFoundation format的尺寸/fps，并创建要求硬件的临时VideoToolbox会话，复用生产profile、码率、颜色及Prepare规则后立即销毁。查询结果与Receiver完整候选求交；未知能力等待新快照，不把未知当作允许。目标镜头也须可准备当前完整格式。
+- C/Swift状态删除无调用方的activeHeight/receiverMaxHeight，不保留兼容字段。AVFoundation服务删除多余的高度参数，直接接收完整编码配置；待提交事务期间普通ABR不覆盖目标码率。
+- iOS device/simulator Rust XCFramework和App构建通过；新ABI的Swift模拟器套件通过，新增完整格式不匹配拒绝与HEVC720p60事务合同。FFI14项通过，文档链接通过。具体日志为/tmp/picoo-ios-source-validated-test.log、/tmp/picoo-ios-source-abi-build.log、/tmp/picoo-ios-source-ffi-suite/result.log。
+- 尚无iPhone真机能力、实际八组合、持续fps或端到端恢复证据；方向仍需按完整原生输入事务继续重构。模拟器结果不证明VideoToolbox硬件候选可用。Mac Receiver已观察到UDP4433监听，原先Keychain阻塞不再作为当前阻碍。
