@@ -63,3 +63,7 @@ REQ-PICOO-MEDIA-073采用标准库VecDeque建立独立于live单IDR缓存的配�
 REQ-PICOO-MEDIA-074在startWriting成功后以std::fs::File保留原生输出的只读句柄；本机验证此时路径已存在。AVAssetWriter取消删除路径后，句柄仍可读取原inode的已写入字节。取消完成后用标准io::copy和既有tempfile原子无覆盖提升恢复partial，并同步文件/目录；不要求文件系统支持硬链接，不复制正常录像路径。重复恢复核对设备号/inode，外来替换路径不覆盖且报错。显式finish/cancel返回恢复失败，Drop仅尽力清理。
 
 macOS生产AVC/HEVC各91个合成AU取消测试：保留句柄与恢复文件逐字节相同；取消后不能签发完成凭据。该证据不承诺任意partial可播放，也不承诺存储故障或原生cancel阻塞有固定结束时限。磁盘满等物理写入失败仍返回失败。
+
+## 桌面录像交互复用
+
+REQ-PICOO-MEDIA-075复用当前锁定GPUI的prompt_for_paths目录选择、reveal_path系统定位及GPUI Kit Button/AlertDialog；沿用Receiver有界命令与异步reply，无新增UI依赖或自制选择器。操作区只显示简短结果，原生错误通过可键盘操作的详情按钮呈现，避免长路径/错误撑大工作区。取消选择不发送开始命令，队列拒绝明确回复；录制状态来自Core，Windows未接入原生mux时不显示可用入口。

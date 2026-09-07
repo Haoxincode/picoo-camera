@@ -87,9 +87,18 @@ impl ReceiverRuntimeConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RecordingSnapshot {
+    pub available: bool,
+    pub state: Option<picoo_recording::bundle::RecordingState>,
+    pub stopping: bool,
+    pub result: Option<picoo_recording::RecordingResult>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // GPUI shell reads fields when `gpui-ui` is enabled.
 pub struct ReceiverSnapshot {
+    pub recording: RecordingSnapshot,
     pub status: ReceiverStatus,
     pub bind_addr: Option<SocketAddr>,
     /// Unicast IPv4 advertised through mDNS and shown for manual IP connection.
@@ -376,6 +385,21 @@ impl ReceiverRuntime {
         let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
         let (trusted_devices, trusted_identity_replacement) = self.trusted_snapshot();
         ReceiverSnapshot {
+            recording: {
+                #[cfg(target_os = "macos")]
+                {
+                    RecordingSnapshot {
+                        available: true,
+                        state: self.receiver.encoded_recording_state(),
+                        stopping: self.receiver.encoded_recording_stopping(),
+                        result: self.receiver.encoded_recording_result(),
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    RecordingSnapshot::default()
+                }
+            },
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
             advertise_host: self.advertise_host.clone(),

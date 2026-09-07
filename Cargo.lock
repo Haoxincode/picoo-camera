@@ -5611,6 +5611,7 @@ dependencies = [
  "picoo-pairing",
  "picoo-protocol",
  "picoo-receiver",
+ "picoo-recording",
  "picoo-session",
  "picoo-transport",
  "serde",

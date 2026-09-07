@@ -14,6 +14,7 @@ mod lifecycle;
 mod nav;
 mod pages;
 mod pairing;
+mod recording;
 mod vcam;
 mod widgets;
 
@@ -120,6 +121,8 @@ struct PicooDesktopApp {
     pairing_locally_confirmed: bool,
     /// Serializes side-effecting Receiver commands and disables duplicate UI submission.
     receiver_command_pending: bool,
+    recording_command_pending: bool,
+    recording_error: Option<String>,
     /// Current post-pairing same-name replacement prompt. Domain identity,
     /// never a list index (REQ-PICOO-PAIRING-006).
     identity_replacement_dialog_revision: Option<u64>,

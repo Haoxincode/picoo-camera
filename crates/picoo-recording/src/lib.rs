@@ -32,3 +32,10 @@ pub enum RecordingError {
 pub struct FinalizedSegment {
     pub(crate) path: std::path::PathBuf,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordingResult {
+    pub path: Option<std::path::PathBuf>,
+    pub state: bundle::RecordingState,
+    pub error: Option<String>,
+}

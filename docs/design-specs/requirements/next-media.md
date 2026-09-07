@@ -162,3 +162,5 @@
 | REQ-PICOO-MEDIA-073 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021、025 | 完整AU早于对应配置时，录像独立暂存最多16项/250ms，不使用live的单IDR暂存；配置匹配后按抵达次序交给录制重排，停止或超限仍缺配置时明确失败 | 早到配置、源身份、固定期限、停止缺配置及live隔离回归 |
 
 | REQ-PICOO-MEDIA-074 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | Apple取消原生写入后，从创建时保留的文件句柄恢复被原生删除的partial；不覆盖已有路径，不给未最终化文件签发完成凭据，恢复失败明确返回 | AVC/HEVC原生cancel后字节留存、已有文件不覆盖与I/O失败；可播放性独立于字节留存 |
+
+| REQ-PICOO-MEDIA-075 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021 | 桌面原码流录像使用原生文件夹选择、显式开始/停止与Receiver快照；固定工作区入口跨页面显示准备/录制/收尾/结果，打开已保留目录，不把命令接纳当作保存完成 | 取消选择、重复请求、队列拒绝、收尾状态、完整/缺口/失败呈现及本机界面验证 |

@@ -18,12 +18,7 @@ use std::{
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 const ARMING_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone)]
-pub struct RecordingResult {
-    pub path: Option<PathBuf>,
-    pub state: RecordingState,
-    pub error: Option<String>,
-}
+use crate::RecordingResult;
 
 struct Shared {
     path: OnceLock<PathBuf>,

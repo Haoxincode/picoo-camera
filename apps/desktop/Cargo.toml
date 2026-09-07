@@ -24,6 +24,7 @@ picoo-pairing.workspace = true
 picoo-protocol.workspace = true
 picoo-metrics.workspace = true
 picoo-receiver.workspace = true
+picoo-recording.workspace = true
 picoo-session.workspace = true
 picoo-transport.workspace = true
 serde.workspace = true

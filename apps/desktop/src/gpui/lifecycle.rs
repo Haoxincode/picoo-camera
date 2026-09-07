@@ -78,6 +78,8 @@ impl PicooDesktopApp {
             pairing_dialog: Default::default(),
             pairing_locally_confirmed: false,
             receiver_command_pending: false,
+            recording_command_pending: false,
+            recording_error: None,
             identity_replacement_dialog_revision: None,
         }
     }
@@ -416,6 +418,7 @@ impl Render for PicooDesktopApp {
                         .min_w_0()
                         .min_h_0()
                         .child(self.render_workspace_toolbar(cx))
+                        .child(self.render_recording_bar(&snapshot, cx))
                         .child(self.render_section(&snapshot, cx)),
                 );
             div()

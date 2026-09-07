@@ -5,7 +5,8 @@ use picoo_packet::AssembledAccessUnit;
 use picoo_recording::{
     bundle::{GapReason, RecordingState},
     ingress::IngressFailure,
-    worker::{RecordingResult, RecordingWorker},
+    worker::RecordingWorker,
+    RecordingResult,
 };
 #[cfg(test)]
 use std::sync::Arc;
@@ -45,6 +46,12 @@ impl ReceiverSession {
 
     pub fn encoded_recording_state(&self) -> Option<RecordingState> {
         self.recording.as_ref().map(RecordingWorker::state)
+    }
+
+    pub fn encoded_recording_stopping(&self) -> bool {
+        self.recording
+            .as_ref()
+            .is_some_and(|worker| !worker.is_accepting() && worker.result().is_none())
     }
 
     pub fn encoded_recording_result(&self) -> Option<RecordingResult> {
@@ -180,6 +187,10 @@ mod tests {
         receiver
             .start_encoded_recording(parent.path().to_owned())
             .unwrap();
+        assert!(receiver
+            .start_encoded_recording(parent.path().to_owned())
+            .is_err());
+        assert!(!receiver.encoded_recording_stopping());
         for id in [2, 1] {
             let au = AssembledAccessUnit {
                 data: data.clone().into(),
@@ -226,6 +237,10 @@ mod tests {
         assert!(receiver.recording_configuration_wait.is_empty());
         receiver.report_recording_gap(GapReason::NetworkLoss);
         receiver.stop_encoded_recording();
+        receiver.stop_encoded_recording();
+        assert!(
+            receiver.encoded_recording_stopping() || receiver.encoded_recording_result().is_some()
+        );
         let deadline = Instant::now() + Duration::from_secs(15);
         let result = loop {
             if let Some(result) = receiver.encoded_recording_result() {
@@ -235,6 +250,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(2));
         };
         assert_eq!(result.state, RecordingState::HasGaps);
+        assert!(!receiver.encoded_recording_stopping());
         let stored = std::fs::read_to_string(result.path.unwrap().join("manifest.json")).unwrap();
         assert!(stored.contains("\"first_au\": 1"));
         assert!(stored.contains("\"last_au\": 2"));
