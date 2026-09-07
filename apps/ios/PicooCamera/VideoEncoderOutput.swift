@@ -2,7 +2,7 @@ import CoreMedia
 import Foundation
 import VideoToolbox
 
-nonisolated struct EncodedFrameConfiguration: Sendable {
+nonisolated struct EncodedFrameConfiguration: Equatable, Sendable {
     let width: UInt32
     let height: UInt32
     let framesPerSecond: UInt32
@@ -13,8 +13,8 @@ nonisolated struct EncodedFrameConfiguration: Sendable {
 }
 
 nonisolated final class CompressionCallbackContext: @unchecked Sendable {
-    private let configurationLock = NSLock()
-    private var configuration: EncodedFrameConfiguration
+    private let configuration: EncodedFrameConfiguration
+    private let submittedFrames = SubmittedFrameConfigurations()
     private let eventHandler: @Sendable (VideoEncoderEvent) -> Void
 
     init(
@@ -25,41 +25,39 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
         self.eventHandler = eventHandler
     }
 
-    func updateBitrate(_ bitrateBps: UInt32) {
-        configurationLock.withLock {
-            configuration = EncodedFrameConfiguration(
-                width: configuration.width,
-                height: configuration.height,
-                framesPerSecond: configuration.framesPerSecond,
-                bitrateBps: bitrateBps,
-                streamEpoch: configuration.streamEpoch,
-                encoderGeneration: configuration.encoderGeneration,
-                rotation: configuration.rotation
-            )
-        }
+    func reserveFrame(bitrateBps: UInt32, rotation: UInt32) -> UInt? {
+        submittedFrames.reserve(EncodedFrameConfiguration(
+            width: configuration.width,
+            height: configuration.height,
+            framesPerSecond: configuration.framesPerSecond,
+            bitrateBps: bitrateBps,
+            streamEpoch: configuration.streamEpoch,
+            encoderGeneration: configuration.encoderGeneration,
+            rotation: rotation
+        ))
     }
 
-    func updateRotation(_ rotation: UInt32) {
-        configurationLock.withLock {
-            configuration = EncodedFrameConfiguration(
-                width: configuration.width,
-                height: configuration.height,
-                framesPerSecond: configuration.framesPerSecond,
-                bitrateBps: configuration.bitrateBps,
-                streamEpoch: configuration.streamEpoch,
-                encoderGeneration: configuration.encoderGeneration,
-                rotation: rotation % 360
-            )
-        }
+    func cancelFrame(_ identifier: UInt) {
+        _ = submittedFrames.take(identifier)
     }
 
     func receive(
+        sourceFrameRefCon: UnsafeMutableRawPointer?,
         status: OSStatus,
         infoFlags: VTEncodeInfoFlags,
         sampleBuffer: CMSampleBuffer?
     ) {
+        guard let sourceFrameRefCon,
+              let configuration = submittedFrames.take(UInt(bitPattern: sourceFrameRefCon))
+        else {
+            eventHandler(.failure(
+                streamEpoch: self.configuration.streamEpoch,
+                encoderGeneration: self.configuration.encoderGeneration,
+                message: "编码完成缺少有效的原始帧身份"
+            ))
+            return
+        }
         guard status == noErr else {
-            let configuration = configurationLock.withLock { self.configuration }
             eventHandler(.failure(
                 streamEpoch: configuration.streamEpoch,
                 encoderGeneration: configuration.encoderGeneration,
@@ -71,11 +69,14 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
               let sampleBuffer,
               CMSampleBufferDataIsReady(sampleBuffer)
         else {
+            eventHandler(.queueOverflow(
+                streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration
+            ))
             return
         }
 
         do {
-            let configuration = configurationLock.withLock { self.configuration }
             let isKeyframe = Self.isKeyframe(sampleBuffer)
             let codecConfiguration = try Self.codecConfiguration(from: sampleBuffer.formatDescription)
             let data = try Self.encodedData(from: sampleBuffer)
@@ -99,7 +100,6 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
                 codecConfiguration: codecConfiguration
             )))
         } catch {
-            let configuration = configurationLock.withLock { self.configuration }
             eventHandler(.failure(
                 streamEpoch: configuration.streamEpoch,
                 encoderGeneration: configuration.encoderGeneration,
@@ -183,5 +183,27 @@ nonisolated private enum VideoEncoderOutputError: LocalizedError {
         case .excessiveAccessUnit:
             "VideoToolbox 输出数据超出容量限制"
         }
+    }
+}
+
+/// Opaque native callback IDs own immutable input facts, never current owner state.
+/// A missing/duplicate completion cannot borrow another submission's identity.
+nonisolated final class SubmittedFrameConfigurations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextIdentifier: UInt = 1
+    private var pending: [UInt: EncodedFrameConfiguration] = [:]
+
+    func reserve(_ configuration: EncodedFrameConfiguration) -> UInt? {
+        lock.withLock {
+            guard pending.count < 16, nextIdentifier < UInt.max else { return nil }
+            let identifier = nextIdentifier
+            nextIdentifier += 1
+            pending[identifier] = configuration
+            return identifier
+        }
+    }
+
+    func take(_ identifier: UInt) -> EncodedFrameConfiguration? {
+        lock.withLock { pending.removeValue(forKey: identifier) }
     }
 }

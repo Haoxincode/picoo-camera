@@ -35,6 +35,8 @@ nonisolated final class VideoEncoderPipeline: NSObject,
 
     func start(configuration: VideoEncoderConfiguration) async {
         await perform {
+            self.isAcceptingFrames = false
+            self.invalidateCompressionSession()
             self.configuration = configuration
             self.forceNextKeyframe = true
             self.isAcceptingFrames = true
@@ -61,7 +63,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             guard let session = self.compressionSession else { return }
             do {
                 try Self.setBitrate(bitrateBps, on: session)
-                self.compressionContext?.updateBitrate(bitrateBps)
             } catch {
                 self.eventHandler(.failure(
                     streamEpoch: self.configuration.streamEpoch,
@@ -82,7 +83,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
                 encoderGeneration: self.configuration.encoderGeneration,
                 rotation: rotation
             )
-            self.compressionContext?.updateRotation(rotation)
         }
     }
 
@@ -342,7 +342,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
 
     private static let outputCallback: VTCompressionOutputCallback = {
         outputCallbackRefCon,
-        _,
+        sourceFrameRefCon,
         status,
         infoFlags,
         sampleBuffer in
@@ -350,7 +350,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         let context = Unmanaged<CompressionCallbackContext>
             .fromOpaque(outputCallbackRefCon)
             .takeUnretainedValue()
-        context.receive(status: status, infoFlags: infoFlags, sampleBuffer: sampleBuffer)
+        context.receive(sourceFrameRefCon: sourceFrameRefCon, status: status, infoFlags: infoFlags, sampleBuffer: sampleBuffer)
     }
 }
 
@@ -379,16 +379,24 @@ extension VideoEncoderPipeline {
             let duration = sampleBuffer.duration.isValid
                 ? sampleBuffer.duration
                 : CMTime(value: 1, timescale: CMTimeScale(configuration.framesPerSecond))
+            guard let context = compressionContext,
+                  let identifier = context.reserveFrame(
+                    bitrateBps: configuration.bitrateBps, rotation: configuration.rotation
+                  )
+            else { throw VideoEncoderError.pendingFramesExhausted }
             let status = VTCompressionSessionEncodeFrame(
                 session,
                 imageBuffer: encodingBuffer,
                 presentationTimeStamp: sampleBuffer.presentationTimeStamp,
                 duration: duration,
                 frameProperties: frameProperties,
-                sourceFrameRefcon: nil,
+                sourceFrameRefcon: UnsafeMutableRawPointer(bitPattern: identifier),
                 infoFlagsOut: &infoFlags
             )
             guard status == noErr else {
+                // Native callbacks may run inline. Cancellation is idempotent
+                // if the callback already consumed its own submission.
+                context.cancelFrame(identifier)
                 eventHandler(.failure(
                     streamEpoch: configuration.streamEpoch,
                     encoderGeneration: configuration.encoderGeneration,

@@ -236,6 +236,44 @@ struct PicooSenderSessionTests {
         }
     }
 
+    @Test("encoder completions retain input facts across updates and out-of-order callbacks")
+    func encoderCompletionUsesOriginalSubmission() throws {
+        let pending = SubmittedFrameConfigurations()
+        let first = EncodedFrameConfiguration(
+            width: 1280, height: 720, framesPerSecond: 30, bitrateBps: 3_000_000,
+            streamEpoch: 2, encoderGeneration: 3, rotation: 0
+        )
+        let next = EncodedFrameConfiguration(
+            width: 1280, height: 720, framesPerSecond: 30, bitrateBps: 4_000_000,
+            streamEpoch: 2, encoderGeneration: 3, rotation: 90
+        )
+        let firstID = try #require(pending.reserve(first))
+        let nextID = try #require(pending.reserve(next))
+        #expect(pending.take(nextID) == next)
+        #expect(pending.take(nextID) == nil)
+        #expect(pending.take(0) == nil)
+        #expect(pending.take(firstID) == first)
+    }
+
+    @Test("pending native frames are bounded and cancelled IDs are never reused")
+    func encoderCompletionCapacityAndCancellation() throws {
+        let pending = SubmittedFrameConfigurations()
+        let frame = EncodedFrameConfiguration(
+            width: 1920, height: 1080, framesPerSecond: 60, bitrateBps: 5_000_000,
+            streamEpoch: 7, encoderGeneration: 9, rotation: 180
+        )
+        var identifiers: [UInt] = []
+        for _ in 0..<16 { identifiers.append(try #require(pending.reserve(frame))) }
+        #expect(pending.reserve(frame) == nil)
+        #expect(pending.take(identifiers[0]) == frame)
+        #expect(pending.take(identifiers[0]) == nil)
+        let replacement = try #require(pending.reserve(frame))
+        #expect(!identifiers.contains(replacement))
+        #expect(pending.take(identifiers[0]) == nil)
+        #expect(pending.take(replacement) == frame)
+        for identifier in identifiers.dropFirst() { #expect(pending.take(identifier) == frame) }
+    }
+
     private func accessUnit(keyframe: Bool, pts: UInt64) -> EncodedAccessUnit {
         EncodedAccessUnit(
             data: Data([0, 0, 0, 1, keyframe ? 0x65 : 0x41]),

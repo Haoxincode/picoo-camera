@@ -109,3 +109,5 @@ iOS 直接从原生 CMFormatDescription 的 avcC/hvcC atom 获取每张 AU 的�
 CodecConfiguration 的共同源事实由位流层解释，各 SPS 必须一致。Sender 序列化与 Receiver 配置替换前核对声明的可见尺寸与 SPS 裁剪后尺寸；coded padding 不当作显示尺寸。Decoder 复用同一检查，仍独立验证实际原生 allocation 和剩余 crop。该静态一致性不能替代相机帧率、色彩或硬件能力证据。
 
 iOS 相机输入的尺寸与帧率必须来自同一个 AVFoundation format；配置服务在串行 owner 内共同设置 activeFormat 与 min/max frame duration。编码配置的 fps 不只是压缩器 hint；采集层不得固定另一个帧率，也不由 sessionPreset 重新选择已提交的格式。原生 8-bit 输入与 420v 输出的选择不代替实际颜色和持续吞吐验证。
+
+iOS 编码输入在提交时登记不可变的配置事实，VideoToolbox 的 sourceFrameRefcon 只承载不解引用的单调身份。回调按原身份消费该快照，不能读取后来修改的方向或码率；未知、重复身份不得发布 AU。每个原生 session 最多十六个待完成项，失败取消幂等且身份不复用。关闭 session 完成原生回调后释放上下文；开始新配置不沿用旧压缩 session。平台丢帧明确触发恢复事实，不静默当作连续预测链。

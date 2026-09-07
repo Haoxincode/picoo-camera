@@ -168,6 +168,7 @@ nonisolated final class VideoEncoderEventBuffer: @unchecked Sendable {
 }
 
 nonisolated enum VideoEncoderError: LocalizedError {
+    case pendingFramesExhausted
     case sessionCreation(OSStatus)
     case hardwareEncoderUnavailable
     case property(String, OSStatus)
@@ -179,6 +180,8 @@ nonisolated enum VideoEncoderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .pendingFramesExhausted:
+            "编码器待完成帧已达到容量上限"
         case .hardwareEncoderUnavailable:
             "没有可用的硬件 H.264 High 编码器"
         case let .sessionCreation(status):

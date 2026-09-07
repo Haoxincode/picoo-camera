@@ -626,3 +626,8 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - 当前没有真 iPhone 采集验证，不将格式表和属性设置视为实际 60fps、颜色或 encoder/decoder offers 交集已经验收。
 
 7a2eaa2 的 CI 34070420985 全平台成功；51d191f、74e9fcf 已推送，CI 34071472188 执行中。
+
+### 2026-09-07：iOS 编码完成保留原输入事实
+
+- REQ-PICOO-MEDIA-041：VideoToolbox 的 sourceFrameRefcon 关联原输入快照，删除回调读取可变最新方向/码率的路径。十六项有界登记、单调不复用 ID 和幂等取消覆盖异步/同步回调；原生丢帧发出恢复事件，新配置 start 关闭旧 session。
+- cargo xtask build ios 原生链路成功，cargo xtask test ios 成功，新增乱序完成保留旧方向/码率，以及容量、取消、重复/未知 ID 不消费其他输入两项回归。模拟器共 17 项；不替代真实 VideoToolbox 硬件并发与持续帧率验证。
