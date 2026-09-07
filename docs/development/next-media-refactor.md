@@ -714,3 +714,15 @@ ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推�
 b5cf956 的 CI 34076167154 全平台成功。
 
 本批最终 `cargo xtask test ios` 成功；Swift/C ABI 模拟器回归继续通过。
+
+### 2026-09-07：原生 Decoder 完整格式探测
+
+- REQ-PICOO-MEDIA-052：复用当前平台 Decoder 工厂及正式提交 API，最多16个自有闭合IDR候选；标准记录经共享协议/位流校验，原生返回正确token和图像才生成offer。每项释放输出并reset，不把探测图像交给FrameBus；reset或身份不变量失败中止，不重建另一设备后混合证据。
+- 无新媒体依赖；输入资产由原生Decoder模块的probes目录拥有，迁出testkit，生产无需依赖测试crate。样本来源和合成属性保留。相同完整格式的多条成功证据仅合并level上限，不借其他存储或tier字段。
+- M4正式factory的实际probe返回11条有效offer，覆盖八种codec/正式尺寸/fps及小米736/High tier差异；24项Decoder测试通过，Clippy通过。全拒绝backend不继承样本能力，reset失败不继续；这些探测不表示持续fps或热稳态。当前仅模块与诊断程序，Receiver worker/能力发送接线继续处理。
+
+### CI 补充：Linux 测试码流必须明确颜色
+
+860cd08 的 CI 34077474767：Windows、macOS、iOS 成功；Rust与Android job在共享Linux Receiver测试中失败，9项旧OpenH264样本没有VUI色彩，严格Sender门禁报 missing source color。读取两个失败job的原始日志后，使用已锁定OpenH264 0.9官方 EncoderConfig::vui(VuiConfig::bt709()) 给7处测试编码器显式配置颜色；不放宽生产校验。修复单独提交922bfc4并在上一轮终态后推送，等待新CI。
+
+本机已有Docker Linux服务，已启动隔离ARM64 Rust容器复核Receiver Linux测试；仓库只读挂载，构建缓存使用本任务专有volume，不替代GitHub Actions。

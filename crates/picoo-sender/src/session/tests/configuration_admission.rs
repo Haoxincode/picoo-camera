@@ -8,7 +8,7 @@ fn actual_offer_rejection_preserves_generation_configuration_and_control_identit
     source.configuration = picoo_bitstream::CodecConfiguration::parse(
         picoo_bitstream::Codec::Hevc,
         Bytes::from_static(include_bytes!(
-            "../../../../picoo-testkit/fixtures/xiaomi-native-formats/2-720-30.config"
+            "../../../../picoo-media-decode/probes/xiaomi-native-formats/2-720-30.config"
         )),
     )
     .unwrap()

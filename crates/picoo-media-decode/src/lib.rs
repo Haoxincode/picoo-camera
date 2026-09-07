@@ -1,4 +1,4 @@
-//! H.264 access-unit decoding — REQ-PICOO-MEDIA-005/006/012/023.
+//! AVC/HEVC access-unit decoding — REQ-PICOO-MEDIA-005/006/012/023.
 //!
 //! Each submission carries an immutable token; delayed outputs return their original token.
 //! - Windows: Media Foundation (`windows-mf`)
@@ -39,9 +39,11 @@ mod openh264_dec;
 ))]
 mod configured_picture;
 
+mod capability_probe;
 #[cfg(any(test, feature = "test-codecs"))]
 mod fixture;
 mod submission;
+pub use capability_probe::probe_capabilities;
 #[cfg(any(test, feature = "test-codecs"))]
 pub use fixture::DecodeFixture;
 pub use submission::{AccessUnitTimeline, DecodeSubmission, DecodeToken, FrameKind};
@@ -100,7 +102,7 @@ pub fn create_platform_decoder() -> Box<dyn AccessUnitDecoder> {
 
 #[cfg(target_os = "macos")]
 fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
-    tracing::info!("Using VideoToolbox H.264 decoder");
+    tracing::info!("Using VideoToolbox native decoder");
     Box::new(videotoolbox::VideoToolboxDecoder::new())
 }
 
@@ -108,7 +110,7 @@ fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
 fn create_platform_decoder_impl() -> Box<dyn AccessUnitDecoder> {
     match mf::MfVideoDecoder::new() {
         Ok(decoder) => {
-            tracing::info!("Using Media Foundation H.264 decoder");
+            tracing::info!("Using Media Foundation native decoder");
             Box::new(decoder)
         }
         Err(err) => {

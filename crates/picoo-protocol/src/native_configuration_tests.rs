@@ -29,7 +29,7 @@ fn actual_hardware_records_preserve_padding_and_exact_offer_membership() {
             source(
                 Codec::$codec,
                 include_bytes!(concat!(
-                    "../../picoo-testkit/fixtures/apple-native-formats/",
+                    "../../picoo-media-decode/probes/apple-native-formats/",
                     $file,
                     ".config"
                 )),
@@ -103,12 +103,12 @@ fn xiaomi_hevc_720_preserves_736_storage_and_720_presentation() {
     for (fps, bytes) in [
         (
             30,
-            include_bytes!("../../picoo-testkit/fixtures/xiaomi-native-formats/2-720-30.config")
+            include_bytes!("../../picoo-media-decode/probes/xiaomi-native-formats/2-720-30.config")
                 .as_slice(),
         ),
         (
             60,
-            include_bytes!("../../picoo-testkit/fixtures/xiaomi-native-formats/2-720-60.config")
+            include_bytes!("../../picoo-media-decode/probes/xiaomi-native-formats/2-720-60.config")
                 .as_slice(),
         ),
     ] {
@@ -148,7 +148,7 @@ fn xiaomi_hevc_720_preserves_736_storage_and_720_presentation() {
 #[test]
 fn hevc_record_cannot_lie_about_sps_tier_or_level() {
     let bytes =
-        include_bytes!("../../picoo-testkit/fixtures/xiaomi-native-formats/2-720-30.config");
+        include_bytes!("../../picoo-media-decode/probes/xiaomi-native-formats/2-720-30.config");
     for (index, mask) in [(1, 0x20), (12, 1)] {
         let mut changed = bytes.to_vec();
         changed[index] ^= mask;

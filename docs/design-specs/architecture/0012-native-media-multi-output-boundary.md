@@ -135,3 +135,5 @@ Android 相机输入必须来自同一个 Camera2 stream map，具有可满足�
 Sender 获得 Receiver offers 后，完整编码事件在绑定 generation、暂存配置或发送数据前，按实际源 VideoFormat/record level/本 AU 字节数验证同一条能力；不从准备请求匹配推导提交成功。缺少配置不能越过门禁。序列化的色彩范围来自明确 BT.709 VUI，不能用默认 limited 标签覆盖未知或 full-range 源事实。
 
 完整 VideoFormat 显式区分 AVC、HEVC Main tier 与 HEVC High tier；缺省 tier 非法，不把 Main profile 当作 Main tier。hvcC 的 profile/tier/level 与每个 SPS 必须一致，header 声明不能降低源事实。准备请求尚无原生 tier 时可匹配任一合法条目，最终提交按实际 tier 精确比较；High tier 不存在 level4 以下的合法能力。
+
+Decoder 能力探测在创建原生 Decoder 的工作线程内执行，同一个实例逐个提交有界的自有合成闭合 IDR 与标准记录。只有实际返回原始 token 和合法原生图像的候选才能成为 offer；每项后 reset，失败不借另一候选能力，不发布探测图像到 FrameBus。资产只是输入，不能作为运行设备支持证据；禁用、缺失或失败的原生 backend 不通过软件替代。能力结果包含真实存储/crop/tier/level，AU预算取本实现的有界准入上限；配置/吞吐/热稳态仍分别验收。探测错误导致该项不可用；reset或内部不变量失败使整份结果失败，不能混合重建前后的设备证据。
