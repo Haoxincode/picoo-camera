@@ -1,27 +1,18 @@
 package com.picoo.camera.media
 
-/** Typed Kotlin boundary for the JNI access-unit submission result. */
-internal sealed interface EncoderSubmitOutcome {
-    data class Success(
-        val encoderAccepted: Boolean,
+import androidx.annotation.Keep
+
+/** REQ-PICOO-NEXT-026: JNI returns separate disposition and side-effect facts. */
+sealed interface EncoderSubmitOutcome {
+    @Keep
+    data class Accepted(
         val streamConfigured: Boolean,
         val keyframeRequested: Boolean,
     ) : EncoderSubmitOutcome
 
-    data class Failure(val nativeCode: Int) : EncoderSubmitOutcome
+    @Keep
+    data class Rejected(val keyframeRequested: Boolean) : EncoderSubmitOutcome
 
-    companion object {
-        private const val ENCODER_ACCEPTED = 1
-        private const val STREAM_CONFIGURED = 1 shl 1
-        private const val KEYFRAME_REQUESTED = 1 shl 2
-
-        fun fromNative(result: Int): EncoderSubmitOutcome {
-            if (result < 0) return Failure(result)
-            return Success(
-                encoderAccepted = result and ENCODER_ACCEPTED != 0,
-                streamConfigured = result and STREAM_CONFIGURED != 0,
-                keyframeRequested = result and KEYFRAME_REQUESTED != 0,
-            )
-        }
-    }
+    @Keep
+    data class Error(val nativeCode: Int) : EncoderSubmitOutcome
 }

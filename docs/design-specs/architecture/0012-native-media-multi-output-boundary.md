@@ -111,3 +111,5 @@ CodecConfiguration 的共同源事实由位流层解释，各 SPS 必须一致�
 iOS 相机输入的尺寸与帧率必须来自同一个 AVFoundation format；配置服务在串行 owner 内共同设置 activeFormat 与 min/max frame duration。编码配置的 fps 不只是压缩器 hint；采集层不得固定另一个帧率，也不由 sessionPreset 重新选择已提交的格式。原生 8-bit 输入与 420v 输出的选择不代替实际颜色和持续吞吐验证。
 
 iOS 编码输入在提交时登记不可变的配置事实，VideoToolbox 的 sourceFrameRefcon 只承载不解引用的单调身份。回调按原身份消费该快照，不能读取后来修改的方向或码率；未知、重复身份不得发布 AU。每个原生 session 最多十六个待完成项，失败取消幂等且身份不复用。关闭 session 完成原生回调后释放上下文；开始新配置不沿用旧压缩 session。平台丢帧明确触发恢复事实，不静默当作连续预测链。
+
+Android 原生 AU 提交直接返回 Accepted、Rejected 或 Error 对象；Accepted 的配置提交、关键帧请求分别表达，Rejected 可独立请求关键帧但不能提交配置，Error 不承载成功副作用。JNI 不把负错误码与成功位掩码混用，不提供旧整数结果解码器。JVM 无法创建结果时保留其异常，不合成成功对象。

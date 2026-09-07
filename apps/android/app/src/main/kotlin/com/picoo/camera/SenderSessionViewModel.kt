@@ -137,7 +137,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 configuredMediaGeneration != accessUnit.encoderGeneration ||
                 configuredMediaSource !== configuration
             )
-        val result = PicooNative.submitEncoderAccessUnit(
+        val outcome = PicooNative.submitEncoderAccessUnit(
             handle = runtime.senderHandle,
             data = accessUnit.data,
             keyframe = accessUnit.isKeyFrame,
@@ -153,34 +153,33 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             fps = configuration.framesPerSecond,
             codecConfiguration = if (configureStream) configuration.record else null,
         )
-        val outcome = EncoderSubmitOutcome.fromNative(result)
-        if (outcome is EncoderSubmitOutcome.Failure) {
-            // JNI failures have no success-side effects. In particular, a
-            // negative two's-complement value must never be read as flags.
+        if (outcome is EncoderSubmitOutcome.Error) {
             if (configureStream) {
                 streamConfigDirty.set(true)
                 configurationKeyframeRequested.set(false)
             }
             return
         }
-        outcome as EncoderSubmitOutcome.Success
+        if (outcome is EncoderSubmitOutcome.Rejected) {
+            if (configureStream) streamConfigDirty.set(true)
+            if (outcome.keyframeRequested) encoderRef.get()?.requestKeyFrame()
+            return
+        }
+        outcome as EncoderSubmitOutcome.Accepted
         if (configureStream && !outcome.streamConfigured) {
-            // A stale generation must not consume the active generation's config.
             streamConfigDirty.set(true)
         }
-        if (outcome.encoderAccepted && outcome.streamConfigured) {
+        if (outcome.streamConfigured) {
             configuredMediaGeneration = accessUnit.encoderGeneration
             configuredMediaSource = configuration
             configurationKeyframeRequested.set(false)
         }
-        if (outcome.encoderAccepted) {
-            encoder.recordAcceptedFrame(
-                accessUnit.data.size,
-                accessUnit.isKeyFrame,
-                accessUnit.streamEpoch,
-                accessUnit.configuration.height,
-            )
-        }
+        encoder.recordAcceptedFrame(
+            accessUnit.data.size,
+            accessUnit.isKeyFrame,
+            accessUnit.streamEpoch,
+            accessUnit.configuration.height,
+        )
         if (outcome.keyframeRequested) {
             encoderRef.get()?.requestKeyFrame()
         }

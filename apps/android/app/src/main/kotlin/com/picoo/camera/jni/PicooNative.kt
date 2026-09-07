@@ -1,5 +1,7 @@
 package com.picoo.camera.jni
 
+import com.picoo.camera.media.EncoderSubmitOutcome
+
 /**
  * JNI bridge to Rust Core C ABI (REQ-PICOO-STACK-003).
  *
@@ -78,7 +80,7 @@ object PicooNative {
 
     /**
      * Atomically validates one native encoder generation, optionally stages its StreamConfig,
-     * packetizes/flushes the AU, pumps control, and returns result flags.
+     * packetizes/flushes the AU, pumps control, and returns explicit outcome facts.
      */
     external fun submitEncoderAccessUnit(
         handle: Long,
@@ -95,7 +97,7 @@ object PicooNative {
         codec: Int,
         fps: Int,
         codecConfiguration: ByteArray?,
-    ): Int
+    ): EncoderSubmitOutcome
 
     /** [accessUnits, packets, bytes, sentDatagrams, pendingPackets] */
     external fun getSenderStats(handle: Long): LongArray
