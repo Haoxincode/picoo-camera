@@ -858,3 +858,9 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - 新picoo-recording的AppleSegment为专用录像工作者提供AVAssetWriter压缩直通，不拥有Receiver状态或UI。独立CoreMedia模块创建标准配置描述、带源PTS/帧时长与NotSync标记的压缩sample；段首IDR、参数集、时间戳及原生状态均显式校验，Busy不消费输入，finalize失败保留partial。
 - M4原生两项测试通过，覆盖AVC/HEVC720p×30/60fps的系统逐AU回读和精确微秒时间戳，以及覆盖文件/非法段首/重复PTS/溢出拒绝；Clippy和文档检查通过。测试binary复制到/tmp/picoo-recording-suite隔离运行，结果results.log；cargo xtask test macos已加入同一原生套件，CI不能用Linux空模块测试代替。
 - 此提交只完成REQ-PICOO-MEDIA-066的平台段边界；Recorder的有界事件队列、入口、分段/gap/manifest、Windows适配与产品按钮尚未完成。iOS方向和原生输入清理bdca1de的CI34094321195已全平台通过。
+
+### 2026-09-07：录制bundle与失败结果
+
+- REQ-PICOO-MEDIA-067：独占私有bundle、manifest原子替换、完成凭据与无覆盖段提升、流式SHA-256、4096段/gap上限；文件提交失败和gap容量耗尽保持Failed，已有gap保持HasGaps，未完成partial保留。
+- macOS隔离执行9项测试通过，含AVC/HEVC原生最终化→bundle提交→AVAssetReader回读集成、文件覆盖/manifest故障/容量及权限合同；Clippy通过。合成fixture测试不保存真实相机内容。测试产物位于外置盘Worktrees/research/picoo-camera/recording-suite。
+- 尚未接入Receiver录制队列、产品录像按钮或Windows mux；本地结果不替代Windows断电耐久性与全平台CI。

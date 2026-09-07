@@ -5821,6 +5821,9 @@ dependencies = [
  "objc2-core-media",
  "objc2-foundation 0.3.2",
  "picoo-bitstream",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
 ]

@@ -37,3 +37,7 @@ picoo-recording复用同一官方AVAssetWriter接口和objc2-av-foundation0.3.2�
 原生Rust测试使用仓库已验证的AVC/HEVC720p合成fixture，30/60fps各五个AU；AVAssetReader通过现代异步loadTracks API回读，压缩字节及每个微秒PTS精确一致。原生Input必须显式设置mediaTimeScale=1000000。已有文件不覆盖，非IDR/非零段首、重复PTS和u64时间溢出均拒绝。最终化后的.partial文件在测试模拟owner改名为.mp4后可被系统读取，partial不作为已完成可播放结果。
 
 原生最终化通知等待上限10秒；超时失败后的系统取消可能受原生I/O时长影响，只允许在专用录像工作者进行，不能据此宣称任意磁盘卡死下该线程一定在10秒内退出。录像owner的独立状态/超时与资源保留仍须在接线时实现。段适配无未完成像素/GPU工作，不把原生writer的内部资源寿命改成自制引用规则。
+
+## Bundle文件操作复用
+
+REQ-PICOO-MEDIA-067复用仓库已有serde/serde_json、sha2 0.10及tempfile 3生态，不自行实现随机命名、JSON或SHA-256。tempfile采用MIT/Apache-2.0，支持Windows/macOS及当前Rust工具链；使用独占目录、NamedTempFile原子替换和TempPath.persist_noclobber，不引入媒体runtime。摘要以64KiB缓冲流式计算，段/gap各限4096项。Unix目录0700、manifest0600；文件sync_all和Unix目录sync配合，Windows目录持久性与断电仍需原生环境验证，不能由macOS文件系统测试替代。所有操作属于专用录制工作者，不能在Receiver或UI事件循环调用。

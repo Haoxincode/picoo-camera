@@ -146,3 +146,5 @@
 | REQ-PICOO-MEDIA-065 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、009 | iOS精确AVFoundation输入直接交给硬件编码器，实际像素尺寸必须匹配准备配置；删除隐式缩放/裁剪与按输入横竖猜编码尺寸的路径，不通过缩放掩盖采集事实不一致 | 精确八组合硬件输出；过小/过大/转置输入拒绝且无AU；Swift构建 |
 
 | REQ-PICOO-MEDIA-066 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、022 | macOS原生MP4段适配使用AVAssetWriter直通标准AVC/HEVC AU，保留源时间与同步标记，有界等待最终化；不重新编码、覆盖已有文件或把失败段当作完成 | 双codec真实系统回读、字节/PTS一致、非RAP段首拒绝、写入繁忙/最终化失败合同；完整Recorder接线另验 |
+
+| REQ-PICOO-MEDIA-067 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | 录制bundle独占创建；manifest原子替换，段文件最终化及同步后才登记完成；gap和失败状态不可被后续成功覆盖，段/gap数量有上限，保留未完成partial | 原子落盘、既有路径不覆盖、粘性结果、段文件摘要、容量上限与I/O失败回归 |

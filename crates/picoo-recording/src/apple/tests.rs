@@ -83,7 +83,10 @@ fn read_track(tracks: *mut NSArray<AVAssetTrack>, error: *mut NSError) -> ReadFr
 fn read(path: &Path) -> Vec<(Vec<u8>, i64)> {
     let completed = path.with_extension("mp4");
     std::fs::rename(path, &completed).unwrap();
-    let path = completed.as_path();
+    read_completed(&completed)
+}
+
+fn read_completed(path: &Path) -> Vec<(Vec<u8>, i64)> {
     autoreleasepool(|_| {
         let (sender, receiver) = mpsc::sync_channel(1);
         let callback = block2::RcBlock::new(
@@ -151,4 +154,47 @@ fn segment_rejects_overwrite_invalid_start_and_nonmonotonic_time() {
     assert!(segment.append(&au, u64::MAX).is_err());
     segment.finish().unwrap();
     assert_eq!(read(&path).len(), 1);
+}
+
+#[test]
+fn native_finalization_bundle_promotion_and_system_readback() {
+    use crate::bundle::{RecordingBundle, RecordingState, SegmentMetadata, SourceRange};
+    use sha2::{Digest, Sha256};
+    for (configuration, au) in fixtures() {
+        let parent = tempfile::tempdir().unwrap();
+        let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+        let path = bundle.next_partial_path().unwrap();
+        let codec = match configuration.codec() {
+            Codec::Avc => "avc",
+            Codec::Hevc => "hevc",
+        };
+        let mut segment = AppleSegment::new(&path, configuration, 30).unwrap();
+        assert_eq!(segment.append(&au, 0).unwrap(), AppendOutcome::Written);
+        bundle.mark_started(500).unwrap();
+        bundle
+            .commit_segment(
+                segment.finish().unwrap(),
+                SegmentMetadata {
+                    source: SourceRange {
+                        connection_generation: 1,
+                        stream_epoch: 1,
+                        first_au: 1,
+                        last_au: 1,
+                        first_pts_us: 500,
+                        last_pts_us: 500,
+                    },
+                    codec: codec.into(),
+                    width: 1280,
+                    height: 720,
+                    fps: 30,
+                    rotation: 0,
+                    configuration_sha256: format!("{:x}", Sha256::digest(b"fixture configuration")),
+                },
+            )
+            .unwrap();
+        bundle.finish().unwrap();
+        assert_eq!(bundle.state(), RecordingState::Complete);
+        assert!(!path.exists());
+        assert_eq!(read_completed(&path.with_extension("mp4")), vec![(au, 0)]);
+    }
 }

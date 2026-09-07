@@ -1,7 +1,7 @@
 //! AVAssetWriter passthrough segments — REQ-PICOO-MEDIA-066.
 //! Construct and use on the recording worker. No pixel buffers or encoders.
 
-use crate::RecordingError;
+use crate::{FinalizedSegment, RecordingError};
 use objc2::{
     rc::{autoreleasepool, Retained},
     AnyThread,
@@ -28,6 +28,7 @@ pub enum AppendOutcome {
 /// Paths must name a new partial file. Promotion and manifest updates belong to
 /// the recording owner after successful finish, never this platform adapter.
 pub struct AppleSegment {
+    path: std::path::PathBuf,
     writer: Retained<AVAssetWriter>,
     input: Retained<AVAssetWriterInput>,
     format: CFRetained<CMFormatDescription>,
@@ -96,6 +97,7 @@ impl AppleSegment {
             (writer, input)
         };
         Ok(Self {
+            path: std::path::PathBuf::from(path),
             writer,
             input,
             format,
@@ -156,7 +158,7 @@ impl AppleSegment {
     }
 
     /// Wait only on the dedicated writer thread. Failure leaves a partial file.
-    pub fn finish(self) -> Result<(), RecordingError> {
+    pub fn finish(self) -> Result<FinalizedSegment, RecordingError> {
         if self.last_pts_us.is_none() {
             return Err(RecordingError::InvalidInput("empty segment"));
         }
@@ -177,7 +179,9 @@ impl AppleSegment {
         if unsafe { self.writer.status() } != AVAssetWriterStatus::Completed {
             return Err(writer_error(&self.writer));
         }
-        Ok(())
+        Ok(FinalizedSegment {
+            path: self.path.clone(),
+        })
     }
 }
 
