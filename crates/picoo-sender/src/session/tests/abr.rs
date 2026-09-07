@@ -97,7 +97,11 @@ fn sustained_network_feedback_never_creates_a_source_configuration_transaction()
 #[test]
 fn rejected_explicit_configuration_can_be_requested_again_without_automatic_retry() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    let first_epoch = session.begin_stream_reconfiguration(720);
+    let first_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let first_id = session.encoder_transaction_id_for_epoch(first_epoch);
     assert_ne!(first_id, 0);
     assert_eq!(
@@ -106,13 +110,24 @@ fn rejected_explicit_configuration_can_be_requested_again_without_automatic_retr
     );
     assert_eq!(session.bitrate_active_height(), 1080);
     assert!(!session.encoder_apply_state.is_applying());
-    let retry_epoch = session.begin_stream_reconfiguration(720);
+    let retry_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     assert!(retry_epoch > first_epoch);
     assert_ne!(
         session.encoder_transaction_id_for_epoch(retry_epoch),
         first_id
     );
-    assert_eq!(session.begin_stream_reconfiguration(1080), 0);
+    assert_eq!(
+        session.begin_stream_reconfiguration(crate::SourceFormat {
+            codec: picoo_bitstream::Codec::Avc,
+            height: 1080,
+            fps: 30
+        }),
+        0
+    );
 }
 
 #[test]

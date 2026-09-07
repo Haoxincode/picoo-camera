@@ -269,15 +269,26 @@ pub extern "C" fn picoo_sender_set_preferred_height(
 pub extern "C" fn picoo_sender_begin_stream_reconfiguration(
     handle: *mut std::ffi::c_void,
     target_height: u32,
+    target_codec: u32,
+    target_fps: u32,
 ) -> u32 {
     if handle.is_null() || target_height == 0 {
         return 0;
     }
+    let codec = match target_codec {
+        1 => picoo_bitstream::Codec::Avc,
+        2 => picoo_bitstream::Codec::Hevc,
+        _ => return 0,
+    };
     let inner = unsafe { &*(handle as *mut SenderInner) };
     inner
         .session
         .lock_or_recover()
-        .begin_stream_reconfiguration(target_height)
+        .begin_stream_reconfiguration(picoo_sender::SourceFormat {
+            codec,
+            height: target_height,
+            fps: target_fps,
+        })
 }
 
 /// Resolve the active Rust transaction for a native encoder epoch.

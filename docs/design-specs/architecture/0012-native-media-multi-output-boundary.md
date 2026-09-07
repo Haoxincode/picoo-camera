@@ -113,3 +113,5 @@ iOS 相机输入的尺寸与帧率必须来自同一个 AVFoundation format；�
 iOS 编码输入在提交时登记不可变的配置事实，VideoToolbox 的 sourceFrameRefcon 只承载不解引用的单调身份。回调按原身份消费该快照，不能读取后来修改的方向或码率；未知、重复身份不得发布 AU。每个原生 session 最多十六个待完成项，失败取消幂等且身份不复用。关闭 session 完成原生回调后释放上下文；开始新配置不沿用旧压缩 session。平台丢帧明确触发恢复事实，不静默当作连续预测链。
 
 Android 原生 AU 提交直接返回 Accepted、Rejected 或 Error 对象；Accepted 的配置提交、关键帧请求分别表达，Rejected 可独立请求关键帧但不能提交配置，Error 不承载成功副作用。JNI 不把负错误码与成功位掩码混用，不提供旧整数结果解码器。JVM 无法创建结果时保留其异常，不合成成功对象。
+
+Encoder 请求以显式 SourceFormat 表达 codec、正式可见尺寸和 fps，无默认配置；这是固定 progressive 8-bit 4:2:0 SDR 产品子集的请求，构造成功不代表硬件支持。原生 started 可以先绑定 generation，但有效随机访问配置必须匹配全部请求字段后才能暂存/提交。C/JNI 请求与 directive 原样携带 codec/fps；恢复从旧已提交记录恢复这些字段，无旧记录不能猜测。相机/编码器/Decoder 的完整 offers 和实际颜色准入仍由各自能力边界负责。

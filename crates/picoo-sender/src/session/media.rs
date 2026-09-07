@@ -134,6 +134,15 @@ impl<T: PicooTransport> SenderSession<T> {
                     .pending_stream_config
                     .clone()
                     .ok_or(SenderError::StreamConfigPending { stream_epoch })?;
+                if !self
+                    .encoder_apply_state
+                    .directive()
+                    .is_some_and(|directive| directive.target_format.matches(&committed_config))
+                {
+                    return Err(SenderError::Protocol(
+                        "native configuration differs from requested source format".into(),
+                    ));
+                }
                 committed_config.stream_epoch = stream_epoch;
                 self.send_stream_config_for_epoch(&committed_config, stream_epoch)?;
             }
@@ -260,6 +269,15 @@ impl<T: PicooTransport> SenderSession<T> {
         let stream_configured = stream_config.is_some();
         if let Some(config) = &stream_config {
             config.to_proto().map_err(SenderError::CodecConfiguration)?;
+        }
+        if stream_config.as_ref().is_some_and(|config| {
+            self.encoder_apply_state
+                .directive()
+                .is_some_and(|directive| !directive.target_format.matches(config))
+        }) {
+            return Err(SenderError::Protocol(
+                "native configuration differs from requested source format".into(),
+            ));
         }
 
         let mut config_staged = false;

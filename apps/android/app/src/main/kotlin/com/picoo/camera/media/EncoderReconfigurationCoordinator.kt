@@ -47,7 +47,7 @@ class EncoderReconfigurationCoordinator {
         targetHeight: Int,
     ): Int {
         rememberCommitted(senderHandle, encoder)
-        val epoch = PicooNative.beginStreamReconfiguration(senderHandle, targetHeight)
+        val epoch = PicooNative.beginStreamReconfiguration(senderHandle, targetHeight, NativeVideoCodec.Avc.wireValue, encoder.profile.targetFps)
         if (epoch <= 0) return 0
         val transactionId = PicooNative.encoderTransactionId(senderHandle, epoch)
         if (transactionId <= 0) return 0

@@ -356,7 +356,11 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         Some(1080)
     );
 
-    let epoch = sender.begin_stream_reconfiguration(720);
+    let epoch = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,

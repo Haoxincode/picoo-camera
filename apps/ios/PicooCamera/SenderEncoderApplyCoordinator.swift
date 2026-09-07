@@ -55,7 +55,7 @@ final class SenderEncoderApplyCoordinator {
     func beginLocal(session: PicooSenderSession, targetHeight: UInt32) -> UInt32 {
         recoveryTask?.cancel()
         recoveryTask = nil
-        return session.beginStreamReconfiguration(targetHeight: targetHeight)
+        return session.beginStreamReconfiguration(targetHeight: targetHeight, codec: 1, framesPerSecond: 30)
     }
 
     func accepts(_ accessUnit: EncodedAccessUnit) -> Bool {

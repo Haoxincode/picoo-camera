@@ -119,11 +119,11 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     /// Allocate a fresh stream generation before a native encoder discontinuity.
-    pub fn begin_stream_reconfiguration(&mut self, target_height: u32) -> u32 {
+    pub fn begin_stream_reconfiguration(&mut self, target_format: crate::SourceFormat) -> u32 {
         if self.encoder_apply_state.is_applying() {
             return 0;
         }
-        if !picoo_rate_control::is_supported_height(target_height) {
+        if !target_format.is_product_format() {
             return 0;
         }
         let id = self.next_encoder_directive_id;
@@ -138,8 +138,8 @@ impl<T: PicooTransport> SenderSession<T> {
         let directive = EncoderDirective {
             id,
             kind: EncoderDirectiveKind::Local,
-            target_height,
-            target_bitrate_bps: BitrateLadder::for_height(target_height)
+            target_format,
+            target_bitrate_bps: BitrateLadder::for_height(target_format.height)
                 .expect("validated source height")
                 .initial_bps,
             stream_epoch: epoch,
@@ -318,10 +318,19 @@ impl<T: PicooTransport> SenderSession<T> {
             self.disconnect();
             return EncoderFailureOutcome::Disconnected;
         };
+        let Some(config) = &self.pending_stream_config else {
+            self.last_session_error = Some("ENCODER_RECOVERY_CONFIGURATION_MISSING".into());
+            self.disconnect();
+            return EncoderFailureOutcome::Disconnected;
+        };
         let directive = EncoderDirective {
             id,
             kind: EncoderDirectiveKind::Recovery,
-            target_height: self.committed_encoder_height,
+            target_format: crate::SourceFormat {
+                codec: config.configuration.codec(),
+                height: config.height,
+                fps: config.fps,
+            },
             target_bitrate_bps: self.current_bitrate_bps(),
             stream_epoch: self.current_stream_epoch,
         };

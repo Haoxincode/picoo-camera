@@ -637,3 +637,12 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - REQ-PICOO-MEDIA-042：JNI 返回 Accepted/Rejected/Error 对象，删除整数成功位掩码、负数分支解码器及其三项旧 JVM 测试；ViewModel 按结果分支处理配置与关键帧事实。原生构造器使用 AndroidX Keep，JVM 构造失败保留异常，不伪装接受。
 - NDK JNI Clippy 通过；完整 assembleDebug/assembleDebugAndroidTest 含新 release JNI，77 项 JVM 测试全部通过。只读启动本机 API 36 ARM64 AVD，安装这批 APK 后执行打包 JNI 错误对象、旧 generation 拒绝对象及已有尺寸门禁，共 3 项 instrumentation 全通过；测试后关闭模拟器。
 - 当前没有物理 ADB 手机；上述证明 JNI 对象交接，不替代小米硬件编码/配对后的成功媒体链路或 R8 正式发布验收。
+
+### 2026-09-07：源请求加入 codec 与 fps
+
+- REQ-PICOO-MEDIA-043：Core 事务使用无 Default 的 SourceFormat，C/JNI 请求和 directive 带显式 codec/fps；配置在暂存及提交前匹配所有请求字段。恢复从旧配置记录取 codec/fps，缺少记录时拒绝恢复。移动端当前执行器仍明确请求已有 AVC/30，不宣称完整 offers 或 HEVC/60 用户选择已启用。
+- Rust Sender 70、Receiver 106、FFI 13 项通过，Receiver 另 2 项忽略。新增相同高度/generation 下 codec、fps 冲突保持旧快照/epoch/控制序号，以及正确 HEVC/60 配置替换可提交的 Core 回归。旧非法 fps 回归因更早的请求匹配而返回 Protocol，更新错误类别断言后通过。
+- iOS 完整 build 成功；Swift 模拟器 18 项通过。新增测试最初漏写 throwing 调用的内层 try，随后又错误地期待本地 apply 出现在仅暴露 recovery effect 的 getter；修正测试保留既有 owner 语义后通过。
+- Android 完整 APK/JNI/JVM 构建成功，77 项 JVM 通过。只读 API 36 ARM64 AVD 的提交结果、显式源参数准入和尺寸合同共 4 项 instrumentation 通过；首次新增测试同样误期待本地 apply 作为新 effect 返回，修正后通过。测试后关闭 AVD。macOS 与 NDK FFI all-target/library Clippy 通过，文档检查通过。
+
+74e9fcf 的 CI 34071472188 全平台成功；799705a、57b9f62、ba609a8 已推送，新 CI 执行中。

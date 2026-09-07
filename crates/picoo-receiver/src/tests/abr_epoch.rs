@@ -121,7 +121,11 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
 
     // Camera switch: epoch bump + new IDR.
     let t0 = Instant::now();
-    let next_epoch = sender.begin_stream_reconfiguration(720);
+    let next_epoch = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
@@ -274,7 +278,11 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
     assert_eq!(receiver.latest_frame().map(|f| f.width), Some(854));
 
     let t0 = Instant::now();
-    let next_epoch = sender.begin_stream_reconfiguration(720);
+    let next_epoch = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     assert_eq!(next_epoch, 2);
     sender.set_stream_config(StreamConfigParams {
         width: 1280,

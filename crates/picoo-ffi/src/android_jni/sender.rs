@@ -269,6 +269,8 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_beginStreamReconfig
     _this: JObject<'_>,
     handle: jlong,
     target_height: jint,
+    target_codec: jint,
+    target_fps: jint,
 ) -> jint {
     let Ok(target_height) = u32::try_from(target_height) else {
         return 0;
@@ -276,11 +278,21 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_beginStreamReconfig
     if target_height == 0 {
         return 0;
     }
+    let Some(codec) = native_codec(target_codec) else {
+        return 0;
+    };
+    let Ok(fps) = u32::try_from(target_fps) else {
+        return 0;
+    };
     with_sender(handle, |inner| {
         let Ok(mut session) = inner.session.lock() else {
             return 0;
         };
-        session.begin_stream_reconfiguration(target_height) as jint
+        session.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+            codec,
+            height: target_height,
+            fps,
+        }) as jint
     })
     .unwrap_or(0)
 }
@@ -403,15 +415,20 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getEncoderDirective
     .flatten() else {
         return ptr::null_mut();
     };
-    let Ok(result) = env.new_long_array(5) else {
+    let Ok(result) = env.new_long_array(7) else {
         return ptr::null_mut();
     };
     let values = [
         directive.id as jlong,
         directive.kind as u32 as jlong,
-        directive.target_height as jlong,
+        directive.target_format.height as jlong,
         directive.target_bitrate_bps as jlong,
         directive.stream_epoch as jlong,
+        match directive.target_format.codec {
+            picoo_bitstream::Codec::Avc => 1,
+            picoo_bitstream::Codec::Hevc => 2,
+        },
+        directive.target_format.fps as jlong,
     ];
     if env.set_long_array_region(&result, 0, &values).is_err() {
         return ptr::null_mut();

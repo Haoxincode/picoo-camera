@@ -223,6 +223,8 @@ pub struct PicooEncoderDirective {
     pub id: u64,
     pub kind: u32,
     pub target_height: u32,
+    pub target_codec: u32,
+    pub target_fps: u32,
     pub target_bitrate_bps: u32,
     pub stream_epoch: u32,
 }
@@ -260,7 +262,12 @@ impl From<EncoderDirective> for PicooEncoderDirective {
         Self {
             id: value.id,
             kind: value.kind as u32,
-            target_height: value.target_height,
+            target_height: value.target_format.height,
+            target_codec: match value.target_format.codec {
+                picoo_bitstream::Codec::Avc => 1,
+                picoo_bitstream::Codec::Hevc => 2,
+            },
+            target_fps: value.target_format.fps,
             target_bitrate_bps: value.target_bitrate_bps,
             stream_epoch: value.stream_epoch,
         }

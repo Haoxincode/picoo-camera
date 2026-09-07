@@ -595,3 +595,6 @@ mod tests {
         assert_eq!(pending_datagrams(&borrowed), pending_datagrams(&owned));
     }
 }
+
+mod source_format;
+pub use source_format::SourceFormat;

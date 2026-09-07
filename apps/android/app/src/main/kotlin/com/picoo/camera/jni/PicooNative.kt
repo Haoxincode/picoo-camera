@@ -166,7 +166,7 @@ object PicooNative {
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
     /** Allocate a fresh Rust-owned epoch before camera/encoder discontinuity. */
-    external fun beginStreamReconfiguration(handle: Long, targetHeight: Int): Int
+    external fun beginStreamReconfiguration(handle: Long, targetHeight: Int, targetCodec: Int, targetFps: Int): Int
 
     /** Resolve the active Rust encoder transaction for [streamEpoch], or zero when committed. */
     external fun encoderTransactionId(handle: Long, streamEpoch: Int): Long
@@ -298,6 +298,8 @@ object PicooNative {
         val id: Long,
         val kind: Int,
         val targetHeight: Int,
+        val targetCodec: Int,
+        val targetFps: Int,
         val targetBitrateBps: Int,
         val streamEpoch: Int,
     )
@@ -327,11 +329,13 @@ object PicooNative {
 
     fun readEncoderDirective(handle: Long): EncoderDirective? {
         val values = getEncoderDirective(handle) ?: return null
-        if (values.size < 5) return null
+        if (values.size != 7) return null
         return EncoderDirective(
             id = values[0],
             kind = values[1].toInt(),
             targetHeight = values[2].toInt(),
+            targetCodec = values[5].toInt(),
+            targetFps = values[6].toInt(),
             targetBitrateBps = values[3].toInt(),
             streamEpoch = values[4].toInt(),
         )

@@ -97,6 +97,8 @@ nonisolated struct SenderEncoderDirective: Equatable, Sendable {
     let id: UInt64
     let kind: UInt32
     let targetHeight: UInt32
+    let targetCodec: UInt32
+    let targetFps: UInt32
     let targetBitrateBps: UInt32
     let streamEpoch: UInt32
 }
@@ -306,6 +308,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             id: directive.id,
             kind: directive.kind,
             targetHeight: directive.target_height,
+            targetCodec: directive.target_codec,
+            targetFps: directive.target_fps,
             targetBitrateBps: directive.target_bitrate_bps,
             streamEpoch: directive.stream_epoch
         )
@@ -349,8 +353,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         )
     }
 
-    func beginStreamReconfiguration(targetHeight: UInt32) -> UInt32 {
-        picoo_sender_begin_stream_reconfiguration(sender, targetHeight)
+    func beginStreamReconfiguration(targetHeight: UInt32, codec: UInt32, framesPerSecond: UInt32) -> UInt32 {
+        picoo_sender_begin_stream_reconfiguration(sender, targetHeight, codec, framesPerSecond)
     }
 
     func encoderTransactionID(for streamEpoch: UInt32) -> UInt64 {

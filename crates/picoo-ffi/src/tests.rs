@@ -182,7 +182,7 @@ fn sender_snapshot_is_coherent_before_capabilities() {
 fn encoder_started_fact_requires_the_matching_transaction() {
     let handle = create_test_sender();
     assert!(!handle.is_null());
-    let pending = picoo_sender_begin_stream_reconfiguration(handle, 720);
+    let pending = picoo_sender_begin_stream_reconfiguration(handle, 720, 1, 30);
     assert!(pending > picoo_sender::INITIAL_STREAM_EPOCH);
     let mut directive = PicooEncoderDirective::default();
     assert_eq!(

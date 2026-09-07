@@ -121,7 +121,11 @@ fn network_feedback_keeps_source_fixed_and_explicit_changes_still_decode() {
     assert_eq!(receiver.latest_frame().unwrap().width, 1920);
 
     // An explicit user request still owns a fresh configuration transaction.
-    let epoch = sender.begin_stream_reconfiguration(720);
+    let epoch = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     assert!(epoch > original_epoch);
     let transaction_id = sender.encoder_transaction_id_for_epoch(epoch);
     let cfg_lo = StreamConfigParams {

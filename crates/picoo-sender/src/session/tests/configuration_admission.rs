@@ -15,7 +15,11 @@ fn invalid_configuration_cannot_send_control_or_commit_matching_idr() {
     session.set_stream_config(super::source_configuration(720));
     let committed_epoch = session.current_stream_epoch();
     assert!(session.report_encoder_started(0, 10, committed_epoch, 720));
-    let candidate_epoch = session.begin_stream_reconfiguration(1080);
+    let candidate_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 1080,
+        fps: 30,
+    });
     let transaction = session.encoder_transaction_id_for_epoch(candidate_epoch);
     assert!(session.report_encoder_started(transaction, 11, candidate_epoch, 1080));
     for fps in [0, 120] {
@@ -34,7 +38,7 @@ fn invalid_configuration_cannot_send_control_or_commit_matching_idr() {
                 3,
                 (transaction, 11, candidate_epoch, 1080),
             )),
-            Err(SenderError::CodecConfiguration(_))
+            Err(SenderError::Protocol(_))
         ));
         assert_eq!(session.current_stream_epoch(), committed_epoch);
         assert_eq!(
@@ -81,4 +85,76 @@ fn invalid_initial_encoder_event_does_not_bind_generation_or_stage_source() {
     assert!(session.pending_stream_config().is_none());
     assert_eq!(session.current_stream_epoch(), epoch);
     assert_eq!(session.pending_packets(), 0);
+}
+
+#[test]
+fn matching_height_and_generation_cannot_commit_another_codec_or_frame_rate() {
+    let mut session = SenderSession::new(MemoryTransport::new());
+    session
+        .connect(Endpoint {
+            host: "127.0.0.1".into(),
+            port: 4433,
+        })
+        .unwrap();
+    session.force_status_for_test(SenderStatus::Streaming);
+    session.set_stream_config(super::source_configuration(720));
+    let old_epoch = session.current_stream_epoch();
+    assert!(session.report_encoder_started(0, 10, old_epoch, 720));
+    let epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Hevc,
+        height: 720,
+        fps: 60,
+    });
+    let transaction = session.encoder_transaction_id_for_epoch(epoch);
+    assert!(session.report_encoder_started(transaction, 11, epoch, 720));
+    let mut desired = super::source_configuration(720);
+    desired.fps = 60;
+    desired.configuration = picoo_bitstream::CodecConfiguration::parse(
+        picoo_bitstream::Codec::Hevc,
+        bytes::Bytes::from_static(include_bytes!(
+            "../../../../picoo-testkit/fixtures/hevc-1280x720-bt709-config.bin"
+        )),
+    )
+    .unwrap()
+    .into();
+    let mut wrong_codec = desired.clone();
+    wrong_codec.configuration = super::source_configuration(720).configuration;
+    let mut wrong_fps = desired.clone();
+    wrong_fps.fps = 30;
+    for config in [wrong_codec, wrong_fps] {
+        let before = session.pending_stream_config.clone();
+        let control = session.next_control_message_id;
+        assert!(session
+            .submit_encoder_event(crate::NativeEncoderEvent {
+                data: b"native-idr",
+                is_keyframe: true,
+                pts_us: 1,
+                encoded_at_us: 2,
+                encoder_generation: 11,
+                stream_epoch: epoch,
+                width: 1280,
+                height: 720,
+                stream_config: Some(config),
+            })
+            .is_err());
+        assert_eq!(session.current_stream_epoch(), old_epoch);
+        assert_eq!(session.pending_stream_config, before);
+        assert_eq!(session.next_control_message_id, control);
+        assert_eq!(session.pending_packets(), 0);
+    }
+    let outcome = session
+        .submit_encoder_event(crate::NativeEncoderEvent {
+            data: b"matching-native-idr",
+            is_keyframe: true,
+            pts_us: 3,
+            encoded_at_us: 4,
+            encoder_generation: 11,
+            stream_epoch: epoch,
+            width: 1280,
+            height: 720,
+            stream_config: Some(desired),
+        })
+        .unwrap();
+    assert!(outcome.encoder_accepted && outcome.stream_configured);
+    assert_eq!(session.current_stream_epoch(), epoch);
 }

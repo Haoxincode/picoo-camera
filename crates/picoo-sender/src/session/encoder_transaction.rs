@@ -94,7 +94,7 @@ impl EncoderApplyState {
             Self::Applying(transaction)
                 if transaction.directive.id == transaction_id
                     && transaction.directive.stream_epoch == stream_epoch
-                    && transaction.directive.target_height == height
+                    && transaction.directive.target_format.height == height
                     && transaction.expected_generation == Some(encoder_generation)
         )
     }
@@ -120,7 +120,7 @@ impl EncoderApplyState {
         };
         if transaction.directive.id != transaction_id
             || transaction.directive.stream_epoch != stream_epoch
-            || transaction.directive.target_height != height
+            || transaction.directive.target_format.height != height
         {
             return false;
         }
@@ -150,7 +150,7 @@ impl EncoderApplyState {
         };
         let matches = transaction.directive.id == transaction_id
             && transaction.directive.stream_epoch == stream_epoch
-            && transaction.directive.target_height == height
+            && transaction.directive.target_format.height == height
             && transaction.expected_generation == Some(encoder_generation);
         if !matches {
             *self = Self::Applying(transaction);
@@ -236,7 +236,11 @@ mod tests {
         EncoderDirective {
             id: 7,
             kind,
-            target_height: 720,
+            target_format: crate::SourceFormat {
+                codec: picoo_bitstream::Codec::Avc,
+                height: 720,
+                fps: 30,
+            },
             target_bitrate_bps: 3_000_000,
             stream_epoch: 4,
         }

@@ -343,7 +343,11 @@ fn macos_videotoolbox_explicit_source_configuration() {
     };
 
     check_congestion(&mut sender);
-    let epoch_720 = sender.begin_stream_reconfiguration(720);
+    let epoch_720 = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     assert_eq!(epoch_720, 2);
     let transaction_720 = sender.encoder_transaction_id_for_epoch(epoch_720);
     let (sps_720, pps_720) = extract_sps_pps(H264_1280X720_RED_IDR).expect("720p parameter sets");
@@ -421,7 +425,11 @@ fn macos_videotoolbox_explicit_source_configuration() {
     let revision_720 = frame_720.description().config_revision;
 
     check_congestion(&mut sender);
-    let epoch_1080 = sender.begin_stream_reconfiguration(1080);
+    let epoch_1080 = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 1080,
+        fps: 30,
+    });
     assert_eq!(epoch_1080, 3);
     let transaction_1080 = sender.encoder_transaction_id_for_epoch(epoch_1080);
     let (sps_1080, pps_1080) =

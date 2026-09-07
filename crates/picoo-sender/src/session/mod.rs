@@ -53,7 +53,7 @@ pub enum EncoderDirectiveKind {
 pub struct EncoderDirective {
     pub id: u64,
     pub kind: EncoderDirectiveKind,
-    pub target_height: u32,
+    pub target_format: crate::SourceFormat,
     pub target_bitrate_bps: u32,
     pub stream_epoch: u32,
 }

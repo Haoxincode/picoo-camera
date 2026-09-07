@@ -61,4 +61,27 @@ class EncoderSubmitContractTest {
         }
     }
 
+
+    @Test
+    fun sourceRequestAdmitsExplicitCodecAndFrameRate() {
+        assertTrue(PicooNative.ensureLoaded())
+        val identity = PicooNative.loadIdentityFromSecret(ByteArray(32) { 0x38 }, "format-test")
+        assertTrue(identity != 0L)
+        var sender = 0L
+        try {
+            sender = PicooNative.createSender(identity)
+            assertTrue(sender != 0L)
+            assertEquals(0, PicooNative.beginStreamReconfiguration(sender, 1080, 0, 60))
+            assertEquals(0, PicooNative.beginStreamReconfiguration(sender, 1080, 2, 120))
+            val epoch = PicooNative.beginStreamReconfiguration(sender, 1080, 2, 60)
+            assertTrue(epoch > 1)
+            // The effect getter must not instruct the owner to repeat its local apply.
+            assertEquals(null, PicooNative.readEncoderDirective(sender))
+            assertTrue(PicooNative.encoderTransactionId(sender, epoch) > 0)
+        } finally {
+            if (sender != 0L) PicooNative.destroySender(sender)
+            PicooNative.destroyIdentity(identity)
+        }
+    }
+
 }

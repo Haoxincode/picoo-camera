@@ -134,19 +134,33 @@ struct PicooSenderSessionTests {
     func streamEpochPolicy() throws {
         let session = try PicooSenderSession(defaultDeviceName: "Epoch Testing")
         #expect(session.snapshot.streamEpoch == PicooSenderSession.initialStreamEpoch)
-        let pending = session.beginStreamReconfiguration(targetHeight: 720)
+        let pending = session.beginStreamReconfiguration(targetHeight: 720, codec: 1, framesPerSecond: 30)
         #expect(pending == PicooSenderSession.initialStreamEpoch + 1)
-        #expect(session.beginStreamReconfiguration(targetHeight: 720) == 0)
+        #expect(session.beginStreamReconfiguration(targetHeight: 720, codec: 1, framesPerSecond: 30) == 0)
         #expect(session.reportEncoderFailed(
             streamEpoch: pending,
             encoderGeneration: 0
         ) == .rolledBack)
-        let next = session.beginStreamReconfiguration(targetHeight: 720)
+        let next = session.beginStreamReconfiguration(targetHeight: 720, codec: 1, framesPerSecond: 30)
         #expect(next == pending + 1)
         #expect(session.reportEncoderFailed(
             streamEpoch: next,
             encoderGeneration: 0
         ) == .rolledBack)
+    }
+
+    @Test("explicit codec and frame rate are admitted at the C request boundary")
+    func sourceFormatRequestRoundTrip() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Format Testing")
+        #expect(session.beginStreamReconfiguration(targetHeight: 1080, codec: 0, framesPerSecond: 60) == 0)
+        #expect(session.beginStreamReconfiguration(targetHeight: 1080, codec: 2, framesPerSecond: 120) == 0)
+        let epoch = session.beginStreamReconfiguration(targetHeight: 1080, codec: 2, framesPerSecond: 60)
+        #expect(epoch > PicooSenderSession.initialStreamEpoch)
+        // Local requests are already being applied by this owner. The effect
+        // getter exposes recovery commands, not a duplicate local apply.
+        #expect(try session.encoderDirective() == nil)
+        #expect(session.encoderTransactionID(for: epoch) > 0)
+        #expect(session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0) == .rolledBack)
     }
 
     @Test("encoder configuration normalizes rotation and clamps bitrate")
