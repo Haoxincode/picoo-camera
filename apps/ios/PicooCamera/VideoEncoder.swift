@@ -4,7 +4,7 @@ import CoreVideo
 import Foundation
 import VideoToolbox
 
-// REQ-PICOO-MEDIA-011: native 420v capture -> hardware H.264 Access Units.
+// REQ-PICOO-MEDIA-011: native 420v capture -> hardware AVC/HEVC Access Units.
 
 nonisolated enum VideoResolution: Int, CaseIterable, Hashable, Sendable {
     case p720 = 720
@@ -26,7 +26,24 @@ nonisolated enum VideoResolution: Int, CaseIterable, Hashable, Sendable {
 
 }
 
+nonisolated enum NativeVideoCodec: UInt32, CaseIterable, Sendable {
+    case avc = 1
+    case hevc = 2
+
+    var mediaType: CMVideoCodecType {
+        switch self { case .avc: kCMVideoCodecType_H264; case .hevc: kCMVideoCodecType_HEVC }
+    }
+
+    var profileLevel: CFString {
+        switch self {
+        case .avc: kVTProfileLevel_H264_High_AutoLevel
+        case .hevc: kVTProfileLevel_HEVC_Main_AutoLevel
+        }
+    }
+}
+
 nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {
+    let codec: NativeVideoCodec
     let resolution: VideoResolution
     let framesPerSecond: UInt32
     let bitrateBps: UInt32
@@ -35,6 +52,7 @@ nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {
     let rotation: UInt32
 
     init(
+        codec: NativeVideoCodec,
         resolution: VideoResolution,
         framesPerSecond: UInt32 = 30,
         bitrateBps: UInt32,
@@ -42,6 +60,7 @@ nonisolated struct VideoEncoderConfiguration: Equatable, Sendable {
         encoderGeneration: UInt64,
         rotation: UInt32 = 0
     ) {
+        self.codec = codec
         self.resolution = resolution
         self.framesPerSecond = framesPerSecond
         self.bitrateBps = bitrateBps
@@ -93,7 +112,7 @@ nonisolated enum VideoEncoderEvent: Sendable {
 
 /// Small bounded GOP-aware handoff between VideoToolbox and the Rust sender.
 /// If the consumer falls behind, dependent frames are discarded until a new
-/// IDR arrives. Only wake-up tokens use AsyncStream; H.264 Data stays bounded.
+/// IDR arrives. Only wake-up tokens use AsyncStream; compressed Data stays bounded.
 nonisolated final class VideoEncoderEventBuffer: @unchecked Sendable {
     let signals: AsyncStream<Void>
 
@@ -168,6 +187,7 @@ nonisolated final class VideoEncoderEventBuffer: @unchecked Sendable {
 }
 
 nonisolated enum VideoEncoderError: LocalizedError {
+    case sourceColorUnavailable
     case pendingFramesExhausted
     case sessionCreation(OSStatus)
     case hardwareEncoderUnavailable
@@ -180,20 +200,22 @@ nonisolated enum VideoEncoderError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .sourceColorUnavailable:
+            "采集图像缺少已确认的 BT.709 SDR 描述"
         case .pendingFramesExhausted:
             "编码器待完成帧已达到容量上限"
         case .hardwareEncoderUnavailable:
-            "没有可用的硬件 H.264 High 编码器"
+            "没有可用的请求格式的硬件视频编码器"
         case let .sessionCreation(status):
-            "无法创建硬件 H.264 编码器（\(status)）"
+            "无法创建硬件视频编码器（\(status)）"
         case let .property(key, status):
-            "无法配置 H.264 编码参数 \(key)（\(status)）"
+            "无法配置 视频编码参数 \(key)（\(status)）"
         case let .prepare(status):
-            "H.264 编码器准备失败（\(status)）"
+            "视频编码器准备失败（\(status)）"
         case .pixelBufferPoolUnavailable:
-            "H.264 编码器没有可用的缩放缓冲池"
+            "视频编码器没有可用的缩放缓冲池"
         case let .pixelBufferCreation(status):
-            "无法创建 H.264 缩放缓冲（\(status)）"
+            "无法创建 视频缩放缓冲（\(status)）"
         case let .pixelTransferCreation(status):
             "无法创建视频缩放器（\(status)）"
         case let .pixelTransfer(status):

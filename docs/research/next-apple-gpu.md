@@ -50,3 +50,13 @@ Mac Decoder 不再复制源 NV12 plane。原生 adapter 从有界 SPS 提取真�
 2026-09-07 核对本机 Xcode iPhoneOS SDK 的 AVCaptureDevice.h（activeFormat、activeVideoMinFrameDuration、activeVideoMaxFrameDuration）：格式与帧率应在同一 begin/commitConfiguration 中设置；activeFormat 自动选择 inputPriority，sessionPreset 会重新取得格式控制并重置时长。采用官方 AVFoundation 格式表，逐条匹配 720p/1080p、8-bit 双平面输入和该条目的 30/60fps 范围，随后设置同一个 1/fps 的最小与最大时长；输出继续请求 420v。候选格式中不把最大尺寸与另一格式的最大 fps 拼接。
 
 该 API 自 iOS 7 可用，满足 iOS 18 最低版本；复用系统 SDK，不增加 Swift 包、运行时或分发体积。独立的“设 preset 后固定 30fps”不能满足配置事实一致性，故删除。格式枚举与帧时长赋值不证明持续吞吐、色彩或硬件编码器交集；正式 offers、实际采集 timestamp 和热稳态仍独立验收。SDK 同时警告格式转换与旋转可能影响实际帧率，不能由属性设置成功宣称 60fps 性能已通过。
+
+## iOS 生产编码器在 M4 的双 codec 调用
+
+2026-09-07 直接将 iOS 的 VideoEncoder.swift、VideoEncoderOutput.swift、VideoEncoderPipeline.swift 与 [harness](../../verification/native-media/ios-encoder-harness.swift) 编译为 macOS 验证程序，使用 Swift 6、MainActor 默认隔离、complete concurrency 与 warnings-as-errors。复用 VideoToolbox 官方 AVC High/HEVC Main profile 和 RequireHardwareAcceleratedVideoEncoder；HEVC 的 AllowOpenGOP 默认允许开放 GOP，按 SDK 文档显式设 false（API 自 iOS 12/macOS 10.14 可用，满足项目最低平台）。不引入新的编解码库或分发依赖。
+
+初次八组实际输出是合法 IDR，但共享位流解析显示全部 SPS color=None，即输入 CoreVideo BT.709 attachments 不会自动成为编码流 VUI。生产代码现在先逐帧验证输入/缩放目标的 420v 与明确 BT.709 primaries/transfer/matrix，再设置 VT 的对应压缩属性。未知输入直接失败，不修改输入 attachment 来满足检查。
+
+修正后 AVC/HEVC × 720p/1080p × 30/60 八组都返回 AU/avcC/hvcC，实际产物经 [共享位流检查器](../../crates/picoo-bitstream/examples/check_native_encoder.rs) 解析，闭合 IDR、参数集身份、可见尺寸与 BT.709 limited 均通过；两 codec 的 1080p 实际 coded height 都是 1088，不能从 codec 名称猜测存储高度。另验证缺失颜色的输入被拒绝。harness 的 CPU 锁定只用于创建合成测试像素；生产输入检查只读元数据。
+
+这证明同一生产 Swift 编码实现的 Apple 原生硬件 API 路径，不能替代 iPhone camera offers、实际采集 fps、持续吞吐、热稳态或网络/Receiver 全链路。手机界面仍明确选已有 AVC/30，双 codec 配置选择继续以完整 offers 为准。

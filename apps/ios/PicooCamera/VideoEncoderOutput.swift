@@ -3,6 +3,7 @@ import Foundation
 import VideoToolbox
 
 nonisolated struct EncodedFrameConfiguration: Equatable, Sendable {
+    let codec: NativeVideoCodec
     let width: UInt32
     let height: UInt32
     let framesPerSecond: UInt32
@@ -27,6 +28,7 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
 
     func reserveFrame(bitrateBps: UInt32, rotation: UInt32) -> UInt? {
         submittedFrames.reserve(EncodedFrameConfiguration(
+            codec: configuration.codec,
             width: configuration.width,
             height: configuration.height,
             framesPerSecond: configuration.framesPerSecond,
@@ -79,6 +81,9 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
         do {
             let isKeyframe = Self.isKeyframe(sampleBuffer)
             let codecConfiguration = try Self.codecConfiguration(from: sampleBuffer.formatDescription)
+            guard codecConfiguration.codec == configuration.codec.rawValue else {
+                throw VideoEncoderOutputError.configurationMismatch
+            }
             let data = try Self.encodedData(from: sampleBuffer)
             let presentationTimeUs = Self.presentationTimeUs(
                 sampleBuffer.presentationTimeStamp
@@ -167,6 +172,7 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
 }
 
 nonisolated private enum VideoEncoderOutputError: LocalizedError {
+    case configurationMismatch
     case missingBlockBuffer
     case copyFailed(OSStatus)
     case missingConfiguration
@@ -174,6 +180,8 @@ nonisolated private enum VideoEncoderOutputError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .configurationMismatch:
+            "VideoToolbox 输出 codec 与请求不一致"
         case .missingBlockBuffer:
             "VideoToolbox 没有返回压缩数据"
         case let .copyFailed(status):

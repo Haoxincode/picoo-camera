@@ -652,3 +652,10 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - REQ-PICOO-MEDIA-044：能力可先于源请求到达；没有源格式时保留已验证 offers，最大高度为未知 0。显式待处理请求优先于旧源快照，按同一完整条目匹配 codec、尺寸、fps、profile、8-bit 420 与既定 BT.709 limited；新请求不匹配时不消耗身份，合法重试清除对应错误。
 - 能力测试按职责从 epoch 测试文件移出。Sender 72、Receiver 106 项通过，Receiver 另 2 项忽略；相关 all-targets Clippy 与文档检查通过。覆盖仅 HEVC/60 的先到能力、跨尺寸/帧率/色彩借用拒绝和合法显式请求。
 - 本批完成准备请求的 Decoder offer 匹配，不宣称相机/编码器原生 offers、实际 SPS level/颜色/每 AU 预算的完整提交准入已完成。
+
+### 2026-09-07：iOS 原生双 codec 与可验证 VUI
+
+- REQ-PICOO-MEDIA-045：VideoEncoderConfiguration 显式包含 codec，复制配置保留该值；VideoToolbox 按 AVC High/HEVC Main 创建硬件 session，HEVC 关闭 Open GOP。原输入快照的 codec 与回调原生 atom 一致，submit 明确在 callbackQueue 上执行。
+- 同一生产 Swift 在 M4 上执行八组 codec/尺寸/fps 配置，初次全部为 IDR 但 SPS 无颜色信息；仅给输入设置 attachment 不够。增加输入/目标的 420v BT.709 元数据验证及 VT 压缩颜色属性后，共享 bitstream 检查八组的闭合 IDR、参数集身份、可见尺寸、BT.709 limited 全部通过。未知颜色的合成输入明确拒绝。两 codec 的 1080 实际编码高度均为 1088。
+- 新 harness/检查器及命令保存在 verification/native-media 和 bitstream examples。首次提取 submit 时遗漏 nonisolated，被 iOS 的 MainActor 默认隔离构建拒绝；补充显式隔离与队列断言后，完整 cargo xtask build ios 与 18 项 Swift 模拟器测试通过，bitstream all-targets Clippy 与文档检查通过。
+- 这些是 M4 原生硬件与模拟器证据；不等于 iPhone 相机、持续 60fps 或完整 offers/用户选择。CameraCaptureModel 仍明确选择 AVC/30，正式 UI 选择待完整能力交集接线。

@@ -53,6 +53,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
     func updateBitrate(_ bitrateBps: UInt32) async {
         await perform {
             self.configuration = VideoEncoderConfiguration(
+                codec: self.configuration.codec,
                 resolution: self.configuration.resolution,
                 framesPerSecond: self.configuration.framesPerSecond,
                 bitrateBps: bitrateBps,
@@ -76,6 +77,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
     func updateRotation(_ rotation: UInt32) async {
         await perform {
             self.configuration = VideoEncoderConfiguration(
+                codec: self.configuration.codec,
                 resolution: self.configuration.resolution,
                 framesPerSecond: self.configuration.framesPerSecond,
                 bitrateBps: self.configuration.bitrateBps,
@@ -129,6 +131,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         let (outputWidth, outputHeight) = outputDimensions(for: imageBuffer)
 
         let actualConfiguration = EncodedFrameConfiguration(
+            codec: configuration.codec,
             width: UInt32(outputWidth),
             height: UInt32(outputHeight),
             framesPerSecond: configuration.framesPerSecond,
@@ -156,7 +159,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             allocator: kCFAllocatorDefault,
             width: outputWidth,
             height: outputHeight,
-            codecType: kCMVideoCodecType_H264,
+            codecType: configuration.codec.mediaType,
             encoderSpecification: encoderSpecification,
             imageBufferAttributes: imageBufferAttributes,
             compressedDataAllocator: nil,
@@ -274,12 +277,22 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             on: session
         )
 
+        // Input attachments are verified before session creation and submission.
+        // Explicit properties are still required: VT does not necessarily put
+        // input color attachments into the encoded SPS by itself.
+        try set(kVTCompressionPropertyKey_ColorPrimaries, value: kCVImageBufferColorPrimaries_ITU_R_709_2, on: session)
+        try set(kVTCompressionPropertyKey_TransferFunction, value: kCVImageBufferTransferFunction_ITU_R_709_2, on: session)
+        try set(kVTCompressionPropertyKey_YCbCrMatrix, value: kCVImageBufferYCbCrMatrix_ITU_R_709_2, on: session)
+
         // REQ-PICOO-MEDIA-026: requested profile is part of the native contract.
         try set(
             kVTCompressionPropertyKey_ProfileLevel,
-            value: kVTProfileLevel_H264_High_AutoLevel,
+            value: configuration.codec.profileLevel,
             on: session
         )
+        if configuration.codec == .hevc {
+            try set(kVTCompressionPropertyKey_AllowOpenGOP, value: kCFBooleanFalse, on: session)
+        }
         try setBitrate(configuration.bitrateBps, on: session)
 
         let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(session)
@@ -298,6 +311,21 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         }
         guard (hardwareValue?.takeRetainedValue() as? NSNumber)?.boolValue == true else {
             throw VideoEncoderError.hardwareEncoderUnavailable
+        }
+    }
+
+    private static func validateColor(_ image: CVImageBuffer) throws {
+        guard CVPixelBufferGetPixelFormatType(image) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange else {
+            throw VideoEncoderError.sourceColorUnavailable
+        }
+        for (key, expected) in [
+            (kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2),
+            (kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2),
+            (kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2),
+        ] {
+            guard CVBufferCopyAttachment(image, key, nil) as? String == expected as String else {
+                throw VideoEncoderError.sourceColorUnavailable
+            }
         }
     }
 
@@ -360,6 +388,12 @@ extension VideoEncoderPipeline {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        submit(sampleBuffer)
+    }
+
+    /// Native capture input. Calls are confined to callbackQueue.
+    nonisolated func submit(_ sampleBuffer: CMSampleBuffer) {
+        dispatchPrecondition(condition: .onQueue(callbackQueue))
         guard isAcceptingFrames,
               let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         else {
@@ -367,11 +401,13 @@ extension VideoEncoderPipeline {
         }
 
         do {
+            try Self.validateColor(imageBuffer)
             let session = try compressionSession(for: imageBuffer)
             let encodingBuffer = try imageBufferForEncoding(
                 imageBuffer,
                 session: session
             )
+            try Self.validateColor(encodingBuffer)
             var infoFlags: VTEncodeInfoFlags = []
             let frameProperties: CFDictionary? = forceNextKeyframe
                 ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
@@ -400,7 +436,7 @@ extension VideoEncoderPipeline {
                 eventHandler(.failure(
                     streamEpoch: configuration.streamEpoch,
                     encoderGeneration: configuration.encoderGeneration,
-                    message: "H.264 帧编码失败（\(status)）"
+                    message: "视频帧编码失败（\(status)）"
                 ))
                 return
             }

@@ -170,6 +170,7 @@ struct PicooSenderSessionTests {
             forHeight: 1080
         )
         let configuration = VideoEncoderConfiguration(
+            codec: .avc,
             resolution: .p1080,
             bitrateBps: canonicalBitrate,
             streamEpoch: 7,
@@ -254,10 +255,12 @@ struct PicooSenderSessionTests {
     func encoderCompletionUsesOriginalSubmission() throws {
         let pending = SubmittedFrameConfigurations()
         let first = EncodedFrameConfiguration(
+            codec: .avc,
             width: 1280, height: 720, framesPerSecond: 30, bitrateBps: 3_000_000,
             streamEpoch: 2, encoderGeneration: 3, rotation: 0
         )
         let next = EncodedFrameConfiguration(
+            codec: .avc,
             width: 1280, height: 720, framesPerSecond: 30, bitrateBps: 4_000_000,
             streamEpoch: 2, encoderGeneration: 3, rotation: 90
         )
@@ -273,6 +276,7 @@ struct PicooSenderSessionTests {
     func encoderCompletionCapacityAndCancellation() throws {
         let pending = SubmittedFrameConfigurations()
         let frame = EncodedFrameConfiguration(
+            codec: .avc,
             width: 1920, height: 1080, framesPerSecond: 60, bitrateBps: 5_000_000,
             streamEpoch: 7, encoderGeneration: 9, rotation: 180
         )

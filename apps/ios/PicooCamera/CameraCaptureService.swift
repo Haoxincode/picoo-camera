@@ -147,6 +147,7 @@ actor CameraCaptureService {
 
     func updateBitrate(_ bitrateBps: UInt32) async {
         encoderConfiguration = VideoEncoderConfiguration(
+            codec: encoderConfiguration.codec,
             resolution: encoderConfiguration.resolution,
             framesPerSecond: encoderConfiguration.framesPerSecond,
             bitrateBps: bitrateBps,
@@ -373,6 +374,7 @@ actor CameraCaptureService {
 nonisolated private extension VideoEncoderConfiguration {
     func withRotation(_ rotation: UInt32) -> Self {
         Self(
+            codec: codec,
             resolution: resolution,
             framesPerSecond: framesPerSecond,
             bitrateBps: bitrateBps,

@@ -30,6 +30,7 @@ final class CameraCaptureModel {
         let sessionReference = CaptureSessionReference()
         let eventBuffer = VideoEncoderEventBuffer()
         let initialConfiguration = VideoEncoderConfiguration(
+            codec: .avc,
             resolution: .p1080,
             bitrateBps: initialBitrateBps,
             streamEpoch: initialStreamEpoch,
@@ -312,6 +313,7 @@ final class CameraCaptureModel {
 
     private var encoderConfiguration: VideoEncoderConfiguration {
         VideoEncoderConfiguration(
+            codec: .avc,
             resolution: resolution,
             bitrateBps: targetBitrateBps,
             streamEpoch: streamEpoch,
