@@ -44,3 +44,9 @@ M4 实测：同一 Metal queue 先等待未触发的 SharedEvent，再提交真�
 ## Decoder 输出事实
 
 Mac Decoder 不再复制源 NV12 plane。原生 adapter 从有界 SPS 提取真实编码尺寸，校验 StreamConfig 可见尺寸，再检查完成输出的 CoreVideo clean aperture、nominal display size 和 BT.709 attachments。VideoToolbox 对显式 PAR 1:1 请求会省略 SPS SAR 字段；解析保留 None，原生输出比例来自平台实际报告，不回写或篡改 SPS。未知色彩的旧 fixture 会被拒绝，新的合成硬件 BT.709 fixtures 用于完整解码→FrameBus→GPU→CPU 输出回归。
+
+## iOS 相机格式与真实帧时长
+
+2026-09-07 核对本机 Xcode iPhoneOS SDK 的 AVCaptureDevice.h（activeFormat、activeVideoMinFrameDuration、activeVideoMaxFrameDuration）：格式与帧率应在同一 begin/commitConfiguration 中设置；activeFormat 自动选择 inputPriority，sessionPreset 会重新取得格式控制并重置时长。采用官方 AVFoundation 格式表，逐条匹配 720p/1080p、8-bit 双平面输入和该条目的 30/60fps 范围，随后设置同一个 1/fps 的最小与最大时长；输出继续请求 420v。候选格式中不把最大尺寸与另一格式的最大 fps 拼接。
+
+该 API 自 iOS 7 可用，满足 iOS 18 最低版本；复用系统 SDK，不增加 Swift 包、运行时或分发体积。独立的“设 preset 后固定 30fps”不能满足配置事实一致性，故删除。格式枚举与帧时长赋值不证明持续吞吐、色彩或硬件编码器交集；正式 offers、实际采集 timestamp 和热稳态仍独立验收。SDK 同时警告格式转换与旋转可能影响实际帧率，不能由属性设置成功宣称 60fps 性能已通过。

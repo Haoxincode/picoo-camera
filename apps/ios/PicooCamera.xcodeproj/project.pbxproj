@@ -18,6 +18,7 @@
 		A10000000000000000000021 /* SenderSessionTick.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000021 /* SenderSessionTick.swift */; };
 		A10000000000000000000022 /* SenderDiscoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000022 /* SenderDiscoveryCoordinator.swift */; };
 		A10000000000000000000023 /* SenderEncoderApplyCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000023 /* SenderEncoderApplyCoordinator.swift */; };
+		D9B723DE664A4379A8229D23 /* CameraCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B758AA193BC5499EA715D01A /* CameraCaptureService.swift */; };
 		A1000000000000000000000A /* CameraCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* CameraCapture.swift */; };
 		A1000000000000000000000B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* Assets.xcassets */; };
 		A1000000000000000000000C /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* AVFoundation.framework */; };
@@ -57,6 +58,7 @@
 		A20000000000000000000021 /* SenderSessionTick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderSessionTick.swift; sourceTree = "<group>"; };
 		A20000000000000000000022 /* SenderDiscoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderDiscoveryCoordinator.swift; sourceTree = "<group>"; };
 		A20000000000000000000023 /* SenderEncoderApplyCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SenderEncoderApplyCoordinator.swift; sourceTree = "<group>"; };
+		B758AA193BC5499EA715D01A /* CameraCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCaptureService.swift; sourceTree = "<group>"; };
 		A2000000000000000000000D /* CameraCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraCapture.swift; sourceTree = "<group>"; };
 		A2000000000000000000000E /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A2000000000000000000000F /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
@@ -117,6 +119,7 @@
 				A20000000000000000000022 /* SenderDiscoveryCoordinator.swift */,
 				A20000000000000000000023 /* SenderEncoderApplyCoordinator.swift */,
 				A2000000000000000000000D /* CameraCapture.swift */,
+				B758AA193BC5499EA715D01A /* CameraCaptureService.swift */,
 				A20000000000000000000011 /* VideoEncoder.swift */,
 				A20000000000000000000024 /* VideoEncoderPipeline.swift */,
 				A20000000000000000000025 /* VideoEncoderOutput.swift */,
@@ -243,6 +246,7 @@
 				A10000000000000000000022 /* SenderDiscoveryCoordinator.swift in Sources */,
 				A10000000000000000000023 /* SenderEncoderApplyCoordinator.swift in Sources */,
 				A1000000000000000000000A /* CameraCapture.swift in Sources */,
+				D9B723DE664A4379A8229D23 /* CameraCaptureService.swift in Sources */,
 				A1000000000000000000000E /* VideoEncoder.swift in Sources */,
 				A10000000000000000000024 /* VideoEncoderPipeline.swift in Sources */,
 				A10000000000000000000025 /* VideoEncoderOutput.swift in Sources */,

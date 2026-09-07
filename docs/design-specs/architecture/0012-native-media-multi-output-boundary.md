@@ -107,3 +107,5 @@ iOS 直接从原生 CMFormatDescription 的 avcC/hvcC atom 获取每张 AU 的�
 原生编码器的 keyframe/sync 标志是待核对的提示。进入 Core 的 AU 必须经过共享位流分类，当前闭合序列合同只接纳 AVC/HEVC IDR 为关键帧；提示与实际 picture 不一致、CRA 或 leading-picture 序列在配置暂存和媒体提交前拒绝。平台层不能用系统标志绕过 codec-specific 恢复准入。
 
 CodecConfiguration 的共同源事实由位流层解释，各 SPS 必须一致。Sender 序列化与 Receiver 配置替换前核对声明的可见尺寸与 SPS 裁剪后尺寸；coded padding 不当作显示尺寸。Decoder 复用同一检查，仍独立验证实际原生 allocation 和剩余 crop。该静态一致性不能替代相机帧率、色彩或硬件能力证据。
+
+iOS 相机输入的尺寸与帧率必须来自同一个 AVFoundation format；配置服务在串行 owner 内共同设置 activeFormat 与 min/max frame duration。编码配置的 fps 不只是压缩器 hint；采集层不得固定另一个帧率，也不由 sessionPreset 重新选择已提交的格式。原生 8-bit 输入与 420v 输出的选择不代替实际颜色和持续吞吐验证。

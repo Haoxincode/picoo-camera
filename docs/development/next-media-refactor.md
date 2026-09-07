@@ -618,3 +618,11 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - REQ-PICOO-MEDIA-039：共同 SPS 解释从 Decoder 移入 CodecConfiguration，复用已有有界 AVC/HEVC 解析；Sender 序列化与 Receiver 状态替换前验证可见尺寸，Decoder 不再维护重复的参数集合遍历。
 - Sender 69、Receiver 106、原生 Mac Decoder 21、bitstream 33 项通过，合计 229 项；Receiver 另 2 项忽略。最初 Receiver 两项镜像/旋转测试使用 720p 参数集配 4×2 声明，被新检查拒绝；改为尺寸匹配的真实 64×64 配置后重跑通过，仍保留实际镜像像素和原生变换描述断言。
 - 相关 all-targets Clippy 和文档检查通过。该检查只证明参数集与声明几何一致，不替代相机实际 fps、颜色与完整硬件 offers 准入。
+
+### 2026-09-07：iOS 请求帧率进入真实相机配置
+
+- REQ-PICOO-MEDIA-040：采集服务从相机 format 表选择匹配尺寸、8-bit 输入与请求 30/60fps 的同一条目，显式设置 activeFormat 和相同 min/max duration，并关闭受支持格式的自动降帧率。旧 preset 与固定 30fps helper 删除；相同尺寸不同帧率不复用旧配置。
+- CameraCapture.swift 原为 798 行，按 AVFoundation 串行服务与 MainActor 界面模型拆分，未更改外部 UI skill。构建第一次因新 Xcode 文件标识与既有配置标识冲突失败，改为独立标识后 cargo xtask build ios 完整成功；cargo xtask test ios 模拟器回归成功。
+- 当前没有真 iPhone 采集验证，不将格式表和属性设置视为实际 60fps、颜色或 encoder/decoder offers 交集已经验收。
+
+7a2eaa2 的 CI 34070420985 全平台成功；51d191f、74e9fcf 已推送，CI 34071472188 执行中。
