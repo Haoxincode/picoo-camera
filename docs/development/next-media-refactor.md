@@ -667,3 +667,9 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - 这批修正能力模型，不宣称 Receiver 原生 offers 探测或每个实际 SPS 的最终能力准入已接线。
 
 ba609a8 的 CI 34072658310 全平台成功；35f40a0、f514b5a、475b5b3 已推送，新 CI 执行中。
+
+### 2026-09-07：Android 编码请求与恢复共用完整 profile
+
+- REQ-PICOO-MEDIA-047：MediaCodecVideoEncoder 从该 generation 的 CaptureProfile 获取 codec/尺寸/fps，Core 源请求使用同一 codec/fps；删除旧 MediaCodecH264Encoder/h264Encoder 名称，无别名。
+- 恢复保存并还原完整 CaptureProfile，含镜头与 codec/fps；与 Core 的恢复指令不一致时拒绝。初始界面仍选择 AVC/30，完整原生 offers 和 HEVC/60 用户选择未接线。
+- 完整 assembleDebug/assembleDebugAndroidTest 和新 JNI 构建成功，77 项 JVM 测试全部通过。当前无物理 ADB 设备，不宣称小米原生双 codec/恢复验收完成。

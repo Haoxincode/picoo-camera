@@ -13,7 +13,7 @@ import android.util.Size
 import android.view.Surface
 import java.io.Closeable
 
-/** Camera2 → OES/EGL compositor → MediaCodec InputSurface H.264 (MEDIA-001 / MEDIA-013). */
+/** Camera2 → OES/EGL compositor → MediaCodec InputSurface AVC/HEVC (MEDIA-001 / MEDIA-013). */
 class Camera2MediaEncoder(
     context: Context,
     initialProfile: CaptureProfile = CaptureProfile(),
@@ -74,7 +74,7 @@ class Camera2MediaEncoder(
     @Volatile internal var lastAppliedBitrateBps: Int = targetBitrateBps
 
     internal val deviceSession = Camera2DeviceSession(this)
-    internal val h264Encoder = MediaCodecH264Encoder(this)
+    internal val videoEncoder = MediaCodecVideoEncoder(this)
 
     val encoderGeneration: Long
         get() = lifecycle.codecGeneration.get()
@@ -97,7 +97,7 @@ class Camera2MediaEncoder(
     override fun setTargetBitrateBps(bitrateBps: Int) {
         if (bitrateBps <= 0) return
         targetBitrateBps = bitrateBps
-        h264Encoder.applyBitrateIfNeeded()
+        videoEncoder.applyBitrateIfNeeded()
     }
 
     override fun prepareStreamEpoch(epoch: Int) {
@@ -107,7 +107,7 @@ class Camera2MediaEncoder(
     }
 
     override fun requestKeyFrame() {
-        h264Encoder.requestSyncFrame()
+        videoEncoder.requestSyncFrame()
     }
 
     internal fun recordAcceptedFrame(
@@ -115,7 +115,7 @@ class Camera2MediaEncoder(
         keyFrame: Boolean,
         streamEpoch: Int,
         encoderHeight: Int,
-    ) = h264Encoder.recordAcceptedFrame(byteCount, keyFrame, streamEpoch, encoderHeight)
+    ) = videoEncoder.recordAcceptedFrame(byteCount, keyFrame, streamEpoch, encoderHeight)
 
     override fun setExposureCompensation(index: Int) {
         val clamped = ExposureCompensation.clamp(index, exposureCompensationRange)
@@ -152,8 +152,8 @@ class Camera2MediaEncoder(
         lifecycle.setState(CaptureState.Idle)
         deviceSession.closeCaptureSession()
         deviceSession.closeCameraDevice()
-        h264Encoder.release()
-        h264Encoder.resetCounters()
+        videoEncoder.release()
+        videoEncoder.resetCounters()
         lifecycle.setState(CaptureState.Idle)
     }
 
@@ -177,7 +177,7 @@ class Camera2MediaEncoder(
             else -> Unit
         }
         // New epoch requires IDR for remote decoder recovery (REQ-PICOO-MEDIA-003).
-        h264Encoder.requestSyncFrame()
+        videoEncoder.requestSyncFrame()
     }
 
     override fun setResolution(width: Int, height: Int) {
@@ -188,18 +188,17 @@ class Camera2MediaEncoder(
             CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()
             else -> Unit
         }
-        h264Encoder.requestSyncFrame()
+        videoEncoder.requestSyncFrame()
     }
 
     /** Rebuild the native encoder at Rust's last committed generation. */
     fun restoreCommittedConfiguration(
-        width: Int,
-        height: Int,
+        profile: CaptureProfile,
         streamEpoch: Int,
         bitrateBps: Int,
     ) {
         require(streamEpoch > 0)
-        profile = profile.copy(resolution = Size(width, height))
+        this.profile = profile
         this.streamEpoch = streamEpoch
         targetBitrateBps = bitrateBps
         appliedStreamEpoch = 0
@@ -241,7 +240,7 @@ class Camera2MediaEncoder(
         lifecycle.setState(CaptureState.Error)
         deviceSession.closeCaptureSession()
         deviceSession.closeCameraDevice()
-        h264Encoder.release()
+        videoEncoder.release()
     }
 
     private companion object {

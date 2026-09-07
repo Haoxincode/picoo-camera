@@ -19,8 +19,7 @@ class EncoderReconfigurationCoordinator {
     )
 
     private data class CommittedApply(
-        val width: Int,
-        val height: Int,
+        val profile: CaptureProfile,
         val streamEpoch: Int,
         val bitrateBps: Int,
     )
@@ -47,7 +46,7 @@ class EncoderReconfigurationCoordinator {
         targetHeight: Int,
     ): Int {
         rememberCommitted(senderHandle, encoder)
-        val epoch = PicooNative.beginStreamReconfiguration(senderHandle, targetHeight, NativeVideoCodec.Avc.wireValue, encoder.profile.targetFps)
+        val epoch = PicooNative.beginStreamReconfiguration(senderHandle, targetHeight, encoder.profile.codec.wireValue, encoder.profile.targetFps)
         if (epoch <= 0) return 0
         val transactionId = PicooNative.encoderTransactionId(senderHandle, epoch)
         if (transactionId <= 0) return 0
@@ -145,10 +144,8 @@ class EncoderReconfigurationCoordinator {
         }
 
         pending = null
-        val size = encoder.profile.resolution
         committed = CommittedApply(
-            width = size.width,
-            height = apply.targetHeight,
+            profile = encoder.profile,
             streamEpoch = apply.streamEpoch,
             bitrateBps = snapshot.currentBitrateBps,
         )
@@ -198,7 +195,9 @@ class EncoderReconfigurationCoordinator {
         val rollback = committed
         if (rollback == null ||
             rollback.streamEpoch != directive.streamEpoch ||
-            rollback.height != directive.targetHeight
+            rollback.profile.resolution.height != directive.targetHeight ||
+            rollback.profile.codec.wireValue != directive.targetCodec ||
+            rollback.profile.targetFps != directive.targetFps
         ) {
             pending = null
             PicooNative.reportEncoderFailed(senderHandle, directive.id, 0)
@@ -206,8 +205,7 @@ class EncoderReconfigurationCoordinator {
             return PollResult.Failed("$message；没有可恢复的视频配置，已断开连接")
         }
         encoder.restoreCommittedConfiguration(
-            width = rollback.width,
-            height = rollback.height,
+            profile = rollback.profile,
             streamEpoch = directive.streamEpoch,
             bitrateBps = directive.targetBitrateBps,
         )
@@ -223,10 +221,8 @@ class EncoderReconfigurationCoordinator {
     private fun rememberCommitted(senderHandle: Long, encoder: Camera2MediaEncoder) {
         if (committed != null) return
         val snapshot = PicooNative.readSenderSnapshot(senderHandle)
-        val size = encoder.profile.resolution
         committed = CommittedApply(
-            width = size.width,
-            height = size.height,
+            profile = encoder.profile,
             streamEpoch = snapshot.streamEpoch,
             bitrateBps = snapshot.currentBitrateBps,
         )
@@ -237,10 +233,8 @@ class EncoderReconfigurationCoordinator {
         if (encoder.appliedStreamEpoch != snapshot.streamEpoch) return
         val height = encoder.appliedEncoderHeight
         if (height <= 0 || height != snapshot.activeHeight) return
-        val size = encoder.profile.resolution
         committed = CommittedApply(
-            width = size.width,
-            height = height,
+            profile = encoder.profile,
             streamEpoch = snapshot.streamEpoch,
             bitrateBps = snapshot.currentBitrateBps,
         )

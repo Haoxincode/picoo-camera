@@ -123,8 +123,8 @@ internal class Camera2DeviceSession(
         encoder.lifecycle.reopenAfterCameraGeneration.set(generation)
         encoder.lifecycle.setState(CaptureState.Opening)
         closeCaptureSession()
-        encoder.h264Encoder.release()
-        encoder.h264Encoder.resetCounters()
+        encoder.videoEncoder.release()
+        encoder.videoEncoder.resetCounters()
         camera.close()
     }
 
@@ -227,7 +227,7 @@ internal class Camera2DeviceSession(
                 }
                 encoder.cameraDevice = camera
             }
-            encoder.h264Encoder.setupEncoderAndSession(camera, generation)
+            encoder.videoEncoder.setupEncoderAndSession(camera, generation)
         }
 
         override fun onClosed(camera: CameraDevice) {
@@ -345,7 +345,7 @@ internal class Camera2DeviceSession(
                                 camera === encoder.cameraDevice
                             ) {
                                 encoder.lifecycle.setState(CaptureState.Previewing)
-                                encoder.h264Encoder.requestSyncFrame()
+                                encoder.videoEncoder.requestSyncFrame()
                             } else {
                                 session.close()
                             }

@@ -5,8 +5,8 @@ import android.media.MediaCodec
 import android.media.MediaFormat
 import android.view.Surface
 
-/** MediaCodec H.264 access-unit lifecycle (MEDIA-001). */
-internal class MediaCodecH264Encoder(
+/** MediaCodec AVC/HEVC access-unit lifecycle (REQ-PICOO-MEDIA-047). */
+internal class MediaCodecVideoEncoder(
     private val encoder: Camera2MediaEncoder,
 ) {
     private data class DetachedCodec(
@@ -20,7 +20,7 @@ internal class MediaCodecH264Encoder(
         val profile = encoder.profile
         val encodeSize = profile.resolution
         val requestedBitrate = encoder.targetBitrateBps
-        val request = NativeEncoderFormat(NativeVideoCodec.Avc, encodeSize, profile.targetFps, requestedBitrate)
+        val request = NativeEncoderFormat(profile.codec, encodeSize, profile.targetFps, requestedBitrate)
         val generationEpoch = encoder.streamEpoch
         val transition = detachCodec()
         val generation = transition.nextGeneration
@@ -41,7 +41,7 @@ internal class MediaCodecH264Encoder(
                     generation,
                     camera,
                     cameraGenerationSnapshot,
-                    "Hardware AVC High encoder unavailable: ${error.message}",
+                    "Hardware ${request.codec} encoder unavailable: ${error.message}",
                 )
                 return@post
             }

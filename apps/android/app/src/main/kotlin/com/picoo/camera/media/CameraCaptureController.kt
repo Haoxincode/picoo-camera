@@ -15,6 +15,7 @@ data class CaptureProfile(
     val resolution: Size = Size(1280, 720),
     val targetFps: Int = 30,
     val lensFacing: LensFacing = LensFacing.Back,
+    val codec: NativeVideoCodec = NativeVideoCodec.Avc,
 )
 
 /** Camera buffer geometry needed by the UI-only TextureView transform. */
