@@ -285,23 +285,19 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_reportEncoderFailed
     .unwrap_or(-1)
 }
 
-/// [status, bitrate, activeHeight, receiverMaxHeight, epoch, reconnectAttempt,
-/// reconnectDelayMs], captured under one sender-session lock.
+/// One coherent status snapshot followed by bounded codec/height/fps candidates.
 #[no_mangle]
 pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getSenderSnapshot(
     env: JNIEnv<'_>,
     _this: JObject<'_>,
     handle: jlong,
 ) -> jlongArray {
-    let Ok(result) = env.new_long_array(7) else {
-        return ptr::null_mut();
-    };
     let values = with_sender(handle, |inner| {
         let Ok(session) = inner.session.lock() else {
-            return [0; 7];
+            return vec![0; 8];
         };
         let snapshot = sender_snapshot(&session);
-        [
+        let mut values = vec![
             snapshot.status as jlong,
             snapshot.current_bitrate_bps as jlong,
             snapshot.active_height as jlong,
@@ -309,9 +305,25 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_getSenderSnapshot(
             snapshot.stream_epoch as jlong,
             snapshot.reconnect_attempt as jlong,
             snapshot.reconnect_delay_ms as jlong,
-        ]
+            snapshot.receiver_capabilities_known as jlong,
+        ];
+        for format in snapshot
+            .receiver_source_formats
+            .iter()
+            .take(snapshot.receiver_source_format_count as usize)
+        {
+            values.extend([
+                format.codec as jlong,
+                format.height as jlong,
+                format.fps as jlong,
+            ]);
+        }
+        values
     })
-    .unwrap_or([0; 7]);
+    .unwrap_or_else(|| vec![0; 8]);
+    let Ok(result) = env.new_long_array(values.len() as i32) else {
+        return ptr::null_mut();
+    };
     let _ = env.set_long_array_region(&result, 0, &values);
     result.into_raw()
 }

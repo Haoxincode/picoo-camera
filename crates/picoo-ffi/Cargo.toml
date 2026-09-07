@@ -27,5 +27,6 @@ cbindgen = "0.27"
 jni = "0.21"
 
 [dev-dependencies]
+picoo-sender = { workspace = true, features = ["test-support"] }
 jni = "0.21"
 tempfile = "3.14"

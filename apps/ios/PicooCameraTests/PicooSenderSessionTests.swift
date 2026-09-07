@@ -1,10 +1,26 @@
 import Foundation
 import CoreMedia
+import PicooCore
 import Testing
 @testable import PicooCamera
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("C fixed-array candidates preserve codec and frame rate")
+    func decoderCandidatesCrossSnapshotBoundary() throws {
+        var value = PicooSenderSnapshot()
+        #expect(PicooSenderSession.sourceFormats(from: value) == nil)
+        value.receiver_capabilities_known = true
+        #expect(PicooSenderSession.sourceFormats(from: value) == [])
+        value.receiver_source_format_count = 2
+        value.receiver_source_formats.0 = PicooSourceFormat(codec: 1, height: 720, fps: 30)
+        value.receiver_source_formats.1 = PicooSourceFormat(codec: 2, height: 1080, fps: 60)
+        let formats = try #require(PicooSenderSession.sourceFormats(from: value))
+        #expect(formats.count == 2)
+        #expect(formats[0].codec == .avc && formats[0].resolution == .p720 && formats[0].framesPerSecond == 30)
+        #expect(formats[1].codec == .hevc && formats[1].resolution == .p1080 && formats[1].framesPerSecond == 60)
+    }
+
     @Test("Rust protocol name crosses the C ABI")
     func protocolNameCrossesSwiftCAbiBoundary() {
         #expect(PicooSenderSession.protocolName == "PCP")
@@ -18,6 +34,7 @@ struct PicooSenderSessionTests {
             let session = try PicooSenderSession(defaultDeviceName: "Swift Testing")
             releasedSession = session
             #expect(session.snapshot.status == .disconnected)
+            #expect(session.snapshot.receiverSourceFormats == nil)
             try session.disconnect()
             #expect(session.snapshot.status == .disconnected)
         }

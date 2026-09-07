@@ -118,6 +118,8 @@ nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
     let streamEpoch: UInt32
     let reconnectAttempt: UInt32
     let reconnectDelayMs: UInt64
+    /// nil means no decoder evidence; [] means no formal preparation candidates.
+    let receiverSourceFormats: [VideoSourceFormat]?
 }
 
 nonisolated struct TrustedReceiverSummary: Identifiable, Equatable, Sendable {
@@ -182,7 +184,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
                 receiverMaxHeight: 0,
                 streamEpoch: Self.initialStreamEpoch,
                 reconnectAttempt: 0,
-                reconnectDelayMs: 0
+                reconnectDelayMs: 0,
+                receiverSourceFormats: nil
             )
         }
         return SenderSessionSnapshot(
@@ -192,8 +195,24 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             receiverMaxHeight: value.receiver_max_height,
             streamEpoch: value.stream_epoch,
             reconnectAttempt: value.reconnect_attempt,
-            reconnectDelayMs: value.reconnect_delay_ms
+            reconnectDelayMs: value.reconnect_delay_ms,
+            receiverSourceFormats: Self.sourceFormats(from: value)
         )
+    }
+
+    static func sourceFormats(from value: PicooSenderSnapshot) -> [VideoSourceFormat]? {
+        guard value.receiver_capabilities_known else { return nil }
+        precondition(value.receiver_source_format_count <= 8, "Invalid native source candidate count")
+        var formats = value.receiver_source_formats
+        return withUnsafeBytes(of: &formats) { bytes in
+            bytes.bindMemory(to: PicooSourceFormat.self)
+                .prefix(Int(value.receiver_source_format_count)).map { format in
+                    guard let source = VideoSourceFormat(codec: format.codec, height: format.height, framesPerSecond: format.fps) else {
+                        preconditionFailure("Invalid native source candidate")
+                    }
+                    return source
+                }
+        }
     }
 
     var pairingShortCode: String {

@@ -6,6 +6,18 @@ use picoo_transport::PicooTransport;
 use super::SenderSession;
 
 impl<T: PicooTransport> SenderSession<T> {
+    /// REQ-PICOO-MEDIA-054: preparation candidates, not proof of native source output.
+    /// None means this connection has not received valid decoder evidence yet.
+    pub fn receiver_source_candidates(&self) -> Option<Vec<crate::SourceFormat>> {
+        let caps = self.receiver_capabilities.as_ref()?;
+        Some(
+            crate::SourceFormat::PRODUCT_FORMATS
+                .into_iter()
+                .filter(|format| format.is_offered_by(caps))
+                .collect(),
+        )
+    }
+
     /// Max height from receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
     pub fn receiver_max_height(&self) -> u32 {
         self.receiver_capabilities
@@ -128,12 +140,16 @@ impl<T: PicooTransport> SenderSession<T> {
             self.last_session_error = Some("INVALID_DECODER_CAPABILITIES".into());
             return false;
         }
-        if self.requested_source_format().is_some()
-            && self.matching_decoder_height(&capabilities) == 0
+        if self
+            .requested_source_format()
+            .is_some_and(|request| !request.is_offered_by(&capabilities))
         {
             self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
-            return false;
+        } else if self.last_session_error.as_deref() == Some("NO_MATCHING_DECODER_OFFER") {
+            self.last_session_error = None;
         }
+        // Retain valid alternatives even when the currently requested format is
+        // unavailable. The UI must be able to offer an explicit new selection.
         self.receiver_capabilities = Some(capabilities);
         self.bitrate
             .set_preferred_height(self.requested_preferred_height);

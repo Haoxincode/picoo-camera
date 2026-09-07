@@ -11,6 +11,50 @@ pub struct SourceFormat {
 }
 
 impl SourceFormat {
+    /// The finite product request space; membership is not capability evidence.
+    pub const PRODUCT_FORMATS: [Self; 8] = [
+        Self {
+            codec: Codec::Avc,
+            height: 1080,
+            fps: 60,
+        },
+        Self {
+            codec: Codec::Avc,
+            height: 1080,
+            fps: 30,
+        },
+        Self {
+            codec: Codec::Avc,
+            height: 720,
+            fps: 60,
+        },
+        Self {
+            codec: Codec::Avc,
+            height: 720,
+            fps: 30,
+        },
+        Self {
+            codec: Codec::Hevc,
+            height: 1080,
+            fps: 60,
+        },
+        Self {
+            codec: Codec::Hevc,
+            height: 1080,
+            fps: 30,
+        },
+        Self {
+            codec: Codec::Hevc,
+            height: 720,
+            fps: 60,
+        },
+        Self {
+            codec: Codec::Hevc,
+            height: 720,
+            fps: 30,
+        },
+    ];
+
     pub fn is_product_format(self) -> bool {
         matches!(self.height, 720 | 1080) && matches!(self.fps, 30 | 60)
     }

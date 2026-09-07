@@ -1,6 +1,7 @@
 package com.picoo.camera.media
 
 import com.picoo.camera.jni.PicooNative
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,6 +39,7 @@ class EncoderSubmitContractTest {
         try {
             sender = PicooNative.createSender(identity)
             assertTrue(sender != 0L)
+            assertNull(PicooNative.readSenderSnapshot(sender).receiverSourceFormats)
             val result = PicooNative.submitEncoderAccessUnit(
                 handle = sender,
                 data = byteArrayOf(0, 0, 0, 1, 0x65, 0x80.toByte()),

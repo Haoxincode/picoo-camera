@@ -183,6 +183,8 @@ fn sender_snapshot_is_coherent_before_capabilities() {
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
     assert_eq!(snapshot.receiver_max_height, 0);
+    assert!(!snapshot.receiver_capabilities_known);
+    assert_eq!(snapshot.receiver_source_format_count, 0);
     assert_eq!(snapshot.active_height, 1080);
     assert!(snapshot.current_bitrate_bps > 0);
     picoo_sender_destroy(handle);
@@ -315,4 +317,60 @@ fn export_diagnostics_with_session_includes_redacted_host() {
         !json.contains("ingress_"),
         "session counters must be role-neutral: {json}"
     );
+}
+
+#[test]
+fn sender_snapshot_carries_bounded_complete_candidates_through_c_abi() {
+    use picoo_protocol::control::{
+        Capabilities, ColorRange, DecoderOffer, FrameRate, Resolution, VideoCodec, VideoFormat,
+    };
+    let handle = create_test_sender();
+    let inner = unsafe { &*(handle as *mut crate::handles::SenderInner) };
+    let mut caps = Capabilities {
+        offers: vec![DecoderOffer {
+            format: Some(VideoFormat::sdr_709(
+                VideoCodec::Hevc,
+                Resolution {
+                    width: 1920,
+                    height: 1088,
+                },
+                FrameRate {
+                    numerator: 60,
+                    denominator: 1,
+                },
+                ColorRange::Limited,
+            )),
+            max_level_idc: 123,
+            max_access_unit_bytes: 4096,
+        }],
+    };
+    caps.offers[0]
+        .format
+        .as_mut()
+        .unwrap()
+        .visible_rect
+        .as_mut()
+        .unwrap()
+        .height = 1080;
+    assert!(inner
+        .session
+        .lock()
+        .unwrap()
+        .apply_capabilities_for_test(caps));
+    let mut snapshot = PicooSenderSnapshot::default();
+    assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
+    assert!(snapshot.receiver_capabilities_known);
+    assert_eq!(snapshot.receiver_source_format_count, 1);
+    assert_eq!(
+        snapshot.receiver_source_formats[0],
+        PicooSourceFormat {
+            codec: 2,
+            height: 1080,
+            fps: 60
+        }
+    );
+    assert!(snapshot.receiver_source_formats[1..]
+        .iter()
+        .all(|format| *format == PicooSourceFormat::default()));
+    picoo_sender_destroy(handle);
 }

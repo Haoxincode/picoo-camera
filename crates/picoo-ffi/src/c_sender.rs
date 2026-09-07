@@ -153,6 +153,28 @@ pub struct PicooEncoderDirective {
     pub stream_epoch: u32,
 }
 
+/// One formal preparation candidate. Actual native output has a stricter offer gate.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PicooSourceFormat {
+    pub codec: u32,
+    pub height: u32,
+    pub fps: u32,
+}
+
+impl From<picoo_sender::SourceFormat> for PicooSourceFormat {
+    fn from(value: picoo_sender::SourceFormat) -> Self {
+        Self {
+            codec: match value.codec {
+                picoo_bitstream::Codec::Avc => 1,
+                picoo_bitstream::Codec::Hevc => 2,
+            },
+            height: value.height,
+            fps: value.fps,
+        }
+    }
+}
+
 /// Coherent sender control-plane state captured under one Rust session lock.
 ///
 /// Platform UIs should prefer this over combining individual getters: fields
@@ -167,10 +189,23 @@ pub struct PicooSenderSnapshot {
     pub stream_epoch: u32,
     pub reconnect_attempt: u32,
     pub reconnect_delay_ms: u64,
+    pub receiver_capabilities_known: bool,
+    pub receiver_source_format_count: u32,
+    pub receiver_source_formats: [PicooSourceFormat; 8],
 }
 
 pub(crate) fn sender_snapshot(session: &SenderSession<QuicSenderTransport>) -> PicooSenderSnapshot {
+    let candidates = session.receiver_source_candidates();
+    let mut receiver_source_formats = [PicooSourceFormat::default(); 8];
+    if let Some(candidates) = &candidates {
+        for (out, candidate) in receiver_source_formats.iter_mut().zip(candidates) {
+            *out = (*candidate).into();
+        }
+    }
     PicooSenderSnapshot {
+        receiver_capabilities_known: candidates.is_some(),
+        receiver_source_format_count: candidates.as_ref().map_or(0, |values| values.len() as u32),
+        receiver_source_formats,
         status: sender_status_code(session.status()),
         current_bitrate_bps: session.current_bitrate_bps(),
         active_height: session.bitrate_active_height(),

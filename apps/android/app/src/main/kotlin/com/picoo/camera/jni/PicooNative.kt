@@ -1,5 +1,6 @@
 package com.picoo.camera.jni
 
+import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.media.EncoderSubmitOutcome
 
 /**
@@ -285,20 +286,32 @@ object PicooNative {
         val streamEpoch: Int,
         val reconnectAttempt: Int,
         val reconnectDelayMs: Long,
-    )
-
-    fun readSenderSnapshot(handle: Long): SenderSnapshot {
-        val values = getSenderSnapshot(handle)
-        return SenderSnapshot(
-            status = values.getOrElse(0) { STATUS_DISCONNECTED.toLong() }.toInt(),
-            currentBitrateBps = values.getOrElse(1) { 0 }.toInt(),
-            activeHeight = values.getOrElse(2) { 0 }.toInt(),
-            receiverMaxHeight = values.getOrElse(3) { 0 }.toInt(),
-            streamEpoch = values.getOrElse(4) { 0 }.toInt(),
-            reconnectAttempt = values.getOrElse(5) { 0 }.toInt(),
-            reconnectDelayMs = values.getOrElse(6) { 0 },
-        )
+        /** Null means decoder evidence has not arrived; empty means no matching product request. */
+        val receiverSourceFormats: List<VideoSourceFormat>?,
+    ) {
+        companion object {
+            internal fun fromNative(values: LongArray): SenderSnapshot {
+                check(values.size in 8..32 && (values.size - 8) % 3 == 0) { "Invalid native sender snapshot" }
+                check(values[7] == 0L || values[7] == 1L) { "Invalid native capability state" }
+                check(values[7] == 1L || values.size == 8) { "Unknown capabilities cannot contain candidates" }
+                val sourceFormats = if (values[7] == 0L) null else (8 until values.size step 3).map { index ->
+                    checkNotNull(VideoSourceFormat.fromWire(values[index].toInt(), values[index + 1].toInt(), values[index + 2].toInt()))
+                }
+                return SenderSnapshot(
+                    status = values[0].toInt(),
+                    currentBitrateBps = values[1].toInt(),
+                    activeHeight = values[2].toInt(),
+                    receiverMaxHeight = values[3].toInt(),
+                    streamEpoch = values[4].toInt(),
+                    reconnectAttempt = values[5].toInt(),
+                    reconnectDelayMs = values[6],
+                    receiverSourceFormats = sourceFormats,
+                )
+            }
+        }
     }
+
+    fun readSenderSnapshot(handle: Long): SenderSnapshot = SenderSnapshot.fromNative(getSenderSnapshot(handle))
 
     fun readEncoderDirective(handle: Long): EncoderDirective? {
         val values = getEncoderDirective(handle) ?: return null

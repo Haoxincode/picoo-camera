@@ -740,3 +740,14 @@ b5cf956 的 CI 34076167154 全平台成功。
 922bfc4 的 CI 34078499965、2d8d9ab 的 CI 34079517343 全平台成功。本批等待提交后的CI；不以本机结果替代对应runner。
 
 本批最终小米15安装新APK后，NativeCodecContractTest/EncoderSubmitContractTest/SourceHeightContractTest共5项通过（硬件编码合同含8组合），结束恢复MainActivity。第一次JNI合同发现“等待能力”被误报为Error；改为Core正常未接受结果，既不绑定/发送，也保持JNI Rejected与真实Error的区分。Sender75项回归和Clippy继续通过。构造器panic另有终态与队列关闭回归，最终Mac Receiver116、Linux Receiver121项通过。
+
+
+### 2026-09-07：完整准备候选跨平台快照
+
+- REQ-PICOO-MEDIA-054：Core 定义八种正式请求空间，仅从同一有效完整 offer 推导准备候选；未知能力与已知空候选不同。有效能力即使不支持当前请求也保留，允许 UI 提供其他明确选择；不再因为当前 AVC/30 不匹配而丢掉 HEVC/60 能力，也不替换用户请求。
+- C 状态快照在同一 session 锁内写入 known/count/最多8个 codec/height/fps 三元组；JNI传递同一快照并严格解析长度与三元组，删除旧的缺字段默认读取。Swift复用cbindgen固定C数组并检查数量。准备候选不是本地Camera/Encoder能力，更不是实际编码记录已获准入。
+- 新增两端 VideoSourceFormat 值类型；尚未把旧分辨率设置UI冒称八种配置已经接通。复用既有cbindgen、官方JNI/Swift桥接，无新序列化依赖；FFI测试仅在dev依赖启用既有Sender test-support，生产不增加测试入口。
+- Sender76项、FFI14项、Android77项JVM测试通过；小米15实际安装新APK后，3项JNI提交/状态快照合同通过，结束恢复MainActivity。混合codec/fps不产生笛卡尔积、有效替代能力不丢失、未知/空表、损坏数组与旧长度拒绝均覆盖。
+- Android完整APK/JNI/test APK、iOS完整XCFramework/App构建、Swift/C模拟器测试通过；新增固定C数组→Swift完整候选合同成功。相关Clippy、格式与文档检查通过。
+
+d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格式的完整事实、Camera/Encoder准备交集和双codec/四格式UI，而不是通过默认高度猜测完成。

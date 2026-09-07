@@ -66,7 +66,7 @@ fn sender_does_not_borrow_height_from_another_codec_or_frame_rate() {
     assert_eq!(session.receiver_max_height(), 720);
 
     caps.offers.remove(0);
-    assert!(!session.apply_capabilities_for_test(caps));
+    assert!(session.apply_capabilities_for_test(caps));
     assert_eq!(
         session.last_session_error.as_deref(),
         Some("NO_MATCHING_DECODER_OFFER")
@@ -178,4 +178,65 @@ fn preparation_matches_visible_size_without_guessing_native_storage_padding() {
         }) > INITIAL_STREAM_EPOCH
     );
     assert_eq!(session.receiver_max_height(), 1080);
+}
+
+#[test]
+fn preparation_candidates_keep_complete_alternatives_when_request_is_unavailable() {
+    use picoo_protocol::control::{ColorRange, DecoderOffer, FrameRate, VideoCodec, VideoFormat};
+    let mut session = SenderSession::new(MemoryTransport::new());
+    assert_eq!(session.receiver_source_candidates(), None);
+    session.set_stream_config(super::source_configuration(1080));
+    let mut caps = decoder_capabilities(&[(1280, 720)]);
+    caps.offers.push(DecoderOffer {
+        format: Some(VideoFormat::sdr_709(
+            VideoCodec::Hevc,
+            Resolution {
+                width: 1920,
+                height: 1080,
+            },
+            FrameRate {
+                numerator: 60,
+                denominator: 1,
+            },
+            ColorRange::Limited,
+        )),
+        max_level_idc: 123,
+        max_access_unit_bytes: 4096,
+    });
+    assert!(session.apply_capabilities_for_test(caps.clone()));
+    assert_eq!(
+        session.receiver_source_candidates(),
+        Some(vec![
+            crate::SourceFormat {
+                codec: picoo_bitstream::Codec::Avc,
+                height: 720,
+                fps: 30
+            },
+            crate::SourceFormat {
+                codec: picoo_bitstream::Codec::Hevc,
+                height: 1080,
+                fps: 60
+            },
+        ])
+    );
+    assert_eq!(
+        session.pending_stream_config().unwrap().height,
+        1080,
+        "no automatic source substitution"
+    );
+    assert_eq!(
+        session.last_session_error.as_deref(),
+        Some("NO_MATCHING_DECODER_OFFER")
+    );
+    for offer in &mut caps.offers {
+        offer.format.as_mut().unwrap().color.as_mut().unwrap().range = ColorRange::Full as i32;
+    }
+    assert!(session.apply_capabilities_for_test(caps));
+    assert_eq!(
+        session.receiver_source_candidates(),
+        Some(vec![]),
+        "known evidence without a limited-range candidate is not unknown"
+    );
+    session.clear_receiver_capabilities();
+    assert_eq!(session.receiver_source_candidates(), None);
 }
