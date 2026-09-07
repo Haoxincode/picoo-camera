@@ -97,3 +97,5 @@ Apple Decoder 以完整 CodecConfiguration（codec 与所有原始参数集）�
 VideoToolbox 的闭合 HEVC 解码合同仅接纳 IDR 随机访问序列；CRA、RASL、RADL 在原生会话变更前明确拒绝。只有具备 leading-picture 归属与独立验收的恢复策略才能扩展此边界，不把 CRA 自动视为 IDR。
 
 Windows Decoder 的 AVC/HEVC 配置切换通过新的同步原生 MFT 准备和提交，保留源 D3D11 设备身份；禁止在已工作的 transform 上试探另一 codec 后再回滚。HEVC 组件必须来自系统枚举并提供同设备原生 NV12 输出；组件缺失或 DXVA 准入失败使该配置不可用。同步驱动不接纳需要事件循环的异步 MFT。
+
+Sender 的原生配置快照必须持有已验证 CodecConfiguration，codec/profile/level 由该记录派生；不得保存可独立互相矛盾的 raw SPS/PPS 与 codec 标签，也不存在空参数集的默认有效配置。平台适配器负责原生 CSD 的显式 framing 转换和失败返回，Core 不猜测输入是 raw NAL 还是 Annex B。配置快照自身的几何、帧率、方向和时间世代继续由源配置事务验证。

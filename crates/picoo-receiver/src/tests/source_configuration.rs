@@ -81,8 +81,11 @@ fn network_feedback_keeps_source_fixed_and_explicit_changes_still_decode() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps: sps_hi,
-        pps: pps_hi,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_hi, &pps_hi,
+        )
+        .unwrap()
+        .into(),
     });
     for _ in 0..40 {
         receiver.pump().ok();
@@ -129,8 +132,11 @@ fn network_feedback_keeps_source_fixed_and_explicit_changes_still_decode() {
         stream_epoch: epoch,
         mirrored: false,
         rotation: 0,
-        sps: sps_lo,
-        pps: pps_lo,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_lo, &pps_lo,
+        )
+        .unwrap()
+        .into(),
     };
     sender.set_stream_config(cfg_lo.clone());
     assert!(sender.report_encoder_started(transaction_id, 2, epoch, 720,));

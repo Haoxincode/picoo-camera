@@ -512,6 +512,11 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
             Err(_) => return -1,
         }
     };
+    let Ok(configuration) =
+        picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+    else {
+        return -2;
+    };
     with_sender(handle, |inner| {
         let Ok(mut session) = inner.session.lock() else {
             return -1;
@@ -524,8 +529,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_setStreamConfig(
             stream_epoch: 0,
             mirrored: mirrored == JNI_TRUE,
             rotation: rotation as u32,
-            sps,
-            pps,
+            configuration: configuration.into(),
         });
         0
     })

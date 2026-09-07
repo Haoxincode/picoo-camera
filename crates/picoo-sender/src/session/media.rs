@@ -1,6 +1,5 @@
 //! Native encoder event boundary — REQ-PICOO-MEDIA-003/016/020..022.
 
-use picoo_bitstream::avc::extract_sps_pps;
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
 #[cfg(any(test, feature = "test-support"))]
 use picoo_session::{ConnectionState, OutputState, SenderStatus, SessionRuntimeState};
@@ -231,7 +230,7 @@ impl<T: PicooTransport> SenderSession<T> {
             stream_epoch,
             width,
             height,
-            mut stream_config,
+            stream_config,
         } = event;
         if encoder_generation == 0 || width == 0 || height == 0 {
             return Err(SenderError::Protocol(
@@ -259,15 +258,6 @@ impl<T: PicooTransport> SenderSession<T> {
             ));
         }
         let stream_configured = stream_config.is_some();
-        if let Some(config) = stream_config.as_mut() {
-            if config.pps.is_empty() {
-                if let Some((sps, pps)) = extract_sps_pps(&config.sps) {
-                    config.sps = sps;
-                    config.pps = pps;
-                }
-            }
-        }
-
         if let Some(config) = &stream_config {
             config.to_proto().map_err(SenderError::CodecConfiguration)?;
         }

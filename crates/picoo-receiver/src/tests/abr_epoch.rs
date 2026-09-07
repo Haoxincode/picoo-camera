@@ -95,8 +95,9 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps: sps1,
-        pps: pps1,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps1, &pps1)
+            .unwrap()
+            .into(),
     });
     for _ in 0..40 {
         receiver.pump().expect("rx");
@@ -130,8 +131,9 @@ fn stream_epoch_bump_recovers_openh264_latest_frame_store_under_three_seconds() 
         stream_epoch: next_epoch,
         mirrored: false,
         rotation: 0,
-        sps: sps2,
-        pps: pps2,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps2, &pps2)
+            .unwrap()
+            .into(),
     });
     // Sender should observe RequestKeyframe from epoch bump.
     let mut keyed = false;
@@ -246,8 +248,11 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps: sps_lo,
-        pps: pps_lo,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_lo, &pps_lo,
+        )
+        .unwrap()
+        .into(),
     });
     for _ in 0..40 {
         receiver.pump().expect("rx");
@@ -279,8 +284,11 @@ fn midstream_resolution_change_openh264_updates_latest_frame_store() {
         stream_epoch: next_epoch,
         mirrored: false,
         rotation: 0,
-        sps: sps_hi,
-        pps: pps_hi,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_hi, &pps_hi,
+        )
+        .unwrap()
+        .into(),
     });
     let transaction_id = sender.encoder_transaction_id_for_epoch(next_epoch);
     assert!(sender.report_encoder_started(transaction_id, 2, next_epoch, 720));
@@ -434,8 +442,9 @@ fn incomplete_keyframe_requests_idr_and_recovers_latest_frame_store() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     };
     sender.set_stream_config(stream_config.clone());
     for _ in 0..50 {

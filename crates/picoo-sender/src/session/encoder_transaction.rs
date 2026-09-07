@@ -244,7 +244,7 @@ mod tests {
 
     fn rollback() -> EncoderRollback {
         EncoderRollback {
-            stream_config: Some(StreamConfigParams::default()),
+            stream_config: Some(super::super::tests::source_configuration(720)),
             stream_config_sent: true,
             encoder_generation: 6,
         }

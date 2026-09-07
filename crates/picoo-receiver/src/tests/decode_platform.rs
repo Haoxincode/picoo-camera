@@ -103,8 +103,9 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().expect("rx");
@@ -217,8 +218,9 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -351,9 +353,13 @@ fn macos_videotoolbox_explicit_source_configuration() {
         fps: 30,
         bitrate_bps: 3_000_000,
         stream_epoch: epoch_720,
-        sps: sps_720,
-        pps: pps_720,
-        ..Default::default()
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_720, &pps_720,
+        )
+        .unwrap()
+        .into(),
+        mirrored: false,
+        rotation: 0,
     });
     assert!(sender.report_encoder_started(transaction_720, 2, epoch_720, 720,));
     sender
@@ -426,9 +432,13 @@ fn macos_videotoolbox_explicit_source_configuration() {
         fps: 30,
         bitrate_bps: 6_000_000,
         stream_epoch: epoch_1080,
-        sps: sps_1080,
-        pps: pps_1080,
-        ..Default::default()
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_1080, &pps_1080,
+        )
+        .unwrap()
+        .into(),
+        mirrored: false,
+        rotation: 0,
     });
     assert!(sender.report_encoder_started(transaction_1080, 3, epoch_1080, 1080,));
     sender
@@ -483,7 +493,7 @@ fn thermal_hold_changes_bitrate_growth_without_source_reconfiguration() {
     sender.set_stream_config(picoo_sender::StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::configured_source()
     });
     assert!(sender.report_encoder_started(0, 1, sender.current_stream_epoch(), 720));
     sender.set_thermal_hold(true);
@@ -620,8 +630,9 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 90,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().expect("rx");

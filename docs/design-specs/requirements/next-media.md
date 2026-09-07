@@ -98,5 +98,8 @@
 | ID | 状态 | 来源 | 契约 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-BITSTREAM-006 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | AVC/HEVC 共享 VideoSpsFacts/VideoColorFacts 源描述；HEVC 复用有界 Scuffle SPS 解析，准入单层 progressive Main 8-bit 4:2:0 与零重排，保留 coded/visible/PAR/色彩/chroma 事实；缺失不猜测，算术/分配前校验，拒绝尾部垃圾 | 硬件 HEVC fixture、逐字节截断、逐位变异、裁剪/块尺寸/预测 scaling matrix/palette/重排异常回归；fuzz 包使用同一补丁；平台 Decoder 与完整配置事务另验 |
-
 | REQ-PICOO-BITSTREAM-007 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025 | 原生 HEVC Annex B CSD 只包含单组 VPS/SPS/PPS，经源 SPS 准入和 Scuffle hvcC mux 进入统一四字节长度记录；保留 profile/tier/constraint/level，未知帧率和 parallelism 不猜测 | 硬件原生 hvcC 字段对照、缺失/冲突/非参数 NAL/长度边界；移动端正式接口接入另验 |
+
+| ID | 状态 | 来源 | 契约 | 验收 |
+| --- | --- | --- | --- | --- |
+| REQ-PICOO-MEDIA-035 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025、026 | Sender 配置必须持有已验证 CodecConfiguration，无空参数默认配置、raw SPS/PPS 猜测或独立 codec/profile 标签；原生适配在 Core 状态变更前拒绝无效参数，非法帧率/方向不取整 | HEVC 原生记录序列化、配置事务非法属性拒绝、FFI 缺失/Annex B 冒充 raw/超长输入；完整双 codec 配置协商另验 |

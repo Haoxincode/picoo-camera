@@ -9,7 +9,7 @@ use std::io::Cursor;
 const MAX_CONFIG_BYTES: usize = 64 * 1024;
 const MAX_PARAMETER_SETS: usize = 64;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecConfiguration {
     codec: Codec,
     nal_length_size: NalLengthSize,

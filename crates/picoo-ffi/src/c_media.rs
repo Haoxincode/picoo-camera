@@ -2,29 +2,27 @@ use picoo_bitstream::avc::extract_sps_pps;
 use picoo_rate_control::BitrateLadder;
 use std::slice;
 
-pub(crate) fn copy_parameter_sets(
+/// Native Apple adapter supplies raw parameter NALs with explicit lengths.
+pub(crate) fn configuration_from_raw_avc(
     sps: *const u8,
     sps_len: usize,
     pps: *const u8,
     pps_len: usize,
-) -> (Vec<u8>, Vec<u8>) {
-    let sps_slice = if !sps.is_null() && sps_len > 0 {
-        unsafe { slice::from_raw_parts(sps, sps_len) }
-    } else {
-        &[]
-    };
-    let pps_slice = if !pps.is_null() && pps_len > 0 {
-        unsafe { slice::from_raw_parts(pps, pps_len) }
-    } else {
-        &[]
-    };
-    if !pps_slice.is_empty() {
-        return (sps_slice.to_vec(), pps_slice.to_vec());
+) -> Result<picoo_bitstream::CodecConfiguration, picoo_bitstream::BitstreamError> {
+    if sps_len.saturating_add(pps_len).saturating_add(11) > 64 * 1024 {
+        return Err(picoo_bitstream::BitstreamError::Limit);
     }
-    if let Some((s, p)) = extract_sps_pps(sps_slice) {
-        return (s, p);
+    if sps.is_null() || pps.is_null() || sps_len == 0 || pps_len == 0 {
+        return Err(picoo_bitstream::BitstreamError::Malformed(
+            "missing native AVC parameter sets",
+        ));
     }
-    (sps_slice.to_vec(), Vec::new())
+    // The FFI caller owns both buffers for this call; bounds are checked before
+    // materialization. No Annex B guessing or configuration mutation occurs here.
+    picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+        unsafe { slice::from_raw_parts(sps, sps_len) },
+        unsafe { slice::from_raw_parts(pps, pps_len) },
+    )
 }
 
 /// Extract SPS/PPS from Annex-B or AVCC bytes into caller buffers (REQ-PICOO-PROTOCOL-005).
@@ -90,4 +88,32 @@ pub extern "C" fn picoo_bitrate_clamp_for_height(bitrate_bps: u32, height: u32) 
 #[no_mangle]
 pub extern "C" fn picoo_stream_epoch_initial() -> u32 {
     picoo_sender::INITIAL_STREAM_EPOCH
+}
+
+#[cfg(test)]
+mod configuration_tests {
+    use super::*;
+
+    #[test]
+    fn native_raw_parameters_reject_missing_ambiguous_and_oversized_input() {
+        let annex = include_bytes!("../../picoo-testkit/fixtures/avc-1280x720-bt709-idr.h264");
+        let (sps, pps) = extract_sps_pps(annex).unwrap();
+        assert!(
+            configuration_from_raw_avc(sps.as_ptr(), sps.len(), pps.as_ptr(), pps.len()).is_ok()
+        );
+        assert!(
+            configuration_from_raw_avc(annex.as_ptr(), annex.len(), std::ptr::null(), 0).is_err()
+        );
+        assert!(
+            configuration_from_raw_avc(std::ptr::null(), usize::MAX, std::ptr::null(), 1).is_err()
+        );
+        let prefixed = [b"\0\0\0\x01".as_slice(), sps.as_slice()].concat();
+        assert!(configuration_from_raw_avc(
+            prefixed.as_ptr(),
+            prefixed.len(),
+            pps.as_ptr(),
+            pps.len()
+        )
+        .is_err());
+    }
 }

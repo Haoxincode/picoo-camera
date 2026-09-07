@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn invalid_configuration_cannot_send_control_or_commit_matching_idr() {
     // REQ-PICOO-PROTOCOL-019: a native refresh fact cannot make invalid
-    // parameter sets authoritative, even when its transaction identity matches.
+    // source attributes authoritative, even when its transaction identity matches.
     let mut session = SenderSession::new(MemoryTransport::new());
     session
         .connect(Endpoint {
@@ -18,12 +18,12 @@ fn invalid_configuration_cannot_send_control_or_commit_matching_idr() {
     let candidate_epoch = session.begin_stream_reconfiguration(1080);
     let transaction = session.encoder_transaction_id_for_epoch(candidate_epoch);
     assert!(session.report_encoder_started(transaction, 11, candidate_epoch, 1080));
-    for sps in [vec![], vec![0x67, 100, 0, 40]] {
+    for fps in [0, 120] {
         session.set_stream_config(StreamConfigParams {
             height: 1080,
             width: 1920,
-            sps,
-            ..Default::default()
+            fps,
+            ..super::source_configuration(1080)
         });
         let sent = session.transport.sent_order.len();
         let message_id = session.next_control_message_id;
@@ -70,7 +70,10 @@ fn invalid_initial_encoder_event_does_not_bind_generation_or_stage_source() {
         stream_epoch: epoch,
         width: 1280,
         height: 720,
-        stream_config: Some(StreamConfigParams::default()),
+        stream_config: Some(StreamConfigParams {
+            fps: 0,
+            ..super::source_configuration(720)
+        }),
     });
     assert!(matches!(outcome, Err(SenderError::CodecConfiguration(_))));
     assert_eq!(session.committed_encoder_generation, 0);

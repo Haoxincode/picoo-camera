@@ -102,8 +102,9 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
             stream_epoch: 1,
             mirrored: false,
             rotation: 0,
-            sps,
-            pps,
+            configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+                .unwrap()
+                .into(),
         });
         for _ in 0..50 {
             receiver.pump().expect("rx");
@@ -539,8 +540,9 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -647,8 +649,9 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().ok();

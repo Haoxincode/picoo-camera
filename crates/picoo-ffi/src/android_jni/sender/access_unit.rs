@@ -67,8 +67,13 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_submitEncoderAccess
             return -1;
         };
         let stream_epoch = stream_epoch as u32;
-        let stream_config =
-            (configure_stream == JNI_TRUE && keyframe == JNI_TRUE).then(|| StreamConfigParams {
+        let stream_config = if configure_stream == JNI_TRUE && keyframe == JNI_TRUE {
+            let Ok(configuration) =
+                picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            else {
+                return -2;
+            };
+            Some(StreamConfigParams {
                 width: encoder_width as u32,
                 height: encoder_height as u32,
                 fps: 30,
@@ -76,9 +81,11 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_submitEncoderAccess
                 stream_epoch,
                 mirrored: mirrored == JNI_TRUE,
                 rotation: 0,
-                sps,
-                pps,
-            });
+                configuration: configuration.into(),
+            })
+        } else {
+            None
+        };
         session
             .submit_encoder_event(NativeEncoderEvent {
                 data: &data,

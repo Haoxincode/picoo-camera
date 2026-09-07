@@ -1,6 +1,6 @@
 //! Native Sender control ABI — REQ-PICOO-MEDIA-016/022.
 
-use crate::c_media::copy_parameter_sets;
+use crate::c_media::configuration_from_raw_avc;
 use crate::c_sender::PicooEncoderDirective;
 use crate::handles::{copy_str_to_buf, RecoverMutex, SenderInner};
 use picoo_sender::{EncoderFailureOutcome, NativeEncoderEvent, StreamConfigParams};
@@ -61,7 +61,9 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
         return -2;
     };
     let stream_config = if configure_stream != 0 {
-        let (sps, pps) = copy_parameter_sets(sps, sps_len, pps, pps_len);
+        let Ok(configuration) = configuration_from_raw_avc(sps, sps_len, pps, pps_len) else {
+            return -2;
+        };
         Some(StreamConfigParams {
             width: encoder_width,
             height: encoder_height,
@@ -70,8 +72,7 @@ pub extern "C" fn picoo_sender_submit_encoder_event(
             stream_epoch,
             mirrored: mirrored != 0,
             rotation,
-            sps,
-            pps,
+            configuration: configuration.into(),
         })
     } else {
         None
@@ -184,7 +185,9 @@ pub extern "C" fn picoo_sender_set_stream_config(
     if handle.is_null() {
         return -1;
     }
-    let (sps_bytes, pps_bytes) = copy_parameter_sets(sps, sps_len, pps, pps_len);
+    let Ok(configuration) = configuration_from_raw_avc(sps, sps_len, pps, pps_len) else {
+        return -2;
+    };
     let inner = unsafe { &*(handle as *mut SenderInner) };
     inner
         .session
@@ -197,8 +200,7 @@ pub extern "C" fn picoo_sender_set_stream_config(
             stream_epoch: 0,
             mirrored: mirrored != 0,
             rotation,
-            sps: sps_bytes,
-            pps: pps_bytes,
+            configuration: configuration.into(),
         });
     0
 }

@@ -117,9 +117,16 @@ fn configured_source() -> picoo_sender::StreamConfigParams {
     let (sps, pps) =
         picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
     picoo_sender::StreamConfigParams {
-        sps,
-        pps,
-        ..Default::default()
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
     }
 }
 

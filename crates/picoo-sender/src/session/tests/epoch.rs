@@ -167,9 +167,16 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
     let (sps, pps) =
         picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
     session.set_stream_config(StreamConfigParams {
-        sps,
-        pps,
-        ..Default::default()
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
     });
     session
         .connect(Endpoint {
@@ -306,7 +313,10 @@ fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
         .expect("matching IDR");
     let config = session.pending_stream_config().expect("staged config");
     assert_eq!(config.stream_epoch, pending);
-    assert_eq!(config.sps, super::source_configuration(720).sps);
+    assert_eq!(
+        config.configuration,
+        super::source_configuration(720).configuration
+    );
     assert!(!session.media_blocked_for_stream_config);
 }
 
@@ -351,7 +361,7 @@ fn noncanonical_encoder_height_cannot_commit_ladder_epoch() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 800,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(!session.report_encoder_started(transaction_id, 11, pending, 800));
@@ -367,7 +377,7 @@ fn failed_before_start_restores_committed_stream_config() {
     session.set_stream_config(StreamConfigParams {
         width: 854,
         height: 480,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert_eq!(session.pending_stream_config().map(|c| c.height), Some(480));
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);

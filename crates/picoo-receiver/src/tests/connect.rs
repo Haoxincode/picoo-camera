@@ -337,8 +337,9 @@ fn capabilities_720_only_are_applied_before_sender_stream_config() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     sender.send_client_hello().expect("hello");
     for _ in 0..200 {

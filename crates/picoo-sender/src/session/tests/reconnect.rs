@@ -400,7 +400,6 @@ fn resends_stream_config_and_requests_keyframe_after_reconnect() {
     assert_eq!(cfg.height, 1080);
     assert!(cfg.mirrored);
     let expected = super::source_configuration(1080);
-    assert_eq!(cfg.sps, expected.sps);
-    assert_eq!(cfg.pps, expected.pps);
+    assert_eq!(cfg.configuration, expected.configuration);
     assert!(session.take_keyframe_request());
 }

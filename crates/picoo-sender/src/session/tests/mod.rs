@@ -294,7 +294,7 @@ impl PicooTransport for RejectConnectTransport {
     }
 }
 
-fn source_configuration(height: u32) -> StreamConfigParams {
+pub(super) fn source_configuration(height: u32) -> StreamConfigParams {
     let (width, fixture): (u32, &[u8]) = match height {
         720 => (1280, picoo_testkit::AVC_1280X720_BT709_IDR),
         1080 => (1920, picoo_testkit::AVC_1920X1080_BT709_IDR),
@@ -304,8 +304,13 @@ fn source_configuration(height: u32) -> StreamConfigParams {
     StreamConfigParams {
         width,
         height,
-        sps,
-        pps,
-        ..Default::default()
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
     }
 }

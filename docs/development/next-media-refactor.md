@@ -579,3 +579,13 @@ Scuffle 发布包补丁在算术/分配前限制块尺寸、PCM、scaling matrix
 - Bitstream/Decoder 53 项本地测试通过，包含新增 VideoToolbox 原生候选创建失败后旧 HEVC 会话和配置仍可用的测试；两 crate all-targets Clippy 通过。
 - codec-bitstream sanitizer fuzz 加入原生 CSD 种子和配置 roundtrip：6,469,219 次 / 61 秒，峰值 RSS 529 MiB，无崩溃。仍是有限 campaign，不表示任意输入安全的完整证明。
 - 移动端正式接口、Sender 配置和 Receiver 事务尚未接入这个 CSD 转换；该边界的通过不提升完整 NEXT-003/004 验收状态。
+
+### 2026-09-07：Sender 配置记录所有权
+
+- REQ-PICOO-MEDIA-035：StreamConfigParams 必须持有已验证 CodecConfiguration，不再有 Default 或 raw SPS/PPS 字段。codec/profile/level 由记录派生；Core 中 raw/Annex B 猜测删除。现有 AVC 平台适配在调用 Core 前建立记录；C 入口在读取/分配前检查参数长度和缺失指针，不将缺 PPS 当作另一个输入格式。
+- 协议序列化仅接纳 30/60fps 和合法 quarter-turn，删除容忍性方向取整。无效源属性在匹配 IDR 到达时也不能提交事务；合法替换仍可继续提交。
+- 本地 Sender 68、Receiver 106、FFI 11 项测试通过（合计 185）；Receiver 另有 2 项忽略，不计通过。此批保留 AVC 原生 FFI 签名，正式 HEVC 原生回调和 Receiver 配置准入仍待接入；没有兼容旧配置记录或协议版本的路径。
+
+该批 Sender/Receiver/FFI all-targets Clippy 通过；Android aarch64 JNI library 使用本机 NDK 28.2 的官方 Clang/AR 编译检查通过。首次直接 cargo check 未指定 NDK 编译器失败，随后配置工具路径重跑成功。配置快照使用 Arc 共享不可变已解析记录，避免在事务枚举和每次快照克隆中复制参数集合。
+
+原生 Decoder 提交 fdfda46 的 CI 34067849022 全平台成功；Windows 的系统 HEVC 诊断仍为显式忽略项，不能把该 CI 结果当作 Windows HEVC 实测通过。配置适配提交 01a560a 已推送，CI 34068821610 执行中。
