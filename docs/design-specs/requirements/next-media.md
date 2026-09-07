@@ -142,3 +142,5 @@
 | REQ-PICOO-MEDIA-063 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-007、012 | 桌面预览需求由GPUI可见帧回调驱动，不依赖新视频帧反向触发重绘；重连/源空档后继续请求新帧，单次显示需求只消费一次，无显示回调不重复提交GPU预览 | 超过旧100ms门槛的源空档恢复、单次需求消费、Mac重连与隐藏/恢复窗口验证 |
 
 | REQ-PICOO-MEDIA-064 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、026 | iOS方向呈现意图通过完整原生编码世代和Core事务提交；编码回调配置不可运行中原地改变，恢复保存方向，拒绝方向不匹配的首AU；同一失败方向不由轮询无限重试 | 方向意图去重/重试边界、AU方向匹配、恢复配置及Swift构建；iPhone旋转与持续fps另验 |
+
+| REQ-PICOO-MEDIA-065 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-005、006、009 | iOS精确AVFoundation输入直接交给硬件编码器，实际像素尺寸必须匹配准备配置；删除隐式缩放/裁剪与按输入横竖猜编码尺寸的路径，不通过缩放掩盖采集事实不一致 | 精确八组合硬件输出；过小/过大/转置输入拒绝且无AU；Swift构建 |

@@ -841,3 +841,9 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 - REQ-PICOO-MEDIA-064：删除运行中直接updateRotation的入口；RotationCoordinator提供意图，直播控制串行执行完整源事务。原生编码配置、首AU校验与恢复缓存都携带方向，同一失败意图不无限重试。方向查询回来后核对镜头、源格式、epoch及最新意图；普通ABR不在原生控制/生命周期任务中覆盖码率。
 - 源格式控制按概念抽出SenderSourceControl，SenderAppModel降至约740行，未放宽界面状态的setter。Swift最终模拟器套件通过；新增意图去重/新连接重试及旧方向AU拒绝/新方向IDR接纳合同。同一生产编码器在M4上的AVC/HEVC×720p/1080p×30/60八组合0→90→0原生世代验证通过。日志/tmp/picoo-ios-rotation-final-test.log、/tmp/picoo-ios-direction-native.log。输入为合成图像，不保存真实相机帧；iPhone真机旋转、画幅、持续fps仍未验证。
+
+### 2026-09-07：iOS原生输入直接编码
+
+- REQ-PICOO-MEDIA-065删除VTPixelTransferSession、隐式Trim和根据输入横竖推断目标尺寸的路径。AVFoundation已选择精确输入，生产编码前核对真实CVPixelBuffer尺寸与颜色，直接提交同一原生图像；不匹配时走原生失败，不放大、裁剪或另建转换池。
+- 生产硬件harness验证过小/过大/转置三类输入被拒绝且没有AU，八种精确配置、0→90→0世代合同及未知颜色拒绝均通过；最终iOS模拟器套件通过。日志/tmp/picoo-ios-direct-input-native.log、/tmp/picoo-ios-direct-input-final-test.log。
+- 预览/连接修复提交675cadd对应CI34092696031，Rust、Android、Windows、iOS、macOS全部成功；该CI不包含之后的iOS方向与输入清理，后者另等新一轮验证。

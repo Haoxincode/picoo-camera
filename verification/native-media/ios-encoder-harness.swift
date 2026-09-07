@@ -67,6 +67,28 @@ nonisolated enum Failure: Error { case message(String) }
             throw Failure.message("unknown color was not rejected")
         }
         print("PASS unknown source color rejected")
+        for (width, height) in [(640, 360), (1920, 1080), (720, 1280)] {
+            let events = Events()
+            let config = VideoEncoderConfiguration(codec: .avc, resolution: .p720,
+                framesPerSecond: 30, bitrateBps: 3_000_000, streamEpoch: 3, encoderGeneration: 4)
+            let encoder = VideoEncoderPipeline(initialConfiguration: config, eventHandler: events.receive)
+            let input = try Input(width: width, height: height, fps: 30)
+            await encoder.start(configuration: config)
+            await withCheckedContinuation { continuation in
+                encoder.callbackQueue.async {
+                    encoder.submit(input.sample)
+                    continuation.resume()
+                }
+            }
+            await encoder.stop()
+            let output = events.take()
+            guard output.count == 1, case let .failure(epoch, generation, message) = output[0],
+                  epoch == 3, generation == 4,
+                  message == VideoEncoderError.sourceDimensionsMismatch.localizedDescription else {
+                throw Failure.message("incorrect source dimensions were not rejected")
+            }
+        }
+        print("PASS smaller, larger, and transposed capture dimensions rejected")
         for codec in NativeVideoCodec.allCases {
             for resolution in VideoResolution.allCases {
                 for fps: UInt32 in [30, 60] {

@@ -74,3 +74,7 @@ Mac Decoder 不再复制源 NV12 plane。原生 adapter 从有界 SPS 提取真�
 2026-09-07复核既有AVCaptureDevice.RotationCoordinator与VideoToolbox回调配置：RotationCoordinator自iOS17可用，满足iOS18最低版本，使用项目官方SDK，不增加包或运行时。原生传感器输入保持不旋转，方向作为呈现元数据；旧实现通过reserveFrame逐帧保存动态方向，已有输入快照保证；但动态更新不经过方向事务，恢复缓存也没有方向。采用现有Core源事务重建VT世代，方向固定于世代配置，reserveFrame仅接受仍可动态变化的码率；方向匹配后才提交，恢复同时保存方向。没有引入第二套方向线程或GPU像素实现。
 
 生产Swift的Apple硬件harness在八种codec/尺寸/fps下额外验证0→90→0的新epoch/世代，每次AU方向与所属回调一致，合成输入验证全部通过。此结果不替代iPhone传感器方向、预览与输出构图及持续帧率的真机验收。
+
+## iOS精确采集输入替代隐式缩放
+
+CameraCaptureService已复用AVFoundation的activeFormat精确选择像素尺寸；因此生产输入无需另一套VTPixelTransferSession缩放。现有系统VTPixelTransfer是成熟API，但不能用隐式Trim来掩盖准备与实际输入的差异，也不需要为此引入CoreImage或自写GPU shader。删除该传输会话、目标池和宽高推断；直接把符合尺寸及BT.709描述的原生CVPixelBuffer交给要求硬件的VT编码器，无新增依赖、GPU上下文或CPU像素路径。不匹配输入交给原生失败事务，明确GPU几何处理仍留在输出边界。

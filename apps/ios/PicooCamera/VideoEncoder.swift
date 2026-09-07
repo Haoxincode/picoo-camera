@@ -193,10 +193,7 @@ nonisolated enum VideoEncoderError: LocalizedError {
     case hardwareEncoderUnavailable
     case property(String, OSStatus)
     case prepare(OSStatus)
-    case pixelBufferPoolUnavailable
-    case pixelBufferCreation(CVReturn)
-    case pixelTransferCreation(OSStatus)
-    case pixelTransfer(OSStatus)
+    case sourceDimensionsMismatch
 
     var errorDescription: String? {
         switch self {
@@ -212,14 +209,8 @@ nonisolated enum VideoEncoderError: LocalizedError {
             "无法配置 视频编码参数 \(key)（\(status)）"
         case let .prepare(status):
             "视频编码器准备失败（\(status)）"
-        case .pixelBufferPoolUnavailable:
-            "视频编码器没有可用的缩放缓冲池"
-        case let .pixelBufferCreation(status):
-            "无法创建 视频缩放缓冲（\(status)）"
-        case let .pixelTransferCreation(status):
-            "无法创建视频缩放器（\(status)）"
-        case let .pixelTransfer(status):
-            "视频缩放失败（\(status)）"
+        case .sourceDimensionsMismatch:
+            "采集图像尺寸与准备的视频配置不一致"
         }
     }
 }

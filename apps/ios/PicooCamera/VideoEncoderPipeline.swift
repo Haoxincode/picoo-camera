@@ -20,7 +20,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
     private var configuration: VideoEncoderConfiguration
     private var compressionSession: VTCompressionSession?
     private var compressionContext: CompressionCallbackContext?
-    private var pixelTransferSession: VTPixelTransferSession?
     private var isAcceptingFrames = false
     private var forceNextKeyframe = true
 
@@ -103,23 +102,17 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         VTCompressionSessionInvalidate(compressionSession)
         self.compressionSession = nil
         compressionContext = nil
-        if let pixelTransferSession {
-            VTPixelTransferSessionInvalidate(pixelTransferSession)
-            self.pixelTransferSession = nil
-        }
     }
 
-    private func compressionSession(for imageBuffer: CVImageBuffer) throws -> VTCompressionSession {
+    private func prepareCompressionSession() throws -> VTCompressionSession {
         if let compressionSession {
             return compressionSession
         }
 
-        let (outputWidth, outputHeight) = outputDimensions(for: imageBuffer)
-
         let actualConfiguration = EncodedFrameConfiguration(
             codec: configuration.codec,
-            width: UInt32(outputWidth),
-            height: UInt32(outputHeight),
+            width: UInt32(configuration.resolution.width),
+            height: UInt32(configuration.resolution.height),
             framesPerSecond: configuration.framesPerSecond,
             bitrateBps: configuration.bitrateBps,
             streamEpoch: configuration.streamEpoch,
@@ -194,74 +187,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         }
 
         return session
-    }
-
-    private func outputDimensions(for imageBuffer: CVImageBuffer) -> (Int32, Int32) {
-        let width = CVPixelBufferGetWidth(imageBuffer)
-        let height = CVPixelBufferGetHeight(imageBuffer)
-        if width >= height {
-            return (configuration.resolution.width, configuration.resolution.height)
-        }
-        return (configuration.resolution.height, configuration.resolution.width)
-    }
-
-    private func imageBufferForEncoding(
-        _ source: CVImageBuffer,
-        session: VTCompressionSession
-    ) throws -> CVImageBuffer {
-        let (targetWidth, targetHeight) = outputDimensions(for: source)
-        guard CVPixelBufferGetWidth(source) != Int(targetWidth)
-                || CVPixelBufferGetHeight(source) != Int(targetHeight)
-        else {
-            return source
-        }
-        guard let pool = VTCompressionSessionGetPixelBufferPool(session) else {
-            throw VideoEncoderError.pixelBufferPoolUnavailable
-        }
-        var destination: CVPixelBuffer?
-        let bufferStatus = CVPixelBufferPoolCreatePixelBuffer(
-            kCFAllocatorDefault,
-            pool,
-            &destination
-        )
-        guard bufferStatus == kCVReturnSuccess, let destination else {
-            throw VideoEncoderError.pixelBufferCreation(bufferStatus)
-        }
-
-        let transferSession: VTPixelTransferSession
-        if let pixelTransferSession {
-            transferSession = pixelTransferSession
-        } else {
-            var created: VTPixelTransferSession?
-            let createStatus = VTPixelTransferSessionCreate(
-                allocator: kCFAllocatorDefault,
-                pixelTransferSessionOut: &created
-            )
-            guard createStatus == noErr, let created else {
-                throw VideoEncoderError.pixelTransferCreation(createStatus)
-            }
-            try Self.set(
-                kVTPixelTransferPropertyKey_ScalingMode,
-                value: kVTScalingMode_Trim,
-                on: created
-            )
-            try Self.set(
-                kVTPixelTransferPropertyKey_RealTime,
-                value: kCFBooleanTrue,
-                on: created
-            )
-            pixelTransferSession = created
-            transferSession = created
-        }
-        let transferStatus = VTPixelTransferSessionTransferImage(
-            transferSession,
-            from: source,
-            to: destination
-        )
-        guard transferStatus == noErr else {
-            throw VideoEncoderError.pixelTransfer(transferStatus)
-        }
-        return destination
     }
 
     private static func configure(
@@ -414,13 +339,12 @@ extension VideoEncoderPipeline {
         }
 
         do {
+            // REQ-PICOO-MEDIA-065: reject incorrect capture facts before VT.
+            guard CVPixelBufferGetWidth(imageBuffer) == Int(configuration.resolution.width),
+                  CVPixelBufferGetHeight(imageBuffer) == Int(configuration.resolution.height)
+            else { throw VideoEncoderError.sourceDimensionsMismatch }
             try Self.validateColor(imageBuffer)
-            let session = try compressionSession(for: imageBuffer)
-            let encodingBuffer = try imageBufferForEncoding(
-                imageBuffer,
-                session: session
-            )
-            try Self.validateColor(encodingBuffer)
+            let session = try prepareCompressionSession()
             var infoFlags: VTEncodeInfoFlags = []
             let frameProperties: CFDictionary? = forceNextKeyframe
                 ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
@@ -435,7 +359,7 @@ extension VideoEncoderPipeline {
             else { throw VideoEncoderError.pendingFramesExhausted }
             let status = VTCompressionSessionEncodeFrame(
                 session,
-                imageBuffer: encodingBuffer,
+                imageBuffer: imageBuffer,
                 presentationTimeStamp: sampleBuffer.presentationTimeStamp,
                 duration: duration,
                 frameProperties: frameProperties,
