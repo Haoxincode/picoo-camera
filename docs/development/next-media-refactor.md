@@ -939,3 +939,5 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 - 新增check_native_recording示例，直接调用生产EncodedWriter。小米15本轮NativeCodecContractTest通过，拉取规范化合成AU后，Android与Apple各八组合录像全部Complete；各输出ffprobe独立解码为91/181帧、正确尺寸、BT.709 limited。小米输出另核对manifest无gap、源AU范围及SHA256。未保存真实相机画面，也未将重复IDR测试作为持续帧率证据。
 - 用户手动点击IP连接可正常弹窗，随后成功连接；手机UI显示H.264 1080p60、约3.8Mbps/14ms，MediaCodec日志连续约5秒编码301帧。仅证明当前连接及编码活动，尚不代替桌面呈现、自动发现和完整录像UI验收。ADB触摸仍需独立排查。
 - Windows CI34173708088首个输出已可独立解码91帧，但finalize标记后的原生调用报E_INVALIDARG；探针明确Finalize/Close诊断并在Shutdown前关闭stream，等待原生重跑。
+
+Windows xtask补入picoo-recording通用合同测试和all-targets Clippy；mux probe对16个独立文件逐项报告并汇总失败，不在首个失败处掩盖其他组合，任一失败仍使CI失败。本机独立Windows探针Clippy和xtask Clippy通过，运行结果待原生runner。

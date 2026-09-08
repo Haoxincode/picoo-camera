@@ -56,6 +56,7 @@ pub fn run() -> Result<()> {
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let fixtures = repository.join("crates/picoo-media-decode/probes/apple-native-formats");
     let descriptions = repository.join("verification/native-media/mp4-sample-descriptions");
+    let mut failures = Vec::new();
     for (wire, codec) in [(1, Codec::Avc), (2, Codec::Hevc)] {
         for (width, height) in [(1280, 720), (1920, 1080)] {
             for fps in [30, 60] {
@@ -82,16 +83,34 @@ pub fn run() -> Result<()> {
                     } else {
                         data.clone()
                     };
-                    write(
+                    let result = write(
                         &path, &record, width, height, fps, &stsd, &payload, fragmented,
-                    )?;
-                    read(&path, codec, &au, fps)?;
-                    println!("PASS {stem} fragmented={fragmented}");
+                    )
+                    .and_then(|()| read(&path, codec, &au, fps));
+                    match result {
+                        Ok(()) => println!("PASS {stem} fragmented={fragmented}"),
+                        Err(error) => {
+                            let failure = format!("{stem} fragmented={fragmented}: {error}");
+                            eprintln!("FAIL {failure}");
+                            failures.push(failure);
+                        }
+                    }
                 }
             }
         }
     }
-    Ok(())
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        // Independent files let every codec/container combination report its
+        // own result. A partial matrix remains a failed validation run.
+        Err(format!(
+            "{} mux checks failed:\n{}",
+            failures.len(),
+            failures.join("\n")
+        )
+        .into())
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
