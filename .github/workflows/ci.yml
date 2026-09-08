@@ -126,6 +126,13 @@ jobs:
           wix extension add WixToolset.Util.wixext/5.0.2
       - name: Test Windows Shared Frame Ring and Media Foundation source
         run: cargo run -p xtask -- test windows
+      - name: Preserve synthetic Windows mux evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-mux-probe
+          path: target/verification/windows-mux-probe/
+          if-no-files-found: ignore
       - run: cargo run -p xtask -- build windows
       - name: Package Windows + MSI
         env:

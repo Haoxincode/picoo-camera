@@ -59,3 +59,9 @@ target/verification/apple-mux-probe target/verification/ios-encoder-output targe
 ```
 
 正常模式逐AU核对AVAssetReader回读的压缩字节和PTS；中断模式只退出当前探针进程，故意跳过finalize，留下合成部分文件供ffprobe检查。该目录不冒充产品录制结果；生产必须区分partial与完成文件。选型、实际结果和限制见[录像封装研究](../../docs/research/next-recording-mux.md)。
+
+## Windows原生MP4 mux研究
+
+在Windows原生环境执行`cargo run -p picoo-recording --example windows_mux_probe -- target/verification/windows-mux-probe`，或使用已包含该探针的`cargo xtask test windows`。输入是仓库既有八组合合成AU/config及Apple生成的stsd参考，不读取相机；输出采用独占子目录，不覆盖旧文件。CI保留`windows-mux-probe`产物，便于独立ffprobe/平台Decoder检查。
+
+探针验证普通/fragmented sink、显式sample description及SourceReader的压缩VCL/帧数/PTS回读。它不提供产品Recorder、动态stsd生成、原生硬件解码或异常中断恢复保证；结果与选型边界见[录像研究](../../docs/research/next-recording-mux.md)。

@@ -79,3 +79,11 @@ REQ-PICOO-MEDIA-077沿用仓库GPU completion permit的标准库原子计数与R
 ## 跨阶段提交期限
 
 REQ-PICOO-MEDIA-078继续使用标准库Instant，在录制接纳完整AU时生成2秒绝对期限，随输入穿过配置等待、通道和重排，不读取远端时钟。各局部队列仍保留更短的容量/等待限制；停止排空也不豁免总期限。原生段切换可能等待最终化，因此每张AU在调用前、Busy重试前及实际写入返回后再次检查；已写入内容仍记入有效前缀，整体Failed及manifest保留具体原因。2秒限制是准入/返回检查，不冒充系统调用可中断或录像最终化整体硬上限。
+
+## Windows原生mux探针
+
+2026-09-08复核[Microsoft MPEG-4 File Sink](https://learn.microsoft.com/en-us/windows/win32/medfound/mpeg-4-file-sink)：AVC输入必须Annex B，MF_MT_MPEG_SEQUENCE_HEADER也使用SPS/PPS start codes；非自动支持的编码通过MF_MT_MPEG4_SAMPLE_DESCRIPTION提供完整stsd。使用既有windows 0.62.2生成绑定，仅启用MediaFoundation/COM，无额外媒体运行时。MFCreateMPEG4MediaSink自Windows 7、fragmented sink自Windows 8可用，低于项目Windows 11目标。
+
+`picoo-recording/examples/windows_mux_probe.rs`以已有八组合合成AU分别测试普通/fragmented sink。sample description使用Apple原生参考box，不在探针阶段自研MP4生成器。AVC按官方要求转Annex B；HEVC测试hvc1配长度前缀AU，这是待Windows证实的候选契约，不是生产结论。SinkWriter输入输出使用相同压缩类型，不启用编码；SourceReader回读逐张VCL字节、帧数和PTS（容器时间舍入容许1微秒）。这些结果仍不替代完整参数/色彩、硬件Decoder、崩溃恢复或生产线程接线。
+
+探针由cargo xtask test windows调用，CI保留只含合成影像的输出作为独立检查素材。本机仅编译非Windows入口，Windows分支必须等原生runner执行并按日志迭代。
