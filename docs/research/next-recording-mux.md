@@ -89,3 +89,5 @@ REQ-PICOO-MEDIA-078继续使用标准库Instant，在录制接纳完整AU时生�
 探针由cargo xtask test windows调用，CI保留只含合成影像的输出作为独立检查素材。本机仅编译非Windows入口，Windows分支必须等原生runner执行并按日志迭代。
 
 首次Windows原生CI34172638264成功编译探针，但首个AVC普通sink在SetInputMediaType返回MF_E_INVALIDSTREAMNUMBER（0xC00D36B3）。原因边界是混用了IMFStreamSink.GetIdentifier与SinkWriter的零基stream index；探针改用Writer index=0，并打印sink ID作为证据。尚未推进到编码数据写入，不据此判断HEVC或MP4内容是否被支持。
+
+第二轮CI34173708088已能写入首个AVC普通MP4，日志在finalize标记后返回E_INVALIDARG。下载产物有完整moov，ffprobe独立解码得到720p的91帧，因此不能直接归因于Finalize。探针改为成功Finalize后、sink Shutdown前关闭byte stream，分别报告两个调用的错误；实际原因和全组合仍等待Windows重跑，未豁免任何原生错误。

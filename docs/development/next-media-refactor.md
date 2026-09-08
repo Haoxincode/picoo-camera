@@ -933,3 +933,9 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 - 22fc5a8的CI34171573353全平台通过。a903798批次已推；新CI34172638264的Windows在探针首个AVC SetInputMediaType失败（MF_E_INVALIDSTREAMNUMBER），探针修正Sink stream ID与Writer index混用，等待新Windows执行。该失败不表示codec已不支持，因为尚未写入媒体。
 - Mac上仅对独立picoo-recording探针执行MSVC目标cargo check，API类型通过，没有链接/运行Windows Receiver。Apple八组参考MP4经ffprobe独立解码，91/181帧、尺寸及BT.709 limited均正确；不是Windows结果。
+
+### 2026-09-08：原生合成样本进入生产录像
+
+- 新增check_native_recording示例，直接调用生产EncodedWriter。小米15本轮NativeCodecContractTest通过，拉取规范化合成AU后，Android与Apple各八组合录像全部Complete；各输出ffprobe独立解码为91/181帧、正确尺寸、BT.709 limited。小米输出另核对manifest无gap、源AU范围及SHA256。未保存真实相机画面，也未将重复IDR测试作为持续帧率证据。
+- 用户手动点击IP连接可正常弹窗，随后成功连接；手机UI显示H.264 1080p60、约3.8Mbps/14ms，MediaCodec日志连续约5秒编码301帧。仅证明当前连接及编码活动，尚不代替桌面呈现、自动发现和完整录像UI验收。ADB触摸仍需独立排查。
+- Windows CI34173708088首个输出已可独立解码91帧，但finalize标记后的原生调用报E_INVALIDARG；探针明确Finalize/Close诊断并在Shutdown前关闭stream，等待原生重跑。

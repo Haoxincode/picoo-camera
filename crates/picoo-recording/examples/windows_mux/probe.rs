@@ -173,10 +173,18 @@ fn write(
             writer.WriteSample(index, &sample)?;
         }
         println!("finalize");
-        writer.Finalize()?;
+        writer
+            .Finalize()
+            .map_err(|error| format!("SinkWriter.Finalize: {error}"))?;
+        // Close only after successful finalization, while the sink is still
+        // alive. Shutdown can already close its byte stream; closing again
+        // after shutdown confuses cleanup errors with mux finalization.
+        println!("close finalized byte stream");
+        stream
+            .Close()
+            .map_err(|error| format!("ByteStream.Close: {error}"))?;
         drop(writer);
         drop(sink);
-        stream.Close()?;
     }
     Ok(())
 }

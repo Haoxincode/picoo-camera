@@ -65,3 +65,7 @@ target/verification/apple-mux-probe target/verification/ios-encoder-output targe
 在Windows原生环境执行`cargo run -p picoo-recording --example windows_mux_probe -- target/verification/windows-mux-probe`，或使用已包含该探针的`cargo xtask test windows`。输入是仓库既有八组合合成AU/config及Apple生成的stsd参考，不读取相机；输出采用独占子目录，不覆盖旧文件。CI保留`windows-mux-probe`产物，便于独立ffprobe/平台Decoder检查。
 
 探针验证普通/fragmented sink、显式sample description及SourceReader的压缩VCL/帧数/PTS回读。它不提供产品Recorder、动态stsd生成、原生硬件解码或异常中断恢复保证；结果与选型边界见[录像研究](../../docs/research/next-recording-mux.md)。
+
+## 生产原码流录像合成验证
+
+macOS执行`cargo run -p picoo-recording --example check_native_recording -- <规范AU/config目录> <新输出目录>`，可分别输入本页Android规范化样本与Apple硬件编码样本。每个codec/尺寸/fps组合将合成IDR重复为3秒加1帧，经过正式EncodedWriter、输入预算/期限及bundle最终化，要求Complete；重复执行需新目录。输出应独立检查manifest、摘要和ffprobe解码。此测试覆盖原生样本到生产封装，不代表实时60fps吞吐、相机录像、网络并发或桌面按钮验收。
