@@ -12,8 +12,16 @@ pub mod configuration_wait;
 pub mod encoded;
 pub mod ingress;
 pub mod reorder;
+#[cfg(windows)]
+pub mod windows;
 #[cfg(target_os = "macos")]
 pub mod worker;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum AppendOutcome {
+    Written,
+    Busy,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum RecordingError {

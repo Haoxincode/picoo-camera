@@ -105,6 +105,17 @@ pub fn run() -> Result<()> {
                         }
                     }
                 }
+                let path = output.join(format!("{stem}-production.mp4"));
+                let result = production(&path, record, fps, &data)
+                    .and_then(|()| read(&path, codec, &au, fps));
+                match result {
+                    Ok(()) => println!("PASS {stem}-production"),
+                    Err(error) => {
+                        let failure = format!("{stem}-production: {error}");
+                        eprintln!("FAIL {failure}");
+                        failures.push(failure);
+                    }
+                }
             }
         }
     }
@@ -120,6 +131,23 @@ pub fn run() -> Result<()> {
         )
         .into())
     }
+}
+
+fn production(path: &Path, configuration: CodecConfiguration, fps: u32, data: &[u8]) -> Result<()> {
+    use picoo_recording::{windows::WindowsSegment, AppendOutcome};
+    let mut segment = WindowsSegment::new(path, configuration.clone(), fps)?;
+    for frame in 0..=3 * fps {
+        let result = segment.append(data, u64::from(frame) * 1_000_000 / u64::from(fps))?;
+        if result != AppendOutcome::Written {
+            return Err("production segment did not confirm the sample".into());
+        }
+    }
+    segment.finish()?;
+    let saved = std::fs::read(path)?;
+    if WindowsSegment::new(path, configuration, fps).is_ok() || std::fs::read(path)? != saved {
+        return Err("production segment overwrote an existing file".into());
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

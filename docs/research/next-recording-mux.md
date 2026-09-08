@@ -107,3 +107,5 @@ REQ-PICOO-MEDIA-079复用现有iOS VideoEncoderPipeline的官方VTCompressionSes
 CI34175223149的32项矩阵得到24项成功：AVC四格式×普通/fragmented×自动/提供description全通过；HEVC四格式×普通×两种description全通过。SourceReader逐AU VCL/帧数/PTS验证成功；下载的24个文件再经ffprobe独立解码，尺寸、91/181帧与BT.709 limited全部正确。新证据确认此Windows SDK可从Annex B参数集序列头自动生成合法HEVC description，不必应用维护stsd builder；旧文档未保证这一能力，所以支持仍以平台准入与文件证据为边界。
 
 八项fragmented HEVC在创建sink时统一返回MF_E_INVALIDMEDIATYPE。产品§17.4限定在支持的后端使用fragmented MP4，故选择AVC fragmented、HEVC普通MP4，各自维持约10秒独立RAP分段；不尝试软件编码或运行中切换容器。探针仅把HEVC fragmented创建阶段这一确切HRESULT报告为UNSUPPORTED；所有普通HEVC失败、AVC失败、成功创建后的写入/最终化/回读失败仍使测试失败。此前32项全部视为必过属于研究矩阵假设，不能把该平台不支持的可选机制误算为普通HEVC不支持。原生Windows Recorder接线与崩溃恢复仍未完成。
+
+REQ-PICOO-MEDIA-080沿用现有windows 0.62.2 MF/COM绑定与标准sync_channel；IMFSinkWriterCallback接收逐样本PlaceMarker与Finalize完成，最多一个样本在途，固定小通道不增加异步运行时。显式关闭隐式节流后由marker承担确认，不能把WriteSample接纳等同于sink已处理。仅在独立录制线程等待，未完成时不能释放对应输入/平台资源并创建无限替代worker。

@@ -963,3 +963,8 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 
 - CI34175223149得到AVC普通/fragmented与HEVC普通的24项成功，系统生成description和显式提供均正确；SourceReader VCL/PTS/帧数及独立ffprobe解码、色彩验证通过。省去应用stsd生成器，生产方向采用AVC fragmented、HEVC普通MP4及独立RAP分段。
 - fragmented HEVC创建时的MF_E_INVALIDMEDIATYPE记录为可选机制不支持；探针只接受这一明确边界，其他任何错误仍失败。Windows生产适配尚未接线，真实Win11/iPhone验收依用户决定后置。本地Windows探针Clippy通过。
+
+### 2026-09-08：Windows原生段适配实现
+
+- REQ-PICOO-MEDIA-080新增WindowsSegment，COM/MF及所有原生对象限于同一录制线程；AVC fragmented、HEVC普通MP4，参数集Annex B输入，由系统生成description。关闭隐式节流后每个样本等待原生marker确认，最多一个在途；Finalize等待独立回调，失败/空段不能产生完成凭据。native对象在runtime关闭前按所有权释放，文件独占创建。
+- AppendOutcome移至录像公共边界，删除Apple专属旧导出路径。Windows探针新增生产适配八组合及禁止覆盖验证。独立Windows库与all-targets Clippy类型检查通过；Mac录像35项回归及Clippy通过。原生回调/最终化行为仍待Windows CI，不将本机类型检查作为原生通过；Windows Receiver/状态机接线尚未启用。

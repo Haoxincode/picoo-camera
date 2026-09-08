@@ -80,7 +80,7 @@ fn rendered(width: u32, height: u32) -> RenderedImage {
 
 #[test]
 fn gpu_targets_use_hardware_codec_and_mux_preserves_output() {
-    use crate::apple::{AppendOutcome, AppleSegment};
+    use crate::{apple::AppleSegment, AppendOutcome};
     for (width, height) in [(1280, 720), (1920, 1080)] {
         let image = rendered(width, height);
         for codec in [Codec::Avc, Codec::Hevc] {

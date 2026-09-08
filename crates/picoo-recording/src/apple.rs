@@ -1,7 +1,7 @@
 //! AVAssetWriter passthrough segments — REQ-PICOO-MEDIA-066.
 //! Construct and use on the recording worker. No pixel buffers or encoders.
 
-use crate::{FinalizedSegment, RecordingError};
+use crate::{AppendOutcome, FinalizedSegment, RecordingError};
 use objc2::{
     rc::{autoreleasepool, Retained},
     AnyThread,
@@ -18,12 +18,6 @@ use picoo_bitstream::{
 use std::{path::Path, sync::mpsc, time::Duration};
 mod partial;
 mod sample;
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum AppendOutcome {
-    Written,
-    Busy,
-}
 
 /// One independently decodable MP4 segment, with one immutable sample description.
 /// Paths must name a new partial file. Promotion and manifest updates belong to

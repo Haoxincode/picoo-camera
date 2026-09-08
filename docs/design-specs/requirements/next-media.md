@@ -172,3 +172,5 @@
 | REQ-PICOO-MEDIA-078 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、025 | 完整AU首次进入录制时绑定2秒绝对提交期限，配置等待、通道、重排和批量写入均不得重置；分段/原生调用返回后仍核对期限，超期保存有效前缀并明确失败 | 停止排空的旧批次拒绝、配置等待传递期限、原生有效前缀留存；不可中断原生调用不宣称有硬退出时限 |
 
 | REQ-PICOO-MEDIA-079 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-019、020、024 | macOS处理后录像的硬件编码适配只接收已完成GPU目标，要求并核实VideoToolbox硬件AVC/HEVC、零重排和明确色彩；输入图像持有到编码回调结束，输出有界，错误/超期终止适配器，不读取CPU像素 | 合成GPU目标的硬件事实、AU配置/PTS/独立解码、输入规格拒绝及回调寿命；Recorder订阅/采样/UI另验 |
+
+| REQ-PICOO-MEDIA-080 | planned | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、020、022、024 | Windows原码流段使用MF原生压缩直通，AVC fragmented/HEVC普通MP4，系统维护description；每个样本以marker确认处理，最终化以回调确认，资源只在所属录制线程释放 | Windows八组合生产适配的原生VCL/PTS/帧数回读、文件拒绝和故障合同；完整Recorder接线另验 |

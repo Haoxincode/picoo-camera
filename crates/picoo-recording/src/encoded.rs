@@ -1,10 +1,10 @@
 //! Ordered encoded segment state machine — REQ-PICOO-MEDIA-069.
 //! Owned exclusively by the recording worker. Callers reorder complete AUs first.
 use crate::{
-    apple::{AppendOutcome, AppleSegment},
+    apple::AppleSegment,
     bundle::{GapReason, RecordingBundle, RecordingState, SegmentMetadata, SourceRange},
     ingress::RecordingInput,
-    RecordingError,
+    AppendOutcome, RecordingError,
 };
 use picoo_bitstream::{
     AccessUnit, Codec, CodecConfiguration, NalFormat, PictureKind, RandomAccessPoint,
