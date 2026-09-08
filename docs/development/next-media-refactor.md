@@ -4,9 +4,9 @@
 
 产品原文：[Next v2](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)；目标：[ARCH-PICOO-MEDIA-002](../design-specs/architecture/0012-native-media-multi-output-boundary.md)；[稳定需求](../design-specs/requirements/next-media.md)。
 
-## 当前交付状态（2026-09-07）
+## 当前交付状态（2026-09-08）
 
-整体仍未过半，40 项 Next 总需求尚未逐项验收闭环。基础契约的 implemented/verified 不等于整个产品完成；下面的初次实施记录属于历史，不表示当前还未执行平台探针。
+40 项 Next 总需求尚未逐项验收闭环；仍有处理后录像、VCam双后端及多输出资源治理等实质开发，不以测试数量估算完成百分比。基础契约的 implemented/verified 不等于整个产品完成；下面的初次实施记录属于历史，不表示当前还未执行平台探针。
 
 | 交付范围 | 当前状态 | 主要剩余 |
 | --- | --- | --- |
@@ -14,7 +14,8 @@
 | Windows/macOS 原生帧、GPU 预览、按需 CPU 输出 | 已接线，相关原生 CI 成功 | 真实显卡画质、全局预算、完整多 sink 验收 |
 | AVC/HEVC 与四种正式配置 | 双移动端已接线完整格式与事务；小米八组合原生合同及Android→Mac正式1080p60链路已验证 | iPhone真机、Windows HEVC实际设备、跨端画质与持续性能 |
 | 两平台 VCam 双后端 | 尚未完成 | GpuNative/CpuBridge、SampleClock、切换和真实系统 sample |
-| 两种录像 | 主要工作尚未完成 | 原码流/处理后录像、分段、失败语义与独立时间线 |
+| 原码流录像 | Mac生产状态机与样本矩阵已验证；Windows原生适配及共享Receiver/UI接线已实现，待新CI | Windows生产回调/bundle验证、真实磁盘故障与完整UI验收 |
+| 处理后录像 | Apple GPU目标硬编适配与八组合合成文件已验证 | Windows硬编、FrameBus订阅/采样/分段、完整worker与UI |
 | 四组合发布验收 | 尚未完成 | 真机矩阵、画质、延迟、热稳态、设备丢失及隐私期限 |
 
 ## 初次实施记录（历史）
@@ -968,3 +969,12 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 
 - REQ-PICOO-MEDIA-080新增WindowsSegment，COM/MF及所有原生对象限于同一录制线程；AVC fragmented、HEVC普通MP4，参数集Annex B输入，由系统生成description。关闭隐式节流后每个样本等待原生marker确认，最多一个在途；Finalize等待独立回调，失败/空段不能产生完成凭据。native对象在runtime关闭前按所有权释放，文件独占创建。
 - AppendOutcome移至录像公共边界，删除Apple专属旧导出路径。Windows探针新增生产适配八组合及禁止覆盖验证。独立Windows库与all-targets Clippy类型检查通过；Mac录像35项回归及Clippy通过。原生回调/最终化行为仍待Windows CI，不将本机类型检查作为原生通过；Windows Receiver/状态机接线尚未启用。
+
+### 2026-09-08：Windows原码流录像公共接线与暂停点
+
+- REQ-PICOO-MEDIA-080接入共享EncodedWriter/RecordingWorker、Receiver完整AU/配置等待/缺口/断连收尾，以及桌面开始/停止与结果快照。仅原生段适配按平台选择，未复制业务状态机。
+- Windows输入验证拒绝保留可最终化的有效前缀；实际原生写入开始后才进入不确定状态，marker确认后解除。生产探针新增重复PTS拒绝后仍可读回原有效前缀的断言。
+- 两平台共享合成录像xtask入口，Apple/小米各八组合；Windows workflow新增bundle artifact。Mac录像35项、Receiver117项通过（另2项原有忽略），独立Windows录像all-targets Clippy与Mac桌面Clippy通过；完整本机xtask结果见后续记录。
+- 用户要求本次收尾后暂停。Windows11/iPhone真机后置；下次优先取得本批Windows生产路径CI证据，再继续RenderedRecorder和VCam双后端，不将旧容器探针成功算作新接线验收。
+
+本次完整cargo xtask test macos通过：身份1、FrameHub54（另2项原有忽略）及跨进程1、Decoder25、GPU10、Receiver117（另2项原有忽略）、录像35、GPUI Apple4、桌面73。共享fixture入口生成Apple/小米各八组bundle，独立Python/ffprobe检查16组全部通过（Complete、摘要/大小、解码帧数、PTS、色彩）。fmt、diff及文档检查通过。暂停时上一轮CI34176063406的Android/iOS/Rust成功，Windows/macOS仍在构建打包；本批保留本地提交，未push，避免取消在途CI。以上本机结果不代表新增Windows生产接线已原生验证。

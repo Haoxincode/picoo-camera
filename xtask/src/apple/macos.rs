@@ -215,7 +215,7 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     ] {
         super::native_tests::run(sh, &["-p", package, "--lib"], &[])?;
     }
-    test_native_recording_fixtures(sh)?;
+    crate::test_suite::recording_fixtures(sh, "apple")?;
     super::native_tests::run(
         sh,
         &[
@@ -257,24 +257,6 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
                 bail!("macOS {tree_name} dependency tree contains forbidden `{forbidden}`");
             }
         }
-    }
-    Ok(())
-}
-
-fn test_native_recording_fixtures(sh: &Shell) -> Result<()> {
-    let output = super::cargo_target_dir(sh)?.join("verification/apple-recording");
-    std::fs::create_dir_all(&output)?;
-    for encoder in ["apple", "xiaomi"] {
-        // macOS mktemp creates an exclusive directory under the build output;
-        // keep both successful and failed synthetic runs for artifact inspection.
-        let template = output.join(format!("{encoder}-XXXXXX"));
-        let run = cmd!(sh, "mktemp -d {template}").read()?;
-        let fixtures = format!("crates/picoo-media-decode/probes/{encoder}-native-formats");
-        cmd!(
-            sh,
-            "cargo run -p picoo-recording --example check_native_recording -- {fixtures} {run}"
-        )
-        .run()?;
     }
     Ok(())
 }

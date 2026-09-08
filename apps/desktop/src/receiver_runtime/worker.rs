@@ -254,9 +254,9 @@ fn apply_receiver_command(
             let _ = response.send(runtime.request_keyframe());
         }
         ReceiverCommand::StartRecording(parent, response) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             let result = runtime.receiver.start_encoded_recording(parent);
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", windows)))]
             let result = {
                 let _ = parent;
                 Err(ReceiverError::Protocol("recording is unavailable".into()))
@@ -264,7 +264,7 @@ fn apply_receiver_command(
             let _ = response.send(result);
         }
         ReceiverCommand::StopRecording(response) => {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             runtime.receiver.stop_encoded_recording();
             let _ = response.send(Ok(()));
         }

@@ -13,7 +13,7 @@ pub struct RecordingSnapshot {
 
 impl RecordingSnapshot {
     pub(super) fn capture(receiver: &ReceiverSession) -> Self {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         {
             // Read the immutable final result first. If publication occurs
             // during this capture, show finalizing until the next snapshot;
@@ -41,7 +41,7 @@ impl RecordingSnapshot {
                 result,
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             let _ = receiver;
             Self::default()

@@ -163,7 +163,6 @@ impl WindowsSegment {
             return Err(RecordingError::InvalidInput("segment already failed"));
         }
         let result = self.append_inner(data, pts_us);
-        self.failed = result.is_err();
         if result.is_ok() {
             self.last_pts_us = Some(pts_us);
         }
@@ -228,11 +227,18 @@ impl WindowsSegment {
             platform(sample.SetSampleDuration(10_000_000 / i64::from(self.fps)))?;
             platform(sample.SetUINT32(&MFSampleExtension_CleanPoint, u32::from(sync)))?;
             let writer = self.writer.as_ref().unwrap();
+            // From here an error can leave an accepted native sample pending.
+            // Earlier validation/allocation errors leave the valid prefix
+            // finalizable, matching the shared recording owner's abort policy.
+            self.failed = true;
             platform(writer.WriteSample(0, &sample))?;
             platform(writer.PlaceMarker(0, ptr::null()))?;
         }
         match self.events.recv_timeout(Duration::from_millis(250)) {
-            Ok(callback::Event::Marker) => Ok(AppendOutcome::Written),
+            Ok(callback::Event::Marker) => {
+                self.failed = false;
+                Ok(AppendOutcome::Written)
+            }
             _ => Err(RecordingError::Platform(
                 "native sample confirmation failed or timed out".into(),
             )),

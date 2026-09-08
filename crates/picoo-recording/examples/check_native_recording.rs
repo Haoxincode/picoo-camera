@@ -1,6 +1,6 @@
 //! Exercise the production ordered recorder with native synthetic encoder AUs.
 //! REQ-PICOO-NEXT-018/021/022; no camera input or real camera frames are saved.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use picoo_bitstream::{Codec, CodecConfiguration};
     use picoo_packet::AssembledAccessUnit;
@@ -73,8 +73,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 fn main() {
-    eprintln!("Production ordered recording validation currently requires macOS");
+    eprintln!("Production ordered recording validation requires macOS or Windows");
     std::process::exit(1);
 }

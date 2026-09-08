@@ -58,6 +58,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(sh, "cargo test -p picoo-media-decode --features windows-mf").run()?;
             cmd!(sh, "cargo run -p picoo-recording --example windows_mux_probe -- target/verification/windows-mux-probe").run()?;
+            recording_fixtures(&sh, "windows")?;
             cmd!(
                 sh,
                 "cargo test -p picoo-receiver --features windows-mf --lib paired_avcc_length_prefixed_au_reaches_latest_frame_store"
@@ -216,6 +217,27 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             )
             .run()?;
         }
+    }
+    Ok(())
+}
+
+/// Run both native encoder fixture sets through the production recording owner.
+/// Keep unique outputs for independent artifact inspection, including failures.
+pub(crate) fn recording_fixtures(sh: &Shell, platform: &str) -> Result<()> {
+    let output =
+        crate::apple::cargo_target_dir(sh)?.join(format!("verification/{platform}-recording"));
+    std::fs::create_dir_all(&output)?;
+    for encoder in ["apple", "xiaomi"] {
+        let run = tempfile::Builder::new()
+            .prefix(&format!("{encoder}-"))
+            .tempdir_in(&output)?
+            .keep();
+        let fixtures = format!("crates/picoo-media-decode/probes/{encoder}-native-formats");
+        cmd!(
+            sh,
+            "cargo run -p picoo-recording --example check_native_recording -- {fixtures} {run}"
+        )
+        .run()?;
     }
     Ok(())
 }

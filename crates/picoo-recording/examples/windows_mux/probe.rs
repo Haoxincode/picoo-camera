@@ -142,6 +142,10 @@ fn production(path: &Path, configuration: CodecConfiguration, fps: u32, data: &[
             return Err("production segment did not confirm the sample".into());
         }
     }
+    if segment.append(data, 0).is_ok() {
+        return Err("production segment accepted a non-increasing PTS".into());
+    }
+    // Validation rejection must not destroy the already accepted prefix.
     segment.finish()?;
     let saved = std::fs::read(path)?;
     if WindowsSegment::new(path, configuration, fps).is_ok() || std::fs::read(path)? != saved {

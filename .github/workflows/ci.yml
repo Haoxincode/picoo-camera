@@ -133,6 +133,13 @@ jobs:
           name: windows-mux-probe
           path: target/verification/windows-mux-probe/
           if-no-files-found: ignore
+      - name: Preserve synthetic Windows recording bundles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-recording-fixtures
+          path: target/verification/windows-recording/
+          if-no-files-found: ignore
       - run: cargo run -p xtask -- build windows
       - name: Package Windows + MSI
         env:

@@ -17,7 +17,7 @@ mod media_report;
 #[cfg(any(target_os = "macos", windows))]
 mod native_publish;
 mod pairing;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod recording;
 mod recovery;
 mod reducer;
@@ -95,9 +95,9 @@ pub struct ReceiverSession {
     shared_ring: Option<CpuOutput>,
     last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     recording: Option<picoo_recording::worker::RecordingWorker>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     recording_configuration_wait: picoo_recording::configuration_wait::ConfigurationWait,
     config_revision: u64,
     admitted_access_unit_budget: Option<u32>,
@@ -173,9 +173,9 @@ impl ReceiverSession {
             shared_ring: None,
             last_shared_ring_error: None,
             current_stream_config: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             recording: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             recording_configuration_wait: Default::default(),
             config_revision: 0,
             admitted_access_unit_budget: None,
@@ -389,7 +389,7 @@ impl ReceiverSession {
                     .whole_access_unit_gap_drop_count()
                     .saturating_sub(gap_drops_before),
             );
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         if self.reassembly.partial_access_unit_drop_count() > partial_drops_before
             || self.reassembly.whole_access_unit_gap_drop_count() > gap_drops_before
         {

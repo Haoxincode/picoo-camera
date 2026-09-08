@@ -104,7 +104,7 @@ impl ReceiverSession {
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
         self.maybe_send_clock_sync()?;
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         self.pump_recording_control();
 
         Ok(())

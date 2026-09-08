@@ -1,7 +1,10 @@
 //! Ordered encoded segment state machine — REQ-PICOO-MEDIA-069.
 //! Owned exclusively by the recording worker. Callers reorder complete AUs first.
+#[cfg(target_os = "macos")]
+use crate::apple::AppleSegment as NativeSegment;
+#[cfg(windows)]
+use crate::windows::WindowsSegment as NativeSegment;
 use crate::{
-    apple::AppleSegment,
     bundle::{GapReason, RecordingBundle, RecordingState, SegmentMetadata, SourceRange},
     ingress::RecordingInput,
     AppendOutcome, RecordingError,
@@ -21,7 +24,7 @@ const SEGMENT_DURATION_US: u64 = 10_000_000;
 const WRITE_DEADLINE: Duration = Duration::from_millis(250);
 
 struct ActiveSegment {
-    native: AppleSegment,
+    native: NativeSegment,
     configuration: Arc<StreamConfig>,
     metadata: SegmentMetadata,
     boundary_requested: bool,
@@ -168,7 +171,7 @@ impl EncodedWriter {
                 return Ok(());
             }
             let native =
-                AppleSegment::new(&self.bundle.next_partial_path()?, configuration, config.fps)?;
+                NativeSegment::new(&self.bundle.next_partial_path()?, configuration, config.fps)?;
             self.active = Some(ActiveSegment {
                 native,
                 configuration: Arc::clone(config),

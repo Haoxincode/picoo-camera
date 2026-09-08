@@ -8,13 +8,15 @@ pub mod apple_encoder;
 mod budget;
 pub mod bundle;
 pub mod configuration_wait;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub mod encoded;
 pub mod ingress;
 pub mod reorder;
+#[cfg(all(test, any(target_os = "macos", windows)))]
+mod test_fixtures;
 #[cfg(windows)]
 pub mod windows;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub mod worker;
 
 #[derive(Debug, PartialEq, Eq)]
