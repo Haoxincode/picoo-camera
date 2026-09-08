@@ -73,22 +73,29 @@ pub fn run() -> Result<()> {
                     &data,
                 )?;
                 let stsd = std::fs::read(descriptions.join(format!("{stem}.stsd")))?;
-                for fragmented in [false, true] {
-                    let path = output.join(format!("{stem}-fragmented-{fragmented}.mp4"));
-                    println!("BEGIN {}", path.display());
-                    // MF consumes elementary-stream AUs; the MP4 storage NAL
-                    // representation is owned by the sink, not by its input.
-                    let payload = au.to_annex_b()?;
-                    let result = write(
-                        &path, &record, width, height, fps, &stsd, &payload, fragmented,
-                    )
-                    .and_then(|()| read(&path, codec, &au, fps));
-                    match result {
-                        Ok(()) => println!("PASS {stem} fragmented={fragmented}"),
-                        Err(error) => {
-                            let failure = format!("{stem} fragmented={fragmented}: {error}");
-                            eprintln!("FAIL {failure}");
-                            failures.push(failure);
+                // Compare the system's description generation with a supplied
+                // native reference before adopting any application box builder.
+                for (description, supplied) in
+                    [("native", None), ("provided", Some(stsd.as_slice()))]
+                {
+                    for fragmented in [false, true] {
+                        let case = format!("{stem}-{description}-fragmented-{fragmented}");
+                        let path = output.join(format!("{case}.mp4"));
+                        println!("BEGIN {}", path.display());
+                        // MF consumes elementary-stream AUs; the MP4 storage NAL
+                        // representation is owned by the sink, not by its input.
+                        let payload = au.to_annex_b()?;
+                        let result = write(
+                            &path, &record, width, height, fps, supplied, &payload, fragmented,
+                        )
+                        .and_then(|()| read(&path, codec, &au, fps));
+                        match result {
+                            Ok(()) => println!("PASS {case}"),
+                            Err(error) => {
+                                let failure = format!("{case}: {error}");
+                                eprintln!("FAIL {failure}");
+                                failures.push(failure);
+                            }
                         }
                     }
                 }
@@ -116,7 +123,7 @@ fn write(
     width: u32,
     height: u32,
     fps: u32,
-    stsd: &[u8],
+    stsd: Option<&[u8]>,
     payload: &[u8],
     fragmented: bool,
 ) -> Result<()> {
@@ -138,8 +145,10 @@ fn write(
         media_type.SetUINT64(&MF_MT_FRAME_RATE, (u64::from(fps) << 32) | 1)?;
         media_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, (1_u64 << 32) | 1)?;
         media_type.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-        media_type.SetBlob(&MF_MT_MPEG4_SAMPLE_DESCRIPTION, stsd)?;
-        media_type.SetUINT32(&MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY, 0)?;
+        if let Some(stsd) = stsd {
+            media_type.SetBlob(&MF_MT_MPEG4_SAMPLE_DESCRIPTION, stsd)?;
+            media_type.SetUINT32(&MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY, 0)?;
+        }
         let mut sequence = Vec::new();
         for nal in record.vps().iter().chain(record.sps()).chain(record.pps()) {
             sequence.extend_from_slice(&[0, 0, 0, 1]);
