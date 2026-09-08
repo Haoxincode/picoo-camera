@@ -76,13 +76,9 @@ pub fn run() -> Result<()> {
                 for fragmented in [false, true] {
                     let path = output.join(format!("{stem}-fragmented-{fragmented}.mp4"));
                     println!("BEGIN {}", path.display());
-                    // AVC explicitly requires Annex B. HEVC with a supplied
-                    // hvc1 description is tested as length-prefixed samples.
-                    let payload = if codec == Codec::Avc {
-                        au.to_annex_b()?
-                    } else {
-                        data.clone()
-                    };
+                    // MF consumes elementary-stream AUs; the MP4 storage NAL
+                    // representation is owned by the sink, not by its input.
+                    let payload = au.to_annex_b()?;
                     let result = write(
                         &path, &record, width, height, fps, &stsd, &payload, fragmented,
                     )
@@ -144,14 +140,12 @@ fn write(
         media_type.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
         media_type.SetBlob(&MF_MT_MPEG4_SAMPLE_DESCRIPTION, stsd)?;
         media_type.SetUINT32(&MF_MT_MPEG4_CURRENT_SAMPLE_ENTRY, 0)?;
-        if record.codec() == Codec::Avc {
-            let mut sequence = Vec::new();
-            for nal in record.sps().iter().chain(record.pps()) {
-                sequence.extend_from_slice(&[0, 0, 0, 1]);
-                sequence.extend_from_slice(nal);
-            }
-            media_type.SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &sequence)?;
+        let mut sequence = Vec::new();
+        for nal in record.vps().iter().chain(record.sps()).chain(record.pps()) {
+            sequence.extend_from_slice(&[0, 0, 0, 1]);
+            sequence.extend_from_slice(nal);
         }
+        media_type.SetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &sequence)?;
         let stream = MFCreateFile(
             MF_ACCESSMODE_READWRITE,
             MF_OPENMODE_FAIL_IF_EXIST,
@@ -160,9 +154,11 @@ fn write(
         )?;
         println!("create media sink");
         let sink = Sink(if fragmented {
-            MFCreateFMPEG4MediaSink(&stream, &media_type, None)?
+            MFCreateFMPEG4MediaSink(&stream, &media_type, None)
+                .map_err(|error| format!("MFCreateFMPEG4MediaSink: {error}"))?
         } else {
-            MFCreateMPEG4MediaSink(&stream, &media_type, None)?
+            MFCreateMPEG4MediaSink(&stream, &media_type, None)
+                .map_err(|error| format!("MFCreateMPEG4MediaSink: {error}"))?
         });
         let sink_id = sink.0.GetStreamSinkByIndex(0)?.GetIdentifier()?;
         // The SinkWriter uses zero-based stream indices. A sink's own stream
@@ -195,13 +191,10 @@ fn write(
         writer
             .Finalize()
             .map_err(|error| format!("SinkWriter.Finalize: {error}"))?;
-        // Close only after successful finalization, while the sink is still
-        // alive. Shutdown can already close its byte stream; closing again
-        // after shutdown confuses cleanup errors with mux finalization.
-        println!("close finalized byte stream");
-        stream
-            .Close()
-            .map_err(|error| format!("ByteStream.Close: {error}"))?;
+        // Finalize owns completion of the output; then release the writer/sink
+        // and their stream references. The native matrix confirmed that an
+        // additional explicit Close returns E_INVALIDARG even for fully
+        // finalized and independently decodable AVC files.
         drop(writer);
         drop(sink);
     }

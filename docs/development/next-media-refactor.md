@@ -945,3 +945,8 @@ Windows xtask补入picoo-recording通用合同测试和all-targets Clippy；mux 
 生产合成录像的独立检查已固化为verification/native-media/check-recording-fixtures.py；Apple/小米各八组合包含实际逐帧PTS（容许1微秒舍入）的全项检查通过。复用外部ffprobe解码与Python标准库，不新增产品依赖。
 
 macOS xtask新增Apple/小米入库样本的生产录像矩阵，workflow始终保留对应合成产物；不依赖手机连接。新增调用与入库小米八组合在本地成功，独立检查全部通过；xtask Clippy和文档检查通过。本批尚未推送，等待d3cf998的CI34174554259终态。
+
+### 2026-09-08：Windows封装与本机完整测试结果
+
+- CI34174554259的Windows录像通用18项测试通过。AVC八个普通/fragmented文件均已Finalize成功，独立ffprobe解码91/181帧；失败明确来自额外Close，探针去掉该调用。HEVC长度前缀候选失败，改为Annex B及完整参数集序列头继续验证，未将Windows生产录像标为完成。
+- 本机cargo xtask test macos完整通过：身份1、FrameHub54（2原有忽略）与跨进程1、Decoder25、GPU10、Receiver117（2原有忽略）、录像33、GPUI Apple4、桌面73，以及新加入的两套八组合生产录像。临时测试binary与产物均在外置盘；不是CMIO实际客户端或真实相机录像验收。
