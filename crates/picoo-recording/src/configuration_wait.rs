@@ -1,5 +1,6 @@
 //! Bounded late-configuration gate — REQ-PICOO-MEDIA-073.
 //! Standard VecDeque owns complete AUs independently of live recovery storage.
+use crate::budget::{self, Reservation, MAX_CONFIGURATION_BYTES};
 use crate::ingress::{IngressFailure, RecordingInput};
 use picoo_packet::AssembledAccessUnit;
 use picoo_protocol::control::StreamConfig;
@@ -12,6 +13,7 @@ use std::{
 const CAPACITY: usize = 16;
 const DEADLINE: Duration = Duration::from_millis(250);
 struct Pending {
+    reservation: Reservation,
     generation: u64,
     au: AssembledAccessUnit,
     configuration: Option<Arc<StreamConfig>>,
@@ -33,14 +35,16 @@ impl ConfigurationWait {
         if self.pending.len() == CAPACITY {
             return Err(IngressFailure::Capacity);
         }
-        if au.data.len() > picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES as usize
-            || configuration.codec_configuration.len() > 64 * 1024
+        if au.data.is_empty()
+            || au.data.len() > picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES as usize
+            || configuration.codec_configuration.len() > MAX_CONFIGURATION_BYTES
         {
             return Err(IngressFailure::InvalidInput);
         }
         let configuration =
             (au.stream_epoch == configuration.stream_epoch).then(|| Arc::clone(configuration));
         self.pending.push_back(Pending {
+            reservation: budget::reserve(au.data.len())?,
             generation,
             au,
             configuration,
@@ -55,6 +59,9 @@ impl ConfigurationWait {
         configuration: &Arc<StreamConfig>,
         now: Instant,
     ) -> Result<Vec<RecordingInput>, IngressFailure> {
+        if configuration.codec_configuration.len() > MAX_CONFIGURATION_BYTES {
+            return Err(IngressFailure::InvalidInput);
+        }
         if self
             .pending
             .iter()
@@ -78,6 +85,7 @@ impl ConfigurationWait {
         {
             let entry = self.pending.pop_front().expect("ready entry");
             ready.push(RecordingInput {
+                _reservation: entry.reservation,
                 connection_generation: entry.generation,
                 configuration: entry.configuration.expect("ready configuration"),
                 access_unit: entry.au,

@@ -71,3 +71,7 @@ REQ-PICOO-MEDIA-075复用当前锁定GPUI的prompt_for_paths目录选择、revea
 ## 原生工作者停滞观察
 
 REQ-PICOO-MEDIA-076复用标准库Instant与AtomicU64记录工作者推进时间，由Receiver快照独立读取；无需增加timer线程、watchdog库或锁。15秒观察阈值大于原生finish回调的10秒等待上限；创建、原生写入、段提交和清理受系统I/O影响时仍可被外部观察。无响应仅是未推进事实，不强杀线程、不发完成凭据；系统调用恢复后的最终结果仍由owner决定。满队列/超龄按既有失败规则处理，已失败入口不再产生RAP需求。实际不可中断I/O的强制退出与进程级隔离不在此观察能力中被假称已解决。
+
+## 跨阶段压缩输入预算
+
+REQ-PICOO-MEDIA-077沿用仓库GPU completion permit的标准库原子计数与RAII释放模式，不增加异步运行时或通用队列依赖。进程唯一预算16MiB，AU首次进入录制所有权时预留payload长度与64KiB最大配置记录；即使配置尚未到达也已计入。计费凭据随ConfigurationWait→RecordingInput→通道→重排→写入移动，不可clone，清理或写入返回自动释放。为相同Arc配置多次保守预留可避免另造共享配置缓存/去重预算器。平台mux内部复制和网络重组分别受各自边界约束，不以这16MiB宣称全进程内存总量。

@@ -1,5 +1,6 @@
 //! Independent compressed ingress — REQ-PICOO-MEDIA-068.
 //! This channel preserves arrival order; dependency reordering belongs to the worker.
+use crate::budget::{self, Reservation, MAX_CONFIGURATION_BYTES};
 use crate::bundle::{GapReason, SourceRange};
 use picoo_packet::AssembledAccessUnit;
 use picoo_protocol::{control::StreamConfig, MAX_MEDIA_ACCESS_UNIT_BYTES};
@@ -10,13 +11,34 @@ use std::{
 
 const CAPACITY: usize = 16;
 const MAX_AGE: Duration = Duration::from_millis(250);
-const MAX_CONFIGURATION_BYTES: usize = 64 * 1024;
 
 #[derive(Debug)]
 pub struct RecordingInput {
-    pub connection_generation: u64,
-    pub configuration: Arc<StreamConfig>,
-    pub access_unit: AssembledAccessUnit,
+    pub(crate) connection_generation: u64,
+    pub(crate) configuration: Arc<StreamConfig>,
+    pub(crate) access_unit: AssembledAccessUnit,
+    pub(crate) _reservation: Reservation,
+}
+
+impl RecordingInput {
+    pub fn new(
+        connection_generation: u64,
+        configuration: Arc<StreamConfig>,
+        access_unit: AssembledAccessUnit,
+    ) -> Result<Self, IngressFailure> {
+        if access_unit.data.is_empty()
+            || access_unit.data.len() > MAX_MEDIA_ACCESS_UNIT_BYTES as usize
+            || configuration.codec_configuration.len() > MAX_CONFIGURATION_BYTES
+        {
+            return Err(IngressFailure::InvalidInput);
+        }
+        Ok(Self {
+            _reservation: budget::reserve(access_unit.data.len())?,
+            connection_generation,
+            configuration,
+            access_unit,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,6 +192,7 @@ mod tests {
 
     fn input(id: u64) -> RecordingInput {
         RecordingInput {
+            _reservation: budget::reserve(3).unwrap(),
             connection_generation: 7,
             configuration: Arc::new(StreamConfig {
                 codec_configuration: vec![1],

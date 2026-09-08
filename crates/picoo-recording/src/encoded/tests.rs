@@ -6,6 +6,7 @@ pub(crate) fn input(codec_index: usize, epoch: u32, id: u64, pts_us: u64) -> Rec
     let (configuration, bytes) = crate::apple::tests::fixtures().remove(codec_index);
     let format = VideoFormat::from_codec_configuration(&configuration, 30).unwrap();
     RecordingInput {
+        _reservation: crate::budget::reserve(bytes.len()).unwrap(),
         connection_generation: 1,
         configuration: Arc::new(StreamConfig {
             codec: format.codec,

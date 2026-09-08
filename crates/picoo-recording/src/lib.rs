@@ -3,6 +3,7 @@
 
 #[cfg(target_os = "macos")]
 pub mod apple;
+mod budget;
 pub mod bundle;
 pub mod configuration_wait;
 #[cfg(target_os = "macos")]
