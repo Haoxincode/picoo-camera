@@ -79,3 +79,9 @@ python3 verification/native-media/check-recording-fixtures.py <输出目录> <�
 检查八组合均存在且Complete、无gap，文件大小与SHA-256、原始配置摘要、源AU/PTS范围正确；ffprobe必须无解码错误，帧数/尺寸/codec/BT.709 limited匹配，逐帧PTS容许1微秒舍入。该检查器专用于check_native_recording的合成输入，不能用其固定无gap预期验收任意业务录像。
 
 `cargo xtask test macos`也会用仓库Apple/小米各八组合执行生产录像示例，每次通过系统mktemp在Cargo target内建立独占目录。CI保留`apple-recording-fixtures`产物；可下载后对各apple-/xiaomi-目录运行上述独立检查器。CI的Complete检查与外部解码检查是不同证据，未运行ffprobe的job不声称已完成后者。
+
+## Apple处理后录像硬编
+
+`cargo xtask test macos`覆盖REQ-PICOO-MEDIA-079的GPU合成目标→硬件AVC/HEVC→生产AppleSegment→AVAssetReader回读，八种尺寸/fps/codec组合。Encoder必须核实实际硬件，并核对输出配置、色彩、PTS和强制IDR；错误尺寸输入不得消耗首个PTS。
+
+需要外部解码时，将`PICOO_ENCODER_PROBE_OUTPUT`设为已创建的空目录再运行测试；只导出合成输入的八个`Avc-/Hevc-`MP4，不覆盖旧文件。用`ffprobe -v error -count_frames -show_streams <文件>`独立检查各3帧、尺寸、codec和BT.709 limited。无该环境变量时由临时目录自动清理。该测试不代表RenderedRecorder订阅/采样/UI已经接线，也不代替迟到回调故障注入或持续吞吐。

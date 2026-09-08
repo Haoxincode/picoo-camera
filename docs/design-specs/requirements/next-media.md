@@ -170,3 +170,5 @@
 | REQ-PICOO-MEDIA-077 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、025 | 录制配置等待、AU通道、重排和正在交给原生的输入共同遵守进程16MiB压缩输入预算；AU与最大配置预留一起计入，所有权移动不重新计费，丢弃/写入返回释放；超额只终止录像 | 多阶段持有的共同上限、跨线程释放、失败和停止释放；不将原生mux内部内存计为已测量 |
 
 | REQ-PICOO-MEDIA-078 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、025 | 完整AU首次进入录制时绑定2秒绝对提交期限，配置等待、通道、重排和批量写入均不得重置；分段/原生调用返回后仍核对期限，超期保存有效前缀并明确失败 | 停止排空的旧批次拒绝、配置等待传递期限、原生有效前缀留存；不可中断原生调用不宣称有硬退出时限 |
+
+| REQ-PICOO-MEDIA-079 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-019、020、024 | macOS处理后录像的硬件编码适配只接收已完成GPU目标，要求并核实VideoToolbox硬件AVC/HEVC、零重排和明确色彩；输入图像持有到编码回调结束，输出有界，错误/超期终止适配器，不读取CPU像素 | 合成GPU目标的硬件事实、AU配置/PTS/独立解码、输入规格拒绝及回调寿命；Recorder订阅/采样/UI另验 |

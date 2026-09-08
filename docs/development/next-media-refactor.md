@@ -950,3 +950,11 @@ macOS xtask新增Apple/小米入库样本的生产录像矩阵，workflow始终�
 
 - CI34174554259的Windows录像通用18项测试通过。AVC八个普通/fragmented文件均已Finalize成功，独立ffprobe解码91/181帧；失败明确来自额外Close，探针去掉该调用。HEVC长度前缀候选失败，改为Annex B及完整参数集序列头继续验证，未将Windows生产录像标为完成。
 - 本机cargo xtask test macos完整通过：身份1、FrameHub54（2原有忽略）与跨进程1、Decoder25、GPU10、Receiver117（2原有忽略）、录像33、GPUI Apple4、桌面73，以及新加入的两套八组合生产录像。临时测试binary与产物均在外置盘；不是CMIO实际客户端或真实相机录像验收。
+
+### 2026-09-08：Apple处理后录像硬件编码适配
+
+- REQ-PICOO-MEDIA-079新增AppleEncoder，消费已完成GPU目标并要求/核实实际硬件AVC High或HEVC Main；显式零重排、关闭HEVC open GOP、BT.709 limited，压缩输出实际配置/尺寸/profile/色彩/PTS和强制IDR均核对。单输入同步工作者边界，250ms包含原生提交与回调等待；超期/原生失败作废实例，回调独立持有目标图像，等待返回不等于GPU读取结束。AU/config复制分别限2MiB/64KiB，无像素mapping或软件Encoder回退。
+- 合成GPU目标的八种codec/尺寸/fps组合通过真实硬编→生产AppleSegment→AVAssetReader字节/微秒PTS回读；录像套件35项通过，相关Clippy通过。新增编码适配尚未接入RenderedRecorder订阅、采样、分段或UI；迟到回调/原生失效阻塞的故障注入及持续吞吐仍待验收，不以这八组合宣布处理后录像完成。
+- 用户确认Windows11与iPhone硬件存在但当前不便直接访问，真机验收留待以后；继续开发与CI，不以缺少这两端访问为开发阻塞。
+
+Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实GPU→硬编→MP4产物经ffprobe独立解码，均为3帧、正确codec/尺寸、BT.709 limited。产物仅为合成灰色视频；不是持续吞吐或真实场景画质证据。

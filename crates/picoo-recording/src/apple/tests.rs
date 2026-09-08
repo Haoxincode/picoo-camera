@@ -80,7 +80,7 @@ fn read_track(tracks: *mut NSArray<AVAssetTrack>, error: *mut NSError) -> ReadFr
     }
 }
 
-fn read(path: &Path) -> Vec<(Vec<u8>, i64)> {
+pub(crate) fn read(path: &Path) -> Vec<(Vec<u8>, i64)> {
     let completed = path.with_extension("mp4");
     std::fs::rename(path, &completed).unwrap();
     read_completed(&completed)

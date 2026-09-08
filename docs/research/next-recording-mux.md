@@ -95,3 +95,9 @@ REQ-PICOO-MEDIA-078继续使用标准库Instant，在录制接纳完整AU时生�
 CI34174554259的完整矩阵确认AVC八项Finalize均成功，额外ByteStream.Close均报E_INVALIDARG；下载的八个普通/fragmented文件均可独立解码91/181帧。因此去掉多余Close，保留Finalize失败门禁并正常释放sink/stream。HEVC长度前缀候选不成立：720p普通文件无可解码帧，1080p普通写入/最终化失败，四项fragmented类型被拒。下一轮使用明确Annex B AU及VPS/SPS/PPS sequence header，仍保留完整stsd并分别验证两种sink；这仍是待验证候选，不是产品支持声明。
 
 探针同时比较系统生成与显式提供stsd两种方式，形成32项独立证据；官方资料对HEVC自动生成的支持描述不足，当前SDK行为必须以原生结果确认。若系统能维护description，就不引入应用box builder；若失败仍保留原始HRESULT与产物，不把未支持研究分支静默视为成功。
+
+## Apple处理后录像硬编边界
+
+REQ-PICOO-MEDIA-079复用现有iOS VideoEncoderPipeline的官方VTCompressionSession配置契约：RequireHardwareAcceleratedVideoEncoder、prepare后的UsingHardwareAcceleratedVideoEncoder检查、明确AVC High/HEVC Main、零重排、关闭HEVC open GOP和BT.709 limited。Rust复用仓库已有objc2-video-toolbox 0.3.2（MIT/Zlib/Apache-2.0），仅扩展VTCompressionSession/VTCompressionProperties/VTSession/block2绑定；无额外媒体运行时，macOS 15目标高于逐帧output-handler API最低系统要求。已核对本地生成绑定与Apple API注释：session会保留image，output handler可能跨线程并在提交返回前或后执行。
+
+输入采用picoo-gpu已有RenderedImage，复用其完成/不可变/池引用合同，不CPU mapping。编码只在录像工作者执行；回调以提交时所有权绑定图像与结果，单个输入未结束时不接纳下一张，超期仍保留平台持有资源直至完成/失效清理。现有Swift Sender事件缓冲会为直播恢复丢弃预测链，不能直接复用于录像；仅复用平台配置规则，不把直播丢帧策略带入Recorder。

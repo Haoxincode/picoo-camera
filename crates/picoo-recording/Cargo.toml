@@ -19,13 +19,17 @@ sha2 = "0.10"
 windows = { version = "0.62.2", features = ["Win32_Media_MediaFoundation", "Win32_System_Com"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+picoo-gpu.workspace = true
+objc2-video-toolbox = { version = "0.3.2", default-features = false, features = ["std", "VTCompressionSession", "VTCompressionProperties", "VTSession", "VTErrors", "objc2", "block2", "objc2-core-media", "objc2-core-video"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer"] }
 objc2 = "0.6.4"
 block2 = "0.6.2"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSError"] }
-objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFNumber", "CFDictionary", "CFArray", "CFString"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFNumber", "CFDictionary", "CFArray", "CFString", "CFPropertyList"] }
 objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMBase", "CMBlockBuffer", "CMFormatDescription", "CMSampleBuffer", "CMTime"] }
 objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat", "objc2-core-media", "block2"] }
 
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
+picoo-frame-hub.workspace = true
 objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVAsset", "AVAssetTrack", "AVAssetReader", "AVAssetReaderOutput"] }
