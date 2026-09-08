@@ -168,6 +168,13 @@ jobs:
         run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
       - name: Test macOS VideoToolbox receiver and shared ring
         run: cargo run -p xtask -- test macos
+      - name: Preserve synthetic production recording outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: apple-recording-fixtures
+          path: target/verification/apple-recording/
+          if-no-files-found: ignore
       - name: Package macOS Host app with Camera Extension
         run: cargo run -p xtask -- package macos
       - uses: actions/upload-artifact@v7

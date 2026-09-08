@@ -943,3 +943,5 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 Windows xtask补入picoo-recording通用合同测试和all-targets Clippy；mux probe对16个独立文件逐项报告并汇总失败，不在首个失败处掩盖其他组合，任一失败仍使CI失败。本机独立Windows探针Clippy和xtask Clippy通过，运行结果待原生runner。
 
 生产合成录像的独立检查已固化为verification/native-media/check-recording-fixtures.py；Apple/小米各八组合包含实际逐帧PTS（容许1微秒舍入）的全项检查通过。复用外部ffprobe解码与Python标准库，不新增产品依赖。
+
+macOS xtask新增Apple/小米入库样本的生产录像矩阵，workflow始终保留对应合成产物；不依赖手机连接。新增调用与入库小米八组合在本地成功，独立检查全部通过；xtask Clippy和文档检查通过。本批尚未推送，等待d3cf998的CI34174554259终态。

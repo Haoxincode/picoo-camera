@@ -77,3 +77,5 @@ python3 verification/native-media/check-recording-fixtures.py <输出目录> <�
 ```
 
 检查八组合均存在且Complete、无gap，文件大小与SHA-256、原始配置摘要、源AU/PTS范围正确；ffprobe必须无解码错误，帧数/尺寸/codec/BT.709 limited匹配，逐帧PTS容许1微秒舍入。该检查器专用于check_native_recording的合成输入，不能用其固定无gap预期验收任意业务录像。
+
+`cargo xtask test macos`也会用仓库Apple/小米各八组合执行生产录像示例，每次通过系统mktemp在Cargo target内建立独占目录。CI保留`apple-recording-fixtures`产物；可下载后对各apple-/xiaomi-目录运行上述独立检查器。CI的Complete检查与外部解码检查是不同证据，未运行ffprobe的job不声称已完成后者。
