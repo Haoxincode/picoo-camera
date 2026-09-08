@@ -88,9 +88,15 @@ pub fn run() -> Result<()> {
                         let result = write(
                             &path, &record, width, height, fps, supplied, &payload, fragmented,
                         )
-                        .and_then(|()| read(&path, codec, &au, fps));
+                        .and_then(|supported| {
+                            if supported {
+                                read(&path, codec, &au, fps)?;
+                            }
+                            Ok(supported)
+                        });
                         match result {
-                            Ok(()) => println!("PASS {case}"),
+                            Ok(true) => println!("PASS {case}"),
+                            Ok(false) => println!("UNSUPPORTED {case}: fragmented HEVC media type"),
                             Err(error) => {
                                 let failure = format!("{case}: {error}");
                                 eprintln!("FAIL {failure}");
@@ -126,7 +132,7 @@ fn write(
     stsd: Option<&[u8]>,
     payload: &[u8],
     fragmented: bool,
-) -> Result<()> {
+) -> Result<bool> {
     unsafe {
         let media_type = MFCreateMediaType()?;
         media_type.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
@@ -163,8 +169,19 @@ fn write(
         )?;
         println!("create media sink");
         let sink = Sink(if fragmented {
-            MFCreateFMPEG4MediaSink(&stream, &media_type, None)
-                .map_err(|error| format!("MFCreateFMPEG4MediaSink: {error}"))?
+            match MFCreateFMPEG4MediaSink(&stream, &media_type, None) {
+                Ok(sink) => sink,
+                // Optional container mechanism, not a required codec path.
+                // Ordinary HEVC MP4 remains required in every format. Only
+                // this precise type rejection at creation is unsupported;
+                // all failures after sample acceptance remain test failures.
+                Err(error)
+                    if record.codec() == Codec::Hevc && error.code() == MF_E_INVALIDMEDIATYPE =>
+                {
+                    return Ok(false)
+                }
+                Err(error) => return Err(format!("MFCreateFMPEG4MediaSink: {error}").into()),
+            }
         } else {
             MFCreateMPEG4MediaSink(&stream, &media_type, None)
                 .map_err(|error| format!("MFCreateMPEG4MediaSink: {error}"))?
@@ -207,7 +224,7 @@ fn write(
         drop(writer);
         drop(sink);
     }
-    Ok(())
+    Ok(true)
 }
 
 fn pictures(codec: Codec, au: &AccessUnit<'_>) -> Vec<Vec<u8>> {

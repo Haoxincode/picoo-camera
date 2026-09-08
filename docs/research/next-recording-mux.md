@@ -101,3 +101,9 @@ CI34174554259的完整矩阵确认AVC八项Finalize均成功，额外ByteStream.
 REQ-PICOO-MEDIA-079复用现有iOS VideoEncoderPipeline的官方VTCompressionSession配置契约：RequireHardwareAcceleratedVideoEncoder、prepare后的UsingHardwareAcceleratedVideoEncoder检查、明确AVC High/HEVC Main、零重排、关闭HEVC open GOP和BT.709 limited。Rust复用仓库已有objc2-video-toolbox 0.3.2（MIT/Zlib/Apache-2.0），仅扩展VTCompressionSession/VTCompressionProperties/VTSession/block2绑定；无额外媒体运行时，macOS 15目标高于逐帧output-handler API最低系统要求。已核对本地生成绑定与Apple API注释：session会保留image，output handler可能跨线程并在提交返回前或后执行。
 
 输入采用picoo-gpu已有RenderedImage，复用其完成/不可变/池引用合同，不CPU mapping。编码只在录像工作者执行；回调以提交时所有权绑定图像与结果，单个输入未结束时不接纳下一张，超期仍保留平台持有资源直至完成/失效清理。现有Swift Sender事件缓冲会为直播恢复丢弃预测链，不能直接复用于录像；仅复用平台配置规则，不把直播丢帧策略带入Recorder。
+
+## Windows已验证的容器选择
+
+CI34175223149的32项矩阵得到24项成功：AVC四格式×普通/fragmented×自动/提供description全通过；HEVC四格式×普通×两种description全通过。SourceReader逐AU VCL/帧数/PTS验证成功；下载的24个文件再经ffprobe独立解码，尺寸、91/181帧与BT.709 limited全部正确。新证据确认此Windows SDK可从Annex B参数集序列头自动生成合法HEVC description，不必应用维护stsd builder；旧文档未保证这一能力，所以支持仍以平台准入与文件证据为边界。
+
+八项fragmented HEVC在创建sink时统一返回MF_E_INVALIDMEDIATYPE。产品§17.4限定在支持的后端使用fragmented MP4，故选择AVC fragmented、HEVC普通MP4，各自维持约10秒独立RAP分段；不尝试软件编码或运行中切换容器。探针仅把HEVC fragmented创建阶段这一确切HRESULT报告为UNSUPPORTED；所有普通HEVC失败、AVC失败、成功创建后的写入/最终化/回读失败仍使测试失败。此前32项全部视为必过属于研究矩阵假设，不能把该平台不支持的可选机制误算为普通HEVC不支持。原生Windows Recorder接线与崩溃恢复仍未完成。

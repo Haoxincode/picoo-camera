@@ -958,3 +958,8 @@ macOS xtask新增Apple/小米入库样本的生产录像矩阵，workflow始终�
 - 用户确认Windows11与iPhone硬件存在但当前不便直接访问，真机验收留待以后；继续开发与CI，不以缺少这两端访问为开发阻塞。
 
 Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实GPU→硬编→MP4产物经ffprobe独立解码，均为3帧、正确codec/尺寸、BT.709 limited。产物仅为合成灰色视频；不是持续吞吐或真实场景画质证据。
+
+### 2026-09-08：Windows容器矩阵收敛
+
+- CI34175223149得到AVC普通/fragmented与HEVC普通的24项成功，系统生成description和显式提供均正确；SourceReader VCL/PTS/帧数及独立ffprobe解码、色彩验证通过。省去应用stsd生成器，生产方向采用AVC fragmented、HEVC普通MP4及独立RAP分段。
+- fragmented HEVC创建时的MF_E_INVALIDMEDIATYPE记录为可选机制不支持；探针只接受这一明确边界，其他任何错误仍失败。Windows生产适配尚未接线，真实Win11/iPhone验收依用户决定后置。本地Windows探针Clippy通过。
