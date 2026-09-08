@@ -106,6 +106,7 @@ mod tests {
 
     fn input(epoch: u32, id: u64) -> RecordingInput {
         RecordingInput {
+            deadline: Instant::now() + crate::ingress::INPUT_DEADLINE,
             _reservation: crate::budget::reserve(1).unwrap(),
             connection_generation: 1,
             configuration: Arc::new(StreamConfig {

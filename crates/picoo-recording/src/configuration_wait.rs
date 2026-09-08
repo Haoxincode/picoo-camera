@@ -85,6 +85,7 @@ impl ConfigurationWait {
         {
             let entry = self.pending.pop_front().expect("ready entry");
             ready.push(RecordingInput {
+                deadline: entry.accepted_at + crate::ingress::INPUT_DEADLINE,
                 _reservation: entry.reservation,
                 connection_generation: entry.generation,
                 configuration: entry.configuration.expect("ready configuration"),
@@ -131,7 +132,12 @@ mod tests {
         gate.push(7, au(2, 2), &config(1), now).unwrap();
         gate.push(7, au(2, 1), &config(1), now).unwrap();
         assert!(gate.resolve(8, &config(2), now).unwrap().is_empty());
-        let ready = gate.resolve(7, &config(2), now).unwrap();
+        let ready = gate
+            .resolve(7, &config(2), now + Duration::from_millis(200))
+            .unwrap();
+        assert!(ready
+            .iter()
+            .all(|entry| entry.deadline == now + crate::ingress::INPUT_DEADLINE));
         assert_eq!(
             ready
                 .iter()

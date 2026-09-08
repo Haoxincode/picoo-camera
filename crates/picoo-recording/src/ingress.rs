@@ -11,6 +11,7 @@ use std::{
 
 const CAPACITY: usize = 16;
 const MAX_AGE: Duration = Duration::from_millis(250);
+pub(crate) const INPUT_DEADLINE: Duration = Duration::from_secs(2);
 
 #[derive(Debug)]
 pub struct RecordingInput {
@@ -18,6 +19,7 @@ pub struct RecordingInput {
     pub(crate) configuration: Arc<StreamConfig>,
     pub(crate) access_unit: AssembledAccessUnit,
     pub(crate) _reservation: Reservation,
+    pub(crate) deadline: Instant,
 }
 
 impl RecordingInput {
@@ -33,6 +35,7 @@ impl RecordingInput {
             return Err(IngressFailure::InvalidInput);
         }
         Ok(Self {
+            deadline: Instant::now() + INPUT_DEADLINE,
             _reservation: budget::reserve(access_unit.data.len())?,
             connection_generation,
             configuration,
@@ -103,6 +106,10 @@ impl RecordingIngress {
         if let Some(failure) = self.failure.get() {
             return Err(*failure);
         }
+        if now >= input.deadline {
+            self.terminate(IngressFailure::TooOld);
+            return Err(*self.failure.get().expect("failure set"));
+        }
         let invalid = input.access_unit.data.is_empty()
             || input.access_unit.data.len() > MAX_MEDIA_ACCESS_UNIT_BYTES as usize
             || input.configuration.codec_configuration.len() > MAX_CONFIGURATION_BYTES
@@ -165,7 +172,9 @@ impl RecordingInbox {
         };
         match receiver.try_recv() {
             Ok(queued) => {
-                if now.saturating_duration_since(queued.accepted_at) > MAX_AGE {
+                if now.saturating_duration_since(queued.accepted_at) > MAX_AGE
+                    || matches!(&queued.event, Event::Input(input) if now >= input.deadline)
+                {
                     let _ = self.failure.set(IngressFailure::TooOld);
                 }
                 if let Some(failure) = self.failure.get().copied() {
@@ -192,6 +201,7 @@ mod tests {
 
     fn input(id: u64) -> RecordingInput {
         RecordingInput {
+            deadline: Instant::now() + INPUT_DEADLINE,
             _reservation: budget::reserve(3).unwrap(),
             connection_generation: 7,
             configuration: Arc::new(StreamConfig {
@@ -211,6 +221,25 @@ mod tests {
                 first_fragment_at: Instant::now(),
             },
         }
+    }
+
+    #[test]
+    fn transfer_to_a_fresh_queue_does_not_restart_the_input_deadline() {
+        let now = Instant::now();
+        let (sender, mut inbox) = channel();
+        let mut first = input(1);
+        first.deadline = now + MAX_AGE / 2;
+        sender.offer_at(first, now).unwrap();
+        assert_eq!(
+            inbox.poll_at(now + MAX_AGE / 2).unwrap_err(),
+            IngressFailure::TooOld
+        );
+
+        let (sender, _) = channel();
+        let mut expired = input(2);
+        expired.deadline = now;
+        assert_eq!(sender.offer_at(expired, now), Err(IngressFailure::TooOld));
+        assert_eq!(sender.offer_at(input(3), now), Err(IngressFailure::TooOld));
     }
 
     #[test]

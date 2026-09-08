@@ -25,6 +25,8 @@ pub enum RecordingError {
     Platform(String),
     #[error("recording finalization timed out")]
     FinalizationTimeout,
+    #[error("recording input deadline expired")]
+    InputExpired,
 }
 
 /// Proof that a native adapter completed a segment. Only adapters in this crate

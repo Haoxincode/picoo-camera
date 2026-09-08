@@ -61,13 +61,16 @@ impl EncodedWriter {
 
     pub fn write_ordered(&mut self, input: RecordingInput) -> Result<(), RecordingError> {
         let result = self.write_inner(input);
-        if result.is_err() {
-            self.abort("encoded segment write failed");
+        if let Err(error) = &result {
+            self.abort(&error.to_string());
         }
         result
     }
 
     fn write_inner(&mut self, input: RecordingInput) -> Result<(), RecordingError> {
+        if Instant::now() >= input.deadline {
+            return Err(RecordingError::InputExpired);
+        }
         if !matches!(
             self.state(),
             RecordingState::Arming | RecordingState::Recording
@@ -196,6 +199,11 @@ impl EncodedWriter {
         let pts = au.pts_us - active.metadata.source.first_pts_us;
         let deadline = Instant::now() + WRITE_DEADLINE;
         loop {
+            // A segment boundary or native preparation may have taken time.
+            // A drained batch is not granted a fresh lifetime at this stage.
+            if Instant::now() >= input.deadline {
+                return Err(RecordingError::InputExpired);
+            }
             match active.native.append(&au.data, pts)? {
                 AppendOutcome::Written => break,
                 AppendOutcome::Busy if Instant::now() < deadline => {
@@ -209,6 +217,9 @@ impl EncodedWriter {
         active.metadata.source.last_au = au.frame_id;
         active.metadata.source.last_pts_us = au.pts_us;
         self.bundle.mark_started(au.pts_us)?;
+        if Instant::now() >= input.deadline {
+            return Err(RecordingError::InputExpired);
+        }
         if idr {
             self.refresh_requested = false;
         }

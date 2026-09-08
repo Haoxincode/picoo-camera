@@ -75,6 +75,7 @@ mod tests {
             limit: 2 * bytes,
         });
         let input = |id| RecordingInput {
+            deadline: Instant::now() + crate::ingress::INPUT_DEADLINE,
             connection_generation: 1,
             configuration: Arc::new(StreamConfig {
                 codec_configuration: vec![1],

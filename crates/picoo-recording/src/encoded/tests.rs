@@ -6,6 +6,7 @@ pub(crate) fn input(codec_index: usize, epoch: u32, id: u64, pts_us: u64) -> Rec
     let (configuration, bytes) = crate::apple::tests::fixtures().remove(codec_index);
     let format = VideoFormat::from_codec_configuration(&configuration, 30).unwrap();
     RecordingInput {
+        deadline: Instant::now() + crate::ingress::INPUT_DEADLINE,
         _reservation: crate::budget::reserve(bytes.len()).unwrap(),
         connection_generation: 1,
         configuration: Arc::new(StreamConfig {
@@ -36,6 +37,25 @@ pub(crate) fn input(codec_index: usize, epoch: u32, id: u64, pts_us: u64) -> Rec
 
 fn manifest(writer: &EncodedWriter) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(writer.path().join("manifest.json")).unwrap()).unwrap()
+}
+
+#[test]
+fn expired_drained_input_fails_without_discarding_the_accepted_native_prefix() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut writer = EncodedWriter::create(parent.path()).unwrap();
+    writer.write_ordered(input(0, 1, 1, 0)).unwrap();
+    let mut expired = input(0, 1, 2, 33_333);
+    expired.deadline = Instant::now();
+    assert!(matches!(
+        writer.write_ordered(expired),
+        Err(RecordingError::InputExpired)
+    ));
+    assert_eq!(writer.state(), RecordingState::Failed);
+    let stored = manifest(&writer);
+    assert_eq!(stored["state"], "Failed");
+    assert_eq!(stored["failure"], "recording input deadline expired");
+    assert_eq!(stored["segments"].as_array().unwrap().len(), 1);
+    assert_eq!(stored["segments"][0]["metadata"]["source"]["last_au"], 1);
 }
 
 #[test]
