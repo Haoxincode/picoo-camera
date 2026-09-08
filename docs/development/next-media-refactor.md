@@ -928,3 +928,8 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 - NEXT-018/022：加入Windows Media Foundation普通/fragmented MP4 probe，由xtask Windows测试调用；同一压缩类型进入SinkWriter，显式stsd，SourceReader检查VCL、帧数及PTS，CI保留合成输出。尚不是生产Windows Recorder适配，HEVC sample表示仍待原生runner证据。
 - 本机重新运行Apple mux八组合，逐AU字节/PTS全部通过；提取八个stsd并独立复现字节一致，核对其包含对应codec record。参考和提取脚本入库，全部来自合成画面。非Windows入口编译、录像/xtask Clippy及文档检查通过；未在Mac交叉编译Windows链路，不把以上作为Windows验证。
+
+### 2026-09-08：Windows探针流索引修正
+
+- 22fc5a8的CI34171573353全平台通过。a903798批次已推；新CI34172638264的Windows在探针首个AVC SetInputMediaType失败（MF_E_INVALIDSTREAMNUMBER），探针修正Sink stream ID与Writer index混用，等待新Windows执行。该失败不表示codec已不支持，因为尚未写入媒体。
+- Mac上仅对独立picoo-recording探针执行MSVC目标cargo check，API类型通过，没有链接/运行Windows Receiver。Apple八组参考MP4经ffprobe独立解码，91/181帧、尺寸及BT.709 limited均正确；不是Windows结果。

@@ -145,7 +145,11 @@ fn write(
         } else {
             MFCreateMPEG4MediaSink(&stream, &media_type, None)?
         });
-        let index = sink.0.GetStreamSinkByIndex(0)?.GetIdentifier()?;
+        let sink_id = sink.0.GetStreamSinkByIndex(0)?.GetIdentifier()?;
+        // The SinkWriter uses zero-based stream indices. A sink's own stream
+        // identifier is a separate namespace and need not match its ordinal.
+        let index = 0;
+        println!("sink stream ID={sink_id}, writer stream index={index}");
         let writer = MFCreateSinkWriterFromMediaSink(&sink.0, None)?;
         // Identical compressed input/output: no encoder or decoded pixels.
         println!("set compressed input type");

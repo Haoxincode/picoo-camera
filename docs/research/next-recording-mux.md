@@ -87,3 +87,5 @@ REQ-PICOO-MEDIA-078继续使用标准库Instant，在录制接纳完整AU时生�
 `picoo-recording/examples/windows_mux_probe.rs`以已有八组合合成AU分别测试普通/fragmented sink。sample description使用Apple原生参考box，不在探针阶段自研MP4生成器。AVC按官方要求转Annex B；HEVC测试hvc1配长度前缀AU，这是待Windows证实的候选契约，不是生产结论。SinkWriter输入输出使用相同压缩类型，不启用编码；SourceReader回读逐张VCL字节、帧数和PTS（容器时间舍入容许1微秒）。这些结果仍不替代完整参数/色彩、硬件Decoder、崩溃恢复或生产线程接线。
 
 探针由cargo xtask test windows调用，CI保留只含合成影像的输出作为独立检查素材。本机仅编译非Windows入口，Windows分支必须等原生runner执行并按日志迭代。
+
+首次Windows原生CI34172638264成功编译探针，但首个AVC普通sink在SetInputMediaType返回MF_E_INVALIDSTREAMNUMBER（0xC00D36B3）。原因边界是混用了IMFStreamSink.GetIdentifier与SinkWriter的零基stream index；探针改用Writer index=0，并打印sink ID作为证据。尚未推进到编码数据写入，不据此判断HEVC或MP4内容是否被支持。
