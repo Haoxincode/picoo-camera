@@ -69,3 +69,11 @@ target/verification/apple-mux-probe target/verification/ios-encoder-output targe
 ## 生产原码流录像合成验证
 
 macOS执行`cargo run -p picoo-recording --example check_native_recording -- <规范AU/config目录> <新输出目录>`，可分别输入本页Android规范化样本与Apple硬件编码样本。每个codec/尺寸/fps组合将合成IDR重复为3秒加1帧，经过正式EncodedWriter、输入预算/期限及bundle最终化，要求Complete；重复执行需新目录。输出应独立检查manifest、摘要和ffprobe解码。此测试覆盖原生样本到生产封装，不代表实时60fps吞吐、相机录像、网络并发或桌面按钮验收。
+
+使用Python 3.11+与已安装的ffprobe独立验收：
+
+```sh
+python3 verification/native-media/check-recording-fixtures.py <输出目录> <规范AU/config目录>
+```
+
+检查八组合均存在且Complete、无gap，文件大小与SHA-256、原始配置摘要、源AU/PTS范围正确；ffprobe必须无解码错误，帧数/尺寸/codec/BT.709 limited匹配，逐帧PTS容许1微秒舍入。该检查器专用于check_native_recording的合成输入，不能用其固定无gap预期验收任意业务录像。
