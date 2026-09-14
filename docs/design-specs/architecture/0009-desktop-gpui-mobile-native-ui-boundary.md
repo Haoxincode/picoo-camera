@@ -125,7 +125,7 @@ UI 同样不承担二维码生成、二维码解析或扫码相机预览；连�
 
 ## 约束
 
-- workspace 根只声明一个固定 Git revision 的 `gpui-kit`；`gpui`、`gpui_platform`、`gpui-base`、`gpui-component` 与 assets 的兼容版本由该 facade 统一决定，应用 crate 不得重复声明。
+- workspace 根只声明一个固定 crates.io 版本的 `gpui-kit`；`gpui`、`gpui_platform`、`gpui-base`、`gpui-component` 与 assets 的兼容版本由该 facade 统一决定，应用 crate 不得重复声明。
 - UI 必须能区分 PRD 定义的连接与错误状态。
 - 权限必须在用户执行相应操作时请求，不在启动后一次性弹出全部权限。
 

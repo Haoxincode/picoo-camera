@@ -773,9 +773,9 @@ gpui-component 已提供完整样式组件、主题和 60 多个桌面组件，�
 
 ### 10.3 GPUI Kit 依赖管理
 
-Workspace 根目录只声明一个固定 Git revision 的 `gpui-kit`，并显式启用 `component` 与 `assets`；桌面应用不分别声明 gpui、gpui_platform、gpui-base 或 gpui-component。
+Workspace 根目录只声明一个固定 crates.io 版本的 `gpui-kit`，并显式启用 `component` 与 `assets`；桌面应用不分别声明 gpui、gpui_platform、gpui-base 或 gpui-component。
 
-不得让不同 crate 绕过 facade 自行引用 GPUI 家族依赖，否则 Cargo 可能解析出两个互不兼容的 GPUI 类型。所选 revision 必须采用 Apache-2.0、支持 Rust 1.90+ / Windows 10+ / macOS 15+，并且不得通过未使用的 HTTP/TLS 依赖引入 CMake；切换到新的正式版本时必须重新核对这些条件和依赖树。
+不得让不同 crate 绕过 facade 自行引用 GPUI 家族依赖，否则 Cargo 可能解析出两个互不兼容的 GPUI 类型。所选版本必须采用 Apache-2.0、支持 Rust 1.90+ / Windows 10+ / macOS 15+，并且不得通过未使用的 HTTP/TLS 依赖引入 CMake；切换到新的正式版本时必须重新核对这些条件和依赖树。
 
 ## 11. Rust Core 架构
 
