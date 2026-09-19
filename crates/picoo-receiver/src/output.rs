@@ -67,6 +67,9 @@ pub(crate) struct CpuOutput {
     events: Arc<Mutex<Option<(u64, OutputEvent)>>>,
     generation: RingContentFence,
     worker: Option<JoinHandle<()>>,
+    // Retained for the backend-selection contract; Windows currently routes
+    // publication through the shared ring without querying this state.
+    #[allow(dead_code)]
     backend: BackendState,
 }
 
@@ -278,10 +281,12 @@ impl CpuOutput {
         })
     }
 
+    #[allow(dead_code)]
     pub(crate) const fn backend(&self) -> OutputBackend {
         self.backend.selection().backend
     }
 
+    #[allow(dead_code)]
     pub(crate) const fn backend_plan_for(
         &self,
         source_generation: u64,
@@ -290,6 +295,7 @@ impl CpuOutput {
         self.backend.plan_for(source_generation, output_revision)
     }
 
+    #[allow(dead_code)]
     pub(crate) const fn backend_failure_reason(&self) -> Option<BackendFailureReason> {
         self.backend.selection().native_failure()
     }

@@ -5,7 +5,10 @@
 //! advertises `GpuNative`; a runtime failure is not an implicit permission to
 //! hide a GPU/codec failure behind a CPU fallback.
 
-#![cfg_attr(target_os = "macos", allow(dead_code))]
+// The backend state machine is a platform contract. Some platform adapters
+// keep the selector available for native-output integration before their
+// runtime path consumes every planning query.
+#![cfg_attr(any(target_os = "macos", windows), allow(dead_code))]
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutputBackend {
