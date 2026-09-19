@@ -2,21 +2,38 @@
 
 #[derive(Debug, Clone)]
 pub(crate) struct SampleClock {
-    duration_100ns: i64,
-    last_pts_100ns: Option<i64>,
+    period_100ns_num: i128,
+    rate_num: i128,
+    anchor_100ns: Option<i128>,
+    last_slot: Option<i128>,
 }
 
 impl SampleClock {
     pub(crate) const fn new(duration_100ns: i64) -> Self {
         assert!(duration_100ns > 0, "sample duration must be positive");
         Self {
-            duration_100ns,
-            last_pts_100ns: None,
+            period_100ns_num: duration_100ns as i128,
+            rate_num: 1,
+            anchor_100ns: None,
+            last_slot: None,
         }
     }
 
+    pub(crate) fn for_frame_rate(rate_num: u32, rate_den: u32) -> Option<Self> {
+        if rate_num == 0 || rate_den == 0 {
+            return None;
+        }
+        Some(Self {
+            period_100ns_num: 10_000_000_i128.checked_mul(i128::from(rate_den))?,
+            rate_num: i128::from(rate_num),
+            anchor_100ns: None,
+            last_slot: None,
+        })
+    }
+
     pub(crate) fn reset(&mut self) {
-        self.last_pts_100ns = None;
+        self.anchor_100ns = None;
+        self.last_slot = None;
     }
 
     /// Allocate one timestamp without sleeping or accumulating missed samples.
@@ -25,22 +42,29 @@ impl SampleClock {
     /// skip elapsed output slots and receive the newest slot not after `now`.
     /// A backwards platform clock cannot make the media timeline regress.
     pub(crate) fn next_timestamp(&mut self, now_100ns: i64) -> Option<i64> {
-        let Some(last) = self.last_pts_100ns else {
-            self.last_pts_100ns = Some(now_100ns);
-            return Some(now_100ns);
+        let now = i128::from(now_100ns);
+        let (anchor, next_slot) = match (self.anchor_100ns, self.last_slot) {
+            (Some(anchor), Some(last_slot)) => (anchor, last_slot.checked_add(1)?),
+            _ => {
+                self.anchor_100ns = Some(now);
+                self.last_slot = Some(0);
+                return Some(now_100ns);
+            }
         };
 
-        let next = i128::from(last) + i128::from(self.duration_100ns);
-        let now = i128::from(now_100ns);
-        let timestamp = if now <= next {
-            next
-        } else {
-            let elapsed = now - next;
-            let skipped = elapsed / i128::from(self.duration_100ns);
-            next + skipped * i128::from(self.duration_100ns)
-        };
+        // Pick the newest absolute slot that is not in the future. Computing
+        // from the anchor avoids accumulating a truncated 100ns duration.
+        let elapsed = now.checked_sub(anchor).unwrap_or_default();
+        let elapsed_slot = elapsed
+            .checked_mul(self.rate_num)?
+            .checked_div(self.period_100ns_num)?;
+        let slot = next_slot.max(elapsed_slot);
+        let timestamp = anchor.checked_add(
+            slot.checked_mul(self.period_100ns_num)?
+                .checked_div(self.rate_num)?,
+        )?;
         let timestamp = i64::try_from(timestamp).ok()?;
-        self.last_pts_100ns = Some(timestamp);
+        self.last_slot = Some(slot);
         Some(timestamp)
     }
 }
@@ -101,5 +125,32 @@ mod tests {
         let mut clock = SampleClock::new(FRAME);
         assert_eq!(clock.next_timestamp(i64::MAX), Some(i64::MAX));
         assert_eq!(clock.next_timestamp(i64::MAX), None);
+    }
+
+    #[test]
+    fn rational_rate_does_not_accumulate_truncated_duration() {
+        let mut clock = SampleClock::for_frame_rate(30, 1).expect("30 fps");
+        let first = clock.next_timestamp(0).expect("first");
+        let second = clock.next_timestamp(1).expect("second");
+        let third = clock.next_timestamp(2).expect("third");
+        assert_eq!(first, 0);
+        assert_eq!(second, 333_333);
+        assert_eq!(third, 666_666);
+
+        for _ in 0..27 {
+            let _ = clock.next_timestamp(3);
+        }
+        let thirtieth = clock.next_timestamp(4).expect("thirtieth");
+        assert_eq!(thirtieth, 10_000_000);
+        let thirty_first = clock.next_timestamp(5).expect("thirty-first");
+        assert_eq!(thirty_first, 10_333_333);
+    }
+
+    #[test]
+    fn sixty_fps_uses_half_frame_period() {
+        let mut clock = SampleClock::for_frame_rate(60, 1).expect("60 fps");
+        let first = clock.next_timestamp(0).expect("first");
+        let second = clock.next_timestamp(1).expect("second");
+        assert_eq!(second - first, 166_666);
     }
 }

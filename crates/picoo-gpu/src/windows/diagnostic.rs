@@ -25,10 +25,10 @@ impl WindowsGpuContext {
                 Some(&mut immediate),
             )?;
             Self::bind_device(
-                WindowsAdapterId {
-                    low: description.AdapterLuid.LowPart,
-                    high: description.AdapterLuid.HighPart,
-                },
+                WindowsAdapterId::from_luid(
+                    description.AdapterLuid.LowPart,
+                    description.AdapterLuid.HighPart,
+                ),
                 device.ok_or(WindowsDeviceError::MissingDevice)?,
                 immediate.ok_or(WindowsDeviceError::MissingDevice)?,
             )

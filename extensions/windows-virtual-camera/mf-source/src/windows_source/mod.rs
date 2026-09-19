@@ -2,8 +2,10 @@
 
 mod activator;
 mod class_factory;
+mod d3d_manager;
 mod media_source;
 mod media_stream;
+mod native_import;
 
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -164,7 +166,7 @@ mod tests {
         assert_eq!(event.GetStatus().expect("IMFMediaEvent::GetStatus"), S_OK);
     }
 
-    unsafe fn expect_sample_delivery(stream: &IMFMediaStream2) -> i64 {
+    unsafe fn expect_sample_delivery(stream: &IMFMediaStream2, duration_100ns: i64) -> i64 {
         let event = stream
             .GetEvent(MF_EVENT_FLAG_NONE)
             .expect("IMFMediaStream::GetEvent(MEMediaSample)");
@@ -180,7 +182,7 @@ mod tests {
             sample
                 .GetSampleDuration()
                 .expect("IMFSample::GetSampleDuration"),
-            crate::format::SAMPLE_DURATION_100NS
+            duration_100ns
         );
         assert_eq!(
             sample.GetTotalLength().expect("IMFSample::GetTotalLength"),
@@ -265,6 +267,18 @@ mod tests {
             stream
                 .cast::<IAgileObject>()
                 .expect("media stream must expose IAgileObject");
+            let media_type_handler = stream
+                .GetStreamDescriptor()
+                .expect("stream descriptor")
+                .GetMediaTypeHandler()
+                .expect("stream media type handler");
+            assert_eq!(
+                media_type_handler
+                    .GetMediaTypeCount()
+                    .expect("media type count"),
+                4,
+                "VCam must advertise 720p and 1080p at both 30 and 60 fps"
+            );
             let allocator_control: IMFSampleAllocatorControl = stream
                 .cast()
                 .expect("media stream must expose allocator control");
@@ -297,6 +311,9 @@ mod tests {
             .expect("cross-thread agile-source check");
 
             let source: IMFMediaSource = source_ex.cast().expect("IMFMediaSource");
+            source_ex
+                .SetD3DManager(None::<&IUnknown>)
+                .expect("clear optional D3D manager for CpuBridge");
             let presentation = source
                 .CreatePresentationDescriptor()
                 .expect("CreatePresentationDescriptor");
@@ -321,9 +338,25 @@ mod tests {
             stream
                 .RequestSample(None::<&IUnknown>)
                 .expect("IMFMediaStream::RequestSample");
-            let first_sample_time = expect_sample_delivery(&stream);
+            let first_sample_time = expect_sample_delivery(
+                &stream,
+                crate::format::sample_duration_100ns(30, 1).expect("30 fps duration"),
+            );
             source.Stop().expect("IMFMediaSource::Stop");
             expect_stream_event(&stream, MEStreamStopped.0 as u32);
+            let mut selected = BOOL(0);
+            let mut descriptor = None;
+            presentation
+                .GetStreamDescriptorByIndex(0, &mut selected, &mut descriptor)
+                .expect("get selected stream descriptor");
+            let descriptor = descriptor.expect("selected stream descriptor");
+            let handler = descriptor
+                .GetMediaTypeHandler()
+                .expect("selected media type handler");
+            let sixty_type = handler.GetMediaTypeByIndex(1).expect("720p60 type");
+            handler
+                .SetCurrentMediaType(&sixty_type)
+                .expect("switch to 720p60 while stopped");
             source
                 .Start(&presentation, &GUID::zeroed(), &start_position)
                 .expect("IMFMediaSource::Start after Stop");
@@ -331,7 +364,10 @@ mod tests {
             stream
                 .RequestSample(None::<&IUnknown>)
                 .expect("IMFMediaStream::RequestSample after restart");
-            let restarted_sample_time = expect_sample_delivery(&stream);
+            let restarted_sample_time = expect_sample_delivery(
+                &stream,
+                crate::format::sample_duration_100ns(60, 1).expect("60 fps duration"),
+            );
             assert!(
                 restarted_sample_time >= first_sample_time,
                 "sample clock must remain monotonic across Stop/Start"

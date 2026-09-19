@@ -5,6 +5,8 @@ mod frame_bus;
 mod latest_frame_store;
 mod native_frame;
 mod native_image;
+#[cfg(any(target_os = "windows", test))]
+mod native_surface;
 mod nv12;
 mod placeholder;
 mod shared_ring;
@@ -27,6 +29,13 @@ pub use native_image::NativeImage;
 pub use native_image::{ApplePixelBufferLease, NativeImageError};
 #[cfg(target_os = "windows")]
 pub use native_image::{D3D11ImageLease, NativeImageError};
+#[cfg(any(target_os = "windows", test))]
+pub use native_surface::{
+    WindowsAdapterId, WindowsNativeChannel, WindowsNativeChannelAck,
+    WindowsNativeChannelCloseReport, WindowsNativeChannelError, WindowsNativeOfferState,
+    WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat, WindowsSharedSurfaceIdentity,
+    WINDOWS_NATIVE_CHANNEL_MAX_IN_FLIGHT,
+};
 pub use nv12::{
     normalize_rotation_degrees, transform_nv12, transform_nv12_with_pool, Nv12TransformError,
     TransformedNv12,

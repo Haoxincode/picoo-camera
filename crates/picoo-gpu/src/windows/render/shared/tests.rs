@@ -2,10 +2,35 @@ use super::*;
 use crate::windows::render::pool::OutputPool;
 use crate::windows::tests::{diagnostic_context, Runtime, GPU_WORK_TEST_LOCK};
 use crate::{CpuExporter, OutputColor, OutputFormat, RenderSpec, Rotation};
-use std::os::windows::io::AsRawHandle;
-use windows::Win32::Foundation::HANDLE;
+use std::os::windows::io::{AsRawHandle, BorrowedHandle};
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+use windows::Win32::System::Threading::GetCurrentProcess;
+
+#[test]
+fn native_identity_allows_initial_zero_decoder_generation() {
+    assert!(WindowsSharedSurfaceIdentity {
+        source_connection_generation: 1,
+        stream_epoch: 1,
+        decoder_generation: 0,
+        source_frame_id: 0,
+        resource_generation: 1,
+        backend_generation: 1,
+        output_revision: 0,
+    }
+    .is_valid());
+    assert!(!WindowsSharedSurfaceIdentity {
+        source_connection_generation: 1,
+        stream_epoch: 1,
+        decoder_generation: 0,
+        source_frame_id: 0,
+        resource_generation: 0,
+        backend_generation: 1,
+        output_revision: 0,
+    }
+    .is_valid());
+}
 
 struct Writer {
     surface: Arc<Surface>,
@@ -88,6 +113,39 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
             spec,
         };
         assert!(image.shared_bgra_handle().is_ok());
+        let target_process = unsafe { BorrowedHandle::borrow_raw(GetCurrentProcess().0) };
+        let transfer = image
+            .duplicate_shared_bgra_handle_into(
+                target_process,
+                WindowsSharedSurfaceIdentity {
+                    source_connection_generation: 1,
+                    stream_epoch: 2,
+                    decoder_generation: 3,
+                    source_frame_id: 4,
+                    resource_generation: 5,
+                    backend_generation: 6,
+                    output_revision: 7,
+                },
+            )
+            .unwrap();
+        let identity = transfer.descriptor().unwrap().identity();
+        assert_eq!(identity.source_frame_id, 4);
+        let lease = transfer.commit();
+        let descriptor = *lease.descriptor();
+        assert_eq!(descriptor.size(), (64, 32));
+        assert_eq!(descriptor.keyed_mutex_key(), 0);
+        assert_eq!(descriptor.format(), WindowsSharedSurfaceFormat::Bgra8);
+        let duplicated_handle = HANDLE(descriptor.handle_value() as usize as *mut std::ffi::c_void);
+        let duplicated_texture: ID3D11Texture2D = consumer
+            .device
+            .cast::<ID3D11Device1>()
+            .unwrap()
+            .OpenSharedResource1(duplicated_handle)
+            .unwrap();
+        unsafe { CloseHandle(duplicated_handle).unwrap() };
+        let mut duplicated_description = D3D11_TEXTURE2D_DESC::default();
+        unsafe { duplicated_texture.GetDesc(&mut duplicated_description) };
+        assert_eq!(duplicated_description.Format, DXGI_FORMAT_B8G8R8A8_UNORM);
         acquire_mutex(&mutex).unwrap();
         let mut description = D3D11_TEXTURE2D_DESC::default();
         imported.GetDesc(&mut description);
@@ -152,10 +210,15 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
         }
         consumer.with_immediate_context(|context| context.Unmap(&copied.staging, 0));
         drop(copied);
+        assert!(matches!(
+            pool.acquire(&producer.device),
+            Err(RenderError::PoolFull)
+        ));
+        drop(lease);
+        drop((second, third));
         assert_eq!(
             pool.acquire(&producer.device).unwrap().texture.as_raw(),
             identity
         );
-        drop((second, third));
     }
 }

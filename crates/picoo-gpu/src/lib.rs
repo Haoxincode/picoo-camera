@@ -16,7 +16,8 @@ mod windows;
 pub use windows::{
     CpuExporter, RenderedImage, WindowsAdapterId, WindowsCompletionError, WindowsDeviceError,
     WindowsDisplayImage, WindowsDisplayReader, WindowsGpuCompletion, WindowsGpuContext,
-    WindowsRenderer,
+    WindowsRenderer, WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat,
+    WindowsSharedSurfaceIdentity, WindowsSharedSurfaceLease, WindowsSharedSurfaceTransfer,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

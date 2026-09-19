@@ -44,13 +44,11 @@ impl PreparedFrameSet {
 }
 
 pub(super) struct PlaceholderFrames {
-    output_480: Arc<PreparedFrameSet>,
     output_720: Arc<PreparedFrameSet>,
     output_1080: Arc<PreparedFrameSet>,
 }
 
 pub(super) struct PreparedFrames {
-    output_480: Arc<PreparedFrameSet>,
     output_720: Arc<PreparedFrameSet>,
     output_1080: Arc<PreparedFrameSet>,
 }
@@ -58,10 +56,6 @@ pub(super) struct PreparedFrames {
 impl PlaceholderFrames {
     pub(super) fn new() -> Self {
         Self {
-            output_480: Arc::new(PreparedFrameSet::placeholder(OutputSize {
-                width: 854,
-                height: 480,
-            })),
             output_720: Arc::new(PreparedFrameSet::placeholder(OutputSize {
                 width: 1280,
                 height: 720,
@@ -75,7 +69,6 @@ impl PlaceholderFrames {
 
     pub(super) fn get(&self, output: OutputSize) -> Arc<PreparedFrameSet> {
         match (output.width, output.height) {
-            (854, 480) => Arc::clone(&self.output_480),
             (1280, 720) => Arc::clone(&self.output_720),
             (1920, 1080) => Arc::clone(&self.output_1080),
             _ => unreachable!("OutputSize only represents negotiated formats"),
@@ -86,26 +79,23 @@ impl PlaceholderFrames {
 impl PreparedFrames {
     pub(super) fn new(placeholders: &PlaceholderFrames) -> Self {
         Self {
-            output_480: placeholders.get(super::OUTPUT_SIZES[0]),
-            output_720: placeholders.get(super::OUTPUT_SIZES[1]),
-            output_1080: placeholders.get(super::OUTPUT_SIZES[2]),
+            output_720: placeholders.get(super::OUTPUT_SIZES[0]),
+            output_1080: placeholders.get(super::OUTPUT_SIZES[1]),
         }
     }
 
     pub(super) fn get(&self, output: OutputSize) -> Arc<PreparedFrameSet> {
         Arc::clone(match output.slot() {
-            0 => &self.output_480,
-            1 => &self.output_720,
-            2 => &self.output_1080,
+            0 => &self.output_720,
+            1 => &self.output_1080,
             _ => unreachable!("OutputSize slot is bounded"),
         })
     }
 
     pub(super) fn set(&mut self, output: OutputSize, frame: Arc<PreparedFrameSet>) {
         match output.slot() {
-            0 => self.output_480 = frame,
-            1 => self.output_720 = frame,
-            2 => self.output_1080 = frame,
+            0 => self.output_720 = frame,
+            1 => self.output_1080 = frame,
             _ => unreachable!("OutputSize slot is bounded"),
         }
     }
@@ -144,8 +134,6 @@ pub(super) struct PreparationResources {
 #[derive(Default)]
 pub(super) struct PreparationCounters {
     #[cfg(test)]
-    pub(super) output_480: AtomicU64,
-    #[cfg(test)]
     pub(super) output_720: AtomicU64,
     #[cfg(test)]
     pub(super) output_1080: AtomicU64,
@@ -157,7 +145,6 @@ impl PreparationCounters {
         let _ = output;
         #[cfg(test)]
         let counter = match (output.width, output.height) {
-            (854, 480) => &self.output_480,
             (1280, 720) => &self.output_720,
             (1920, 1080) => &self.output_1080,
             _ => return,

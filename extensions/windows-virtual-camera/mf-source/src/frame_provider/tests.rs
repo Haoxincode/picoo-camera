@@ -162,7 +162,7 @@ fn background_workers_publish_latest_prepared_frames() {
         prepared.pixels.as_ptr(),
         "RequestSample cache hits must only clone the prepared Arc"
     );
-    assert_eq!(provider.preparation_counts(), (0, 1, 0));
+    assert_eq!(provider.preparation_counts(), (1, 0));
 
     provider.set_output_active(1920, 1080, true);
     let second_deadline = Instant::now() + Duration::from_secs(2);
@@ -182,7 +182,7 @@ fn background_workers_publish_latest_prepared_frames() {
     }
     assert_eq!(
         provider.preparation_counts(),
-        (0, 1, 1),
+        (1, 1),
         "adding a consumer must not reprepare an unchanged active format"
     );
 

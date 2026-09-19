@@ -10,7 +10,7 @@ Camera Extension 使用 Core Media I/O 系统扩展机制注册统一设备名 `
 
 Host 与 Extension 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`；代码从 Info.plist 读取该值，Developer ID provisioning profile 必须同时授权它。
 
-原生边界采用 Swift 6 严格并发检查和 C17 原子操作。共享环固定为三个槽；Producer 取得独占写租约后才覆盖槽，Extension 在复制 NV12 到 `CVPixelBuffer` 期间持有读取租约，从而避免 torn frame。macOS file mapping 为每个槽使用独立 advisory lock，既允许不同槽并行读写，也能在进程异常退出后由内核释放锁并安全回收遗留的原子租约。扩展提供 480p、720p、1080p 的 30 fps NV12 格式，环中尺寸与客户端当前选择不一致时输出黑帧，等待 Receiver 完成格式切换。
+原生边界采用 Swift 6 严格并发检查和 C17 原子操作。共享环固定为三个槽；Producer 取得独占写租约后才覆盖槽，Extension 在复制 NV12 到 `CVPixelBuffer` 期间持有读取租约，从而避免 torn frame。macOS file mapping 为每个槽使用独立 advisory lock，既允许不同槽并行读写，也能在进程异常退出后由内核释放锁并安全回收遗留的原子租约。扩展提供 720p、1080p 的 30/60 fps NV12 格式，环中尺寸与客户端当前选择不一致时输出黑帧，等待 Receiver 完成格式切换。
 
 实现必须保持以下边界：
 

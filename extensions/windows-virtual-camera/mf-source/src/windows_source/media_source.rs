@@ -17,9 +17,10 @@ use windows::Win32::Media::MediaFoundation::{
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
 
+use super::d3d_manager::NativeDeviceBinding;
 use super::media_stream::{
-    allocator_usage, attach_source, descriptor, set_default_allocator, set_output_media_type,
-    set_stream_state, shutdown, MediaStream, SharedStreamState,
+    allocator_usage, attach_source, descriptor, set_default_allocator, set_native_generation,
+    set_output_media_type, set_stream_state, shutdown, MediaStream, SharedStreamState,
 };
 use super::{lock, query_interface, ObjectTracker};
 
@@ -30,6 +31,8 @@ struct SourceState {
     presentation: Option<windows::Win32::Media::MediaFoundation::IMFPresentationDescriptor>,
     stream: Option<IMFMediaStream2>,
     stream_state: SharedStreamState,
+    native_device: Option<NativeDeviceBinding>,
+    native_generation: u64,
     shutdown: bool,
     stream_presented: bool,
 }
@@ -62,6 +65,8 @@ impl MediaSource {
                     presentation: Some(presentation),
                     stream: Some(stream),
                     stream_state: stream_state.clone(),
+                    native_device: None,
+                    native_generation: 0,
                     shutdown: false,
                     stream_presented: false,
                 }),
@@ -265,6 +270,7 @@ impl IMFMediaSource_Impl for MediaSource_Impl {
                 state.stream_presented = false;
                 state.presentation = None;
                 state.stream = None;
+                state.native_device = None;
                 (state.queue.take(), state.stream_state.clone(), false)
             }
         };
@@ -296,8 +302,36 @@ impl IMFMediaSourceEx_Impl for MediaSource_Impl {
         descriptor(&state.stream_state)?.cast()
     }
 
-    fn SetD3DManager(&self, _manager: Ref<'_, IUnknown>) -> Result<()> {
-        ensure_source_alive(&self.state)
+    fn SetD3DManager(&self, manager: Ref<'_, IUnknown>) -> Result<()> {
+        let next = match manager.as_ref() {
+            Some(manager) => {
+                let manager = manager
+                    .cast::<windows::Win32::Media::MediaFoundation::IMFDXGIDeviceManager>(
+                )?;
+                Some(unsafe { NativeDeviceBinding::from_manager(manager)? })
+            }
+            None => None,
+        };
+        let mut state = lock(&self.state)?;
+        if state.shutdown {
+            return Err(Error::from(MF_E_SHUTDOWN));
+        }
+        let changed = match (&state.native_device, &next) {
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+            (Some(current), Some(next)) => !current.same_binding(next)?,
+        };
+        if !changed {
+            return Ok(());
+        }
+        let next_generation = state
+            .native_generation
+            .checked_add(1)
+            .ok_or_else(|| Error::from(windows::Win32::Foundation::E_FAIL))?;
+        set_native_generation(&state.stream_state, next.map(|_| next_generation))?;
+        state.native_generation = next_generation;
+        state.native_device = next;
+        Ok(())
     }
 }
 

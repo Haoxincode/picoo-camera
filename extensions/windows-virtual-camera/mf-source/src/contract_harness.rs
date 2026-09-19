@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use picoo_frame_hub::{SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES};
 
-use crate::format::{nv12_len, SAMPLE_DURATION_100NS};
+use crate::format::{nv12_len, DEFAULT_FRAME_RATE_DEN, DEFAULT_FRAME_RATE_NUM};
 use crate::frame_provider::{FrameOrigin, FrameProvider};
 use crate::sample_clock::SampleClock;
 
@@ -21,11 +21,11 @@ fn ring_name() -> String {
 }
 
 fn wait_for_pixels(provider: &FrameProvider, value: u8) {
-    provider.set_output_active(854, 480, true);
+    provider.set_output_active(1280, 720, true);
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         let acquired = provider
-            .acquire_for_output(854, 480)
+            .acquire_for_output(1280, 720)
             .expect("negotiated output");
         if acquired.frame.pixels.first() == Some(&value) {
             assert_eq!(acquired.origin, FrameOrigin::Fresh);
@@ -36,7 +36,7 @@ fn wait_for_pixels(provider: &FrameProvider, value: u8) {
                     acquired.frame.stride,
                     acquired.frame.pixels.len(),
                 ),
-                (854, 480, 854, nv12_len(854, 480).expect("NV12 size"))
+                (1280, 720, 1280, nv12_len(1280, 720).expect("NV12 size"))
             );
             return;
         }
@@ -48,11 +48,11 @@ fn wait_for_pixels(provider: &FrameProvider, value: u8) {
 #[test]
 fn producer_pause_crash_restart_and_host_rebuild_preserve_contract() {
     let name = ring_name();
-    let frame_len = nv12_len(854, 480).expect("NV12 size");
+    let frame_len = nv12_len(1280, 720).expect("NV12 size");
     let mut producer = SharedFrameRingProducer::create(&name, DEFAULT_MAX_FRAME_BYTES)
         .expect("first producer generation");
     producer
-        .publish_nv12(854, 480, 854, 0, 1, &vec![41; frame_len])
+        .publish_nv12(1280, 720, 1280, 0, 1, &vec![41; frame_len])
         .expect("first frame");
 
     let first_host = FrameProvider::with_ring_name(name.clone()).expect("first host");
@@ -62,7 +62,7 @@ fn producer_pause_crash_restart_and_host_rebuild_preserve_contract() {
 
     thread::sleep(Duration::from_millis(600));
     let cached = first_host
-        .acquire_for_output(854, 480)
+        .acquire_for_output(1280, 720)
         .expect("cached paused frame");
     assert_eq!(cached.origin, FrameOrigin::Cached);
     assert_eq!(cached.frame.pixels.first(), Some(&41));
@@ -71,7 +71,7 @@ fn producer_pause_crash_restart_and_host_rebuild_preserve_contract() {
     let placeholder_deadline = Instant::now() + Duration::from_secs(3);
     loop {
         if first_host
-            .acquire_for_output(854, 480)
+            .acquire_for_output(1280, 720)
             .is_some_and(|frame| frame.origin == FrameOrigin::Placeholder)
         {
             break;
@@ -86,7 +86,7 @@ fn producer_pause_crash_restart_and_host_rebuild_preserve_contract() {
     let mut replacement = SharedFrameRingProducer::create(&name, DEFAULT_MAX_FRAME_BYTES)
         .expect("replacement producer generation");
     replacement
-        .publish_nv12(854, 480, 854, 0, 2, &vec![82; frame_len])
+        .publish_nv12(1280, 720, 1280, 0, 2, &vec![82; frame_len])
         .expect("replacement frame with sequence reset");
     wait_for_pixels(&first_host, 82);
     wait_for_pixels(&second_client, 82);
@@ -140,7 +140,7 @@ fn concurrent_requests_and_repeated_shutdown_are_safe() {
 #[test]
 fn every_negotiated_shape_has_fixed_stride_size_and_monotonic_clock() {
     let provider = FrameProvider::with_ring_name(ring_name()).expect("provider");
-    for (width, height) in [(854, 480), (1280, 720), (1920, 1080)] {
+    for (width, height) in [(1280, 720), (1920, 1080)] {
         let frame = provider
             .acquire_for_output(width, height)
             .expect("supported negotiated output")
@@ -152,13 +152,15 @@ fn every_negotiated_shape_has_fixed_stride_size_and_monotonic_clock() {
         assert_eq!(frame.pixels.len(), nv12_len(width, height).expect("NV12"));
     }
 
-    let mut clock = SampleClock::new(SAMPLE_DURATION_100NS);
+    let mut clock = SampleClock::for_frame_rate(DEFAULT_FRAME_RATE_NUM, DEFAULT_FRAME_RATE_DEN)
+        .expect("default frame rate");
     let mut previous = clock.next_timestamp(1_000_000).expect("first timestamp");
     for request in 1..1_000_i64 {
         let next = clock
             .next_timestamp(1_000_000 + request)
             .expect("timestamp");
-        assert_eq!(next - previous, SAMPLE_DURATION_100NS);
+        assert!(next > previous);
+        assert!(next - previous <= 333_334);
         previous = next;
     }
     clock.reset();

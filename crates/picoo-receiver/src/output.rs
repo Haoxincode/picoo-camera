@@ -1,6 +1,11 @@
 //! Dedicated CPU sink preparation from native source frames.
 //! REQ-PICOO-NEXT-029/033/034: Receiver owner never maps or transforms pixels.
 
+mod backend;
+pub(crate) use backend::{
+    BackendCapabilities, BackendFailureReason, BackendState, OutputBackend, OutputPlan,
+};
+
 #[cfg(all(test, target_os = "macos"))]
 use picoo_media_decode::DecodeFixture as _;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
@@ -46,6 +51,7 @@ pub(crate) struct CpuOutput {
     events: Arc<Mutex<Option<(u64, OutputEvent)>>>,
     generation: RingContentFence,
     worker: Option<JoinHandle<()>>,
+    backend: BackendState,
 }
 
 impl CpuOutput {
@@ -242,12 +248,31 @@ impl CpuOutput {
                 });
             }
         };
+        let backend = BackendState::auto(BackendCapabilities::cpu_bridge_only())
+            .map_err(|error| SharedRingError::Shmem(format!("CPU bridge backend: {error:?}")))?;
         Ok(Self {
             shared,
             events,
             generation,
             worker: Some(worker),
+            backend,
         })
+    }
+
+    pub(crate) const fn backend(&self) -> OutputBackend {
+        self.backend.selection().backend
+    }
+
+    pub(crate) const fn backend_plan_for(
+        &self,
+        source_generation: u64,
+        output_revision: u64,
+    ) -> OutputPlan {
+        self.backend.plan_for(source_generation, output_revision)
+    }
+
+    pub(crate) const fn backend_failure_reason(&self) -> Option<BackendFailureReason> {
+        self.backend.selection().native_failure()
     }
 
     pub(crate) fn submit(&self, frame: Arc<NativeVideoFrame>) -> SharedRingSubmitOutcome {
@@ -409,6 +434,7 @@ mod tests {
             SharedFrameRingProducer::create(&producer_name, DEFAULT_MAX_FRAME_BYTES)
         })
         .unwrap();
+        assert_eq!(output.backend(), OutputBackend::CpuBridge);
         let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
         let source = bus.latest().unwrap().clone();
         output.submit(Arc::clone(&source));

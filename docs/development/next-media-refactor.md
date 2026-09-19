@@ -4,6 +4,85 @@
 
 产品原文：[Next v2](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)；目标：[ARCH-PICOO-MEDIA-002](../design-specs/architecture/0012-native-media-multi-output-boundary.md)；[稳定需求](../design-specs/requirements/next-media.md)。
 
+## 2026-09-18：Windows VCam 正式帧率契约
+
+Windows MF Source 原先只把 30fps 写入旧的 NV12 协商类型，虽然 macOS Camera Extension 已有
+30/60fps 表，但 Windows 端不能据此宣称双平台提供相同时间语义。现已将 Windows 描述符收敛为
+720p/1080p × 30/60fps，`SetOutputType` 按完整尺寸与有理帧率准入，并让样本 duration
+随当前协商类型产生。
+
+Windows `SampleClock` 改为以 host-time 锚点和绝对槽号计算时间戳，避免把 30/60fps 的截断
+100ns 周期累加成长期漂移；慢请求跳过过期槽，Stop/Start 重新锚定。CPU bridge 的有界
+FrameProvider、Shared Frame Ring 和 RequestSample 最终 copy 边界未改变；GpuNative 尚未接入，
+本节不提升 `REQ-PICOO-NEXT-013/014` 为产品级验收完成。
+
+MF Source 的 `SetOutputType` 现在还会完整核对 NV12、progressive、BT.709 limited、方形像素、
+紧凑 stride、sample size 以及协商的尺寸/有理帧率；不再只看 frame size。Host Contract 已补上
+停止状态下的 30→60 切换，并分别检查 333333/166666 个 100ns sample duration。这样可以把
+“协商到了 60fps”与“仍然按 30fps 发 sample”区分开；真实 Frame Server 和会议软件的消费证据仍待
+Windows runner / Win11 host contract。
+
+Windows Source 的 `SetD3DManager` 不再是空实现：收到 Frame Server manager 后解析其精确
+D3D11 device，拒绝 software adapter、`SINGLETHREADED` device 和未开启
+`ID3D11Multithread` protection 的 device，保留 manager/device/adapter LUID，并在 manager/device
+改变时推进 native resource generation；运行中的 source 不接受切换。
+没有 manager 仍保留显式 CpuBridge 路径；manager 已绑定但逐帧原生资源尚未接通时，`RequestSample`
+明确返回不支持的媒体类型错误，绝不静默改发 CPU `MEMediaSample`。这个前置绑定尚不等于逐帧
+GpuNative：跨进程资源名/权限、keyed-mutex 读取和合法 MF GPU sample 仍必须在下一步 Windows
+Host Contract 中接通并验证。
+
+Windows GPU renderer 现在提供了受约束的 Producer 侧共享资源交接原语：`RenderedImage` 可将
+BGRA NT handle 以只读共享权限复制到已经认证的目标进程，并随返回描述携带 adapter LUID、纹理尺寸、
+source frame identity、resource/backend generation、output revision、BGRA 格式和 keyed-mutex key 0；
+transfer token 在 control channel 确认前负责回收目标句柄，commit 后形成 producer lease，直到 Consumer
+导入、GPU 读取完成并释放 key 0 才能丢弃。decoder/frame/revision 计数允许从零开始，只有 resource/backend
+generation 是资源生命周期的非零门禁。该原语已加入 same-process import 与池复用回归，但尚未接入
+Receiver↔Frame Server control channel，也尚未把它接到合法 MF allocator sample，因此仍不能宣称 GpuNative
+端到端完成。
+
+本机只能完成格式/纯时钟静态检查；当前 Xcode license 未接受，无法链接运行 macOS 测试或
+Windows 交叉检查。真实 Windows MF Source、30↔60 切换、Frame Server 与会议软件证据仍需
+Windows runner / Win11 host contract。
+
+## 2026-09-19：输出后端代际边界
+
+`picoo-receiver` 新增与平台资源无关的输出后端状态机：自动选择只在平台预检明确证明
+GpuNative 可用时优先选择 GpuNative，否则才选择 CpuBridge；两者都不可用时返回显式错误。
+后端切换推进独立 generation，同一后端保持 generation，旧 generation 的完成不能被新后端
+提交。不可变 `OutputPlan` 同时携带 backend selection 与 generation，native 探测失败原因限定为
+导入不支持、adapter 不匹配、allocator 不可用、共享不可用、未授权、设备丢失或契约非法；
+现有 Shared Frame Ring 输出登记为明确的 CpuBridge。GpuNative 资源适配器尚未接入，不会由该
+状态机把运行时 GPU/codec 失败静默改写成 CPU 成功。
+
+## 2026-09-19：Native handoff descriptor 单一契约源
+
+Windows native surface 的 identity、adapter LUID、尺寸、格式、keyed-mutex key 和目标进程
+handle value 已从 `picoo-gpu` 私有类型收敛到 `picoo-frame-hub` 的平台描述模块。FrameHub 只
+保存不可变事实与 `resource_generation/backend_generation` 的非零门禁，不持有 HANDLE、COM 对象
+或传输状态；GPU producer 的 transfer/lease 仍负责真实资源生命周期。这样未来 MF Source importer
+与 producer 使用同一 descriptor 定义，不再允许两边复制字段后悄然漂移。
+
+本片只完成契约源收敛和零值首帧/非法句柄回归，尚未实现受保护本地 control channel、Frame Server
+侧 `OpenSharedResource1` importer 或合法 GPU `IMFSample`。Windows 交叉链接仍需 Windows runner。
+
+随后补上的 `WindowsNativeChannel` 只是该本地通道的有界状态合同：Hello/Ready 绑定连接、stream、
+resource、backend 与 output revision，FrameOffer 最多保持三个，必须按 Offered→Imported→Released
+顺序确认；Rejected 只允许发生在 Imported 之前，关闭返回所有待清理 offer ID 及其阶段，且已关闭对象不能复用。
+它仍不等于 named-pipe ACL、HANDLE 传递或 MF sample 交付；这些必须在 Windows 原生 adapter 与 Host
+Contract 中逐项实现和验收。
+
+Frame Server 侧新增独立 `native_import` 准入边界：在任何 sample 组装前，使用已绑定的
+`IMFDXGIDeviceManager` device 打开目标进程句柄，核对 descriptor 的 adapter/格式/尺寸/key，比较
+纹理 `GetDevice` 的 COM identity，并检查 BGRA8、DEFAULT usage、单 array/mip、无 CPU access、
+`SHARED_NTHANDLE|SHARED_KEYEDMUTEX`。numeric HANDLE 在 `OpenSharedResource1` 后立即关闭（含失败路径），
+只把 COM texture/mutex 留给后续 adapter。当前仍没有 mutex lease-backed MF buffer、allocator、
+named-pipe ACL 或 RequestSample 接线，因此这只是 importer admission，不是 GpuNative 完成证据。
+同一模块还提供了带 keyed-mutex lease 的 BGRA `IMFMediaBuffer`/`IMFSample` 原语，但当前 Source
+仍协商 NV12；没有 BGRA→NV12 GPU bridge、Frame Server allocator 接管、worker 或 QueueEvent 接线，
+所以该 sample 原语也不能直接作为 `RequestSample` 输出。其 lease 记录 `ReleaseSync(0)` 失败，
+并通过共享状态句柄在最终 COM buffer drop 后观察；后续 control adapter 必须把该状态映射为资源
+代际失效/设备丢失，不能发送成功的 Released ack。
+
 ## 当前交付状态（2026-09-08）
 
 40 项 Next 总需求尚未逐项验收闭环；仍有处理后录像、VCam双后端及多输出资源治理等实质开发，不以测试数量估算完成百分比。基础契约的 implemented/verified 不等于整个产品完成；下面的初次实施记录属于历史，不表示当前还未执行平台探针。

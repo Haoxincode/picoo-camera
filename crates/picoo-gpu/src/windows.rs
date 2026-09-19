@@ -11,6 +11,8 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::Dxgi::{IDXGIAdapter1, IDXGIDevice, DXGI_ADAPTER_FLAG_SOFTWARE};
 
+pub use picoo_frame_hub::WindowsAdapterId;
+
 #[derive(Debug, thiserror::Error)]
 pub enum WindowsDeviceError {
     #[error("software adapters cannot run the production native media pipeline")]
@@ -21,22 +23,6 @@ pub enum WindowsDeviceError {
     MissingThreadProtection,
     #[error("Windows GPU device creation failed: {0}")]
     Platform(#[from] windows::core::Error),
-}
-
-/// Identifies the selected adapter, not a resource generation or a process handle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct WindowsAdapterId {
-    low: u32,
-    high: i32,
-}
-
-impl WindowsAdapterId {
-    pub fn low(&self) -> u32 {
-        self.low
-    }
-    pub fn high(&self) -> i32 {
-        self.high
-    }
 }
 
 /// REQ-PICOO-GPU-004: a fixed D3D11 device and protected submission context.
@@ -78,10 +64,10 @@ impl WindowsGpuContext {
         let device = device.ok_or(WindowsDeviceError::MissingDevice)?;
         let immediate = immediate.ok_or(WindowsDeviceError::MissingDevice)?;
         Self::bind_device(
-            WindowsAdapterId {
-                low: description.AdapterLuid.LowPart,
-                high: description.AdapterLuid.HighPart,
-            },
+            WindowsAdapterId::from_luid(
+                description.AdapterLuid.LowPart,
+                description.AdapterLuid.HighPart,
+            ),
             device,
             immediate,
         )
@@ -105,10 +91,10 @@ impl WindowsGpuContext {
         }
         let immediate = device.GetImmediateContext()?;
         Self::bind_device(
-            WindowsAdapterId {
-                low: description.AdapterLuid.LowPart,
-                high: description.AdapterLuid.HighPart,
-            },
+            WindowsAdapterId::from_luid(
+                description.AdapterLuid.LowPart,
+                description.AdapterLuid.HighPart,
+            ),
             device,
             immediate,
         )
@@ -181,7 +167,11 @@ mod completion;
 pub use completion::{WindowsCompletionError, WindowsGpuCompletion};
 
 mod render;
-pub use render::{RenderedImage, WindowsDisplayImage, WindowsDisplayReader, WindowsRenderer};
+pub use render::{
+    RenderedImage, WindowsDisplayImage, WindowsDisplayReader, WindowsRenderer,
+    WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat, WindowsSharedSurfaceIdentity,
+    WindowsSharedSurfaceLease, WindowsSharedSurfaceTransfer,
+};
 
 mod cpu_export;
 pub use cpu_export::CpuExporter;

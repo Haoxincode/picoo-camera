@@ -221,8 +221,7 @@ struct OutputSize {
 
 impl OutputSize {
     fn new(width: u32, height: u32) -> Option<Self> {
-        matches!((width, height), (854, 480) | (1280, 720) | (1920, 1080))
-            .then_some(Self { width, height })
+        matches!((width, height), (1280, 720) | (1920, 1080)).then_some(Self { width, height })
     }
 
     const fn bit(self) -> u8 {
@@ -231,19 +230,14 @@ impl OutputSize {
 
     const fn slot(self) -> usize {
         match (self.width, self.height) {
-            (854, 480) => 0,
-            (1280, 720) => 1,
-            (1920, 1080) => 2,
-            _ => 3,
+            (1280, 720) => 0,
+            (1920, 1080) => 1,
+            _ => 2,
         }
     }
 }
 
-const OUTPUT_SIZES: [OutputSize; 3] = [
-    OutputSize {
-        width: 854,
-        height: 480,
-    },
+const OUTPUT_SIZES: [OutputSize; 2] = [
     OutputSize {
         width: 1280,
         height: 720,
@@ -410,7 +404,7 @@ struct WorkerHandles {
 /// storage under a short pointer lock (REQ-PICOO-VCAM-010).
 pub(crate) struct FrameProvider {
     placeholders: Arc<PlaceholderFrames>,
-    last_delivered_live_revisions: [AtomicU64; 3],
+    last_delivered_live_revisions: [AtomicU64; 2],
     control: Arc<WorkerControl>,
     #[cfg(test)]
     preparation_counters: Arc<PreparationCounters>,
@@ -538,9 +532,8 @@ impl FrameProvider {
     }
 
     #[cfg(test)]
-    fn preparation_counts(&self) -> (u64, u64, u64) {
+    fn preparation_counts(&self) -> (u64, u64) {
         (
-            self.preparation_counters.output_480.load(Ordering::Relaxed),
             self.preparation_counters.output_720.load(Ordering::Relaxed),
             self.preparation_counters
                 .output_1080
@@ -565,7 +558,7 @@ fn run_ring_reader(
     source_tx: mpsc::SyncSender<SourceSnapshot>,
     control: &WorkerControl,
 ) {
-    let mut last_sent: [Option<(SourceKey, u64)>; 3] = [None; 3];
+    let mut last_sent: [Option<(SourceKey, u64)>; 2] = [None; 2];
     while let Some((active_outputs, demand_revision)) = control.wait_until_active() {
         for output in OUTPUT_SIZES {
             if active_outputs & output.bit() == 0 {

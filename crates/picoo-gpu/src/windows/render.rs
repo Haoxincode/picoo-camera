@@ -5,6 +5,10 @@ mod geometry;
 mod pipeline;
 mod pool;
 mod shared;
+pub use picoo_frame_hub::{
+    WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat, WindowsSharedSurfaceIdentity,
+};
+pub use shared::{WindowsSharedSurfaceLease, WindowsSharedSurfaceTransfer};
 
 use crate::{OutputColor, RenderError, RenderSpec, Rotation, WindowsGpuContext};
 use picoo_frame_hub::{ChromaSiting, ImageSize, NativeImage, NativeVideoFrame, SourceColor};
