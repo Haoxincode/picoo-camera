@@ -82,13 +82,15 @@ pub(super) fn prepare(
                     error => PrepareError::Failed(error.to_string()),
                 })?);
         }
-        if !resources
+        match resources
             .cpu_bridge
             .as_mut()
             .expect("CPU bridge initialized")
             .has_capacity()
         {
-            return Err(PrepareError::Backpressure);
+            Ok(true) => {}
+            Ok(false) => return Err(PrepareError::Backpressure),
+            Err(error) => return Err(PrepareError::Failed(error.to_string())),
         }
         resources
             .renderer

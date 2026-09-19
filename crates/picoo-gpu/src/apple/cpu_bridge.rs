@@ -53,8 +53,12 @@ impl AppleCpuBridge {
     /// CPU readback. A temporary allocation is immediately released; the
     /// worker is single-threaded, so the next export observes the same slot
     /// availability unless a retained downstream image exists.
-    pub fn has_capacity(&mut self) -> bool {
-        self.pool.acquire().is_ok()
+    pub fn has_capacity(&mut self) -> Result<bool, RenderError> {
+        match self.pool.acquire() {
+            Ok(_) => Ok(true),
+            Err(RenderError::PoolFull) => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     pub fn export(&mut self, rendered: &RenderedImage) -> Result<CpuBridgedImage, RenderError> {
