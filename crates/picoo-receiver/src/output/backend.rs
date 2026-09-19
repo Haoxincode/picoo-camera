@@ -5,6 +5,8 @@
 //! advertises `GpuNative`; a runtime failure is not an implicit permission to
 //! hide a GPU/codec failure behind a CPU fallback.
 
+#![cfg_attr(target_os = "macos", allow(dead_code))]
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutputBackend {
     GpuNative,

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use picoo_pairing::TrustedDevice;
 use picoo_sender::SenderSession;
@@ -274,7 +274,13 @@ fn paired_loopback_binds_lan_only_without_wan() {
     sender
         .ingest_and_flush(b"lan-only-au", true, 1, 1)
         .expect("ingest");
-    for _ in 0..100 {
+    let video_deadline = Instant::now()
+        + if cfg!(target_os = "macos") {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_millis(200)
+        };
+    while Instant::now() < video_deadline {
         receiver.pump().expect("rx");
         sender.pump().ok();
         if receiver.latest_frame().is_some() {

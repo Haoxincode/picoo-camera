@@ -45,7 +45,12 @@ func verifyOutputSampleClock() throws {
 
 func verifyOutputFormatProperties() throws {
     let device = try PicooCameraDeviceSource(localizedName: "Picoo contract test")
-    guard let stream = device.device.streams.first?.source as? PicooCameraStreamSource else {
+    try require(device.device.streams.count == 2)
+    try require(device.device.streams[0].direction == .source)
+    try require(device.device.streams[1].direction == .sink)
+    guard let stream = device.device.streams[0].source as? PicooCameraStreamSource,
+          let sink = device.device.streams[1].source as? PicooCameraSinkStreamSource
+    else {
         throw CocoaError(.coderInvalidValue)
     }
     try require(stream.formats.count == 4)
@@ -58,6 +63,25 @@ func verifyOutputFormatProperties() throws {
     let read = try stream.streamProperties(forProperties: [.streamFrameDuration, .streamActiveFormatIndex])
     try require(read.activeFormatIndex == 1)
     try require(read.frameDuration == CMTime(value: 1, timescale: 60))
+    let sinkRead = try sink.streamProperties(
+        forProperties: [
+            .streamFrameDuration,
+            .streamActiveFormatIndex,
+            .streamSinkBufferQueueSize,
+            .streamSinkBuffersRequiredForStartup,
+        ]
+    )
+    try require(sinkRead.activeFormatIndex == 1)
+    try require(sinkRead.frameDuration == CMTime(value: 1, timescale: 60))
+    try require(sinkRead.sinkBufferQueueSize == 3)
+    try require(sinkRead.sinkBuffersRequiredForStartup == 1)
+
+    let matching = try makeNV12Sample(width: 1280, height: 720)
+    try require(device.compatibleSinkImage(in: matching) != nil)
+    let wrongSize = try makeNV12Sample(width: 1920, height: 1080)
+    try require(device.compatibleSinkImage(in: wrongSize) == nil)
+    let untagged = try makeNV12Sample(width: 1280, height: 720, tagged: false)
+    try require(device.compatibleSinkImage(in: untagged) == nil)
     for index in [0, 99] {
         properties.activeFormatIndex = index
         properties.frameDuration = CMTime(value: 1, timescale: 24)
@@ -65,5 +89,44 @@ func verifyOutputFormatProperties() throws {
         do { try stream.setStreamProperties(properties) } catch { rejected = true }
         try require(rejected && stream.activeFormatIndex == 1)
     }
-    print("CMIO output properties: four formats; atomic format/rate admission passed")
+    print("CMIO source/sink properties: shared four-format selection and sink validation passed")
+}
+
+private func makeNV12Sample(width: Int, height: Int, tagged: Bool = true) throws -> CMSampleBuffer {
+    var image: CVPixelBuffer?
+    let attributes: NSDictionary = [
+        kCVPixelBufferIOSurfacePropertiesKey: [:] as NSDictionary,
+    ]
+    guard CVPixelBufferCreate(
+        kCFAllocatorDefault,
+        width,
+        height,
+        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+        attributes,
+        &image
+    ) == kCVReturnSuccess, let image else { throw CocoaError(.coderInvalidValue) }
+    if tagged { PicooCameraDeviceSource.applyOutputColor(to: image) }
+    var description: CMVideoFormatDescription?
+    guard CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: image,
+        formatDescriptionOut: &description
+    ) == noErr, let description else { throw CocoaError(.coderInvalidValue) }
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 60),
+        presentationTimeStamp: .zero,
+        decodeTimeStamp: .invalid
+    )
+    var sample: CMSampleBuffer?
+    guard CMSampleBufferCreateForImageBuffer(
+        allocator: kCFAllocatorDefault,
+        imageBuffer: image,
+        dataReady: true,
+        makeDataReadyCallback: nil,
+        refcon: nil,
+        formatDescription: description,
+        sampleTiming: &timing,
+        sampleBufferOut: &sample
+    ) == noErr, let sample else { throw CocoaError(.coderInvalidValue) }
+    return sample
 }

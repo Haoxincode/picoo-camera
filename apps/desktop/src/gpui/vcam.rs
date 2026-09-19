@@ -21,6 +21,10 @@ use super::widgets::{
 };
 use super::PicooDesktopApp;
 
+#[cfg(test)]
+#[path = "vcam_tests.rs"]
+mod vcam_tests;
+
 #[derive(Clone, PartialEq, Eq)]
 pub(super) enum VcamSetupState {
     Idle,
@@ -562,11 +566,11 @@ impl PicooDesktopApp {
                             .text_color(cx.theme().muted_foreground)
                             .child(vcam_repair_hint(snapshot.virtual_camera)),
                     )
-                    .child(match &snapshot.shared_ring_error {
+                    .child(match &snapshot.vcam_output_error {
                         Some(err) => {
-                            status_row("Shared Frame Ring", format!("附着失败：{err}"), false, cx)
+                            status_row("虚拟摄像头输出", format!("连接失败：{err}"), false, cx)
                         }
-                        None => status_row("Shared Frame Ring", "已附着".to_string(), true, cx),
+                        None => status_row("虚拟摄像头输出", "已连接".to_string(), true, cx),
                     })
                     .child(
                         div()
@@ -703,105 +707,5 @@ pub(super) fn vcam_label_zh(status: VirtualCameraStatus) -> &'static str {
         VirtualCameraStatus::Installed => "已注册 · 等待系统发布",
         VirtualCameraStatus::NotInstalled => "未安装 (Not Installed)",
         VirtualCameraStatus::Active => "就绪 (Active)",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        macos_activation_action_visible, macos_deactivation_action_visible,
-        resolve_pending_macos_vcam_status,
-    };
-    use crate::model::VirtualCameraStatus;
-    use crate::prefs::{MacosCameraExtensionIntent, PendingMacosCameraExtension};
-
-    #[test]
-    fn macos_camera_extension_actions_follow_lifecycle_state() {
-        for status in [
-            VirtualCameraStatus::Unknown,
-            VirtualCameraStatus::AwaitingApproval,
-            VirtualCameraStatus::RestartRequired,
-            VirtualCameraStatus::Uninstalling,
-            VirtualCameraStatus::Installed,
-            VirtualCameraStatus::NotInstalled,
-            VirtualCameraStatus::Active,
-        ] {
-            assert!(!macos_activation_action_visible(status));
-        }
-        assert!(macos_activation_action_visible(
-            VirtualCameraStatus::Bundled
-        ));
-        assert!(macos_deactivation_action_visible(
-            VirtualCameraStatus::Installed
-        ));
-        assert!(macos_deactivation_action_visible(
-            VirtualCameraStatus::Active
-        ));
-        assert!(!macos_deactivation_action_visible(
-            VirtualCameraStatus::RestartRequired
-        ));
-        assert!(!macos_deactivation_action_visible(
-            VirtualCameraStatus::Uninstalling
-        ));
-    }
-
-    #[test]
-    fn macos_reboot_pending_intent_survives_until_system_state_converges() {
-        let activation = PendingMacosCameraExtension {
-            intent: MacosCameraExtensionIntent::Activate,
-            boot_session: "boot-a".into(),
-        };
-        let deactivation = PendingMacosCameraExtension {
-            intent: MacosCameraExtensionIntent::Deactivate,
-            boot_session: "boot-a".into(),
-        };
-        assert_eq!(
-            resolve_pending_macos_vcam_status(
-                VirtualCameraStatus::Bundled,
-                Some(&activation),
-                Some("boot-a")
-            ),
-            (VirtualCameraStatus::RestartRequired, false, false)
-        );
-        assert_eq!(
-            resolve_pending_macos_vcam_status(
-                VirtualCameraStatus::Active,
-                Some(&activation),
-                Some("boot-a")
-            ),
-            (VirtualCameraStatus::Active, true, false)
-        );
-        assert_eq!(
-            resolve_pending_macos_vcam_status(
-                VirtualCameraStatus::Active,
-                Some(&deactivation),
-                Some("boot-a")
-            ),
-            (VirtualCameraStatus::Uninstalling, false, false)
-        );
-        assert_eq!(
-            resolve_pending_macos_vcam_status(
-                VirtualCameraStatus::Bundled,
-                Some(&deactivation),
-                Some("boot-a")
-            ),
-            (VirtualCameraStatus::Bundled, true, false)
-        );
-    }
-
-    #[test]
-    fn macos_reboot_pending_intent_unlocks_retry_when_system_did_not_converge() {
-        let activation = PendingMacosCameraExtension {
-            intent: MacosCameraExtensionIntent::Activate,
-            boot_session: "boot-a".into(),
-        };
-        assert_eq!(
-            resolve_pending_macos_vcam_status(
-                VirtualCameraStatus::Bundled,
-                Some(&activation),
-                Some("boot-b")
-            ),
-            (VirtualCameraStatus::Bundled, true, true)
-        );
     }
 }

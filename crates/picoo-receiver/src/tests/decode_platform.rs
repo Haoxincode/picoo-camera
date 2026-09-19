@@ -572,7 +572,7 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
     receiver
-        .attach_shared_ring(&ring_name)
+        .attach_virtual_camera_output(&ring_name)
         .expect("attach shared ring");
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "ring-phone".into(),

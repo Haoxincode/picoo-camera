@@ -26,7 +26,9 @@ use super::decoder_worker::{DecodeSubmitOutcome, EncodedAccessUnit};
 use super::media_publish::FrameTimeline;
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
-use crate::{ReceiverError, DEFAULT_SHARED_RING_NAME};
+use crate::ReceiverError;
+#[cfg(not(target_os = "macos"))]
+use crate::DEFAULT_SHARED_RING_NAME;
 
 impl ReceiverSession {
     pub(super) fn release_pending_stream_config_idr(
@@ -123,73 +125,95 @@ impl ReceiverSession {
         Ok(())
     }
 
-    /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
-    pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
-        let name = name.to_owned();
-        let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
-        let factory = move || {
-            #[cfg(target_os = "windows")]
-            if use_platform_ring {
-                return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
-                    picoo_frame_hub::windows_shared_ring_path(&name),
-                    picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-                );
-            }
-            #[cfg(target_os = "macos")]
-            if use_platform_ring {
-                let path = picoo_frame_hub::macos_app_group_ring_path(&name)?;
-                return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
-                    path,
-                    picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-                );
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let _ = use_platform_ring;
-            picoo_frame_hub::SharedFrameRingProducer::open_or_create(
-                &name,
-                picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-            )
-        };
-        #[cfg(any(target_os = "macos", windows))]
-        let ring = crate::output::CpuOutput::start(factory)?;
-        #[cfg(not(any(target_os = "macos", windows)))]
-        let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
-        self.shared_ring = Some(ring);
-        #[cfg(windows)]
+    /// Attach the platform VCam transport.
+    pub fn attach_virtual_camera_output(&mut self, name: &str) -> Result<(), ReceiverError> {
+        #[cfg(target_os = "macos")]
         {
-            self.native_output = match crate::output::NativeOutput::start() {
-                Ok(output) => Some(output),
-                Err(error) => {
-                    tracing::warn!(%error, "GpuNative VCam unavailable; keeping CpuBridge output");
-                    None
-                }
-            };
+            let _ = name;
+            self.native_output =
+                Some(crate::output::NativeOutput::start().map_err(|error| {
+                    ReceiverError::Protocol(format!("macOS CMIO output: {error}"))
+                })?);
+            self.last_vcam_output_error = None;
+            self.publish_waiting_placeholder()?;
+            Ok(())
         }
-        self.last_shared_ring_error = None;
-        self.publish_waiting_placeholder()?;
-        Ok(())
+        #[cfg(not(target_os = "macos"))]
+        {
+            let name = name.to_owned();
+            let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
+            let factory = move || {
+                #[cfg(target_os = "windows")]
+                if use_platform_ring {
+                    return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
+                        picoo_frame_hub::windows_shared_ring_path(&name),
+                        picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+                    );
+                }
+                #[cfg(not(target_os = "windows"))]
+                let _ = use_platform_ring;
+                picoo_frame_hub::SharedFrameRingProducer::open_or_create(
+                    &name,
+                    picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+                )
+            };
+            #[cfg(windows)]
+            let ring = crate::output::CpuOutput::start(factory)?;
+            #[cfg(not(any(target_os = "macos", windows)))]
+            let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
+            self.shared_ring = Some(ring);
+            #[cfg(windows)]
+            {
+                self.native_output = match crate::output::NativeOutput::start() {
+                    Ok(output) => Some(output),
+                    Err(error) => {
+                        tracing::warn!(%error, "GpuNative VCam unavailable; keeping CpuBridge output");
+                        None
+                    }
+                };
+            }
+            self.last_vcam_output_error = None;
+            self.publish_waiting_placeholder()?;
+            Ok(())
+        }
     }
 
-    pub(super) fn drain_shared_ring_events(&mut self) {
+    pub(super) fn drain_virtual_camera_output_events(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            let Some(output) = self.native_output.as_ref() else {
+                return;
+            };
+            while let Some(event) = output.poll_event() {
+                match event {
+                    crate::output::OutputEvent::Published => self.last_vcam_output_error = None,
+                    crate::output::OutputEvent::Failed(error) => {
+                        self.last_vcam_output_error = Some(error)
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
         let Some(ring) = self.shared_ring.as_ref() else {
             return;
         };
+        #[cfg(not(target_os = "macos"))]
         while let Some(event) = ring.poll_event() {
-            #[cfg(any(target_os = "macos", windows))]
+            #[cfg(windows)]
             match event {
-                crate::output::OutputEvent::Published => self.last_shared_ring_error = None,
+                crate::output::OutputEvent::Published => self.last_vcam_output_error = None,
                 crate::output::OutputEvent::Failed(error) => {
-                    self.last_shared_ring_error = Some(error)
+                    self.last_vcam_output_error = Some(error)
                 }
             }
             #[cfg(not(any(target_os = "macos", windows)))]
             match event {
                 picoo_frame_hub::SharedRingWriterEvent::Published { .. } => {
-                    self.last_shared_ring_error = None;
+                    self.last_vcam_output_error = None;
                 }
                 picoo_frame_hub::SharedRingWriterEvent::Failed { error, .. } => {
                     tracing::warn!(%error, "Shared Frame Ring output failed");
-                    self.last_shared_ring_error = Some(error.to_string());
+                    self.last_vcam_output_error = Some(error.to_string());
                 }
             }
         }

@@ -10,8 +10,12 @@ use std::{
 };
 
 const CAPACITY: usize = 16;
-const MAX_AGE: Duration = Duration::from_millis(250);
 pub(crate) const INPUT_DEADLINE: Duration = Duration::from_secs(2);
+// Queue age is the same absolute bound carried by each AU. A shorter
+// process-local limit would let cold native writer startup invalidate an AU
+// before the worker can observe it, while violating REQ-PICOO-MEDIA-078's
+// single two-second deadline contract.
+const MAX_AGE: Duration = INPUT_DEADLINE;
 
 #[derive(Debug)]
 pub struct RecordingInput {

@@ -75,6 +75,7 @@ fn network_episode_is_hysteretic_without_overwriting_streaming_lifecycle() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn placeholder_mode_bars_and_logo_publish_distinct_frames() {
     // AC-D-SET-01: Logo / Black / Bars must produce distinct waiting frames.
@@ -89,7 +90,9 @@ fn placeholder_mode_bars_and_logo_publish_distinct_frames() {
             .unwrap()
             .as_nanos()
     );
-    receiver.attach_shared_ring(&name).expect("output ring");
+    receiver
+        .attach_virtual_camera_output(&name)
+        .expect("output ring");
     let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
     let mut sequence = 0;
     let mut read_mode = |mode| {

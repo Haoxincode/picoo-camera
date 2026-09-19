@@ -2,26 +2,34 @@
 //! REQ-PICOO-NEXT-029/033/034: Receiver owner never maps or transforms pixels.
 
 mod backend;
+#[cfg(windows)]
 pub(crate) use backend::{
     BackendCapabilities, BackendFailureReason, BackendState, OutputBackend, OutputPlan,
 };
 
-#[cfg(all(test, target_os = "macos"))]
-use picoo_media_decode::DecodeFixture as _;
+#[cfg(windows)]
 use std::sync::{mpsc, Arc, Condvar, Mutex};
+#[cfg(windows)]
 use std::thread::{self, JoinHandle};
+#[cfg(windows)]
 use std::time::Duration;
 
+#[cfg(windows)]
 use picoo_frame_hub::{
     NativeVideoFrame, PlaceholderMode, RingContentFence, RingPublishOutcome, SharedFrameKind,
     SharedFrameRingProducer, SharedRingError, SharedRingSubmitOutcome,
 };
+#[cfg(windows)]
 use picoo_gpu::CpuImage;
 
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]
-use apple::{prepare, Resources};
+mod macos_cmio;
+#[cfg(target_os = "macos")]
+mod native_macos;
+#[cfg(target_os = "macos")]
+pub(crate) use native_macos::NativeOutput;
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
@@ -31,11 +39,13 @@ mod native_windows;
 #[cfg(windows)]
 pub(crate) use native_windows::NativeOutput;
 
+#[cfg(windows)]
 enum Request {
     Frame(Arc<NativeVideoFrame>),
     Placeholder(PlaceholderMode, bool),
 }
 
+#[cfg(windows)]
 #[derive(Default)]
 struct State {
     pending: Option<Request>,
@@ -51,6 +61,7 @@ pub(crate) enum OutputEvent {
     Failed(String),
 }
 
+#[cfg(windows)]
 pub(crate) struct CpuOutput {
     shared: Arc<(Mutex<State>, Condvar)>,
     events: Arc<Mutex<Option<(u64, OutputEvent)>>>,
@@ -59,6 +70,7 @@ pub(crate) struct CpuOutput {
     backend: BackendState,
 }
 
+#[cfg(windows)]
 impl CpuOutput {
     pub(crate) fn start(
         factory: impl FnOnce() -> Result<SharedFrameRingProducer, SharedRingError> + Send + 'static,
@@ -332,6 +344,7 @@ impl CpuOutput {
     }
 }
 
+#[cfg(windows)]
 impl Drop for CpuOutput {
     fn drop(&mut self) {
         {
@@ -347,11 +360,13 @@ impl Drop for CpuOutput {
     }
 }
 
+#[cfg(windows)]
 enum Prepared {
     Image(Arc<CpuImage>),
     Placeholder(Vec<u8>),
 }
 
+#[cfg(windows)]
 fn prepare_counted(
     resources: &mut Option<Resources>,
     frame: &NativeVideoFrame,
@@ -366,194 +381,4 @@ fn prepare_counted(
         "CPU output materialized for active demand"
     );
     Ok(image)
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod tests {
-    use super::*;
-    use picoo_frame_hub::{
-        FrameBus, FrameDescription, FrameIdentity, FrameTimeline, NativeVideoFrame,
-        PresentationTransform, SharedFrameRingConsumer, SourceColor, DEFAULT_MAX_FRAME_BYTES,
-    };
-    use picoo_gpu::Rotation;
-    use std::time::Instant;
-
-    fn wait_until(mut predicate: impl FnMut() -> bool) {
-        let deadline = Instant::now() + Duration::from_secs(3);
-        while !predicate() {
-            assert!(
-                Instant::now() < deadline,
-                "CPU demand worker did not progress"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
-    }
-
-    #[test]
-    fn hardware_decode_bus_gpu_and_cpu_sink_preserve_bt709_pixels() {
-        // REQ-PICOO-NEXT-011/016/029: source stays native up to the output exporter.
-        let decoded = picoo_media_decode::create_platform_decoder()
-            .decode_fixture(
-                &crate::tests::wire_avc(picoo_testkit::AVC_64X64_BT709_IDR),
-                None,
-            )
-            .unwrap()
-            .into_fixture_frame()
-            .unwrap();
-        let description = decoded.description().native_format;
-        let mut bus = FrameBus::new();
-        bus.publish(
-            NativeVideoFrame::new(
-                FrameIdentity {
-                    connection_generation: 1,
-                    stream_epoch: 1,
-                    decoder_generation: 1,
-                    frame_id: 7,
-                },
-                42_000,
-                FrameDescription {
-                    coded_size: description.coded_size,
-                    visible_rect: description.visible_rect,
-                    pixel_aspect_ratio: description.pixel_aspect_ratio,
-                    color: SourceColor::Nv12Bt709Limited {
-                        chroma_siting: description.chroma_siting,
-                    },
-                    transform: PresentationTransform {
-                        rotation: Rotation::None,
-                        mirror: false,
-                    },
-                    config_revision: 3,
-                },
-                decoded.into_native_image(),
-                FrameTimeline {
-                    encoded_at_us: 43_000,
-                    received_at_us: 45_000,
-                    decode_submitted_at_us: 46_000,
-                    decoded_at: Instant::now(),
-                },
-            )
-            .unwrap(),
-        );
-        let name = format!(
-            "picoo-native-output-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let producer_name = name.clone();
-        let output = CpuOutput::start(move || {
-            SharedFrameRingProducer::create(&producer_name, DEFAULT_MAX_FRAME_BYTES)
-        })
-        .unwrap();
-        assert_eq!(output.backend(), OutputBackend::CpuBridge);
-        let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
-        let source = bus.latest().unwrap().clone();
-        output.submit(Arc::clone(&source));
-        // Opening the mapping is not demand; wait until the worker actually
-        // observes the queued frame before checking that no export occurred.
-        wait_until(|| output.shared.0.lock().unwrap().demand_waits > 0);
-        assert_eq!(output.shared.0.lock().unwrap().exports, 0);
-        // Releasing the source bus must not invalidate the worker's native lease.
-        bus.clear();
-        let deadline = Instant::now() + Duration::from_secs(3);
-        loop {
-            if let Some(frame) = consumer.latest_frame() {
-                assert_eq!((frame.width, frame.height), (64, 64));
-                assert!(frame.timestamp_us > 0);
-                let y = frame.nv12[0];
-                let u = frame.nv12[64 * 64];
-                let v = frame.nv12[64 * 64 + 1];
-                assert!(
-                    y.abs_diff(63) <= 3 && u.abs_diff(102) <= 3 && v.abs_diff(240) <= 3,
-                    "hardware BT.709 red changed through GPU/CPU output: {y}/{u}/{v}"
-                );
-                break;
-            }
-            if let Some(OutputEvent::Failed(error)) = output.poll_event() {
-                panic!("output failed: {error}");
-            }
-            assert!(
-                Instant::now() < deadline,
-                "native GPU output did not publish"
-            );
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(output.shared.0.lock().unwrap().exports, 1);
-        let first_sequence = consumer.latest_frame().unwrap().sequence;
-        output.submit(Arc::clone(&source));
-        wait_until(|| output.shared.0.lock().unwrap().pending.is_none());
-        let waited = output.shared.0.lock().unwrap().demand_waits;
-        for _ in 0..8 {
-            output.submit(Arc::clone(&source));
-        }
-        wait_until(|| output.shared.0.lock().unwrap().demand_waits > waited);
-        assert_eq!(
-            output.shared.0.lock().unwrap().exports,
-            1,
-            "same source is exported once"
-        );
-        assert_eq!(consumer.latest_frame().unwrap().sequence, first_sequence);
-        drop(consumer);
-        thread::sleep(Duration::from_millis(300)); // crashed reader's 250ms lease expires
-        let waited = output.shared.0.lock().unwrap().demand_waits;
-        let next_source = Arc::new(
-            NativeVideoFrame::new(
-                FrameIdentity {
-                    frame_id: source.identity().frame_id + 1,
-                    ..source.identity()
-                },
-                source.source_pts_us() + 33_333,
-                source.description(),
-                source.image().clone(),
-                source.timeline(),
-            )
-            .unwrap(),
-        );
-        output.submit(next_source);
-        wait_until(|| output.shared.0.lock().unwrap().demand_waits > waited);
-        assert_eq!(
-            output.shared.0.lock().unwrap().exports,
-            1,
-            "expired demand cannot export new source"
-        );
-        let consumer = SharedFrameRingConsumer::open(&name, DEFAULT_MAX_FRAME_BYTES).unwrap();
-        // No new source submission: an actual read request wakes retained work.
-        output.poll_event();
-        consumer.latest_frame();
-        wait_until(|| matches!(output.poll_event(), Some(OutputEvent::Published)));
-        assert_eq!(output.shared.0.lock().unwrap().exports, 2);
-        let waited = output.shared.0.lock().unwrap().demand_waits;
-        let identity = source.identity();
-        for frame_id in 20..28 {
-            output.submit(Arc::new(
-                NativeVideoFrame::new(
-                    FrameIdentity {
-                        frame_id,
-                        ..identity
-                    },
-                    source.source_pts_us() + frame_id * 16_667,
-                    source.description(),
-                    source.image().clone(),
-                    source.timeline(),
-                )
-                .unwrap(),
-            ));
-        }
-        wait_until(|| output.shared.0.lock().unwrap().demand_waits > waited);
-        assert_eq!(
-            output.shared.0.lock().unwrap().exports,
-            2,
-            "a live lease without a new read request cannot export more source images"
-        );
-        let second_sequence = consumer.latest_frame().unwrap().sequence;
-        wait_until(|| output.shared.0.lock().unwrap().exports == 3);
-        wait_until(|| matches!(output.poll_event(), Some(OutputEvent::Published)));
-        assert!(consumer.latest_frame().unwrap().sequence > second_sequence);
-        output.invalidate();
-        assert!(
-            consumer.latest_frame().is_none(),
-            "owner invalidation fences IPC immediately"
-        );
-    }
 }

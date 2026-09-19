@@ -117,7 +117,7 @@ pub fn local_advertise_ipv4() -> Option<Ipv4Addr> {
     // remains Picoo-owned: a default route is not automatically a phone-
     // reachable LAN and VPN/virtual adapters still need to be excluded.
     let ifaces = netdev::get_interfaces();
-    let mut v4: Vec<(String, Ipv4Addr)> = ifaces
+    let v4: Vec<(String, Ipv4Addr)> = ifaces
         .iter()
         .filter(|iface| iface.is_up() && !iface.is_loopback())
         .flat_map(|iface| {

@@ -232,6 +232,46 @@ fn cpu_export_rejects_different_output_color_without_readback() {
 }
 
 #[test]
+fn cpu_bridge_copies_into_independent_bounded_iosurface_images() {
+    let source = red_source(true);
+    let output_spec = spec(OutputColor::Bt709Limited);
+    let mut renderer = AppleRenderer::new(output_spec).unwrap();
+    let rendered = renderer.render(&source).unwrap();
+    let expected = sample(&rendered, 640, 360);
+    let mut bridge = AppleCpuBridge::new(output_spec).unwrap();
+    let first = bridge.export(&rendered).unwrap();
+    let second = bridge.export(&rendered).unwrap();
+    let third = bridge.export(&rendered).unwrap();
+    assert!(matches!(
+        bridge.export(&rendered),
+        Err(RenderError::PoolFull)
+    ));
+    let actual = unsafe {
+        let buffer = first.pixel_buffer();
+        assert_eq!(
+            CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly),
+            0
+        );
+        let y = CVPixelBufferGetBaseAddressOfPlane(buffer, 0).cast::<u8>();
+        let uv = CVPixelBufferGetBaseAddressOfPlane(buffer, 1).cast::<u8>();
+        let result = [
+            *y.add(360 * CVPixelBufferGetBytesPerRowOfPlane(buffer, 0) + 640),
+            *uv.add(180 * CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) + 640),
+            *uv.add(180 * CVPixelBufferGetBytesPerRowOfPlane(buffer, 1) + 641),
+        ];
+        assert_eq!(
+            CVPixelBufferUnlockBaseAddress(buffer, CVPixelBufferLockFlags::ReadOnly),
+            0
+        );
+        result
+    };
+    assert_eq!(actual, expected);
+    drop(second);
+    assert!(bridge.export(&rendered).is_ok());
+    drop((first, third));
+}
+
+#[test]
 fn rotation_then_mirror_matches_source_quadrants() {
     let source = source_fixture(true, true);
     for (rotation, expected) in [

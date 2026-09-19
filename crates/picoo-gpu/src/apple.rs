@@ -1,5 +1,7 @@
+mod cpu_bridge;
 mod cpu_export;
 mod pool;
+pub use cpu_bridge::{AppleCpuBridge, CpuBridgedImage};
 pub use cpu_export::CpuExporter;
 #[cfg(test)]
 mod tests;

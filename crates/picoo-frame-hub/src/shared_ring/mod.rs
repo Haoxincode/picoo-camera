@@ -19,8 +19,6 @@ mod writer;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod file_mapping;
-#[cfg(target_os = "macos")]
-mod macos_app_group;
 #[cfg(target_os = "windows")]
 mod windows_machine;
 
@@ -31,11 +29,6 @@ pub use consumer::SharedFrameRingConsumer;
 pub use layout::{
     DEFAULT_MAX_FRAME_BYTES, PIXEL_FORMAT_NV12, RING_MAGIC, RING_META_SIZE, RING_READY_DONE,
     RING_SLOT_COUNT, RING_SLOT_META_SIZE,
-};
-#[cfg(target_os = "macos")]
-pub use macos_app_group::{
-    macos_app_group_identifier, macos_app_group_ring_path, MACOS_APP_GROUP_INFO_KEY,
-    MACOS_UNSIGNED_BUILD_INFO_KEY,
 };
 pub use producer::{RingPublishOutcome, SharedFrameRingProducer};
 #[cfg(target_os = "windows")]
@@ -72,8 +65,6 @@ pub enum SharedRingError {
     Shmem(String),
     #[error("file mapping {path}: {message}")]
     FileMapping { path: PathBuf, message: String },
-    #[error("macOS App Group container is unavailable: {0}")]
-    AppGroupUnavailable(String),
     #[error("a Shared Frame Ring producer is already active for {0}")]
     ProducerAlreadyRunning(PathBuf),
     #[error("invalid layout")]

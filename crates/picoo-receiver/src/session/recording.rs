@@ -503,7 +503,12 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         };
-        assert_eq!(result.state, RecordingState::HasGaps);
+        assert_eq!(
+            result.state,
+            RecordingState::HasGaps,
+            "recording result: {:?}",
+            result.error
+        );
         assert!(!receiver.encoded_recording_stopping());
         let stored = std::fs::read_to_string(result.path.unwrap().join("manifest.json")).unwrap();
         assert!(stored.contains("\"first_au\": 1"));

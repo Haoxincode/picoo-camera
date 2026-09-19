@@ -66,10 +66,11 @@ impl ReceiverSession {
             .latest()
             .expect("published native frame")
             .clone();
+        #[cfg(windows)]
         if let Some(output) = &self.shared_ring {
             output.submit(latest.clone());
         }
-        #[cfg(windows)]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(native_output) = &self.native_output {
             native_output.submit(latest);
         }
@@ -78,24 +79,26 @@ impl ReceiverSession {
 
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         self.frames.clear();
+        #[cfg(windows)]
         if let Some(output) = &self.shared_ring {
             output.placeholder(self.placeholder_mode, false);
         }
-        #[cfg(windows)]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(native_output) = &self.native_output {
-            native_output.clear();
+            native_output.placeholder(self.placeholder_mode, false);
         }
         Ok(())
     }
 
     pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
         self.frames.clear();
+        #[cfg(windows)]
         if let Some(output) = &self.shared_ring {
             output.placeholder(self.placeholder_mode, true);
         }
-        #[cfg(windows)]
+        #[cfg(any(target_os = "macos", windows))]
         if let Some(native_output) = &self.native_output {
-            native_output.clear();
+            native_output.placeholder(self.placeholder_mode, true);
         }
         Ok(())
     }

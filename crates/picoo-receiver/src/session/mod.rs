@@ -30,7 +30,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(windows)]
 use crate::output::CpuOutput;
 #[cfg(test)]
 use bytes::Bytes;
@@ -91,11 +91,11 @@ pub struct ReceiverSession {
     placeholder_mode: picoo_frame_hub::PlaceholderMode,
     #[cfg(not(any(target_os = "macos", windows)))]
     shared_ring: Option<SharedFrameRingWriter>,
-    #[cfg(any(target_os = "macos", windows))]
-    shared_ring: Option<CpuOutput>,
     #[cfg(windows)]
+    shared_ring: Option<CpuOutput>,
+    #[cfg(any(target_os = "macos", windows))]
     native_output: Option<crate::output::NativeOutput>,
-    last_shared_ring_error: Option<String>,
+    last_vcam_output_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
     #[cfg(any(target_os = "macos", windows))]
     recording: Option<picoo_recording::worker::RecordingWorker>,
@@ -174,10 +174,11 @@ impl ReceiverSession {
             permit_unpaired_video: false,
             auto_accept_paired: true,
             placeholder_mode: PlaceholderMode::Logo,
+            #[cfg(not(target_os = "macos"))]
             shared_ring: None,
-            #[cfg(windows)]
+            #[cfg(any(target_os = "macos", windows))]
             native_output: None,
-            last_shared_ring_error: None,
+            last_vcam_output_error: None,
             current_stream_config: None,
             #[cfg(any(target_os = "macos", windows))]
             recording: None,
@@ -295,8 +296,8 @@ impl ReceiverSession {
         self.last_media_error.as_deref()
     }
 
-    pub fn last_shared_ring_error(&self) -> Option<&str> {
-        self.last_shared_ring_error.as_deref()
+    pub fn last_vcam_output_error(&self) -> Option<&str> {
+        self.last_vcam_output_error.as_deref()
     }
 
     /// Last ReceiverStats sent upstream (REQ-PICOO-PROTOCOL-006 / PUC-005 live metrics).

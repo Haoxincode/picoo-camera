@@ -38,7 +38,7 @@ impl DiagnosticAnalysis {
         media_error: Option<&str>,
         status: ReceiverStatus,
         virtual_camera: VirtualCameraStatus,
-        shared_ring_error: Option<&str>,
+        vcam_output_error: Option<&str>,
     ) -> Self {
         analyze(
             stats,
@@ -47,7 +47,7 @@ impl DiagnosticAnalysis {
             media_error,
             status,
             virtual_camera,
-            shared_ring_error,
+            vcam_output_error,
         )
     }
 }
@@ -59,7 +59,7 @@ fn analyze(
     media_error: Option<&str>,
     status: ReceiverStatus,
     virtual_camera: VirtualCameraStatus,
-    shared_ring_error: Option<&str>,
+    vcam_output_error: Option<&str>,
 ) -> DiagnosticAnalysis {
     if let Some(error) = media_error {
         return DiagnosticAnalysis {
@@ -69,11 +69,11 @@ fn analyze(
         };
     }
 
-    if let Some(error) = shared_ring_error {
+    if let Some(error) = vcam_output_error {
         return DiagnosticAnalysis {
             health: DiagnosticHealth::Poor,
             label: "输出发布异常",
-            message: format!("Receiver 无法向虚拟摄像头发布共享帧：{error}"),
+            message: format!("Receiver 无法向虚拟摄像头发布画面：{error}"),
         };
     }
 

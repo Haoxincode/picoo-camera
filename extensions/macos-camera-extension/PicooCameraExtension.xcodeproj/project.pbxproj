@@ -8,23 +8,18 @@
 /* Begin PBXBuildFile section */
 		A10000000000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* main.swift */; };
 		A10000000000000000000002 /* PicooCameraProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* PicooCameraProvider.swift */; };
-		A10000000000000000000003 /* SharedRingReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* SharedRingReader.swift */; };
-		A10000000000000000000004 /* SharedRingAtomic.c in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* SharedRingAtomic.c */; };
 		A10000000000000000000005 /* CoreMediaIO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* CoreMediaIO.framework */; };
 		A10000000000000000000006 /* CoreMedia.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* CoreMedia.framework */; };
 		A10000000000000000000007 /* CoreVideo.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* CoreVideo.framework */; };
 		A10000000000000000000008 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* IOKit.framework */; };
 		A10000000000000000000009 /* OutputPixelBufferPool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* OutputPixelBufferPool.swift */; };
 		A1000000000000000000000A /* OutputSampleClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* OutputSampleClock.swift */; };
+		A1000000000000000000000B /* PicooCameraSink.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* PicooCameraSink.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		A20000000000000000000001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		A20000000000000000000002 /* PicooCameraProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PicooCameraProvider.swift; sourceTree = "<group>"; };
-		A20000000000000000000003 /* SharedRingReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedRingReader.swift; sourceTree = "<group>"; };
-		A20000000000000000000004 /* SharedRingAtomic.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = SharedRingAtomic.c; sourceTree = "<group>"; };
-		A20000000000000000000005 /* SharedRingAtomic.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SharedRingAtomic.h; sourceTree = "<group>"; };
-		A20000000000000000000006 /* PicooCameraExtension-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "PicooCameraExtension-Bridging-Header.h"; sourceTree = "<group>"; };
 		A20000000000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000008 /* PicooCameraExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = PicooCameraExtension.entitlements; sourceTree = "<group>"; };
 		A20000000000000000000009 /* CoreMediaIO.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreMediaIO.framework; path = System/Library/Frameworks/CoreMediaIO.framework; sourceTree = SDKROOT; };
@@ -34,6 +29,7 @@
 		A2000000000000000000000D /* com.haoxincode.picoo-camera.camera-extension.systemextension */ = {isa = PBXFileReference; explicitFileType = wrapper.system-extension; includeInIndex = 0; path = "com.haoxincode.picoo-camera.camera-extension.systemextension"; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000000000000000000000E /* OutputPixelBufferPool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputPixelBufferPool.swift; sourceTree = "<group>"; };
 		A2000000000000000000000F /* OutputSampleClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputSampleClock.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* PicooCameraSink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PicooCameraSink.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -65,12 +61,9 @@
 			children = (
 				A20000000000000000000001 /* main.swift */,
 				A20000000000000000000002 /* PicooCameraProvider.swift */,
+				A20000000000000000000010 /* PicooCameraSink.swift */,
 				A2000000000000000000000E /* OutputPixelBufferPool.swift */,
 				A2000000000000000000000F /* OutputSampleClock.swift */,
-				A20000000000000000000003 /* SharedRingReader.swift */,
-				A20000000000000000000004 /* SharedRingAtomic.c */,
-				A20000000000000000000005 /* SharedRingAtomic.h */,
-				A20000000000000000000006 /* PicooCameraExtension-Bridging-Header.h */,
 				A20000000000000000000007 /* Info.plist */,
 				A20000000000000000000008 /* PicooCameraExtension.entitlements */,
 			);
@@ -156,10 +149,9 @@
 			files = (
 				A10000000000000000000001 /* main.swift in Sources */,
 				A10000000000000000000002 /* PicooCameraProvider.swift in Sources */,
+				A1000000000000000000000B /* PicooCameraSink.swift in Sources */,
 				A10000000000000000000009 /* OutputPixelBufferPool.swift in Sources */,
 				A1000000000000000000000A /* OutputSampleClock.swift in Sources */,
-				A10000000000000000000003 /* SharedRingReader.swift in Sources */,
-				A10000000000000000000004 /* SharedRingAtomic.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -210,7 +202,6 @@
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = NO;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
-				SWIFT_OBJC_BRIDGING_HEADER = "PicooCameraExtension-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				SWIFT_VERSION = 6.0;
@@ -240,7 +231,6 @@
 				REGISTER_APP_GROUPS = YES;
 				SKIP_INSTALL = NO;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = nonisolated;
-				SWIFT_OBJC_BRIDGING_HEADER = "PicooCameraExtension-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				SWIFT_VERSION = 6.0;

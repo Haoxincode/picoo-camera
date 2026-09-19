@@ -73,7 +73,7 @@ enum ReleasePlatform {
 pub(crate) enum TestSuite {
     /// Swift/C ABI integration on an installed ARM64 iPhone Simulator runtime.
     Ios,
-    /// VideoToolbox, Shared Frame Ring, and Apple product dependency boundaries.
+    /// VideoToolbox, CMIO source/sink, and Apple product dependency boundaries.
     Macos,
     /// Synthetic AVC/HEVC hardware, IOSurface/Metal, and CPU container contracts.
     AppleNativeMedia,

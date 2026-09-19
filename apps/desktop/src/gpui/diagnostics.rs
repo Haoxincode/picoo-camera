@@ -35,7 +35,7 @@ impl PicooDesktopApp {
             snapshot.media_error.as_deref(),
             snapshot.status,
             snapshot.virtual_camera,
-            snapshot.shared_ring_error.as_deref(),
+            snapshot.vcam_output_error.as_deref(),
         );
         let actual_fps = stats.map(|_| {
             if target_fps > 0 {
@@ -279,10 +279,10 @@ impl PicooDesktopApp {
                     ))
                     .child(network_detail_row(
                         DesktopIcon::Server,
-                        "共享帧环",
-                        "Receiver 向虚拟摄像头发布 NV12 帧的进程边界",
+                        "虚拟摄像头输出",
+                        "Receiver 向系统虚拟摄像头发布画面的平台边界",
                         snapshot
-                            .shared_ring_error
+                            .vcam_output_error
                             .as_ref()
                             .map(|_| "异常".into())
                             .unwrap_or_else(|| "可用".into()),

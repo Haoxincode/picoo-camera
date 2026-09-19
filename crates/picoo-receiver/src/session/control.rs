@@ -224,9 +224,13 @@ impl ReceiverSession {
         })?;
         self.current_stream_config = Some(std::sync::Arc::new(config));
         self.admitted_access_unit_budget = Some(budget);
-        #[cfg(any(target_os = "macos", windows))]
+        #[cfg(windows)]
         if let Some(output) = &self.shared_ring {
             output.invalidate();
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(output) = &self.native_output {
+            output.placeholder(self.placeholder_mode, false);
         }
         if previous_epoch != Some(config_epoch) {
             self.reset_clock_sync(config_epoch);

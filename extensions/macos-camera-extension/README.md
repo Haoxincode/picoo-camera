@@ -1,27 +1,42 @@
 # Picoo Camera macOS Camera Extension
 
-状态：原生可编译、跨进程共享环和 Host bundle 基线已实现。`cargo xtask test macos` 会直接编译生产 Swift/C Reader，验证 Rust Writer 并发读写和 Reader/Producer 异常退出恢复；`cargo xtask package macos` 构建共享 GPUI Receiver 与 ARM64 Camera Extension，并将扩展嵌入未签名 `Picoo Camera.app` 的标准 System Extensions 目录。App Group 签名读写、激活、用户批准和公证仍待真机验收。
+状态：原生 CMIO source/sink 与 Host bundle 基线已实现。产品基线为 macOS 15+ ARM64（Apple Silicon），不构建或发布 Intel slice。
 
-产品基线为 macOS 15+ ARM64（Apple Silicon），不构建或发布 Intel slice。
+Camera Extension 在同一 `Picoo Camera` 设备注册两个流：
 
-Camera Extension 使用 Core Media I/O 系统扩展机制注册统一设备名 `Picoo Camera`，并通过 App Group mmap 消费 NV12 Shared Frame Ring。扩展只修改每槽的原子读取租约，帧元数据和像素只读；不得运行 QUIC、配对、Receiver Session 或视频解码器。
+- 公开 `.source`：会议软件读取 720p/1080p × 30/60 NV12。
+- 受限 `.sink`：只允许 signing ID 为 `com.haoxincode.picoo-camera` 的 Host 写入同一四格式表。
 
-扩展 Bundle ID 为 `com.haoxincode.picoo-camera.camera-extension`，bundle 文件名按 Apple System Extensions 规则追加 `.systemextension`，即 `com.haoxincode.picoo-camera.camera-extension.systemextension`，并嵌入 `Picoo Camera.app/Contents/Library/SystemExtensions/`。不保留旧的通用文件名。
-
-Host 与 Extension 使用 Apple 推荐的显式 App Group `group.com.haoxincode.picoo-camera`；代码从 Info.plist 读取该值，Developer ID provisioning profile 必须同时授权它。
-
-原生边界采用 Swift 6 严格并发检查和 C17 原子操作。共享环固定为三个槽；Producer 取得独占写租约后才覆盖槽，Extension 在复制 NV12 到 `CVPixelBuffer` 期间持有读取租约，从而避免 torn frame。macOS file mapping 为每个槽使用独立 advisory lock，既允许不同槽并行读写，也能在进程异常退出后由内核释放锁并安全回收遗留的原子租约。扩展提供 720p、1080p 的 30/60 fps NV12 格式，环中尺寸与客户端当前选择不一致时输出黑帧，等待 Receiver 完成格式切换。
-
-实现必须保持以下边界：
+Host 作为 CMIO Hardware output client，通过 legacy device UID
+`com.haoxincode.picoo-camera.virtual-camera` 找到 sink 并向系统三槽队列提交
+IOSurface-backed `CVPixelBuffer`。扩展只在 source 客户端实际取流时调用
+`consumeSampleBuffer`，缓存最后一张格式兼容图像，并用独立有理数 SampleClock 产生对外
+timestamp；尚无 Host 图像时输出黑帧。扩展不运行 QUIC、配对、Receiver Session、视频解码、
+缩放或效果处理。
 
 ```text
 Picoo Camera Desktop.app
   -> VideoToolbox decode once
-  -> LatestFrameStore
-  -> App Group mmap Shared Frame Ring
-  -> Picoo Camera Extension.systemextension
+  -> FrameBus / latest-only VCam worker
+  -> Apple renderer (GpuNative) or explicit CpuBridge
+  -> CMIO output queue -> Extension .sink
+  -> cached image + source SampleClock -> Extension .source
 ```
 
-无签名 CI 只负责主程序与扩展的可编译性、ARM64 slice、CMIO 身份和禁止依赖边界。系统扩展激活、用户批准、Developer ID、Hardened Runtime、公证、卸载清理和会议软件枚举必须在 macOS 真机单独验收。
+旧 App Group mmap `SharedRingReader`、C17 原子桥、文件锁与跨语言 ring ABI 已删除。
+`group.com.haoxincode.picoo-camera` 仍由 Host/Extension entitlement 和 Developer ID
+provisioning profile 共同声明，用于现有发布身份与 System Extension capability；它不承载像素。
 
-追溯：`REQ-PICOO-FRAME-006`、`REQ-PICOO-VCAM-006`、`REQ-PICOO-VCAM-007`。
+扩展 Bundle ID 为 `com.haoxincode.picoo-camera.camera-extension`，bundle 文件名按 Apple
+System Extensions 规则为
+`com.haoxincode.picoo-camera.camera-extension.systemextension`，嵌入
+`Picoo Camera.app/Contents/Library/SystemExtensions/`。
+
+`cargo xtask test macos` 以 Swift 6 strict concurrency 和 warnings-as-errors 编译生产
+source/sink，验证共享四格式选择、非法格式拒绝、source SampleClock 与三槽 CoreVideo pool；
+`cargo xtask package macos` 构建 Host 与 ARM64 Camera Extension。无签名 CI 不替代系统扩展
+激活、用户批准、Developer ID、Hardened Runtime、公证、真实 sink 消费、会议软件枚举与持续
+吞吐验收。
+
+追溯：`REQ-PICOO-VCAM-006`、`REQ-PICOO-VCAM-007`、`REQ-PICOO-VCAM-015`、
+`REQ-PICOO-VCAM-017`。

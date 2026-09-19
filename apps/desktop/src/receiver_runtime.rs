@@ -130,8 +130,8 @@ pub struct ReceiverSnapshot {
     pub active_sender: Option<ActiveSenderSummary>,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub virtual_camera: crate::model::VirtualCameraStatus,
-    /// None when Shared Frame Ring attach succeeded (REQ-PICOO-FRAME-003 / PUC-004).
-    pub shared_ring_error: Option<String>,
+    /// None when the platform VCam output transport is connected.
+    pub vcam_output_error: Option<String>,
     /// Last production decoder failure; cleared after a real frame is committed.
     pub media_error: Option<String>,
 }
@@ -147,7 +147,7 @@ pub(crate) struct ReceiverRuntime {
     advertised_trusted_count: usize,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
-    shared_ring_error: Option<String>,
+    vcam_output_error: Option<String>,
     metrics_history: LiveMetricsHistory,
     trusted_snapshot_cache: RefCell<TrustedSnapshotCache>,
 }
@@ -165,16 +165,17 @@ impl ReceiverRuntime {
             .with_identity(config.identity.clone())
             .with_loaded_trusted_store(config.trusted_store, &config.trusted_store_path);
 
-        let shared_ring_error = match receiver.attach_shared_ring(&config.shared_ring_name) {
-            Ok(()) => None,
-            Err(err) => {
-                tracing::error!(
-                    ring = %config.shared_ring_name,
-                    "Shared Frame Ring unavailable — VCam will stay on placeholder: {err}"
-                );
-                Some(err.to_string())
-            }
-        };
+        let vcam_output_error =
+            match receiver.attach_virtual_camera_output(&config.shared_ring_name) {
+                Ok(()) => None,
+                Err(err) => {
+                    tracing::error!(
+                        output = %config.shared_ring_name,
+                        "virtual camera output unavailable — VCam will stay on placeholder: {err}"
+                    );
+                    Some(err.to_string())
+                }
+            };
 
         let bind = receiver.listen(Endpoint {
             host: config.bind_host,
@@ -233,7 +234,7 @@ impl ReceiverRuntime {
             display_name: config.identity.display_name().to_owned(),
             advertised_trusted_count: trusted_count,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
-            shared_ring_error,
+            vcam_output_error,
             metrics_history: LiveMetricsHistory::default(),
             trusted_snapshot_cache: RefCell::new(TrustedSnapshotCache::default()),
         })
@@ -439,11 +440,11 @@ impl ReceiverRuntime {
             display_name: self.display_name.clone(),
             active_sender,
             virtual_camera: self.virtual_camera,
-            shared_ring_error: self
+            vcam_output_error: self
                 .receiver
-                .last_shared_ring_error()
+                .last_vcam_output_error()
                 .map(str::to_owned)
-                .or_else(|| self.shared_ring_error.clone()),
+                .or_else(|| self.vcam_output_error.clone()),
             media_error: self.receiver.last_media_error().map(str::to_string),
         }
     }

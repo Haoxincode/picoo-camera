@@ -18,14 +18,6 @@ objc2-io-surface = { version = "0.3.2", default-features = false, features = ["s
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFDictionary", "CFString"] }
 objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferIOSurface", "CVReturn", "objc2-io-surface"] }
 memmap2 = "0.9.11"
-objc2-foundation = { version = "0.3.2", default-features = false, features = [
-    "NSBundle",
-    "std",
-    "NSFileManager",
-    "NSValue",
-    "NSString",
-    "NSURL",
-] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62.2", features = [

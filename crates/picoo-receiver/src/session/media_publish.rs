@@ -172,7 +172,11 @@ impl ReceiverSession {
     #[cfg(test)]
     pub(crate) fn drain_decoder_until_idle_for_test(&mut self) {
         let expected_completion = self.decoder_completions.saturating_add(1);
-        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        // The first CoreVideo/IOSurface fixture on macOS may initialize a
+        // process-global dispatch_once path. Keep the production worker
+        // contract unchanged while giving this test cold-start room.
+        let timeout = if cfg!(target_os = "macos") { 15 } else { 1 };
+        let deadline = Instant::now() + std::time::Duration::from_secs(timeout);
         while Instant::now() < deadline {
             self.drain_decoder_events().expect("decoder events");
             if self.decoder_completions >= expected_completion {
@@ -243,7 +247,7 @@ impl ReceiverSession {
         ));
         if let Some(ring) = self.shared_ring.as_ref() {
             if ring.submit(published) == picoo_frame_hub::SharedRingSubmitOutcome::Stopped {
-                self.last_shared_ring_error = Some("Shared Frame Ring writer stopped".into());
+                self.last_vcam_output_error = Some("Shared Frame Ring writer stopped".into());
             }
         }
         Ok(())

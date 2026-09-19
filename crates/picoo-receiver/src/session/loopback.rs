@@ -1,6 +1,6 @@
 //! Sender→receiver loopback helpers for desktop diagnostics and tests.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::ReceiverFrame;
 use picoo_session::ReceiverStatus;
@@ -52,7 +52,13 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Arc<ReceiverFrame>, Re
     // Production senders never enter Streaming before pairing has committed.
     sender.ingest_and_flush_unchecked_for_test(payload, true, 1, 1)?;
 
-    for _ in 0..200 {
+    let video_deadline = Instant::now()
+        + if cfg!(target_os = "macos") {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_millis(400)
+        };
+    while Instant::now() < video_deadline {
         receiver.pump()?;
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {

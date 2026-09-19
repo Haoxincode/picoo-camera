@@ -3,7 +3,7 @@
 #[cfg(target_os = "macos")]
 mod apple;
 #[cfg(target_os = "macos")]
-pub use apple::{AppleRenderer, CpuExporter, RenderedImage};
+pub use apple::{AppleCpuBridge, AppleRenderer, CpuBridgedImage, CpuExporter, RenderedImage};
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod cpu_image;

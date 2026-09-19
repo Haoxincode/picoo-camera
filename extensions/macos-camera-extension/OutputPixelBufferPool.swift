@@ -1,7 +1,7 @@
 import CoreVideo
 import Foundation
 
-/// REQ-PICOO-VCAM-014: retained system samples consume the same three-slot budget.
+/// REQ-PICOO-VCAM-017: retained system samples consume the extension's three-slot budget.
 final class OutputPixelBufferPool {
     private let pool: CVPixelBufferPool
     private let allocation = [kCVPixelBufferPoolAllocationThresholdKey: 3] as CFDictionary
