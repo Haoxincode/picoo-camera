@@ -13,7 +13,10 @@ use windows::Win32::Foundation::{LocalFree, ERROR_PIPE_CONNECTED, HANDLE, HLOCAL
 use windows::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
-use windows::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+use windows::Win32::Security::{
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid, TokenUser,
+    PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
+};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_FIRST_PIPE_INSTANCE,
     FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_NONE, OPEN_EXISTING, PIPE_ACCESS_DUPLEX,
@@ -21,6 +24,10 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
     NAMED_PIPE_MODE, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
+};
+use windows::Win32::System::SystemServices::SECURITY_LOCAL_SERVICE_RID;
+use windows::Win32::System::Threading::{
+    OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 
 pub const WINDOWS_NATIVE_PIPE_NAME: &str = r"\\.\pipe\PicooCamera.NativeVcam";
@@ -206,6 +213,13 @@ impl WindowsNativePipeServer {
         Ok(process_id)
     }
 
+    /// Accept only a Frame Server process running as Windows Local Service.
+    /// This is the production validator for the fixed pipe name; callers that
+    /// use a test or broker identity must use the explicit validator API.
+    pub fn accept_local_service(&self) -> Result<u32, WindowsNativePipeError> {
+        self.accept_with_peer_validator(is_local_service_process)
+    }
+
     fn disconnect_client(&self) {
         unsafe {
             let _ = DisconnectNamedPipe(HANDLE(self.handle.as_raw_handle()));
@@ -227,6 +241,64 @@ impl WindowsNativePipeServer {
     pub fn write_frame(&self, payload: &[u8]) -> Result<(), WindowsNativePipeError> {
         write_frame(HANDLE(self.handle.as_raw_handle()), payload)
     }
+}
+
+fn is_local_service_process(process_id: u32) -> bool {
+    let Ok(process) =
+        (unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) })
+    else {
+        return false;
+    };
+    let process = unsafe { OwnedHandle::from_raw_handle(process.0 as *mut _) };
+    let mut token = HANDLE::default();
+    if unsafe { OpenProcessToken(HANDLE(process.as_raw_handle()), TOKEN_QUERY, &mut token) }
+        .is_err()
+    {
+        return false;
+    }
+    let token = unsafe { OwnedHandle::from_raw_handle(token.0 as *mut _) };
+    let mut needed = 0u32;
+    let _ = unsafe {
+        GetTokenInformation(
+            HANDLE(token.as_raw_handle()),
+            TokenUser,
+            None,
+            0,
+            &mut needed,
+        )
+    };
+    if needed == 0 {
+        return false;
+    }
+    let mut buffer = vec![0u8; needed as usize];
+    if unsafe {
+        GetTokenInformation(
+            HANDLE(token.as_raw_handle()),
+            TokenUser,
+            Some(buffer.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+    }
+    .is_err()
+    {
+        return false;
+    }
+    let token_user = unsafe { &*(buffer.as_ptr() as *const TOKEN_USER) };
+    let sid = token_user.User.Sid;
+    if sid.0.is_null() || !unsafe { IsValidSid(sid).as_bool() } {
+        return false;
+    }
+    if unsafe { *GetSidSubAuthorityCount(sid) } != 1 {
+        return false;
+    }
+    let authority = unsafe {
+        (*sid.0.cast::<windows::Win32::Security::SID>())
+            .IdentifierAuthority
+            .Value
+    };
+    authority == [0, 0, 0, 0, 0, 5]
+        && unsafe { *GetSidSubAuthority(sid, 0) } == SECURITY_LOCAL_SERVICE_RID as u32
 }
 
 impl Drop for WindowsNativePipeServer {
