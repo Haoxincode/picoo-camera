@@ -90,6 +90,278 @@ pub enum WindowsNativeChannelError {
     InvalidAcknowledgement,
 }
 
+/// Bounded control messages carried by the Windows native pipe. The message
+/// itself never owns a HANDLE; the descriptor's numeric value is valid only in
+/// the receiving process after the producer duplicated it into that process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsNativeWireMessage {
+    Hello {
+        source_connection_generation: u64,
+        stream_epoch: u64,
+        adapter: WindowsAdapterId,
+        resource_generation: u64,
+        backend_generation: u64,
+        output_revision: u64,
+    },
+    Ready {
+        source_connection_generation: u64,
+        stream_epoch: u64,
+        resource_generation: u64,
+        backend_generation: u64,
+        output_revision: u64,
+    },
+    Offer {
+        offer_id: u64,
+        descriptor: WindowsSharedSurfaceDescriptor,
+    },
+    Ack {
+        offer_id: u64,
+        ack: WindowsNativeChannelAck,
+    },
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowsNativeWireError {
+    Malformed,
+    FrameTooLarge,
+    InvalidAck,
+    InvalidFormat,
+}
+
+impl WindowsNativeWireMessage {
+    const HELLO: u8 = 1;
+    const READY: u8 = 2;
+    const OFFER: u8 = 3;
+    const ACK: u8 = 4;
+    const CLOSE: u8 = 5;
+    const MAX_BYTES: usize = 256;
+
+    pub fn encode(self) -> Result<Vec<u8>, WindowsNativeWireError> {
+        let mut bytes = Vec::with_capacity(Self::MAX_BYTES);
+        match self {
+            Self::Hello {
+                source_connection_generation,
+                stream_epoch,
+                adapter,
+                resource_generation,
+                backend_generation,
+                output_revision,
+            } => {
+                bytes.push(Self::HELLO);
+                put_u64(&mut bytes, source_connection_generation);
+                put_u64(&mut bytes, stream_epoch);
+                put_u32(&mut bytes, adapter.low());
+                put_u32(&mut bytes, adapter.high() as u32);
+                put_u64(&mut bytes, resource_generation);
+                put_u64(&mut bytes, backend_generation);
+                put_u64(&mut bytes, output_revision);
+            }
+            Self::Ready {
+                source_connection_generation,
+                stream_epoch,
+                resource_generation,
+                backend_generation,
+                output_revision,
+            } => {
+                bytes.push(Self::READY);
+                put_u64(&mut bytes, source_connection_generation);
+                put_u64(&mut bytes, stream_epoch);
+                put_u64(&mut bytes, resource_generation);
+                put_u64(&mut bytes, backend_generation);
+                put_u64(&mut bytes, output_revision);
+            }
+            Self::Offer {
+                offer_id,
+                descriptor,
+            } => {
+                bytes.push(Self::OFFER);
+                put_u64(&mut bytes, offer_id);
+                put_descriptor(&mut bytes, descriptor);
+            }
+            Self::Ack { offer_id, ack } => {
+                bytes.push(Self::ACK);
+                put_u64(&mut bytes, offer_id);
+                bytes.push(match ack {
+                    WindowsNativeChannelAck::Imported => 1,
+                    WindowsNativeChannelAck::Released => 2,
+                    WindowsNativeChannelAck::Rejected => 3,
+                });
+            }
+            Self::Close => bytes.push(Self::CLOSE),
+        }
+        if bytes.len() > Self::MAX_BYTES {
+            return Err(WindowsNativeWireError::FrameTooLarge);
+        }
+        Ok(bytes)
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, WindowsNativeWireError> {
+        if bytes.is_empty() || bytes.len() > Self::MAX_BYTES {
+            return Err(if bytes.len() > Self::MAX_BYTES {
+                WindowsNativeWireError::FrameTooLarge
+            } else {
+                WindowsNativeWireError::Malformed
+            });
+        }
+        let mut reader = WireReader { bytes, offset: 1 };
+        match bytes[0] {
+            Self::HELLO => {
+                let message = Self::Hello {
+                    source_connection_generation: reader.u64()?,
+                    stream_epoch: reader.u64()?,
+                    adapter: WindowsAdapterId::from_luid(reader.u32()?, reader.u32()? as i32),
+                    resource_generation: reader.u64()?,
+                    backend_generation: reader.u64()?,
+                    output_revision: reader.u64()?,
+                };
+                reader.finish()?;
+                Ok(message)
+            }
+            Self::READY => {
+                let message = Self::Ready {
+                    source_connection_generation: reader.u64()?,
+                    stream_epoch: reader.u64()?,
+                    resource_generation: reader.u64()?,
+                    backend_generation: reader.u64()?,
+                    output_revision: reader.u64()?,
+                };
+                reader.finish()?;
+                Ok(message)
+            }
+            Self::OFFER => Ok(Self::Offer {
+                offer_id: reader.u64()?,
+                descriptor: read_descriptor(&mut reader)?,
+            }),
+            Self::ACK => {
+                let offer_id = reader.u64()?;
+                let ack = match reader.byte()? {
+                    1 => WindowsNativeChannelAck::Imported,
+                    2 => WindowsNativeChannelAck::Released,
+                    3 => WindowsNativeChannelAck::Rejected,
+                    _ => return Err(WindowsNativeWireError::InvalidAck),
+                };
+                reader.finish()?;
+                Ok(Self::Ack { offer_id, ack })
+            }
+            Self::CLOSE => {
+                reader.finish()?;
+                Ok(Self::Close)
+            }
+            _ => Err(WindowsNativeWireError::Malformed),
+        }
+    }
+}
+
+fn put_u32(bytes: &mut Vec<u8>, value: u32) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_u64(bytes: &mut Vec<u8>, value: u64) {
+    bytes.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_descriptor(bytes: &mut Vec<u8>, descriptor: WindowsSharedSurfaceDescriptor) {
+    put_u64(bytes, descriptor.handle_value());
+    put_u32(bytes, descriptor.adapter().low());
+    put_u32(bytes, descriptor.adapter().high() as u32);
+    let (width, height) = descriptor.size();
+    put_u32(bytes, width);
+    put_u32(bytes, height);
+    bytes.push(match descriptor.format() {
+        WindowsSharedSurfaceFormat::Bgra8 => 1,
+    });
+    put_u64(bytes, descriptor.keyed_mutex_key());
+    let identity = descriptor.identity();
+    put_u64(bytes, identity.source_connection_generation);
+    put_u64(bytes, identity.stream_epoch);
+    put_u64(bytes, identity.decoder_generation);
+    put_u64(bytes, identity.source_frame_id);
+    put_u64(bytes, identity.resource_generation);
+    put_u64(bytes, identity.backend_generation);
+    put_u64(bytes, identity.output_revision);
+}
+
+fn read_descriptor(
+    reader: &mut WireReader<'_>,
+) -> Result<WindowsSharedSurfaceDescriptor, WindowsNativeWireError> {
+    let handle_value = reader.u64()?;
+    let adapter = WindowsAdapterId::from_luid(reader.u32()?, reader.u32()? as i32);
+    let width = reader.u32()?;
+    let height = reader.u32()?;
+    let format = match reader.byte()? {
+        1 => WindowsSharedSurfaceFormat::Bgra8,
+        _ => return Err(WindowsNativeWireError::InvalidFormat),
+    };
+    let keyed_mutex_key = reader.u64()?;
+    let identity = WindowsSharedSurfaceIdentity {
+        source_connection_generation: reader.u64()?,
+        stream_epoch: reader.u64()?,
+        decoder_generation: reader.u64()?,
+        source_frame_id: reader.u64()?,
+        resource_generation: reader.u64()?,
+        backend_generation: reader.u64()?,
+        output_revision: reader.u64()?,
+    };
+    reader.finish()?;
+    WindowsSharedSurfaceDescriptor::new(
+        handle_value,
+        adapter,
+        width,
+        height,
+        format,
+        keyed_mutex_key,
+        identity,
+    )
+    .ok_or(WindowsNativeWireError::Malformed)
+}
+
+struct WireReader<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> WireReader<'a> {
+    fn take(&mut self, length: usize) -> Result<&'a [u8], WindowsNativeWireError> {
+        let end = self
+            .offset
+            .checked_add(length)
+            .ok_or(WindowsNativeWireError::Malformed)?;
+        let value = self
+            .bytes
+            .get(self.offset..end)
+            .ok_or(WindowsNativeWireError::Malformed)?;
+        self.offset = end;
+        Ok(value)
+    }
+
+    fn byte(&mut self) -> Result<u8, WindowsNativeWireError> {
+        Ok(*self.take(1)?.first().expect("take(1) returns one byte"))
+    }
+
+    fn u32(&mut self) -> Result<u32, WindowsNativeWireError> {
+        Ok(u32::from_le_bytes(
+            self.take(4)?
+                .try_into()
+                .expect("take(4) returns four bytes"),
+        ))
+    }
+
+    fn u64(&mut self) -> Result<u64, WindowsNativeWireError> {
+        Ok(u64::from_le_bytes(
+            self.take(8)?
+                .try_into()
+                .expect("take(8) returns eight bytes"),
+        ))
+    }
+
+    fn finish(&self) -> Result<(), WindowsNativeWireError> {
+        (self.offset == self.bytes.len())
+            .then_some(())
+            .ok_or(WindowsNativeWireError::Malformed)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowsNativeChannelCloseReport {
     offers: [(u64, WindowsNativeOfferState); WINDOWS_NATIVE_CHANNEL_MAX_IN_FLIGHT],
@@ -453,6 +725,66 @@ mod tests {
         assert_eq!(
             channel.acknowledge(offers[1], WindowsNativeChannelAck::Released),
             Err(WindowsNativeChannelError::InvalidState)
+        );
+    }
+
+    #[test]
+    fn wire_messages_round_trip_and_reject_trailing_bytes() {
+        let identity = WindowsSharedSurfaceIdentity {
+            source_connection_generation: 7,
+            stream_epoch: 1,
+            decoder_generation: 9,
+            source_frame_id: 42,
+            resource_generation: 11,
+            backend_generation: 3,
+            output_revision: 4,
+        };
+        let descriptor = WindowsSharedSurfaceDescriptor::new(
+            0xfeed,
+            WindowsAdapterId::from_luid(1, -2),
+            1280,
+            720,
+            WindowsSharedSurfaceFormat::Bgra8,
+            0,
+            identity,
+        )
+        .unwrap();
+        let messages = [
+            WindowsNativeWireMessage::Hello {
+                source_connection_generation: 7,
+                stream_epoch: 1,
+                adapter: WindowsAdapterId::from_luid(1, -2),
+                resource_generation: 11,
+                backend_generation: 3,
+                output_revision: 4,
+            },
+            WindowsNativeWireMessage::Ready {
+                source_connection_generation: 7,
+                stream_epoch: 1,
+                resource_generation: 11,
+                backend_generation: 3,
+                output_revision: 4,
+            },
+            WindowsNativeWireMessage::Offer {
+                offer_id: 12,
+                descriptor,
+            },
+            WindowsNativeWireMessage::Ack {
+                offer_id: 12,
+                ack: WindowsNativeChannelAck::Imported,
+            },
+            WindowsNativeWireMessage::Close,
+        ];
+        for message in messages {
+            let encoded = message.encode().unwrap();
+            assert_eq!(WindowsNativeWireMessage::decode(&encoded), Ok(message));
+        }
+
+        let mut malformed = WindowsNativeWireMessage::Close.encode().unwrap();
+        malformed.push(0);
+        assert_eq!(
+            WindowsNativeWireMessage::decode(&malformed),
+            Err(WindowsNativeWireError::Malformed)
         );
     }
 }

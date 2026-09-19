@@ -40,8 +40,8 @@ pub use native_pipe::{
 pub use native_surface::{
     WindowsAdapterId, WindowsNativeChannel, WindowsNativeChannelAck,
     WindowsNativeChannelCloseReport, WindowsNativeChannelError, WindowsNativeOfferState,
-    WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat, WindowsSharedSurfaceIdentity,
-    WINDOWS_NATIVE_CHANNEL_MAX_IN_FLIGHT,
+    WindowsNativeWireError, WindowsNativeWireMessage, WindowsSharedSurfaceDescriptor,
+    WindowsSharedSurfaceFormat, WindowsSharedSurfaceIdentity, WINDOWS_NATIVE_CHANNEL_MAX_IN_FLIGHT,
 };
 pub use nv12::{
     normalize_rotation_degrees, transform_nv12, transform_nv12_with_pool, Nv12TransformError,
