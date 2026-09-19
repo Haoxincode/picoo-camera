@@ -380,15 +380,12 @@ private struct LiveCameraView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                PicooCameraColor.surface.ignoresSafeArea()
-                cameraSurface
-                safeFrame(width: proxy.size.width - PicooCameraLayout.safeHorizontalInset * 2)
-                hud
-                cameraStatus
-                controls
-            }
+        ZStack {
+            PicooCameraColor.surface.ignoresSafeArea()
+            cameraSurface
+            hud
+            cameraStatus
+            controls
         }
         .preferredColorScheme(.dark)
     }
@@ -399,24 +396,6 @@ private struct LiveCameraView: View {
             CameraPreview(previewLayer: previewLayer)
                 .ignoresSafeArea()
         }
-    }
-
-    private func safeFrame(width: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: PicooCameraLayout.safeFrameRadius)
-            .stroke(
-                PicooCameraColor.safeFrame,
-                style: StrokeStyle(
-                    lineWidth: PicooCameraLayout.safeFrameStroke,
-                    dash: PicooCameraLayout.safeFrameDash
-                )
-            )
-            .frame(width: width, height: width / PicooCameraLayout.videoAspectRatio)
-            .overlay(alignment: .topLeading) {
-                Text("16:9 PC 裁切框")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(PicooCameraColor.safeFrameLabel)
-                    .padding(PicooSpace.sm)
-            }
     }
 
     private var hud: some View {
@@ -489,8 +468,7 @@ private struct LiveCameraView: View {
     private var isConnected: Bool {
         model.senderStatus == .streaming ||
             model.senderStatus == .reconnecting ||
-            model.senderStatus == .networkUnstable ||
-            model.senderStatus == .permissionRequired
+            model.senderStatus == .networkUnstable
     }
 
     private var connectionTitle: String {
@@ -548,7 +526,7 @@ private struct LiveCameraView: View {
                 title: "正在连接电脑…",
                 detail: "连接建立后会自动开始本机预览。"
             )
-        } else if !isConnected {
+        } else if !isConnected && model.senderStatus != .permissionRequired {
             VStack(spacing: PicooSpace.md) {
                 CameraOverlay(
                     title: connectionTitle,

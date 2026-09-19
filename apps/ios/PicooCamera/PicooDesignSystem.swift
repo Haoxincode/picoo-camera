@@ -25,8 +25,6 @@ enum PicooCameraColor {
     static let contentMuted = Color.white.opacity(0.64)
     static let contentSubtle = Color.white.opacity(0.58)
     static let overlayDetail = Color.white.opacity(0.66)
-    static let safeFrame = Color.white.opacity(0.30)
-    static let safeFrameLabel = Color.white.opacity(0.55)
     static let stopBorder = Color.white.opacity(0.88)
     static let selected = Color(red: 0.169, green: 0.498, blue: 1)
     static let success = Color(red: 0, green: 0.737, blue: 0.490)
@@ -36,10 +34,6 @@ enum PicooCameraColor {
 
 enum PicooCameraLayout {
     static let safeHorizontalInset: CGFloat = 14
-    static let safeFrameRadius: CGFloat = 8
-    static let safeFrameStroke: CGFloat = 1
-    static let safeFrameDash: [CGFloat] = [6, 5]
-    static let videoAspectRatio: CGFloat = 16 / 9
     static let statusDot: CGFloat = 7
     static let hudItemSpacing: CGFloat = 7
     static let hudHorizontalPadding: CGFloat = 11
