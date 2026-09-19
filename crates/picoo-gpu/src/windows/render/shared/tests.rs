@@ -55,6 +55,7 @@ impl Drop for Reader {
 }
 
 #[test]
+#[ignore = "requires a hardware D3D11 adapter; the diagnostic WARP device is intentionally rejected"]
 fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
     let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
     let _runtime = Runtime::start();
