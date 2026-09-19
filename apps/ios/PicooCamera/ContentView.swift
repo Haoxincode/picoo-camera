@@ -764,7 +764,7 @@ private struct SettingsSheet: View {
                                 title: "默认初始画质",
                                 detail: "新连接的编码格式、分辨率与帧率",
                                 value: model.preferredSourceFormat.label,
-                                icon: .network
+                                icon: .exposure
                             )
                         }
                         .buttonStyle(.plain)
@@ -809,9 +809,7 @@ private struct SettingsSheet: View {
                                 title: "相机权限",
                                 detail: "进入直播取景时按需请求",
                                 value: cameraPermissionLabel,
-                                valueColor: cameraPermissionLabel == "未授权"
-                                    ? PicooColor.statusWarning
-                                    : PicooColor.statusSuccess,
+                                valueColor: cameraPermissionColor,
                                 icon: .secureConnection
                             )
                         }
@@ -863,10 +861,25 @@ private struct SettingsSheet: View {
 
     private var cameraPermissionLabel: String {
         switch model.camera.state {
-        case .denied: "未授权"
-        case .running: "使用中"
+        case .idle: "按需请求"
+        case .requestingPermission: "正在请求"
+        case .starting: "正在启动"
         case .stopping: "正在停止"
-        default: "按需请求"
+        case .running: "使用中"
+        case .denied: "未授权"
+        case .unavailable: "不可用"
+        case .failed: "检查失败"
+        }
+    }
+
+    private var cameraPermissionColor: Color {
+        switch model.camera.state {
+        case .running:
+            PicooColor.statusSuccess
+        case .denied, .unavailable, .failed:
+            PicooColor.statusWarning
+        case .idle, .requestingPermission, .starting, .stopping:
+            PicooColor.contentMuted
         }
     }
 
@@ -935,8 +948,9 @@ private struct IOSSettingsRow: View {
                 Text(detail)
                     .font(.subheadline)
                     .foregroundStyle(PicooColor.contentMuted)
-                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: PicooSpace.sm)
 

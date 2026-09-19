@@ -424,9 +424,9 @@ private fun SettingsText(title: String, description: String, modifier: Modifier 
 private fun SettingsDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(
-            start = PicooTheme.dimensions.space16 +
-                PicooTheme.dimensions.settingsIconContainer +
-                PicooTheme.dimensions.space12,
+            start = PicooTheme.dimensions.space8 +
+                PicooTheme.dimensions.iconEmphasis +
+                PicooTheme.dimensions.space8,
         ),
         color = PicooTheme.colors.borderDefault,
     )
