@@ -51,8 +51,27 @@ GpuNative 可用时优先选择 GpuNative，否则才选择 CpuBridge；两者�
 后端切换推进独立 generation，同一后端保持 generation，旧 generation 的完成不能被新后端
 提交。不可变 `OutputPlan` 同时携带 backend selection 与 generation，native 探测失败原因限定为
 导入不支持、adapter 不匹配、allocator 不可用、共享不可用、未授权、设备丢失或契约非法；
-现有 Shared Frame Ring 输出登记为明确的 CpuBridge。GpuNative 资源适配器尚未接入，不会由该
+现有 Shared Frame Ring 输出登记为明确的 CpuBridge。GpuNative 的 Frame Server/MF resource adapter
+尚未完成，不会由该
 状态机把运行时 GPU/codec 失败静默改写成 CPU 成功。
+
+## 2026-09-19：Windows GpuNative producer 控制通道接线
+
+Windows Receiver 已把已完成的 NV12 `NativeVideoFrame` 交给独立 GpuNative worker：worker 在
+目标进程已通过 Local Service 身份校验的 named pipe 上完成有界 Hello/Ready、逐帧 Offer/Imported/
+Released 确认，并在释放确认后才提交 producer transfer。pipe 仅承载控制描述符，不承载像素；ACL、
+目标 PID，以及 descriptor 中的 adapter LUID、格式、尺寸、source identity 和 output revision 均在
+producer/wire 边界核对；这不替代 Frame Server importer 的纹理准入。
+
+renderer/spec 重建和连接重建分别推进 `resource_generation` 与 `backend_generation`，两者通过
+`checked_add` 防止回绕，并与 Hello、Ready、channel 及 descriptor identity 使用同一组代际。这样旧
+surface 完成不会混入新资源；CPU Shared Frame Ring 仍是独立 CpuBridge 输出，不被 GpuNative 失败
+静默替代。
+
+本片只代表 Receiver producer 与本地控制协议已接线；Windows Frame Server 侧合法 MF GPU sample、
+真实 hardware adapter、同步/设备丢失恢复、named-pipe teardown 的原生 runner 证据，以及 Teams/Zoom
+等会议软件消费仍未完成。不能用本机 cross-target `cargo check` 或协议单测代替 Windows 11 host
+contract 和实际会议软件验收。
 
 ## 2026-09-19：Native handoff descriptor 单一契约源
 
