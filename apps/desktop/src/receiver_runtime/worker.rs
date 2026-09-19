@@ -12,6 +12,7 @@ use picoo_recording::bundle::RecordingMode;
 use super::{ReceiverRuntime, ReceiverSnapshot};
 use crate::prefs::DesktopPreferences;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RecordingRequest {
     Encoded,
@@ -21,6 +22,7 @@ pub enum RecordingRequest {
     },
 }
 
+#[allow(dead_code)]
 impl RecordingRequest {
     pub fn mode(self) -> RecordingMode {
         match self {

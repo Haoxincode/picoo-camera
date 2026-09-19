@@ -27,10 +27,12 @@ use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
 mod recording;
+#[allow(unused_imports)]
 pub use recording::{RecordingSnapshot, RecordingSnapshots};
 mod worker;
 #[cfg(feature = "gpui-ui")]
 pub use worker::await_receiver_reply;
+#[allow(unused_imports)]
 pub use worker::RecordingRequest;
 pub use worker::{ReceiverReply, ReceiverRuntimeHandle};
 

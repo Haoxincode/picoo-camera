@@ -81,6 +81,13 @@ impl NativeOutput {
         drop(state);
         self.server.disconnect_client();
     }
+
+    pub(crate) fn placeholder(&self, _mode: picoo_frame_hub::PlaceholderMode, _reconnecting: bool) {
+        // The Windows shared-ring output owns placeholder pixels. The native
+        // channel has no CPU placeholder frame, so disconnect its current
+        // surface and let the peer observe the empty generation.
+        self.clear();
+    }
 }
 
 impl Drop for NativeOutput {

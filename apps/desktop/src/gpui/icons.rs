@@ -5,6 +5,7 @@ use gpui_kit::*;
 ///
 /// Keeping this mapping typed makes a missing or misspelled Reicon a compile-time
 /// error instead of silently rendering an unrelated fallback glyph.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DesktopIcon {
     NetworkActivity,
@@ -54,6 +55,7 @@ pub(super) enum DesktopIcon {
 impl DesktopIcon {
     /// The complete semantic surface. Keep this exhaustive when adding a
     /// product icon so asset validation covers every callable variant.
+    #[allow(dead_code)]
     const ALL: [Self; 42] = [
         Self::NetworkActivity,
         Self::CameraPreview,

@@ -193,6 +193,7 @@ impl RingFrameReader {
     fn probe_consumer(&mut self, now: Instant) {
         if now >= self.next_generation_probe {
             self.next_generation_probe = now + GENERATION_PROBE_INTERVAL;
+            let mut generation_detached = false;
             if self
                 .consumer
                 .as_ref()
@@ -202,13 +203,20 @@ impl RingFrameReader {
                 // sequence at one, so detach must reset deduplication.
                 self.consumer = None;
                 self.last_sequence = 0;
-                self.last_live = None;
-                self.last_live_at = None;
                 self.current_placeholder = None;
                 self.producer_alive = false;
+                generation_detached = true;
             }
             if self.consumer.is_none() {
                 self.consumer = self.open_consumer().ok();
+                if generation_detached && self.consumer.is_some() {
+                    // A replacement mapping is a new privacy generation. Do
+                    // not carry the prior producer's pixels into it; the
+                    // short hold only applies while the old mapping is
+                    // unavailable and the replacement has not attached.
+                    self.last_live = None;
+                    self.last_live_at = None;
+                }
             }
             #[cfg(windows)]
             {
@@ -472,6 +480,7 @@ pub(crate) struct FrameProvider {
     placeholders: Arc<PlaceholderFrames>,
     last_delivered_live_revisions: [AtomicU64; 2],
     control: Arc<WorkerControl>,
+    #[cfg_attr(not(windows), allow(dead_code))]
     content: Mutex<RingContentObserver>,
     #[cfg(test)]
     preparation_counters: Arc<PreparationCounters>,
@@ -573,6 +582,7 @@ impl FrameProvider {
         }
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn set_placeholder_output_active(&self, width: u32, height: u32, active: bool) {
         let Some(output) = OutputSize::new(width, height) else {
             return;
@@ -607,6 +617,7 @@ impl FrameProvider {
         Some(AcquiredNv12Frame { frame, origin })
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn content_kind(&self) -> SharedFrameKind {
         self.content
             .lock()
@@ -614,6 +625,7 @@ impl FrameProvider {
             .kind()
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(crate) fn live_content_token(&self) -> Option<LiveContentToken> {
         self.content
             .lock()

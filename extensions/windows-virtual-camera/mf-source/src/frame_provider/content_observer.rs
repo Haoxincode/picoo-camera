@@ -92,6 +92,7 @@ impl RingContentObserver {
             }
             #[cfg(not(windows))]
             {
+                let _ = consumer;
                 true
             }
         });
