@@ -5,6 +5,8 @@ mod frame_bus;
 mod latest_frame_store;
 mod native_frame;
 mod native_image;
+#[cfg(target_os = "windows")]
+mod native_pipe;
 #[cfg(any(target_os = "windows", test))]
 mod native_surface;
 mod nv12;
@@ -29,6 +31,11 @@ pub use native_image::NativeImage;
 pub use native_image::{ApplePixelBufferLease, NativeImageError};
 #[cfg(target_os = "windows")]
 pub use native_image::{D3D11ImageLease, NativeImageError};
+#[cfg(target_os = "windows")]
+pub use native_pipe::{
+    WindowsNativePipeClient, WindowsNativePipeError, WindowsNativePipeServer,
+    WINDOWS_NATIVE_PIPE_MAX_FRAME, WINDOWS_NATIVE_PIPE_NAME,
+};
 #[cfg(any(target_os = "windows", test))]
 pub use native_surface::{
     WindowsAdapterId, WindowsNativeChannel, WindowsNativeChannelAck,
