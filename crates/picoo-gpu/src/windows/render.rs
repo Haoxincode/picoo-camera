@@ -11,7 +11,9 @@ pub use picoo_frame_hub::{
 pub use shared::{WindowsSharedSurfaceLease, WindowsSharedSurfaceTransfer};
 
 use crate::{OutputColor, RenderError, RenderSpec, Rotation, WindowsGpuContext};
-use picoo_frame_hub::{ChromaSiting, ImageSize, NativeImage, NativeVideoFrame, SourceColor};
+use picoo_frame_hub::{
+    ChromaSiting, ImageSize, NativeImage, NativeVideoFrame, SourceColor, WindowsAdapterId,
+};
 use pipeline::Pipeline;
 use pool::{OutputPool, Surface};
 use std::mem::ManuallyDrop;

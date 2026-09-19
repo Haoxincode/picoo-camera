@@ -19,6 +19,8 @@ pub mod reorder;
 mod test_fixtures;
 #[cfg(windows)]
 pub mod windows;
+#[cfg(windows)]
+pub mod windows_encoder;
 #[cfg(any(target_os = "macos", windows))]
 pub mod worker;
 

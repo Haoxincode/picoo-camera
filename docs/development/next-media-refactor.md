@@ -1095,3 +1095,9 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 - 桌面固定工作区分别呈现两个录像入口，使用独立pending/loading与操作错误。处理后格式菜单按源帧率门控，不支持的源规格在开始前禁用并解释原因；Windows未接入处理后硬编owner时不显示该能力。
 - Receiver会在连接会话重置时只结束FrameBus有序录像源，同时保留预览短时latest，因此500ms重连画面保持不能让录像静默跨连接代际。规格八组合、双工作者并行与独立停止/路径、短断线源终止的针对性测试通过；菜单动作和UI状态回归完成编译检查。Receiver与桌面测试目标编译、相关Clippy、文档与diff检查通过。测试链接使用临时Zig工具链绕过本机尚未接受的Xcode许可；GPUI测试二进制因该环境重复加载libobjc未执行，真实目录选择、手机并录与持续吞吐留平台验收，Windows处理后编码继续后置。
 - 原码流工作者与处理后工作者统一最终边界：完成全部原生清理后先释放进程名额，再发布一次性结果，因此UI看见结果时下一owner已可安全创建；共享Receiver测试锁另避免同进程测试争用全局名额。工作者即时复用回归和双工作者回归实际通过，subagent最终复审无P1/P2。
+
+### 2026-09-19：Windows处理后录像硬件编码适配
+
+- REQ-PICOO-MEDIA-084新增WindowsEncoder，只从hardware MFT枚举AVC/HEVC异步编码器，要求D3D11 aware并把已完成NV12目标所属的同一device绑定到DXGI manager；输入直接包装D3D11 surface，不做CPU readback或软件回退。固定八种codec/尺寸/fps的High/Main profile与level、码率、低延迟、GOP及逐帧IDR请求均显式提交；AVC按官方顺序在SetOutputType前设置零B帧，HEVC不要求其未支持的属性。
+- 单在途目标持有到对应输出取得；提前到达的NeedInput作为后续额度有界保存，拒绝声明跨对应ProcessOutput继续持有输入的MFT。NeedInput/HaveOutput和取样共用250ms期限，超期、事件异常、类型变化、PTS/强制IDR不符或原生错误均作废实例。强制IDR按CodecAPI要求使用VT_UI4，调用方输出buffer遵守MFT对齐。输出重新读取Annex B参数集，核对profile、尺寸、BT.709 limited及AU，再有界复制成四字节长度前缀交给WindowsSegment。
+- Windows MSVC目标的录像库及all-targets严格Clippy通过，覆盖八组合profile/level合同；同时修正既有FrameHub命名管道BOOL判断与GPU Windows共享类型生命周期/导入。本机不是Windows，未运行硬件MFT、故障注入或持续吞吐；RenderedRecorder、Receiver和桌面接线仍在后续批次完成，不把跨目标编译声明为原生验收。

@@ -76,3 +76,11 @@ WindowsDisplayReader 采用 GPUI 所用的实际 ID3D11Device，以官方 OpenSh
 采用官方 IMFTransform::GetOutputAvailableType/GetOutputCurrentType 与 MF_MT_MINIMUM_DISPLAY_APERTURE（MFVideoArea，MFOffset 为整数+16bit fraction）。保留 advertised media type 上的原生描述后提交类型，不从源 SPS crop 直接猜测纹理中的坐标。缺少 display aperture 时按 MF frame size 的全画面解释，并要求它与源 visible size 一致；分数坐标、越界、非偶数 NV12 crop、非 square PAR 及缺失/冲突 BT.709 limited 标记均拒绝。源码 SPS 仍记录原 coded size，native image 保留实际 allocation 尺寸；两者不是 CPU stride。Windows Video Processor 当前只接收 left chroma。
 
 诊断上传复用现有 MF runtime owner 与官方 CreateTexture2D 初始数据/MFCreateDXGISurfaceBuffer，只有 test/test-codecs 可调用；共享一个有界诊断 runtime，每个调用线程仍单独维护 COM apartment。这个测试入口不属于产品 Decoder 回退。
+
+## 处理后录像硬件编码
+
+候选一是让Sink Writer自动插入encoder并开启`MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS`；该属性只是允许选择硬件，不能禁止软件回退，也不能提供本产品需要的逐AU配置、IDR与一入一出验证，因此不采用。候选二是FFmpeg、oneVPL或厂商SDK；它们会增加另一套D3D11/MF互操作、部署和codec选择边界，而Windows 10/11已提供官方AVC/HEVC encoder MFT，当前阶段不采用。
+
+采用`MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, NV12, AVC/HEVC)`。微软明确规定hardware MFT属于异步模型，因此直接实现`METransformNeedInput`/`METransformHaveOutput`事件驱动，不把同步MFT或系统inbox软件encoder列为候选。NeedInput可先于当前HaveOutput到达，作为后续输入额度有界保存，不能按请求/响应严格交替解释；产品仍在取得当前输出后才消费下一额度。AVC/HEVC官方encoder均要求先设output type再设input type；HEVC最小Windows 10符合产品基线。低延迟属性要求不因重排增加sample延迟并期望一入一出，本产品仍逐帧核对输出PTS、IDR和压缩语法，不能只信属性。类型协商后拒绝`MFT_INPUT_STREAM_HOLDS_BUFFERS`，调用方输出sample使用MFT声明的`cbSize`与`cbAlignment`。
+
+目标NV12纹理已经由Windows Video Processor在固定D3D11 device上完成。编码器从该纹理device建立DXGI manager并要求MFT声明D3D11 aware，随后用`MFCreateDXGISurfaceBuffer`包装输入；RenderedImage owner保留到对应输出取回，禁止CPU map/readback。硬件枚举、D3D manager与surface输入三项共同构成准入证据；缺任一项即明确不可用，不重选source adapter或改用软件。

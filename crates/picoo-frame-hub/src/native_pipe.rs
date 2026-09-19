@@ -363,7 +363,7 @@ pub struct WindowsNativePipeClient {
 impl WindowsNativePipeClient {
     pub fn is_available() -> bool {
         let name = pipe_name_wide();
-        unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 0).is_ok() }
+        unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 0).as_bool() }
     }
 
     pub fn connect() -> Result<Self, WindowsNativePipeError> {

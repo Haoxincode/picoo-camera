@@ -69,7 +69,7 @@ impl<'a> WindowsSharedSurfaceTransfer<'a> {
     }
 }
 
-impl Drop for WindowsSharedSurfaceTransfer {
+impl Drop for WindowsSharedSurfaceTransfer<'_> {
     fn drop(&mut self) {
         let Some(descriptor) = self.descriptor.take() else {
             return;
@@ -147,6 +147,11 @@ impl RenderedImage {
     /// Duplicate an NV12 or BGRA shared target into an authenticated peer.
     /// The format is part of the descriptor and is checked against the
     /// completed RenderSpec before the handle is transferred.
+    ///
+    /// # Safety
+    /// `target_process` must identify an authenticated peer process and grant
+    /// `PROCESS_DUP_HANDLE`. The caller must keep the returned producer lease
+    /// alive until that peer has released keyed mutex key 0.
     pub unsafe fn duplicate_shared_handle_into<'target>(
         &self,
         target_process: BorrowedHandle<'target>,
