@@ -67,7 +67,7 @@ pub(crate) fn read(path: &Path) -> Vec<(Vec<u8>, i64)> {
     read_completed(&completed)
 }
 
-fn read_completed(path: &Path) -> Vec<(Vec<u8>, i64)> {
+pub(crate) fn read_completed(path: &Path) -> Vec<(Vec<u8>, i64)> {
     autoreleasepool(|_| {
         let (sender, receiver) = mpsc::sync_channel(1);
         let callback = block2::RcBlock::new(
@@ -143,7 +143,8 @@ fn native_finalization_bundle_promotion_and_system_readback() {
     use sha2::{Digest, Sha256};
     for (configuration, au) in fixtures() {
         let parent = tempfile::tempdir().unwrap();
-        let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+        let mut bundle =
+            RecordingBundle::create(parent.path(), crate::bundle::RecordingMode::Encoded).unwrap();
         let path = bundle.next_partial_path().unwrap();
         let codec = match configuration.codec() {
             Codec::Avc => "avc",
@@ -164,6 +165,11 @@ fn native_finalization_bundle_promotion_and_system_readback() {
                         first_pts_us: 500,
                         last_pts_us: 500,
                     },
+                    output_first_pts_us: 0,
+                    output_last_pts_us: 0,
+                    scene_revision: None,
+                    source_rotation: None,
+                    source_mirrored: None,
                     codec: codec.into(),
                     width: 1280,
                     height: 720,

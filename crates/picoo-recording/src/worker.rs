@@ -19,7 +19,7 @@ static ACTIVE: AtomicBool = AtomicBool::new(false);
 const ARMING_TIMEOUT: Duration = Duration::from_secs(5);
 
 use crate::RecordingResult;
-mod progress;
+pub(crate) mod progress;
 
 struct Shared {
     progress: progress::Progress,

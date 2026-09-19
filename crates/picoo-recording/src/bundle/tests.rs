@@ -10,6 +10,11 @@ fn metadata() -> SegmentMetadata {
             first_pts_us: 100,
             last_pts_us: 300,
         },
+        output_first_pts_us: 0,
+        output_last_pts_us: 200,
+        scene_revision: None,
+        source_rotation: None,
+        source_mirrored: None,
         codec: "avc".into(),
         width: 1280,
         height: 720,
@@ -35,7 +40,7 @@ fn manifest(bundle: &RecordingBundle) -> serde_json::Value {
 #[test]
 fn completed_segments_are_durable_named_hashed_and_gaps_remain_sticky() {
     let parent = tempfile::tempdir().unwrap();
-    let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     bundle.mark_started(100).unwrap();
     bundle.record_gap(GapReason::NetworkLoss, None).unwrap();
     let segment = completed(&bundle);
@@ -55,13 +60,33 @@ fn completed_segments_are_durable_named_hashed_and_gaps_remain_sticky() {
     bundle.finish().unwrap();
     assert_eq!(bundle.state(), RecordingState::HasGaps);
     assert_eq!(manifest(&bundle)["state"], "HasGaps");
+    assert_eq!(manifest(&bundle)["mode"], "Encoded");
     assert!(bundle.mark_started(999).is_err());
+}
+
+#[test]
+fn rendered_bundle_mode_is_explicit() {
+    let parent = tempfile::tempdir().unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Rendered).unwrap();
+    assert_eq!(manifest(&bundle)["mode"], "Rendered");
+    let invalid = completed(&bundle);
+    assert!(bundle.commit_segment(invalid, metadata()).is_err());
+
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Rendered).unwrap();
+    let segment = completed(&bundle);
+    let mut rendered = metadata();
+    rendered.scene_revision = Some(7);
+    rendered.source_rotation = Some(90);
+    rendered.source_mirrored = Some(true);
+    rendered.rotation = 0;
+    rendered.mirrored = false;
+    bundle.commit_segment(segment, rendered).unwrap();
 }
 
 #[test]
 fn failure_and_empty_recordings_cannot_be_completed_successfully() {
     let parent = tempfile::tempdir().unwrap();
-    let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     let partial = bundle.next_partial_path().unwrap();
     fs::write(&partial, b"unfinished").unwrap();
     bundle.fail("disk stopped").unwrap();
@@ -69,7 +94,7 @@ fn failure_and_empty_recordings_cannot_be_completed_successfully() {
     assert_eq!(bundle.state(), RecordingState::Failed);
     assert_eq!(manifest(&bundle)["failure"], "disk stopped");
     assert_eq!(fs::read(partial).unwrap(), b"unfinished");
-    let mut empty = RecordingBundle::create(parent.path()).unwrap();
+    let mut empty = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     assert_ne!(empty.path(), bundle.path());
     empty.finish().unwrap();
     assert_eq!(empty.state(), RecordingState::Failed);
@@ -78,7 +103,7 @@ fn failure_and_empty_recordings_cannot_be_completed_successfully() {
 #[test]
 fn promotion_never_overwrites_existing_files_and_keeps_partial() {
     let parent = tempfile::tempdir().unwrap();
-    let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     let segment = completed(&bundle);
     let partial = segment.path.clone();
     let complete = partial.with_extension("mp4");
@@ -94,7 +119,7 @@ fn promotion_never_overwrites_existing_files_and_keeps_partial() {
 #[test]
 fn persistence_failure_keeps_old_manifest_and_marks_memory_failed() {
     let parent = tempfile::tempdir().unwrap();
-    let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     let path = bundle.path().join("manifest.json");
     let original = fs::read(&path).unwrap();
     fs::rename(&path, bundle.path().join("previous.json")).unwrap();
@@ -113,13 +138,13 @@ fn persistence_failure_keeps_old_manifest_and_marks_memory_failed() {
 #[test]
 fn metadata_capacity_is_bounded_and_foreign_segments_are_rejected() {
     let parent = tempfile::tempdir().unwrap();
-    let mut bundle = RecordingBundle::create(parent.path()).unwrap();
-    let other = RecordingBundle::create(parent.path()).unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
+    let other = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     let foreign = completed(&other);
     let path = foreign.path.clone();
     assert!(bundle.commit_segment(foreign, metadata()).is_err());
     assert!(path.exists());
-    let mut bundle = RecordingBundle::create(parent.path()).unwrap();
+    let mut bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     bundle.manifest.gaps = vec![
         Gap {
             reason: GapReason::NetworkLoss,
@@ -138,7 +163,7 @@ fn metadata_capacity_is_bounded_and_foreign_segments_are_rejected() {
 fn bundle_and_manifest_are_private_to_the_current_user() {
     use std::os::unix::fs::PermissionsExt;
     let parent = tempfile::tempdir().unwrap();
-    let bundle = RecordingBundle::create(parent.path()).unwrap();
+    let bundle = RecordingBundle::create(parent.path(), RecordingMode::Encoded).unwrap();
     assert_eq!(
         fs::metadata(bundle.path()).unwrap().permissions().mode() & 0o777,
         0o700

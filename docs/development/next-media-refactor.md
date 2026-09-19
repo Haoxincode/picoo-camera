@@ -1082,3 +1082,9 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 - REQ-PICOO-MEDIA-081新增RenderedTimeline纯状态边界，按源媒体时间的绝对有理数槽选择30/60fps输出；槽边界使用与`floor(slot × 1_000_000 / fps)`精确互逆的判定，不累加截断帧周期。未到槽明确跳过，跨槽报告缺失数量并从零PTS、强制IDR的新段恢复。
 - 连接与stream身份只允许向前；同一源stream内Decoder或配置变化仍先要求frame ID和源PTS严格递增，且各自代际不得倒退。所有可失败的代际与时间计算先完成再提交状态，失败输入可安全重试。
 - 30/60槽边界、常见60fps向下取整PTS的60→30采样、gap切段、代际/配置切段、旧源回流、身份/PTS倒退及算术/代际耗尽测试已通过编译检查，subagent复审无P1/P2。本机`cargo check -p picoo-recording --tests`通过；测试二进制与Clippy build-script链接被尚未接受的Xcode许可（exit 69）阻断，未宣称执行通过。本批尚未接入FrameBus工作者、GPU处理、编码/mux owner或UI。
+
+### 2026-09-19：macOS处理后录像工作者
+
+- REQ-PICOO-MEDIA-082接入独立RenderedRecordingWorker，串联FrameBus有序订阅、媒体时间采样、Apple GPU渲染、硬件编码、AppleSegment与Rendered bundle。正常停止先在线性化门禁关闭订阅，再排空已接纳帧；晚到帧继续更新直播latest但不能进入旧录像。断代、缺槽和十秒周期边界均从零PTS、强制IDR的新段恢复。
+- manifest显式区分Encoded/Rendered；处理后段记录固定scene revision与源旋转/镜像溯源，输出像素已完成变换，因此输出旋转/镜像必须为零/false。失败与panic都在同一原生owner线程关闭有效前缀并持久化Failed，工作者真正退出后才释放进程名额。
+- 覆盖60→30真实GPU/硬编、正常停止cutoff、工作者复用、Reset收尾、gap/decoder generation三段以及panic后有效前缀；FrameBus另覆盖cutoff与clear并发线性化、TooOld/Cancelled终止原因。`cargo fmt --all`、`git diff --check`、`cargo check -p picoo-frame-hub --tests`和`cargo check -p picoo-recording --tests`通过，subagent最终复审无P1/P2。因本机Xcode许可尚未接受，链接执行仍被exit 69阻断；Receiver/UI接线、Windows处理后编码及原生故障/持续吞吐验收继续后置。

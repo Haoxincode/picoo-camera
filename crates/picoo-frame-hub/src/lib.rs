@@ -18,7 +18,8 @@ pub use frame_buffer_pool::{
     DEFAULT_FRAME_BUFFER_POOL_BYTES,
 };
 pub use frame_bus::{
-    FrameBus, NativeFrameSubscription, SubscriptionAlreadyActive, SubscriptionEnd,
+    FrameBus, NativeFrameSubscription, NativeFrameSubscriptionCutoff, SubscriptionAlreadyActive,
+    SubscriptionEnd,
 };
 pub use latest_frame_store::{LatestFrameStore, VideoFrame};
 pub use native_frame::{

@@ -7,6 +7,8 @@
 
 use picoo_frame_hub::FrameIdentity;
 
+const SEGMENT_DURATION_SECONDS: u64 = 10;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SourceGeneration {
     connection: u64,
@@ -176,7 +178,9 @@ impl RenderedTimeline {
             return Ok(RenderedSampleDecision::Skip);
         }
         let missed_slots = reached_slot - self.next_slot;
-        let force_idr = missed_slots != 0;
+        let scheduled_boundary = reached_slot - self.segment_start_slot
+            >= u64::from(self.fps) * SEGMENT_DURATION_SECONDS;
+        let force_idr = missed_slots != 0 || scheduled_boundary;
         let (segment_generation, segment_start_slot) = if force_idr {
             let segment_generation = self
                 .segment_generation
@@ -278,6 +282,25 @@ mod tests {
         assert_eq!(continued.segment_pts_us, 33_333);
         assert_eq!(continued.missed_slots, 0);
         assert!(!continued.force_idr);
+    }
+
+    #[test]
+    fn ten_second_boundary_starts_a_new_idr_segment_without_reporting_a_gap() {
+        let mut timeline = RenderedTimeline::new(30).unwrap();
+        for slot in 0..300 {
+            let sample = encoded(
+                timeline
+                    .offer(identity(slot + 1), 4, slot_pts_us(slot, 30).unwrap())
+                    .unwrap(),
+            );
+            assert_eq!(sample.segment_generation, 1);
+            assert!(!sample.force_idr || slot == 0);
+        }
+        let boundary = encoded(timeline.offer(identity(301), 4, 10_000_000).unwrap());
+        assert_eq!(boundary.segment_generation, 2);
+        assert_eq!(boundary.segment_pts_us, 0);
+        assert_eq!(boundary.missed_slots, 0);
+        assert!(boundary.force_idr);
     }
 
     #[test]

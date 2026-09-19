@@ -5,7 +5,9 @@ use crate::apple::AppleSegment as NativeSegment;
 #[cfg(windows)]
 use crate::windows::WindowsSegment as NativeSegment;
 use crate::{
-    bundle::{GapReason, RecordingBundle, RecordingState, SegmentMetadata, SourceRange},
+    bundle::{
+        GapReason, RecordingBundle, RecordingMode, RecordingState, SegmentMetadata, SourceRange,
+    },
     ingress::RecordingInput,
     AppendOutcome, RecordingError,
 };
@@ -41,7 +43,7 @@ pub struct EncodedWriter {
 impl EncodedWriter {
     pub fn create(parent: &Path) -> Result<Self, RecordingError> {
         Ok(Self {
-            bundle: RecordingBundle::create(parent)?,
+            bundle: RecordingBundle::create(parent, RecordingMode::Encoded)?,
             active: None,
             refresh_requested: true,
         })
@@ -185,6 +187,11 @@ impl EncodedWriter {
                         first_pts_us: au.pts_us,
                         last_pts_us: au.pts_us,
                     },
+                    output_first_pts_us: 0,
+                    output_last_pts_us: 0,
+                    scene_revision: None,
+                    source_rotation: None,
+                    source_mirrored: None,
                     codec: if codec == Codec::Avc { "avc" } else { "hevc" }.into(),
                     width: config.width,
                     height: config.height,
@@ -219,6 +226,7 @@ impl EncodedWriter {
         }
         active.metadata.source.last_au = au.frame_id;
         active.metadata.source.last_pts_us = au.pts_us;
+        active.metadata.output_last_pts_us = pts;
         self.bundle.mark_started(au.pts_us)?;
         if Instant::now() >= input.deadline {
             return Err(RecordingError::InputExpired);

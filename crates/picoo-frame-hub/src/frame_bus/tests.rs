@@ -140,7 +140,11 @@ fn ordered_queue_preserves_frame_order_and_rejects_expired_work() {
     assert!(
         matches!(ordered.try_next_at(now + Duration::from_millis(151)), Err(SubscriptionEnd::TooOld(id)) if id == expired)
     );
-    assert_eq!(bus.latest().unwrap().identity().frame_id, 3);
+    assert_eq!(
+        bus.publish(frame(4)),
+        Some(SubscriptionEnd::TooOld(expired))
+    );
+    assert_eq!(bus.latest().unwrap().identity().frame_id, 4);
 }
 
 #[test]
@@ -167,6 +171,59 @@ fn only_one_recorder_subscription_is_active_at_a_time() {
     assert!(bus.subscribe_ordered().is_err());
     drop(ordered);
     assert!(bus.subscribe_ordered().is_ok());
+}
+
+#[test]
+fn cancelled_subscription_reports_its_terminal_reason_to_publisher() {
+    let mut bus = FrameBus::new();
+    let ordered = bus.subscribe_ordered().unwrap();
+    drop(ordered);
+    assert_eq!(bus.publish(frame(1)), Some(SubscriptionEnd::Cancelled));
+}
+
+#[test]
+fn normal_cutoff_drains_only_publications_admitted_before_stop() {
+    let mut bus = FrameBus::new();
+    let mut ordered = bus.subscribe_ordered().unwrap();
+    let cutoff = ordered.cutoff();
+    bus.publish(frame(1));
+
+    let (continue_publish, stopped) = std::sync::mpsc::channel();
+    let publisher = std::thread::spawn(move || {
+        stopped.recv().unwrap();
+        assert_eq!(bus.publish(frame(2)), None);
+        bus
+    });
+    cutoff.close();
+    continue_publish.send(()).unwrap();
+    let mut bus = publisher.join().unwrap();
+
+    assert_eq!(ordered.try_next().unwrap().unwrap().identity().frame_id, 1);
+    assert!(ordered.try_next().unwrap().is_none());
+    // The old, normally closed consumer is no longer active even before drop.
+    assert!(bus.subscribe_ordered().is_ok());
+}
+
+#[test]
+fn concurrent_empty_poll_cannot_swallow_reset_as_normal_cutoff() {
+    for _ in 0..128 {
+        let mut bus = FrameBus::new();
+        let mut ordered = bus.subscribe_ordered().unwrap();
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let publisher_start = Arc::clone(&start);
+        let reset = std::thread::spawn(move || {
+            publisher_start.wait();
+            bus.clear();
+        });
+        start.wait();
+        let first = ordered.try_next();
+        reset.join().unwrap();
+        match first {
+            Err(SubscriptionEnd::Reset) => {}
+            Ok(None) => assert!(matches!(ordered.try_next(), Err(SubscriptionEnd::Reset))),
+            result => panic!("unexpected concurrent reset result: {result:?}"),
+        }
+    }
 }
 
 #[test]

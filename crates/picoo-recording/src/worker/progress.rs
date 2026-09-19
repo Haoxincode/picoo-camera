@@ -6,20 +6,20 @@ use std::{
 
 const STALL_THRESHOLD: Duration = Duration::from_secs(15);
 
-pub(super) struct Progress {
+pub(crate) struct Progress {
     origin: Instant,
     last_tick_ms: AtomicU64,
 }
 
 impl Progress {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             origin: Instant::now(),
             last_tick_ms: AtomicU64::new(0),
         }
     }
 
-    pub(super) fn tick(&self) {
+    pub(crate) fn tick(&self) {
         self.tick_at(Instant::now());
     }
 
@@ -28,7 +28,7 @@ impl Progress {
             .store(self.elapsed_ms(now), Ordering::Release);
     }
 
-    pub(super) fn stalled(&self) -> bool {
+    pub(crate) fn stalled(&self) -> bool {
         self.stalled_at(Instant::now())
     }
 

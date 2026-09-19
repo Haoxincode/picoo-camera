@@ -21,6 +21,12 @@ pub enum RecordingState {
     HasGaps,
     Failed,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum RecordingMode {
+    Encoded,
+    Rendered,
+}
 impl RecordingState {
     fn terminal(self) -> bool {
         matches!(self, Self::Complete | Self::HasGaps | Self::Failed)
@@ -40,6 +46,12 @@ pub struct SourceRange {
 #[derive(Debug, Clone, Serialize)]
 pub struct SegmentMetadata {
     pub source: SourceRange,
+    pub output_first_pts_us: u64,
+    pub output_last_pts_us: u64,
+    pub scene_revision: Option<u64>,
+    /// Source transform baked by Rendered mode; absent for Encoded mode.
+    pub source_rotation: Option<u32>,
+    pub source_mirrored: Option<bool>,
     pub codec: String,
     pub width: u32,
     pub height: u32,
@@ -72,7 +84,7 @@ struct Segment {
 #[derive(Debug, Clone, Serialize)]
 struct Manifest {
     recording_id: String,
-    mode: &'static str,
+    mode: RecordingMode,
     software_version: &'static str,
     state: RecordingState,
     created_at_unix_ms: u64,
@@ -91,7 +103,7 @@ pub struct RecordingBundle {
 impl RecordingBundle {
     /// The chosen parent must already exist. A private, unique child is created;
     /// existing recording directories and state are never reopened or migrated.
-    pub fn create(parent: &Path) -> Result<Self, RecordingError> {
+    pub fn create(parent: &Path, mode: RecordingMode) -> Result<Self, RecordingError> {
         let parent = parent.canonicalize()?;
         let mut builder = tempfile::Builder::new();
         builder.prefix("recording-");
@@ -107,7 +119,7 @@ impl RecordingBundle {
             path,
             manifest: Manifest {
                 recording_id,
-                mode: "Encoded",
+                mode,
                 software_version: env!("CARGO_PKG_VERSION"),
                 state: RecordingState::Arming,
                 created_at_unix_ms: now_ms(),
@@ -193,6 +205,8 @@ impl RecordingBundle {
         }
         if metadata.source.first_au > metadata.source.last_au
             || metadata.source.first_pts_us > metadata.source.last_pts_us
+            || metadata.output_first_pts_us > metadata.output_last_pts_us
+            || metadata.output_first_pts_us != 0
             || !matches!(metadata.codec.as_str(), "avc" | "hevc")
             || !matches!(metadata.fps, 30 | 60)
             || metadata.width == 0
@@ -205,6 +219,27 @@ impl RecordingBundle {
                 .all(|b| b.is_ascii_hexdigit())
         {
             return Err(RecordingError::InvalidInput("invalid segment metadata"));
+        }
+        let mode_matches = match self.manifest.mode {
+            RecordingMode::Encoded => {
+                metadata.scene_revision.is_none()
+                    && metadata.source_rotation.is_none()
+                    && metadata.source_mirrored.is_none()
+            }
+            RecordingMode::Rendered => {
+                metadata.scene_revision.is_some()
+                    && metadata
+                        .source_rotation
+                        .is_some_and(|rotation| matches!(rotation, 0 | 90 | 180 | 270))
+                    && metadata.source_mirrored.is_some()
+                    && metadata.rotation == 0
+                    && !metadata.mirrored
+            }
+        };
+        if !mode_matches {
+            return Err(RecordingError::InvalidInput(
+                "segment metadata does not match recording mode",
+            ));
         }
         let mut file = File::options().read(true).write(true).open(&expected)?;
         let info = file.metadata()?;
