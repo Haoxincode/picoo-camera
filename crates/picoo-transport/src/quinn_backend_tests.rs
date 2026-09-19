@@ -2,10 +2,19 @@ use super::*;
 
 #[test]
 fn rejects_zero_platform_network_identifiers() {
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("socket");
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).expect("socket");
+    socket
+        .bind(
+            &"127.0.0.1:0"
+                .parse::<std::net::SocketAddr>()
+                .unwrap()
+                .into(),
+        )
+        .expect("bind");
     assert_eq!(
         apply_client_network_binding(
             &socket,
+            true,
             ClientNetworkBinding::AndroidNetwork {
                 network_handle: 0,
                 allow_system_lan_route_fallback: false,
@@ -16,7 +25,7 @@ fn rejects_zero_platform_network_identifiers() {
         io::ErrorKind::InvalidInput
     );
     assert_eq!(
-        apply_client_network_binding(&socket, ClientNetworkBinding::AppleInterface(0))
+        apply_client_network_binding(&socket, true, ClientNetworkBinding::AppleInterface(0))
             .expect_err("zero Apple interface")
             .kind(),
         io::ErrorKind::InvalidInput
@@ -29,8 +38,16 @@ fn binds_an_apple_udp_socket_to_loopback_interface() {
     let name = std::ffi::CString::new("lo0").expect("interface name");
     let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
     assert_ne!(index, 0, "lo0 interface index");
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("socket");
-    apply_client_network_binding(&socket, ClientNetworkBinding::AppleInterface(index))
+    let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP)).expect("socket");
+    socket
+        .bind(
+            &"127.0.0.1:0"
+                .parse::<std::net::SocketAddr>()
+                .unwrap()
+                .into(),
+        )
+        .expect("bind");
+    apply_client_network_binding(&socket, true, ClientNetworkBinding::AppleInterface(index))
         .expect("IP_BOUND_IF");
 }
 

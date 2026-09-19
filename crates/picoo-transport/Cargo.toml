@@ -11,7 +11,7 @@ picoo-protocol.workspace = true
 quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-socket2 = "0.6"
+socket2 = { version = "0.6", features = ["all"] }
 thiserror.workspace = true
 tokio = { version = "1", features = ["io-util", "macros", "rt-multi-thread", "sync", "time"] }
 

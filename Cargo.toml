@@ -51,6 +51,9 @@ tracing = "0.1"
 yuv = "0.8.17"
 reed-solomon-erasure = "6.0"
 zeroize = "1.8"
+directories = "6.0"
+auto-launch = "0.6"
+netdev = { version = "0.46.3", default-features = false }
 
 # GPUI Kit facade — one compatible crates.io stack. 0.6.1 includes #2940, so
 # the desktop build does not pull the unused reqwest/AWS-LC/CMake chain.

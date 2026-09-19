@@ -50,8 +50,9 @@ impl FileMapping {
     #[cfg(target_os = "windows")]
     pub(super) fn has_live_producer(&self) -> bool {
         match try_windows_file_lock(&producer_lock_path(&self.path), false) {
-            // The Producer owns an exclusive byte-range lock for its complete
-            // lifetime. A shared probe can only succeed after it exits.
+            // The Producer owns an exclusive sidecar file lock for its
+            // complete lifetime. A shared probe can only succeed after it
+            // exits.
             Ok(Some(_unused_probe)) => false,
             Ok(None) => true,
             // A transient sidecar access error must not turn a live meeting

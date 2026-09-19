@@ -69,10 +69,9 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     let prefs = load_prefs();
     // Ensure subscriber exists even if main skipped prefs-aware init paths.
     crate::logging::init_logging(prefs.log_level.env_filter());
-    // REQ-PICOO-UI-007: apply persisted startup preference at launch.
-    if let Err(err) = crate::startup::sync_launch_at_startup(prefs.launch_at_startup) {
-        tracing::warn!("startup sync on launch: {err}");
-    }
+    // REQ-PICOO-UI-007: startup registration is changed only by the explicit
+    // settings toggle. Do not re-enable a login item that the user disabled in
+    // Windows/macOS system settings while the persisted preference is `true`.
     // GPUI's Windows platform calls OleInitialize (STA). It must own the UI
     // thread apartment before ReceiverRuntime creates the Media Foundation
     // decoder; otherwise an earlier MTA init makes platform construction panic.

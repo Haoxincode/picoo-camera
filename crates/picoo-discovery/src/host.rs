@@ -7,7 +7,7 @@
 //! addresses that phones cannot reach; interface-aware selection excludes those adapters
 //! and prefers Wi‑Fi / Ethernet among the remaining physical-LAN candidates.
 
-use std::net::{IpAddr, Ipv4Addr};
+use std::net::Ipv4Addr;
 
 /// Default QUIC UDP port (aligned with WiX FirewallException).
 pub const DEFAULT_QUIC_PORT: u16 = 4433;
@@ -112,14 +112,24 @@ fn is_advertise_candidate(ip: Ipv4Addr) -> bool {
 
 /// Enumerate local interface IPv4 addresses and pick an advertise host.
 pub fn local_advertise_ipv4() -> Option<Ipv4Addr> {
-    let Ok(ifaces) = local_ip_address::list_afinet_netifas() else {
-        return None;
-    };
-    let v4: Vec<(String, Ipv4Addr)> = ifaces
-        .into_iter()
-        .filter_map(|(name, addr)| match addr {
-            IpAddr::V4(v4) => Some((name, v4)),
-            IpAddr::V6(_) => None,
+    // `netdev` supplies the platform's interface metadata (friendly names,
+    // operational flags and address prefixes).  The selection policy below
+    // remains Picoo-owned: a default route is not automatically a phone-
+    // reachable LAN and VPN/virtual adapters still need to be excluded.
+    let ifaces = netdev::get_interfaces();
+    let mut v4: Vec<(String, Ipv4Addr)> = ifaces
+        .iter()
+        .filter(|iface| iface.is_up() && !iface.is_loopback())
+        .flat_map(|iface| {
+            let name = iface
+                .friendly_name
+                .as_deref()
+                .unwrap_or(&iface.name)
+                .to_string();
+            iface
+                .ipv4
+                .iter()
+                .map(move |network| (name.clone(), network.addr()))
         })
         .collect();
     if v4.is_empty() {

@@ -17,6 +17,8 @@ loopback-diagnostics = ["picoo-receiver/loopback-diagnostics"]
 
 [dependencies]
 anyhow = "1"
+auto-launch.workspace = true
+directories.workspace = true
 picoo-discovery.workspace = true
 picoo-diagnostics.workspace = true
 picoo-frame-hub.workspace = true

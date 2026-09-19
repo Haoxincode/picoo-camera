@@ -68,7 +68,7 @@ recovery 或让 Preview 停顿。关闭时只发 stop，join 在独立清理线�
 | Windows | `%ProgramData%\Picoo Camera` 中的 per-machine mmap Shared File |
 | macOS | App Group Container 中的 mmap Shared File |
 
-Windows 与 macOS 都在原子租约外为每个槽增加独立的内核文件锁：Windows mmap 使用 `LockFileEx` byte-range sidecar，macOS mmap 使用 `flock` sidecar。锁在进程退出时由内核释放，下一方取得锁后才能安全清理由异常退出遗留的原子租约；每槽独立设计保留槽间并行能力。
+Windows 与 macOS 都在原子租约外为每个槽增加独立的内核文件锁。Rust 端使用标准库 `File::try_lock` / `try_lock_shared` / `unlock`（当前实现分别映射到 Windows `LockFileEx` 和 Unix `flock`），sidecar 仍保持独立文件、非阻塞获取和每槽并行；macOS Swift 扩展继续直接使用 `flock`，因此跨语言锁语义不变。锁在进程退出时由内核释放，下一方取得锁后才能安全清理由异常退出遗留的原子租约。
 
 Windows Media Foundation Frame Server 以 Local Service 身份运行在 Session 0，不能把交互用户的 `%TEMP%`、用户 Profile 或 session-local object 当作 Receiver 与 Media Source 的共同身份。因此生产环使用 MSI 预创建的 `%ProgramData%\Picoo Camera` 目录和固定编码文件名；目录 ACL 允许交互用户 Receiver 与 Local Service 读写映射及其锁文件，并由文件继承。普通应用进程不创建或修改目录 ACL。路径通过 Windows Known Folder API 解析，不信任进程可覆盖的 `PROGRAMDATA` 环境变量。Producer 在整个生命周期持有独占文件锁，保证单 Writer；Receiver 重启时复用同一个文件 identity 并重新发布占位/直播帧。布局无效时 Producer 将旧文件移到独立代际再创建新文件，Consumer 比较 volume/file index 后释放旧 mapping 并重新附着，禁止对仍被 Frame Server 映射的文件原地 resize/reinitialize。自定义 ring name 的 Named Shared Memory 只保留给同会话测试与诊断，不是 Windows 生产 VCam 数据面。
 
