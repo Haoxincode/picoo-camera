@@ -19,6 +19,7 @@ pub(super) struct AdapterLuid {
 }
 
 /// The exact manager/device pair supplied by Frame Server.
+#[derive(Clone)]
 pub(super) struct NativeDeviceBinding {
     pub(super) manager: IMFDXGIDeviceManager,
     pub(super) device: ID3D11Device,

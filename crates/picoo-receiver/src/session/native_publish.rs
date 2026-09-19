@@ -62,12 +62,16 @@ impl ReceiverSession {
             tracing::warn!(?reason, "native recording subscription ended");
         }
         if let Some(output) = &self.shared_ring {
-            output.submit(
-                self.frames
-                    .latest()
-                    .expect("published native frame")
-                    .clone(),
-            );
+            let latest = self
+                .frames
+                .latest()
+                .expect("published native frame")
+                .clone();
+            output.submit(latest.clone());
+            #[cfg(windows)]
+            if let Some(native_output) = &self.native_output {
+                native_output.submit(latest);
+            }
         }
         Ok(())
     }

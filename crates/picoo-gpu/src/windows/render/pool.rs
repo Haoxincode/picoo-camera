@@ -57,7 +57,10 @@ impl OutputPool {
         if self.slots.len() == 3 {
             return Err(RenderError::PoolFull);
         }
-        let shared = self.spec.format == crate::OutputFormat::Bgra8;
+        let shared = matches!(
+            self.spec.format,
+            crate::OutputFormat::Bgra8 | crate::OutputFormat::Nv12
+        );
         let mut texture = None;
         device
             .CreateTexture2D(

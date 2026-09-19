@@ -49,6 +49,7 @@ impl WindowsSharedSurfaceIdentity {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowsSharedSurfaceFormat {
     Bgra8,
+    Nv12,
 }
 
 /// A target-process handle value plus the immutable facts required before an
@@ -270,6 +271,7 @@ fn put_descriptor(bytes: &mut Vec<u8>, descriptor: WindowsSharedSurfaceDescripto
     put_u32(bytes, height);
     bytes.push(match descriptor.format() {
         WindowsSharedSurfaceFormat::Bgra8 => 1,
+        WindowsSharedSurfaceFormat::Nv12 => 2,
     });
     put_u64(bytes, descriptor.keyed_mutex_key());
     let identity = descriptor.identity();
@@ -291,6 +293,7 @@ fn read_descriptor(
     let height = reader.u32()?;
     let format = match reader.byte()? {
         1 => WindowsSharedSurfaceFormat::Bgra8,
+        2 => WindowsSharedSurfaceFormat::Nv12,
         _ => return Err(WindowsNativeWireError::InvalidFormat),
     };
     let keyed_mutex_key = reader.u64()?;
@@ -470,7 +473,10 @@ impl WindowsNativeChannel {
         }
         let identity = descriptor.identity();
         if descriptor.adapter() != self.adapter
-            || descriptor.format() != WindowsSharedSurfaceFormat::Bgra8
+            || !matches!(
+                descriptor.format(),
+                WindowsSharedSurfaceFormat::Bgra8 | WindowsSharedSurfaceFormat::Nv12
+            )
             || descriptor.keyed_mutex_key() != 0
             || !identity.is_valid()
             || identity.source_connection_generation != self.source_connection_generation

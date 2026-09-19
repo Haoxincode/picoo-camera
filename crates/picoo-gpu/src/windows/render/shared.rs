@@ -110,6 +110,9 @@ impl RenderedImage {
     /// Never modify the image. Retain this image (not just a duplicated handle or
     /// imported texture) until the last read and mutex release, including failure.
     pub unsafe fn shared_bgra_handle(&self) -> Result<BorrowedHandle<'_>, RenderError> {
+        if self.spec.format != crate::OutputFormat::Bgra8 {
+            return Err(RenderError::UnsupportedOutputFormat);
+        }
         self.surface
             .shared
             .as_ref()
@@ -134,6 +137,22 @@ impl RenderedImage {
         target_process: BorrowedHandle<'target>,
         identity: WindowsSharedSurfaceIdentity,
     ) -> Result<WindowsSharedSurfaceTransfer<'target>, RenderError> {
+        self.duplicate_shared_handle_into(
+            target_process,
+            identity,
+            WindowsSharedSurfaceFormat::Bgra8,
+        )
+    }
+
+    /// Duplicate an NV12 or BGRA shared target into an authenticated peer.
+    /// The format is part of the descriptor and is checked against the
+    /// completed RenderSpec before the handle is transferred.
+    pub unsafe fn duplicate_shared_handle_into<'target>(
+        &self,
+        target_process: BorrowedHandle<'target>,
+        identity: WindowsSharedSurfaceIdentity,
+        format: WindowsSharedSurfaceFormat,
+    ) -> Result<WindowsSharedSurfaceTransfer<'target>, RenderError> {
         if !identity.is_valid() {
             return Err(RenderError::Platform(
                 "invalid native surface handoff identity".into(),
@@ -153,7 +172,19 @@ impl RenderedImage {
         let mut texture_desc = Default::default();
         self.surface.texture.GetDesc(&mut texture_desc);
 
-        let handle = self.shared_bgra_handle()?;
+        if (format == WindowsSharedSurfaceFormat::Bgra8
+            && self.spec.format != crate::OutputFormat::Bgra8)
+            || (format == WindowsSharedSurfaceFormat::Nv12
+                && self.spec.format != crate::OutputFormat::Nv12)
+        {
+            return Err(RenderError::UnsupportedOutputFormat);
+        }
+        let handle = self
+            .surface
+            .shared
+            .as_ref()
+            .map(AsHandle::as_handle)
+            .ok_or(RenderError::UnsupportedOutputFormat)?;
         let producer_handle = HANDLE(handle.as_raw_handle());
         let mut target_handle = HANDLE::default();
         DuplicateHandle(
@@ -177,7 +208,7 @@ impl RenderedImage {
             ),
             texture_desc.Width,
             texture_desc.Height,
-            WindowsSharedSurfaceFormat::Bgra8,
+            format,
             0,
             identity,
         ) {

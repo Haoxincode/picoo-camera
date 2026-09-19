@@ -113,6 +113,10 @@ impl WindowsRenderer {
         })
     }
 
+    pub fn adapter_id(&self) -> WindowsAdapterId {
+        self.gpu.adapter_id()
+    }
+
     /// REQ-PICOO-NEXT-009/016/029: waits only on this dedicated output worker.
     pub fn render(&mut self, frame: &NativeVideoFrame) -> Result<RenderedImage, RenderError> {
         let description = frame.description();

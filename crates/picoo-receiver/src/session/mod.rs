@@ -93,6 +93,8 @@ pub struct ReceiverSession {
     shared_ring: Option<SharedFrameRingWriter>,
     #[cfg(any(target_os = "macos", windows))]
     shared_ring: Option<CpuOutput>,
+    #[cfg(windows)]
+    native_output: Option<crate::output::NativeOutput>,
     last_shared_ring_error: Option<String>,
     current_stream_config: Option<Arc<StreamConfig>>,
     #[cfg(any(target_os = "macos", windows))]
@@ -171,6 +173,8 @@ impl ReceiverSession {
             auto_accept_paired: true,
             placeholder_mode: PlaceholderMode::Logo,
             shared_ring: None,
+            #[cfg(windows)]
+            native_output: None,
             last_shared_ring_error: None,
             current_stream_config: None,
             #[cfg(any(target_os = "macos", windows))]

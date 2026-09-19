@@ -155,6 +155,16 @@ impl ReceiverSession {
         #[cfg(not(any(target_os = "macos", windows)))]
         let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
         self.shared_ring = Some(ring);
+        #[cfg(windows)]
+        {
+            self.native_output = match crate::output::NativeOutput::start() {
+                Ok(output) => Some(output),
+                Err(error) => {
+                    tracing::warn!(%error, "GpuNative VCam unavailable; keeping CpuBridge output");
+                    None
+                }
+            };
+        }
         self.last_shared_ring_error = None;
         self.publish_waiting_placeholder()?;
         Ok(())

@@ -26,6 +26,10 @@ use apple::{prepare, Resources};
 mod windows;
 #[cfg(windows)]
 use windows::{prepare, Resources};
+#[cfg(windows)]
+mod native_windows;
+#[cfg(windows)]
+pub(crate) use native_windows::NativeOutput;
 
 enum Request {
     Frame(Arc<NativeVideoFrame>),

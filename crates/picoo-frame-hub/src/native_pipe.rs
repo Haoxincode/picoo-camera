@@ -6,6 +6,7 @@
 
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 use windows::core::PCWSTR;
@@ -23,7 +24,8 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-    NAMED_PIPE_MODE, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
+    PeekNamedPipe, WaitNamedPipeW, NAMED_PIPE_MODE, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+    PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 use windows::Win32::System::SystemServices::SECURITY_LOCAL_SERVICE_RID;
 use windows::Win32::System::Threading::{
@@ -43,6 +45,8 @@ pub enum WindowsNativePipeError {
     Closed,
     #[error("native pipe peer process was not accepted")]
     PeerRejected,
+    #[error("native pipe read timed out")]
+    Timeout,
     #[error("native pipe I/O failed: {0}")]
     Io(#[from] io::Error),
 }
@@ -220,7 +224,7 @@ impl WindowsNativePipeServer {
         self.accept_with_peer_validator(is_local_service_process)
     }
 
-    fn disconnect_client(&self) {
+    pub fn disconnect_client(&self) {
         unsafe {
             let _ = DisconnectNamedPipe(HANDLE(self.handle.as_raw_handle()));
         }
@@ -238,8 +242,53 @@ impl WindowsNativePipeServer {
         read_frame(HANDLE(self.handle.as_raw_handle()))
     }
 
+    pub fn read_frame_timeout(&self, timeout: Duration) -> Result<Vec<u8>, WindowsNativePipeError> {
+        read_frame_timeout(HANDLE(self.handle.as_raw_handle()), timeout)
+    }
+
     pub fn write_frame(&self, payload: &[u8]) -> Result<(), WindowsNativePipeError> {
         write_frame(HANDLE(self.handle.as_raw_handle()), payload)
+    }
+}
+
+fn read_frame_timeout(
+    handle: HANDLE,
+    timeout: Duration,
+) -> Result<Vec<u8>, WindowsNativePipeError> {
+    let deadline = Instant::now() + timeout;
+    wait_for_bytes(handle, 4, deadline)?;
+    let mut length = [0u8; 4];
+    read_exact(handle, &mut length)?;
+    let length = u32::from_le_bytes(length) as usize;
+    if length > WINDOWS_NATIVE_PIPE_MAX_FRAME {
+        return Err(WindowsNativePipeError::FrameTooLarge);
+    }
+    let mut payload = vec![0u8; length];
+    wait_for_bytes(handle, length, deadline)?;
+    read_exact(handle, &mut payload)?;
+    Ok(payload)
+}
+
+fn wait_for_bytes(
+    handle: HANDLE,
+    required: usize,
+    deadline: Instant,
+) -> Result<(), WindowsNativePipeError> {
+    if required == 0 {
+        return Ok(());
+    }
+    loop {
+        let mut available = 0u32;
+        unsafe {
+            PeekNamedPipe(handle, None, 0, None, Some(&mut available), None)?;
+        }
+        if available as usize >= required {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(WindowsNativePipeError::Timeout);
+        }
+        std::thread::sleep(Duration::from_millis(1));
     }
 }
 
@@ -312,6 +361,11 @@ pub struct WindowsNativePipeClient {
 }
 
 impl WindowsNativePipeClient {
+    pub fn is_available() -> bool {
+        let name = pipe_name_wide();
+        unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 0).is_ok() }
+    }
+
     pub fn connect() -> Result<Self, WindowsNativePipeError> {
         let name = pipe_name_wide();
         let handle = unsafe {

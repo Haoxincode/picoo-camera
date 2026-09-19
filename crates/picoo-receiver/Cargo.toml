@@ -39,6 +39,12 @@ objc2 = "0.6.4"
 picoo-recording.workspace = true
 picoo-gpu.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 picoo-media-decode = { workspace = true, features = ["test-codecs"] }
 picoo-discovery.workspace = true

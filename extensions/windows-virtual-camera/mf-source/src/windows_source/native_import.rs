@@ -1,28 +1,31 @@
-//! Frame Server-side admission for producer-owned BGRA shared surfaces.
+//! Frame Server-side admission for producer-owned D3D11 shared surfaces.
 //!
 //! This is deliberately separate from `RequestSample`: it validates an
 //! already duplicated target-process HANDLE and exact manager device. The
-//! optional sample primitive below is BGRA-only and is not the source's NV12
-//! output contract; this module does not queue samples.
+//! NV12 surfaces are the negotiated native sample contract; BGRA admission is
+//! retained for isolated interop probes and is never queued as an MF sample.
 
+use picoo_frame_hub::{WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-
-use picoo_frame_hub::{WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat};
 use windows::core::{implement, IUnknown, Interface, Result};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, S_OK};
 use windows::Win32::Graphics::Direct3D11::{
     ID3D11Device1, ID3D11Texture2D, D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX,
     D3D11_RESOURCE_MISC_SHARED_NTHANDLE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
-use windows::Win32::Graphics::Dxgi::{Common::DXGI_FORMAT_B8G8R8A8_UNORM, IDXGIKeyedMutex};
+use windows::Win32::Graphics::Dxgi::{
+    Common::{DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12},
+    IDXGIKeyedMutex,
+};
 use windows::Win32::Media::MediaFoundation::{
-    IMFMediaBuffer, IMFMediaBuffer_Impl, IMFSample, MFCreateDXGISurfaceBuffer, MFCreateSample,
+    IMFMediaBuffer, IMFMediaBuffer_Impl, IMFSample, IMFVideoSampleAllocator,
+    MFCreateDXGISurfaceBuffer, MFCreateSample,
 };
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
-use windows::Win32::System::Threading::INFINITE;
+use windows::Win32::System::Threading::WAIT_TIMEOUT;
 
 use super::d3d_manager::NativeDeviceBinding;
 
@@ -46,6 +49,7 @@ struct KeyedMutexBuffer {
     inner: IMFMediaBuffer,
     mutex: IDXGIKeyedMutex,
     release_failed: Arc<AtomicBool>,
+    release_ack: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl IMFMediaBuffer_Impl for KeyedMutexBuffer_Impl {
@@ -83,8 +87,14 @@ impl IAgileObject_Impl for KeyedMutexBuffer_Impl {}
 impl Drop for KeyedMutexBuffer {
     fn drop(&mut self) {
         unsafe {
-            if self.mutex.ReleaseSync(0).is_err() {
+            let released = self.mutex.ReleaseSync(0).is_ok();
+            if !released {
                 self.release_failed.store(true, Ordering::Release);
+            }
+            if released {
+                if let Some(release_ack) = &self.release_ack {
+                    release_ack();
+                }
             }
         }
     }
@@ -132,7 +142,12 @@ impl NativeSampleLease {
 }
 
 unsafe fn acquire_key_zero(mutex: &IDXGIKeyedMutex) -> Result<KeyedMutexGuard> {
-    let status = (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, INFINITE);
+    const KEYED_MUTEX_WAIT_MS: u32 = 250;
+    let status =
+        (Interface::vtable(mutex).AcquireSync)(Interface::as_raw(mutex), 0, KEYED_MUTEX_WAIT_MS);
+    if status.0 == WAIT_TIMEOUT.0 as i32 {
+        return Err(windows::core::Error::from(status));
+    }
     if status == S_OK {
         Ok(KeyedMutexGuard {
             mutex: Some(mutex.clone()),
@@ -150,6 +165,8 @@ pub(super) unsafe fn make_native_sample(
     imported: ImportedNativeSurface,
     sample_time_100ns: i64,
     sample_duration_100ns: i64,
+    release_ack: Option<Arc<dyn Fn() + Send + Sync>>,
+    allocator: Option<&IMFVideoSampleAllocator>,
 ) -> Result<NativeSampleLease> {
     let mut guard = acquire_key_zero(&imported.mutex)?;
     let surface_buffer =
@@ -159,9 +176,16 @@ pub(super) unsafe fn make_native_sample(
         inner: surface_buffer,
         mutex: guard.mutex.take().expect("keyed mutex guard is held"),
         release_failed: Arc::clone(&release_failed),
+        release_ack,
     }
     .into();
-    let sample = MFCreateSample()?;
+    let sample = if let Some(allocator) = allocator {
+        let sample = allocator.AllocateSample()?;
+        sample.RemoveAllBuffers()?;
+        sample
+    } else {
+        MFCreateSample()?
+    };
     sample.AddBuffer(&buffer)?;
     sample.SetSampleTime(sample_time_100ns)?;
     sample.SetSampleDuration(sample_duration_100ns)?;
@@ -178,7 +202,36 @@ pub(super) unsafe fn import_bgra_surface(
     binding: &NativeDeviceBinding,
     descriptor: WindowsSharedSurfaceDescriptor,
 ) -> std::result::Result<ImportedNativeSurface, NativeImportError> {
-    if descriptor.format() != WindowsSharedSurfaceFormat::Bgra8
+    import_surface(
+        binding,
+        descriptor,
+        WindowsSharedSurfaceFormat::Bgra8,
+        DXGI_FORMAT_B8G8R8A8_UNORM,
+    )
+}
+
+/// Import the producer's negotiated NV12 target directly. This keeps the
+/// Frame Server sample in the advertised NV12 contract without a CPU copy or
+/// a BGRA readback/bridge.
+pub(super) unsafe fn import_nv12_surface(
+    binding: &NativeDeviceBinding,
+    descriptor: WindowsSharedSurfaceDescriptor,
+) -> std::result::Result<ImportedNativeSurface, NativeImportError> {
+    import_surface(
+        binding,
+        descriptor,
+        WindowsSharedSurfaceFormat::Nv12,
+        DXGI_FORMAT_NV12,
+    )
+}
+
+unsafe fn import_surface(
+    binding: &NativeDeviceBinding,
+    descriptor: WindowsSharedSurfaceDescriptor,
+    expected_format: WindowsSharedSurfaceFormat,
+    expected_dxgi_format: DXGI_FORMAT,
+) -> std::result::Result<ImportedNativeSurface, NativeImportError> {
+    if descriptor.format() != expected_format
         || descriptor.keyed_mutex_key() != 0
         || descriptor.adapter().low() != binding.adapter.low
         || descriptor.adapter().high() != binding.adapter.high
@@ -211,7 +264,7 @@ pub(super) unsafe fn import_bgra_surface(
     let (width, height) = descriptor.size();
     let required_misc =
         (D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0) as u32;
-    if description.Format != DXGI_FORMAT_B8G8R8A8_UNORM
+    if description.Format != expected_dxgi_format
         || description.Width != width
         || description.Height != height
         || description.Usage != D3D11_USAGE_DEFAULT
