@@ -222,6 +222,13 @@ impl FrameBus {
     /// on the next poll; their already-held image leases remain their responsibility.
     pub fn clear(&mut self) {
         self.latest = None;
+        self.reset_ordered_source();
+    }
+
+    /// End only the processed-recording source. Preview may retain its latest
+    /// frame during the disconnect hold, but the ordered recording cannot span
+    /// a confirmed Receiver session reset without an explicit terminal reason.
+    pub fn reset_ordered_source(&mut self) {
         self.end_ordered(SubscriptionEnd::Reset);
     }
 

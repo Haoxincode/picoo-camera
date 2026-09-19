@@ -17,6 +17,8 @@ impl ReceiverSession {
             self.report_recording_gap(picoo_recording::bundle::GapReason::SourceStopped);
             self.stop_encoded_recording();
         }
+        #[cfg(target_os = "macos")]
+        self.frames.reset_ordered_source();
         self.decoder_worker.reset();
         #[cfg(not(any(target_os = "macos", windows)))]
         self.frame_buffer_pool.clear();
@@ -102,5 +104,24 @@ impl ReceiverSession {
         }
         self.apply_receiver_event(ReceiverEvent::DisconnectHoldElapsed)?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use picoo_frame_hub::SubscriptionEnd;
+
+    #[test]
+    fn session_reset_ends_rendered_source_before_preview_hold_expires() {
+        let mut receiver = ReceiverSession::new();
+        let mut subscription = receiver.frames.subscribe_ordered().unwrap();
+
+        receiver.reset_session_resources();
+
+        assert!(matches!(
+            subscription.try_next(),
+            Err(SubscriptionEnd::Reset)
+        ));
     }
 }

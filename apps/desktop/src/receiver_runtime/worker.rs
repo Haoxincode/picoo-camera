@@ -7,9 +7,28 @@ use picoo_receiver::runtime::{
     RuntimeCommandSubmitOutcome,
 };
 use picoo_receiver::ReceiverError;
+use picoo_recording::bundle::RecordingMode;
 
 use super::{ReceiverRuntime, ReceiverSnapshot};
 use crate::prefs::DesktopPreferences;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecordingRequest {
+    Encoded,
+    Rendered {
+        codec: picoo_protocol::control::VideoCodec,
+        fps: u32,
+    },
+}
+
+impl RecordingRequest {
+    pub fn mode(self) -> RecordingMode {
+        match self {
+            Self::Encoded => RecordingMode::Encoded,
+            Self::Rendered { .. } => RecordingMode::Rendered,
+        }
+    }
+}
 
 #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 pub(crate) enum ReceiverCommand {
@@ -18,10 +37,11 @@ pub(crate) enum ReceiverCommand {
     SendCameraCommand(CameraCommand, oneshot::Sender<Result<(), ReceiverError>>),
     RequestKeyframe(oneshot::Sender<Result<(), ReceiverError>>),
     StartRecording(
+        RecordingRequest,
         std::path::PathBuf,
         oneshot::Sender<Result<(), ReceiverError>>,
     ),
-    StopRecording(oneshot::Sender<Result<(), ReceiverError>>),
+    StopRecording(RecordingMode, oneshot::Sender<Result<(), ReceiverError>>),
     ConfirmPairing(oneshot::Sender<Result<(), ReceiverError>>),
     RejectPairing(oneshot::Sender<Result<(), ReceiverError>>),
     RemoveTrustedDevice(String, oneshot::Sender<Result<bool, ReceiverError>>),
@@ -45,8 +65,8 @@ impl ReceiverCommand {
             Self::Disconnect(response)
             | Self::SendCameraCommand(_, response)
             | Self::RequestKeyframe(response)
-            | Self::StartRecording(_, response)
-            | Self::StopRecording(response)
+            | Self::StartRecording(_, _, response)
+            | Self::StopRecording(_, response)
             | Self::ConfirmPairing(response)
             | Self::RejectPairing(response) => {
                 let _ = response.send(Err(error));
@@ -182,12 +202,16 @@ impl ReceiverRuntimeHandle {
         self.request(ReceiverCommand::RequestKeyframe)
     }
 
-    pub fn start_recording(&self, parent: std::path::PathBuf) -> ReceiverReply<()> {
-        self.request(|response| ReceiverCommand::StartRecording(parent, response))
+    pub fn start_recording(
+        &self,
+        request: RecordingRequest,
+        parent: std::path::PathBuf,
+    ) -> ReceiverReply<()> {
+        self.request(|response| ReceiverCommand::StartRecording(request, parent, response))
     }
 
-    pub fn stop_recording(&self) -> ReceiverReply<()> {
-        self.request(ReceiverCommand::StopRecording)
+    pub fn stop_recording(&self, mode: RecordingMode) -> ReceiverReply<()> {
+        self.request(|response| ReceiverCommand::StopRecording(mode, response))
     }
 
     pub fn confirm_pairing(&self) -> ReceiverReply<()> {
@@ -253,20 +277,55 @@ fn apply_receiver_command(
         ReceiverCommand::RequestKeyframe(response) => {
             let _ = response.send(runtime.request_keyframe());
         }
-        ReceiverCommand::StartRecording(parent, response) => {
+        ReceiverCommand::StartRecording(request, parent, response) => {
             #[cfg(any(target_os = "macos", windows))]
-            let result = runtime.receiver.start_encoded_recording(parent);
+            let result = match request {
+                RecordingRequest::Encoded => runtime.receiver.start_encoded_recording(parent),
+                RecordingRequest::Rendered { codec, fps } => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        runtime
+                            .receiver
+                            .start_rendered_recording(parent, codec, fps)
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        let _ = (parent, codec, fps);
+                        Err(ReceiverError::Protocol(
+                            "rendered recording is unavailable on this platform".into(),
+                        ))
+                    }
+                }
+            };
             #[cfg(not(any(target_os = "macos", windows)))]
             let result = {
-                let _ = parent;
+                let _ = (request, parent);
                 Err(ReceiverError::Protocol("recording is unavailable".into()))
             };
             let _ = response.send(result);
         }
-        ReceiverCommand::StopRecording(response) => {
-            #[cfg(any(target_os = "macos", windows))]
-            runtime.receiver.stop_encoded_recording();
-            let _ = response.send(Ok(()));
+        ReceiverCommand::StopRecording(mode, response) => {
+            let result = match mode {
+                RecordingMode::Encoded => {
+                    #[cfg(any(target_os = "macos", windows))]
+                    runtime.receiver.stop_encoded_recording();
+                    Ok(())
+                }
+                RecordingMode::Rendered => {
+                    #[cfg(target_os = "macos")]
+                    {
+                        runtime.receiver.stop_rendered_recording();
+                        Ok(())
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        Err(ReceiverError::Protocol(
+                            "rendered recording is unavailable on this platform".into(),
+                        ))
+                    }
+                }
+            };
+            let _ = response.send(result);
         }
         ReceiverCommand::ConfirmPairing(response) => {
             let _ = response.send(runtime.confirm_pairing());
@@ -383,12 +442,24 @@ mod tests {
 
     #[test]
     fn recording_commands_receive_explicit_queue_rejection() {
-        for start in [true, false] {
+        for (start, mode) in [
+            (true, RecordingMode::Encoded),
+            (false, RecordingMode::Encoded),
+            (true, RecordingMode::Rendered),
+            (false, RecordingMode::Rendered),
+        ] {
             let (response, mut reply) = oneshot::channel();
             let command = if start {
-                ReceiverCommand::StartRecording("unused".into(), response)
+                let request = match mode {
+                    RecordingMode::Encoded => RecordingRequest::Encoded,
+                    RecordingMode::Rendered => RecordingRequest::Rendered {
+                        codec: picoo_protocol::control::VideoCodec::Avc,
+                        fps: 30,
+                    },
+                };
+                ReceiverCommand::StartRecording(request, "unused".into(), response)
             } else {
-                ReceiverCommand::StopRecording(response)
+                ReceiverCommand::StopRecording(mode, response)
             };
             command.reject(ReceiverError::Protocol("queue full".into()));
             assert!(

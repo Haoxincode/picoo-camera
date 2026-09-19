@@ -11,6 +11,12 @@ use picoo_recording::{
 #[cfg(test)]
 use std::sync::Arc;
 use std::{path::PathBuf, time::Instant};
+#[cfg(target_os = "macos")]
+use {
+    picoo_bitstream::Codec,
+    picoo_protocol::control::{StreamConfig, VideoCodec},
+    picoo_recording::rendered::{RenderedRecordingConfig, RenderedRecordingWorker},
+};
 
 impl ReceiverSession {
     pub fn start_encoded_recording(&mut self, parent: PathBuf) -> Result<(), ReceiverError> {
@@ -62,6 +68,89 @@ impl ReceiverSession {
         self.recording
             .as_ref()
             .is_some_and(RecordingWorker::stalled)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn start_rendered_recording(
+        &mut self,
+        parent: PathBuf,
+        codec: VideoCodec,
+        fps: u32,
+    ) -> Result<(), ReceiverError> {
+        if !self.video_allowed() {
+            return Err(ReceiverError::Protocol(
+                "rendered recording requires authorized video".into(),
+            ));
+        }
+        let source = self.current_stream_config.as_deref().ok_or_else(|| {
+            ReceiverError::Protocol(
+                "rendered recording requires an active video configuration".into(),
+            )
+        })?;
+        if self
+            .rendered_recording
+            .as_ref()
+            .is_some_and(|worker| worker.result().is_none())
+        {
+            return Err(ReceiverError::Protocol(
+                "rendered recording is already active".into(),
+            ));
+        }
+        let config = rendered_config(source, codec, fps)?;
+        let subscription = self
+            .frames
+            .subscribe_ordered()
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
+        self.rendered_recording = Some(RenderedRecordingWorker::start(
+            parent,
+            subscription,
+            config,
+        )?);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn stop_rendered_recording(&self) {
+        if let Some(worker) = &self.rendered_recording {
+            worker.stop();
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn rendered_recording_state(&self) -> Option<RecordingState> {
+        self.rendered_recording
+            .as_ref()
+            .map(RenderedRecordingWorker::state)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn rendered_recording_stopping(&self) -> bool {
+        self.rendered_recording
+            .as_ref()
+            .is_some_and(|worker| !worker.is_accepting() && worker.result().is_none())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn rendered_recording_result(&self) -> Option<RecordingResult> {
+        self.rendered_recording
+            .as_ref()
+            .and_then(RenderedRecordingWorker::result)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn rendered_recording_stalled(&self) -> bool {
+        self.rendered_recording
+            .as_ref()
+            .is_some_and(RenderedRecordingWorker::stalled)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn rendered_recording_source_supported(&self) -> bool {
+        self.video_allowed()
+            && self
+                .current_stream_config
+                .as_deref()
+                .is_some_and(|source| rendered_config(source, VideoCodec::Avc, 30).is_ok())
     }
 
     pub(super) fn record_assembled_access_unit(&mut self, access_unit: &AssembledAccessUnit) {
@@ -149,15 +238,174 @@ impl ReceiverSession {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn rendered_config(
+    source: &StreamConfig,
+    codec: VideoCodec,
+    fps: u32,
+) -> Result<RenderedRecordingConfig, ReceiverError> {
+    if !matches!((source.width, source.height), (1280, 720) | (1920, 1080)) {
+        return Err(ReceiverError::Protocol(
+            "rendered recording supports only 720p or 1080p source video".into(),
+        ));
+    }
+    if !matches!(fps, 30 | 60) || fps > source.fps {
+        return Err(ReceiverError::Protocol(
+            "rendered recording frame rate must be 30 or 60 and cannot exceed the source".into(),
+        ));
+    }
+    let codec = match codec {
+        VideoCodec::Avc => Codec::Avc,
+        VideoCodec::Hevc => Codec::Hevc,
+        VideoCodec::Unspecified => {
+            return Err(ReceiverError::Protocol(
+                "rendered recording codec is required".into(),
+            ))
+        }
+    };
+    let bitrate = match (codec, source.height, fps) {
+        (Codec::Avc, 720, 30) => 6_000_000,
+        (Codec::Avc, 720, 60) => 10_000_000,
+        (Codec::Avc, 1080, 30) => 10_000_000,
+        (Codec::Avc, 1080, 60) => 16_000_000,
+        (Codec::Hevc, 720, 30) => 4_000_000,
+        (Codec::Hevc, 720, 60) => 7_000_000,
+        (Codec::Hevc, 1080, 30) => 7_000_000,
+        (Codec::Hevc, 1080, 60) => 12_000_000,
+        _ => unreachable!("validated rendered recording dimensions and fps"),
+    };
+    Ok(RenderedRecordingConfig {
+        codec,
+        width: source.width,
+        height: source.height,
+        fps,
+        bitrate,
+        // No configurable effects/overlays exist yet; revision zero is the
+        // immutable identity scene rather than the transport config revision.
+        scene_revision: 0,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use picoo_bitstream::{AccessUnit, Codec, CodecConfiguration, NalFormat};
     use picoo_protocol::control::{StreamConfig, VideoFormat};
-    use std::time::{Duration, Instant};
+    use std::{
+        sync::Mutex,
+        time::{Duration, Instant},
+    };
+
+    static RECORDING_WORKER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rendered_profiles_cover_the_complete_codec_size_and_rate_matrix() {
+        for (wire_codec, codec, width, height, fps, bitrate) in [
+            (VideoCodec::Avc, Codec::Avc, 1280, 720, 30, 6_000_000),
+            (VideoCodec::Avc, Codec::Avc, 1280, 720, 60, 10_000_000),
+            (VideoCodec::Avc, Codec::Avc, 1920, 1080, 30, 10_000_000),
+            (VideoCodec::Avc, Codec::Avc, 1920, 1080, 60, 16_000_000),
+            (VideoCodec::Hevc, Codec::Hevc, 1280, 720, 30, 4_000_000),
+            (VideoCodec::Hevc, Codec::Hevc, 1280, 720, 60, 7_000_000),
+            (VideoCodec::Hevc, Codec::Hevc, 1920, 1080, 30, 7_000_000),
+            (VideoCodec::Hevc, Codec::Hevc, 1920, 1080, 60, 12_000_000),
+        ] {
+            let source = StreamConfig {
+                width,
+                height,
+                fps: 60,
+                ..Default::default()
+            };
+            let config = rendered_config(&source, wire_codec, fps).unwrap();
+            assert_eq!(config.codec, codec);
+            assert_eq!((config.width, config.height), (width, height));
+            assert_eq!(config.fps, fps);
+            assert_eq!(config.bitrate, bitrate);
+            assert_eq!(config.scene_revision, 0);
+        }
+
+        for (width, height, source_fps, codec, output_fps) in [
+            (1920, 1080, 30, VideoCodec::Avc, 60),
+            (640, 480, 30, VideoCodec::Avc, 30),
+            (1280, 721, 30, VideoCodec::Avc, 30),
+            (1280, 720, 25, VideoCodec::Avc, 30),
+            (1280, 720, 30, VideoCodec::Unspecified, 30),
+        ] {
+            let source = StreamConfig {
+                width,
+                height,
+                fps: source_fps,
+                ..Default::default()
+            };
+            assert!(rendered_config(&source, codec, output_fps).is_err());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn encoded_and_rendered_workers_have_independent_control_and_results() {
+        let _worker_lock = RECORDING_WORKER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let parent = tempfile::tempdir().unwrap();
+        let mut receiver = ReceiverSession::new();
+        receiver.permit_unpaired_video = true;
+        receiver.current_stream_config = Some(Arc::new(StreamConfig {
+            codec: VideoCodec::Avc.into(),
+            width: 1280,
+            height: 720,
+            fps: 30,
+            ..Default::default()
+        }));
+        receiver.control_generation = Some(1);
+
+        receiver
+            .start_encoded_recording(parent.path().to_owned())
+            .unwrap();
+        receiver
+            .start_rendered_recording(parent.path().to_owned(), VideoCodec::Hevc, 30)
+            .unwrap();
+        assert_eq!(
+            receiver.encoded_recording_state(),
+            Some(RecordingState::Arming)
+        );
+        assert_eq!(
+            receiver.rendered_recording_state(),
+            Some(RecordingState::Arming)
+        );
+
+        receiver.stop_rendered_recording();
+        assert!(!receiver.encoded_recording_stopping());
+        assert!(receiver.encoded_recording_result().is_none());
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let rendered = loop {
+            if let Some(result) = receiver.rendered_recording_result() {
+                break result;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+
+        receiver.stop_encoded_recording();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let encoded = loop {
+            if let Some(result) = receiver.encoded_recording_result() {
+                break result;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        assert_eq!(rendered.state, RecordingState::Failed);
+        assert_eq!(encoded.state, RecordingState::Failed);
+        assert_ne!(rendered.path.unwrap(), encoded.path.unwrap());
+    }
 
     #[test]
     fn live_recovery_preserves_recording_aus_and_tail_loss_is_reported() {
+        let _worker_lock = RECORDING_WORKER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let parent = tempfile::tempdir().unwrap();
         let mut receiver = ReceiverSession::new();
         assert!(receiver

@@ -30,7 +30,8 @@ struct Shared {
 }
 
 /// Commands only. Drop requests a normal drain; it never joins a native thread.
-/// The process-wide slot remains occupied until the worker actually exits.
+/// The process-wide slot remains occupied until native ownership and cleanup
+/// finish; final result publication happens only after that slot is reusable.
 pub struct RecordingWorker {
     ingress: Option<ingress::RecordingIngress>,
     shared: Arc<Shared>,
@@ -61,7 +62,7 @@ impl RecordingWorker {
         std::thread::Builder::new()
             .name("picoo-recording".into())
             .spawn(move || {
-                let _slot = slot;
+                let slot = slot;
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run(parent, inbox, &worker_shared)
                 }));
@@ -77,6 +78,9 @@ impl RecordingWorker {
                     .state
                     .store(state_code(outcome.state), Ordering::Release);
                 worker_shared.refresh.store(false, Ordering::Release);
+                // A published result is the reusable completion boundary: the
+                // next owner must never observe a result while this slot is busy.
+                drop(slot);
                 let _ = worker_shared.result.set(outcome);
             })?;
         Ok(Self {
@@ -247,12 +251,6 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             if let Some(result) = worker.result() {
-                // The final snapshot precedes thread-local destruction. A new
-                // worker may start only after the old slot is actually released.
-                while ACTIVE.load(Ordering::Acquire) {
-                    assert!(Instant::now() < deadline);
-                    std::thread::sleep(Duration::from_millis(1));
-                }
                 return result;
             }
             assert!(Instant::now() < deadline, "recording did not finish");

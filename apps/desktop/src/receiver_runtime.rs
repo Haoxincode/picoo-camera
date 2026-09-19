@@ -27,10 +27,11 @@ use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
 mod recording;
-pub use recording::RecordingSnapshot;
+pub use recording::{RecordingSnapshot, RecordingSnapshots};
 mod worker;
 #[cfg(feature = "gpui-ui")]
 pub use worker::await_receiver_reply;
+pub use worker::RecordingRequest;
 pub use worker::{ReceiverReply, ReceiverRuntimeHandle};
 
 #[cfg(any(target_os = "macos", windows))]
@@ -92,7 +93,7 @@ impl ReceiverRuntimeConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // GPUI shell reads fields when `gpui-ui` is enabled.
 pub struct ReceiverSnapshot {
-    pub recording: RecordingSnapshot,
+    pub recordings: RecordingSnapshots,
     pub status: ReceiverStatus,
     pub bind_addr: Option<SocketAddr>,
     /// Unicast IPv4 advertised through mDNS and shown for manual IP connection.
@@ -379,7 +380,7 @@ impl ReceiverRuntime {
         let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
         let (trusted_devices, trusted_identity_replacement) = self.trusted_snapshot();
         ReceiverSnapshot {
-            recording: RecordingSnapshot::capture(&self.receiver),
+            recordings: RecordingSnapshots::capture(&self.receiver),
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
             advertise_host: self.advertise_host.clone(),

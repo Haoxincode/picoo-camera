@@ -165,6 +165,18 @@ fn clear_and_publisher_drop_cannot_look_like_successful_end_of_recording() {
 }
 
 #[test]
+fn source_reset_ends_ordered_recording_without_clearing_preview_latest() {
+    let mut bus = FrameBus::new();
+    bus.publish(frame(1));
+    let mut ordered = bus.subscribe_ordered().unwrap();
+
+    bus.reset_ordered_source();
+
+    assert_eq!(bus.latest().unwrap().identity().frame_id, 1);
+    assert!(matches!(ordered.try_next(), Err(SubscriptionEnd::Reset)));
+}
+
+#[test]
 fn only_one_recorder_subscription_is_active_at_a_time() {
     let mut bus = FrameBus::new();
     let ordered = bus.subscribe_ordered().unwrap();

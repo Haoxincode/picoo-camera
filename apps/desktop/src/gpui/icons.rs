@@ -186,6 +186,8 @@ pub(super) fn reicon_button_content(
 
 #[cfg(test)]
 mod tests {
+    use super::DesktopIcon;
+
     #[test]
     fn every_desktop_semantic_reicon_is_a_valid_svg_asset() {
         for icon in DesktopIcon::ALL {

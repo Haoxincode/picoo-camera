@@ -78,8 +78,7 @@ impl PicooDesktopApp {
             pairing_dialog: Default::default(),
             pairing_locally_confirmed: false,
             receiver_command_pending: false,
-            recording_command_pending: false,
-            recording_error: None,
+            recording_ui: Default::default(),
             identity_replacement_dialog_revision: None,
         }
     }

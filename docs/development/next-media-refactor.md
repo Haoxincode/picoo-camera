@@ -1088,3 +1088,10 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 - REQ-PICOO-MEDIA-082接入独立RenderedRecordingWorker，串联FrameBus有序订阅、媒体时间采样、Apple GPU渲染、硬件编码、AppleSegment与Rendered bundle。正常停止先在线性化门禁关闭订阅，再排空已接纳帧；晚到帧继续更新直播latest但不能进入旧录像。断代、缺槽和十秒周期边界均从零PTS、强制IDR的新段恢复。
 - manifest显式区分Encoded/Rendered；处理后段记录固定scene revision与源旋转/镜像溯源，输出像素已完成变换，因此输出旋转/镜像必须为零/false。失败与panic都在同一原生owner线程关闭有效前缀并持久化Failed，工作者真正退出后才释放进程名额。
 - 覆盖60→30真实GPU/硬编、正常停止cutoff、工作者复用、Reset收尾、gap/decoder generation三段以及panic后有效前缀；FrameBus另覆盖cutoff与clear并发线性化、TooOld/Cancelled终止原因。`cargo fmt --all`、`git diff --check`、`cargo check -p picoo-frame-hub --tests`和`cargo check -p picoo-recording --tests`通过，subagent最终复审无P1/P2。因本机Xcode许可尚未接受，链接执行仍被exit 69阻断；Receiver/UI接线、Windows处理后编码及原生故障/持续吞吐验收继续后置。
+
+### 2026-09-19：macOS处理后录像Receiver与桌面入口
+
+- REQ-PICOO-MEDIA-083让Receiver独立持有原码流与处理后录像工作者；两者可同时开始，命令、停止、停滞、错误、最终结果和目录互不代替。处理后入口显式选择AVC/HEVC与30/60fps，只接受当前720p/1080p源且不允许输出帧率高于源；固定码率和身份scene不从窗口或传输revision推导。
+- 桌面固定工作区分别呈现两个录像入口，使用独立pending/loading与操作错误。处理后格式菜单按源帧率门控，不支持的源规格在开始前禁用并解释原因；Windows未接入处理后硬编owner时不显示该能力。
+- Receiver会在连接会话重置时只结束FrameBus有序录像源，同时保留预览短时latest，因此500ms重连画面保持不能让录像静默跨连接代际。规格八组合、双工作者并行与独立停止/路径、短断线源终止的针对性测试通过；菜单动作和UI状态回归完成编译检查。Receiver与桌面测试目标编译、相关Clippy、文档与diff检查通过。测试链接使用临时Zig工具链绕过本机尚未接受的Xcode许可；GPUI测试二进制因该环境重复加载libobjc未执行，真实目录选择、手机并录与持续吞吐留平台验收，Windows处理后编码继续后置。
+- 原码流工作者与处理后工作者统一最终边界：完成全部原生清理后先释放进程名额，再发布一次性结果，因此UI看见结果时下一owner已可安全创建；共享Receiver测试锁另避免同进程测试争用全局名额。工作者即时复用回归和双工作者回归实际通过，subagent最终复审无P1/P2。
