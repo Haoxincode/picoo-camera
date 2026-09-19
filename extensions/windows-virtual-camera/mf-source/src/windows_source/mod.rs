@@ -6,6 +6,7 @@ mod d3d_manager;
 mod media_source;
 mod media_stream;
 mod native_import;
+mod producer_identity;
 
 use std::ffi::c_void;
 use std::panic::{catch_unwind, AssertUnwindSafe};

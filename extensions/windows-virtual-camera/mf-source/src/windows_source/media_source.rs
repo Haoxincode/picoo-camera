@@ -1,4 +1,3 @@
-use picoo_frame_hub::WindowsNativePipeClient;
 use std::ffi::c_void;
 use std::sync::Mutex;
 
@@ -313,8 +312,7 @@ impl IMFMediaSourceEx_Impl for MediaSource_Impl {
             }
             None => None,
         };
-        let native_available = next.is_some() && WindowsNativePipeClient::is_available();
-        let admitted = if native_available { next } else { None };
+        let admitted = next;
         let mut state = lock(&self.state)?;
         if state.shutdown {
             return Err(Error::from(MF_E_SHUTDOWN));
@@ -334,7 +332,7 @@ impl IMFMediaSourceEx_Impl for MediaSource_Impl {
         set_native_generation(
             &state.stream_state,
             admitted.as_ref().map(|_| next_generation),
-            admitted.as_ref().map(Clone::clone),
+            admitted.clone(),
         )?;
         state.native_generation = next_generation;
         state.native_device = admitted;

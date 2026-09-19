@@ -75,7 +75,7 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
     let mut pool = OutputPool::new(spec);
     unsafe {
         let surface = pool.acquire(&producer.device).unwrap();
-        let identity = surface.texture.as_raw();
+        let texture_identity = surface.texture.as_raw();
         let access = SharedAccess::acquire(&surface).unwrap();
         let device: ID3D11Device1 = consumer.device.cast().unwrap();
         let imported: ID3D11Texture2D = device
@@ -113,7 +113,7 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
             spec,
         };
         assert!(image.shared_bgra_handle().is_ok());
-        let target_process = unsafe { BorrowedHandle::borrow_raw(GetCurrentProcess().0) };
+        let target_process = BorrowedHandle::borrow_raw(GetCurrentProcess().0);
         let transfer = image
             .duplicate_shared_bgra_handle_into(
                 target_process,
@@ -128,8 +128,8 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
                 },
             )
             .unwrap();
-        let identity = transfer.descriptor().unwrap().identity();
-        assert_eq!(identity.source_frame_id, 4);
+        let handoff_identity = transfer.descriptor().unwrap().identity();
+        assert_eq!(handoff_identity.source_frame_id, 4);
         let lease = transfer.commit();
         let descriptor = *lease.descriptor();
         assert_eq!(descriptor.size(), (64, 32));
@@ -142,9 +142,9 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
             .unwrap()
             .OpenSharedResource1(duplicated_handle)
             .unwrap();
-        unsafe { CloseHandle(duplicated_handle).unwrap() };
+        CloseHandle(duplicated_handle).unwrap();
         let mut duplicated_description = D3D11_TEXTURE2D_DESC::default();
-        unsafe { duplicated_texture.GetDesc(&mut duplicated_description) };
+        duplicated_texture.GetDesc(&mut duplicated_description);
         assert_eq!(duplicated_description.Format, DXGI_FORMAT_B8G8R8A8_UNORM);
         acquire_mutex(&mutex).unwrap();
         let mut description = D3D11_TEXTURE2D_DESC::default();
@@ -218,7 +218,7 @@ fn bgra_nt_target_crosses_devices_without_cpu_upload_and_keeps_pool_lease() {
         drop((second, third));
         assert_eq!(
             pool.acquire(&producer.device).unwrap().texture.as_raw(),
-            identity
+            texture_identity
         );
     }
 }

@@ -50,7 +50,7 @@ impl NativeDeviceBinding {
             let _ = manager.CloseDeviceHandle(handle);
             return Err(Error::from(E_INVALIDARG));
         } else {
-            ID3D11Device::from_raw(raw);
+            ID3D11Device::from_raw(raw)
         };
         let unlock_result = manager.UnlockDevice(handle, false);
         let close_result = manager.CloseDeviceHandle(handle);

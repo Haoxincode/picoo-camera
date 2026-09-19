@@ -1,13 +1,8 @@
 use picoo_frame_hub::{
-    WindowsAdapterId, WindowsNativeChannel, WindowsNativeChannelAck, WindowsNativePipeClient,
-    WindowsNativeWireMessage, WindowsSharedSurfaceFormat,
+    WindowsAdapterId, WindowsNativeChannel, WindowsNativePipeClient, WindowsSharedSurfaceIdentity,
 };
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Condvar, Mutex, Weak,
-};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
 
 use windows::core::{implement, Error, IUnknown, Interface, Ref, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG};
@@ -15,17 +10,16 @@ use windows::Win32::Media::KernelStreaming::PINNAME_VIDEO_CAPTURE;
 use windows::Win32::Media::MediaFoundation::{
     IMFAsyncCallback, IMFAsyncResult, IMFMediaEvent, IMFMediaEventGenerator_Impl,
     IMFMediaEventQueue, IMFMediaSource, IMFMediaStream2, IMFMediaStream2_Impl, IMFMediaStream_Impl,
-    IMFMediaType, IMFMediaTypeHandler, IMFSample, IMFSampleAllocatorControl,
-    IMFSampleAllocatorControl_Impl, IMFStreamDescriptor, IMFVideoSampleAllocator, MEMediaSample,
-    MEStreamStarted, MEStreamStopped, MFCreateEventQueue, MFCreateMediaType, MFCreateMemoryBuffer,
-    MFCreateSample, MFCreateStreamDescriptor, MFFrameSourceTypes_Color, MFMediaType_Video,
-    MFNominalRange_16_235, MFSampleAllocatorUsage, MFSampleAllocatorUsage_UsesProvidedAllocator,
-    MFSampleExtension_Token, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
-    MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
-    MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES,
-    MF_DEVICESTREAM_FRAMESERVER_SHARED, MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID,
-    MF_E_INVALIDREQUEST, MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION,
-    MF_E_MEDIA_SOURCE_WRONGSTATE, MF_E_SHUTDOWN, MF_E_UNSUPPORTED_BYTESTREAM_TYPE,
+    IMFMediaType, IMFMediaTypeHandler, IMFSampleAllocatorControl, IMFSampleAllocatorControl_Impl,
+    IMFStreamDescriptor, IMFVideoSampleAllocator, MEStreamStarted, MEStreamStopped,
+    MFCreateEventQueue, MFCreateMediaType, MFCreateStreamDescriptor, MFFrameSourceTypes_Color,
+    MFMediaType_Video, MFNominalRange_16_235, MFSampleAllocatorUsage,
+    MFSampleAllocatorUsage_UsesCustomAllocator, MFSampleAllocatorUsage_UsesProvidedAllocator,
+    MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFVideoPrimaries_BT709, MFVideoTransFunc_709,
+    MFVideoTransferMatrix_BT709, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS,
+    MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES, MF_DEVICESTREAM_FRAMESERVER_SHARED,
+    MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID, MF_E_INVALIDREQUEST,
+    MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION, MF_E_SHUTDOWN,
     MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AVG_BITRATE, MF_MT_COMPRESSED, MF_MT_DEFAULT_STRIDE,
     MF_MT_FIXED_SIZE_SAMPLES, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
     MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SAMPLE_SIZE, MF_MT_SUBTYPE,
@@ -33,41 +27,24 @@ use windows::Win32::Media::MediaFoundation::{
     MF_STREAM_STATE, MF_STREAM_STATE_RUNNING, MF_STREAM_STATE_STOPPED,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
-use windows::Win32::System::Com::{
-    CoInitializeEx, CoUninitialize, IAgileObject, IAgileObject_Impl, COINIT_MULTITHREADED,
-};
+use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
 
 use crate::format::{
     is_supported_frame_rate, is_supported_output_size, nv12_len, sample_duration_100ns,
     DEFAULT_FRAME_RATE_DEN, DEFAULT_FRAME_RATE_NUM, FRAME_RATES,
 };
-use crate::frame_provider::{FrameProvider, OwnedNv12Frame};
+use crate::frame_provider::FrameProvider;
 use crate::metrics::{VcamMetrics, VcamMetricsSnapshot};
 use crate::sample_clock::SampleClock;
 
 use super::d3d_manager::NativeDeviceBinding;
-use super::native_import::{import_nv12_surface, make_native_sample};
 use super::{lock, ObjectTracker};
 
+mod cpu;
+mod delivery;
+mod native;
+
 pub(super) type SharedStreamState = Arc<Mutex<StreamState>>;
-
-struct PreparedNativeSample {
-    sample: IMFSample,
-    release_committed: Arc<AtomicBool>,
-    lifecycle_revision: u64,
-}
-
-// Media Foundation samples and the D3D11 manager are free-threaded objects in
-// the Frame Server process. StreamState already carries the corresponding
-// explicit Send boundary; keep the prepared sample on the same boundary.
-unsafe impl Send for PreparedNativeSample {}
-
-impl PreparedNativeSample {
-    fn abort(self) {
-        self.release_committed.store(true, Ordering::Release);
-        drop(self.sample);
-    }
-}
 
 pub(super) struct StreamState {
     source: Option<IMFMediaSource>,
@@ -80,6 +57,7 @@ pub(super) struct StreamState {
     sample_clock: SampleClock,
     output_width: u32,
     output_height: u32,
+    native_output_revision: u64,
     frame_rate_num: u32,
     frame_rate_den: u32,
     sample_duration_100ns: i64,
@@ -95,12 +73,17 @@ pub(super) struct StreamState {
     native_adapter: Option<WindowsAdapterId>,
     native_device: Option<NativeDeviceBinding>,
     native_pipe: Option<Arc<Mutex<WindowsNativePipeClient>>>,
+    native_session_revision: u64,
+    native_session_exhausted: bool,
+    native_placeholder_active: bool,
     native_handshake: bool,
     native_handshake_identity: Option<(u64, u64, u64, u64, u64)>,
     native_channel: Option<Arc<Mutex<WindowsNativeChannel>>>,
-    native_prepared: Option<PreparedNativeSample>,
+    native_prepared: Option<native::PreparedNativeSample>,
     native_inflight: bool,
+    native_last_delivered_identity: Option<WindowsSharedSurfaceIdentity>,
     native_ready: Arc<(Mutex<u64>, Condvar)>,
+    native_worker: Option<JoinHandle<()>>,
 }
 
 // SAFETY: the Media Foundation objects stored here are the platform's
@@ -167,6 +150,7 @@ impl MediaStream {
                 .ok_or_else(|| Error::from(E_INVALIDARG))?,
                 output_width: 1280,
                 output_height: 720,
+                native_output_revision: 1,
                 frame_rate_num: DEFAULT_FRAME_RATE_NUM,
                 frame_rate_den: DEFAULT_FRAME_RATE_DEN,
                 sample_duration_100ns: sample_duration_100ns(
@@ -183,18 +167,28 @@ impl MediaStream {
                 native_adapter: None,
                 native_device: None,
                 native_pipe: None,
+                native_session_revision: 1,
+                native_session_exhausted: false,
+                native_placeholder_active: false,
                 native_handshake: false,
                 native_handshake_identity: None,
                 native_channel: None,
                 native_prepared: None,
                 native_inflight: false,
+                native_last_delivered_identity: None,
                 native_ready: Arc::new((Mutex::new(0), Condvar::new())),
+                native_worker: None,
             }));
             let worker_state = Arc::downgrade(&shared);
-            thread::Builder::new()
+            let worker_tracker = ObjectTracker::new();
+            let worker = thread::Builder::new()
                 .name("picoo-vcam-native-preparer".into())
-                .spawn(move || native_prepare_loop(worker_state))
+                .spawn(move || {
+                    let _tracker = worker_tracker;
+                    native::native_prepare_loop(worker_state);
+                })
                 .map_err(|_| Error::from(E_FAIL))?;
+            lock(&shared)?.native_worker = Some(worker);
             let interface = Self {
                 shared: Arc::clone(&shared),
                 _tracker: ObjectTracker::new(),
@@ -224,17 +218,13 @@ pub(super) fn set_native_generation(
             return Err(Error::from(MF_E_INVALIDREQUEST));
         }
         state.native_generation = generation;
+        state.native_placeholder_active = false;
         state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
         state.native_adapter = binding
             .as_ref()
             .map(|binding| WindowsAdapterId::from_luid(binding.adapter.low, binding.adapter.high));
         state.native_device = binding;
-        state.native_pipe = None;
-        state.native_handshake = false;
-        state.native_handshake_identity = None;
-        state.native_channel = None;
-        state.native_inflight = false;
-        state.native_prepared.take()
+        native::reset_native_session_state(&mut state)
     };
     if let Some(prepared) = prepared {
         prepared.abort();
@@ -253,7 +243,7 @@ pub(super) fn descriptor(shared: &SharedStreamState) -> Result<IMFStreamDescript
 pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
-    let (queue, allocator, frames, prepared) = {
+    let (queue, allocator, frames, prepared, worker) = {
         let mut state = lock(shared)?;
         state.state = MF_STREAM_STATE_STOPPED;
         state.transitioning = false;
@@ -261,12 +251,13 @@ pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
         state.source = None;
         state.descriptor = None;
         state.current_type = None;
-        state.native_inflight = false;
+        let prepared = native::reset_native_session_state(&mut state);
         (
             state.queue.take(),
             state.allocator.take(),
             Arc::clone(&state.frames),
-            state.native_prepared.take(),
+            prepared,
+            state.native_worker.take(),
         )
     };
     if let Some(prepared) = prepared {
@@ -278,9 +269,14 @@ pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
             let _ = allocator.UninitializeSampleAllocator();
         }
     }
-    if let Some(queue) = queue {
-        unsafe { queue.Shutdown()? };
+    let queue_result = match queue {
+        Some(queue) => unsafe { queue.Shutdown() },
+        None => Ok(()),
+    };
+    if let Some(worker) = worker {
+        let _ = worker.join();
     }
+    queue_result?;
     Ok(())
 }
 
@@ -290,7 +286,7 @@ pub(super) fn set_stream_state(
 ) -> Result<()> {
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
-    let (previous, queue, allocator, current_type, frames, output_width, output_height) = {
+    let (previous, queue, allocator, current_type, frames, output_width, output_height, cpu_bridge) = {
         let mut state = lock(shared)?;
         if state.queue.is_none() {
             return Err(Error::from(MF_E_SHUTDOWN));
@@ -309,7 +305,14 @@ pub(super) fn set_stream_state(
             .queue
             .clone()
             .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
-        let allocator = state.allocator.clone();
+        // GpuNative owns producer surfaces and therefore reports/uses a
+        // custom allocator. The Frame Server allocator is only initialized
+        // for the CpuBridge path.
+        let allocator = if state.native_generation.is_none() {
+            state.allocator.clone()
+        } else {
+            None
+        };
         let current_type = state.current_type.clone();
         state.transitioning = true;
         (
@@ -320,6 +323,7 @@ pub(super) fn set_stream_state(
             Arc::clone(&state.frames),
             state.output_width,
             state.output_height,
+            state.native_generation.is_none(),
         )
     };
 
@@ -349,7 +353,7 @@ pub(super) fn set_stream_state(
                 }
                 return Err(error);
             }
-            frames.set_output_active(output_width, output_height, true);
+            frames.set_output_active(output_width, output_height, cpu_bridge);
             let event_result = unsafe {
                 queue.QueueEventParamVar(
                     MEStreamStarted.0 as u32,
@@ -359,12 +363,17 @@ pub(super) fn set_stream_state(
                 )
             };
             if let Err(error) = event_result {
-                let mut state = lock(shared)?;
-                if state.state == requested {
-                    state.state = previous;
-                    state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                let prepared = {
+                    let mut state = lock(shared)?;
+                    if state.state == requested {
+                        state.state = previous;
+                        state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                    }
+                    native::reset_native_session_state(&mut state)
+                };
+                if let Some(prepared) = prepared {
+                    prepared.abort();
                 }
-                drop(state);
                 frames.set_output_active(output_width, output_height, false);
                 if let Some(allocator) = allocator {
                     unsafe {
@@ -397,7 +406,10 @@ pub(super) fn set_stream_state(
                 }
                 return Err(error);
             }
-            let prepared = lock(shared)?.native_prepared.take();
+            let prepared = {
+                let mut state = lock(shared)?;
+                native::reset_native_session_state(&mut state)
+            };
             if let Some(prepared) = prepared {
                 prepared.abort();
             }
@@ -424,7 +436,7 @@ pub(super) fn set_stream_state(
                         state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
                     }
                     drop(state);
-                    frames.set_output_active(output_width, output_height, true);
+                    frames.set_output_active(output_width, output_height, cpu_bridge);
                 }
                 return Err(error);
             }
@@ -491,39 +503,63 @@ pub(super) fn set_output_media_type(
         validate_output_media_type(media_type, width, height, frame_rate_num, frame_rate_den)?;
     }
 
-    let mut state = lock(shared)?;
-    if state.transitioning {
-        return Err(Error::from(MF_E_INVALIDREQUEST));
-    }
-    if state.state != MF_STREAM_STATE_STOPPED {
-        return if (state.output_width, state.output_height) == (width, height)
-            && state.frame_rate_num == frame_rate_num
-            && state.frame_rate_den == frame_rate_den
-        {
-            Ok(())
+    let prepared = {
+        let mut state = lock(shared)?;
+        if state.transitioning {
+            return Err(Error::from(MF_E_INVALIDREQUEST));
+        }
+        if state.state != MF_STREAM_STATE_STOPPED {
+            return if (state.output_width, state.output_height) == (width, height)
+                && state.frame_rate_num == frame_rate_num
+                && state.frame_rate_den == frame_rate_den
+            {
+                Ok(())
+            } else {
+                Err(Error::from(MF_E_INVALIDREQUEST))
+            };
+        }
+        let changed = (state.output_width, state.output_height) != (width, height)
+            || state.frame_rate_num != frame_rate_num
+            || state.frame_rate_den != frame_rate_den;
+        let next_output_revision = next_output_revision(state.native_output_revision, changed)
+            .ok_or_else(|| Error::from(E_FAIL))?;
+        let descriptor = state
+            .descriptor
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
+        unsafe {
+            descriptor
+                .GetMediaTypeHandler()?
+                .SetCurrentMediaType(media_type)?;
+        }
+        state.current_type = Some(media_type.clone());
+        state.output_width = width;
+        state.output_height = height;
+        state.native_output_revision = next_output_revision;
+        state.frame_rate_num = frame_rate_num;
+        state.frame_rate_den = frame_rate_den;
+        state.sample_duration_100ns = sample_duration;
+        state.sample_clock = SampleClock::for_frame_rate(frame_rate_num, frame_rate_den)
+            .ok_or_else(|| Error::from(E_INVALIDARG))?;
+        if changed {
+            native::reset_native_session_state(&mut state)
         } else {
-            Err(Error::from(MF_E_INVALIDREQUEST))
-        };
+            None
+        }
+    };
+    if let Some(prepared) = prepared {
+        prepared.abort();
     }
-    let descriptor = state
-        .descriptor
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
-    unsafe {
-        descriptor
-            .GetMediaTypeHandler()?
-            .SetCurrentMediaType(media_type)?;
-    }
-    state.current_type = Some(media_type.clone());
-    state.output_width = width;
-    state.output_height = height;
-    state.frame_rate_num = frame_rate_num;
-    state.frame_rate_den = frame_rate_den;
-    state.sample_duration_100ns = sample_duration;
-    state.sample_clock = SampleClock::for_frame_rate(frame_rate_num, frame_rate_den)
-        .ok_or_else(|| Error::from(E_INVALIDARG))?;
     Ok(())
+}
+
+fn next_output_revision(current: u64, changed: bool) -> Option<u64> {
+    if changed {
+        current.checked_add(1)
+    } else {
+        Some(current)
+    }
 }
 
 pub(super) fn allocator_usage(
@@ -543,7 +579,11 @@ pub(super) fn allocator_usage(
         if !input_stream_id.is_null() {
             input_stream_id.write(state.stream_id);
         }
-        usage.write(MFSampleAllocatorUsage_UsesProvidedAllocator);
+        usage.write(if state.native_generation.is_some() {
+            MFSampleAllocatorUsage_UsesCustomAllocator
+        } else {
+            MFSampleAllocatorUsage_UsesProvidedAllocator
+        });
     }
     Ok(())
 }
@@ -595,7 +635,7 @@ impl IMFMediaStream_Impl for MediaStream_Impl {
 
     fn RequestSample(&self, token: Ref<'_, IUnknown>) -> Result<()> {
         let delivery_started = std::time::Instant::now();
-        let result = deliver_sample(&self.shared, token);
+        let result = delivery::deliver_sample(&self.shared, token);
         let origin = result.as_ref().ok().copied();
         let snapshot = lock(&self.shared)?
             .metrics
@@ -727,580 +767,6 @@ unsafe fn validate_output_media_type(
     Ok(())
 }
 
-fn deliver_sample(
-    shared: &SharedStreamState,
-    token: Ref<'_, IUnknown>,
-) -> Result<crate::frame_provider::FrameOrigin> {
-    let native = {
-        let state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        state.native_generation.is_some()
-    };
-    if native {
-        return deliver_native_sample(shared, token);
-    }
-    let (frames, lifecycle_operation, lifecycle_revision, output_width, output_height) = {
-        let state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        (
-            Arc::clone(&state.frames),
-            Arc::clone(&state.lifecycle_operation),
-            state.lifecycle_revision,
-            state.output_width,
-            state.output_height,
-        )
-    };
-    let acquired = frames
-        .acquire_for_output(output_width, output_height)
-        .ok_or_else(|| Error::from(E_FAIL))?;
-    let frame_origin = acquired.origin;
-    let frame = acquired.frame;
-    if nv12_len(frame.width, frame.height) != Some(frame.pixels.len()) {
-        return Err(Error::from(E_FAIL));
-    }
-    // Pixel conversion intentionally happens outside the lifecycle operation.
-    // Revalidate immediately before touching MF objects so a Stop/Shutdown can
-    // never uninitialize the allocator or overtake this sample event.
-    let _operation = lock(&lifecycle_operation)?;
-    let (allocator, queue, sample_time_100ns, sample_duration_100ns) = {
-        let mut state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING
-            || state.transitioning
-            || state.lifecycle_revision != lifecycle_revision
-            || (state.output_width, state.output_height) != (output_width, output_height)
-        {
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        let allocator = state.allocator.as_ref().cloned();
-        let queue = state
-            .queue
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
-        let now_100ns = unsafe { windows::Win32::Media::MediaFoundation::MFGetSystemTime() };
-        let sample_time_100ns = state
-            .sample_clock
-            .next_timestamp(now_100ns)
-            .ok_or_else(|| Error::from(E_FAIL))?;
-        (
-            allocator,
-            queue,
-            sample_time_100ns,
-            state.sample_duration_100ns,
-        )
-    };
-    let sample = create_sample(
-        allocator.as_ref(),
-        &frame,
-        token.as_ref(),
-        sample_time_100ns,
-        sample_duration_100ns,
-    )?;
-
-    unsafe {
-        queue.QueueEventParamUnk(
-            MEMediaSample.0 as u32,
-            &GUID::zeroed(),
-            HRESULT(0),
-            &sample.cast::<IUnknown>()?,
-        )?;
-    }
-    Ok(frame_origin)
-}
-
-fn prepare_native_sample(shared: &SharedStreamState) -> Result<PreparedNativeSample> {
-    let (pipe, binding, lifecycle_revision, output_width, output_height, allocator, duration) = {
-        let mut state = lock(shared)?;
-        let binding = state
-            .native_device
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| Error::from(E_FAIL))?;
-        let pipe = match state.native_pipe.as_ref() {
-            Some(pipe) => Arc::clone(pipe),
-            None => {
-                let client = WindowsNativePipeClient::connect()
-                    .map_err(|error| Error::new(E_FAIL, error.to_string()))?;
-                let pipe = Arc::new(Mutex::new(client));
-                state.native_pipe = Some(Arc::clone(&pipe));
-                pipe
-            }
-        };
-        (
-            pipe,
-            binding,
-            state.lifecycle_revision,
-            state.output_width,
-            state.output_height,
-            state.allocator.clone(),
-            state.sample_duration_100ns,
-        )
-    };
-
-    let mut pipe_guard = pipe
-        .lock()
-        .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))?;
-    let handshake_needed = lock(shared)?.native_handshake;
-    if !handshake_needed {
-        let message = WindowsNativeWireMessage::decode(
-            &pipe_guard
-                .read_frame_timeout(Duration::from_millis(250))
-                .map_err(|error| {
-                    reset_native_session(shared);
-                    Error::new(E_FAIL, error.to_string())
-                })?,
-        )
-        .map_err(|error| {
-            reset_native_session(shared);
-            Error::new(E_FAIL, format!("native hello: {error:?}"))
-        })?;
-        let WindowsNativeWireMessage::Hello {
-            source_connection_generation,
-            stream_epoch,
-            adapter,
-            resource_generation,
-            backend_generation,
-            output_revision,
-        } = message
-        else {
-            let _ = pipe_guard
-                .write_frame(&WindowsNativeWireMessage::Close.encode().unwrap_or_default());
-            reset_native_session(shared);
-            return Err(Error::from(E_INVALIDARG));
-        };
-        let expected_adapter =
-            WindowsAdapterId::from_luid(binding.adapter.low, binding.adapter.high);
-        if adapter != expected_adapter
-            || source_connection_generation == 0
-            || resource_generation == 0
-            || backend_generation == 0
-        {
-            let _ = pipe_guard
-                .write_frame(&WindowsNativeWireMessage::Close.encode().unwrap_or_default());
-            reset_native_session(shared);
-            return Err(Error::from(E_INVALIDARG));
-        }
-        let ready = WindowsNativeWireMessage::Ready {
-            source_connection_generation,
-            stream_epoch,
-            resource_generation,
-            backend_generation,
-            output_revision,
-        };
-        pipe_guard
-            .write_frame(&ready.encode().map_err(|_| Error::from(E_INVALIDARG))?)
-            .map_err(|error| {
-                reset_native_session(shared);
-                Error::new(E_FAIL, error.to_string())
-            })?;
-        lock(shared)?.native_handshake = true;
-        lock(shared)?.native_handshake_identity = Some((
-            source_connection_generation,
-            stream_epoch,
-            resource_generation,
-            backend_generation,
-            output_revision,
-        ));
-        let mut channel = WindowsNativeChannel::new(
-            source_connection_generation,
-            stream_epoch,
-            adapter,
-            resource_generation,
-            backend_generation,
-            output_revision,
-        )
-        .map_err(|_| {
-            reset_native_session(shared);
-            Error::from(E_INVALIDARG)
-        })?;
-        channel.begin_handshake().map_err(|_| {
-            reset_native_session(shared);
-            Error::from(E_INVALIDARG)
-        })?;
-        channel
-            .accept_ready(
-                source_connection_generation,
-                stream_epoch,
-                resource_generation,
-                backend_generation,
-                output_revision,
-            )
-            .map_err(|_| {
-                reset_native_session(shared);
-                Error::from(E_INVALIDARG)
-            })?;
-        lock(shared)?.native_channel = Some(Arc::new(Mutex::new(channel)));
-    }
-    let offer = WindowsNativeWireMessage::decode(
-        &pipe_guard
-            .read_frame_timeout(Duration::from_millis(250))
-            .map_err(|error| {
-                reset_native_session(shared);
-                Error::new(E_FAIL, error.to_string())
-            })?,
-    )
-    .map_err(|error| {
-        reset_native_session(shared);
-        Error::new(E_FAIL, format!("native offer: {error:?}"))
-    })?;
-    let WindowsNativeWireMessage::Offer {
-        offer_id,
-        descriptor,
-    } = offer
-    else {
-        reset_native_session(shared);
-        return Err(Error::from(E_INVALIDARG));
-    };
-    let native_channel = lock(shared)?
-        .native_channel
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| Error::from(E_INVALIDARG))?;
-    let channel_offer_id = match native_channel
-        .lock()
-        .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))?
-        .offer_frame(descriptor)
-    {
-        Ok(offer_id) => offer_id,
-        Err(_) => {
-            send_native_ack(&pipe, offer_id, WindowsNativeChannelAck::Rejected);
-            reset_native_session(shared);
-            return Err(Error::from(E_INVALIDARG));
-        }
-    };
-    if channel_offer_id != offer_id {
-        send_native_ack(&pipe, offer_id, WindowsNativeChannelAck::Rejected);
-        reset_native_session(shared);
-        return Err(Error::from(E_INVALIDARG));
-    }
-    if descriptor.format() != WindowsSharedSurfaceFormat::Nv12
-        || descriptor.size() != (output_width, output_height)
-        || !lock(shared)?
-            .native_handshake_identity
-            .is_some_and(|identity| {
-                let descriptor_identity = descriptor.identity();
-                (
-                    descriptor_identity.source_connection_generation,
-                    descriptor_identity.stream_epoch,
-                    descriptor_identity.resource_generation,
-                    descriptor_identity.backend_generation,
-                    descriptor_identity.output_revision,
-                ) == identity
-            })
-    {
-        let rejected = WindowsNativeWireMessage::Ack {
-            offer_id,
-            ack: WindowsNativeChannelAck::Rejected,
-        };
-        let _ = pipe_guard.write_frame(&rejected.encode().unwrap_or_default());
-        let _ = native_channel
-            .lock()
-            .map_err(|_| ())
-            .and_then(|mut channel| {
-                channel
-                    .acknowledge(offer_id, WindowsNativeChannelAck::Rejected)
-                    .map_err(|_| ())
-            });
-        reset_native_session(shared);
-        return Err(Error::from(E_INVALIDARG));
-    }
-    drop(pipe_guard);
-    let imported = match unsafe { import_nv12_surface(&binding, descriptor) } {
-        Ok(imported) => imported,
-        Err(error) => {
-            send_native_ack(&pipe, offer_id, WindowsNativeChannelAck::Rejected);
-            reset_native_session(shared);
-            return Err(Error::new(E_FAIL, error.to_string()));
-        }
-    };
-    let current = lock(shared)?;
-    let still_running = current.state == MF_STREAM_STATE_RUNNING
-        && !current.transitioning
-        && current.lifecycle_revision == lifecycle_revision;
-    drop(current);
-    if !still_running {
-        send_native_ack(&pipe, offer_id, WindowsNativeChannelAck::Rejected);
-        reset_native_session(shared);
-        return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-    }
-    let ack_pipe = Arc::clone(&pipe);
-    let ack_channel = Arc::clone(&native_channel);
-    let release_state = Arc::clone(shared);
-    let release_ready = {
-        let state = lock(shared)?;
-        Arc::clone(&state.native_ready)
-    };
-    let release_committed = Arc::new(AtomicBool::new(false));
-    let release_committed_for_ack = Arc::clone(&release_committed);
-    let release_ack: Arc<dyn Fn() + Send + Sync> = Arc::new(move || {
-        if !release_committed_for_ack.load(Ordering::Acquire) {
-            return;
-        }
-        let mut transport_failed = false;
-        if let Ok(pipe) = ack_pipe.lock() {
-            let message = WindowsNativeWireMessage::Ack {
-                offer_id,
-                ack: WindowsNativeChannelAck::Released,
-            };
-            if let Ok(bytes) = message.encode() {
-                transport_failed = pipe.write_frame(&bytes).is_err();
-            } else {
-                transport_failed = true;
-            }
-        } else {
-            transport_failed = true;
-        }
-        if let Ok(mut channel) = ack_channel.lock() {
-            if channel
-                .acknowledge(offer_id, WindowsNativeChannelAck::Released)
-                .is_err()
-            {
-                transport_failed = true;
-            }
-        } else {
-            transport_failed = true;
-        }
-        if let Ok(mut state) = release_state.lock() {
-            state.native_inflight = false;
-        }
-        if let Ok(mut revision) = release_ready.0.lock() {
-            *revision = revision.wrapping_add(1);
-            release_ready.1.notify_all();
-        }
-        if transport_failed {
-            reset_native_session(&release_state);
-        }
-    });
-    let lease = match unsafe {
-        make_native_sample(imported, 0, duration, Some(release_ack), allocator.as_ref())
-    } {
-        Ok(lease) => lease,
-        Err(error) => {
-            send_native_ack(&pipe, offer_id, WindowsNativeChannelAck::Rejected);
-            reset_native_session(shared);
-            return Err(error);
-        }
-    };
-    let imported_state_ok = match native_channel.lock() {
-        Ok(mut channel) => channel
-            .acknowledge(offer_id, WindowsNativeChannelAck::Imported)
-            .is_ok(),
-        Err(_) => false,
-    };
-    if !imported_state_ok {
-        reset_native_session(shared);
-        return Err(Error::from(E_INVALIDARG));
-    }
-    let imported_sent = if let Ok(pipe) = pipe.lock() {
-        WindowsNativeWireMessage::Ack {
-            offer_id,
-            ack: WindowsNativeChannelAck::Imported,
-        }
-        .encode()
-        .ok()
-        .is_some_and(|bytes| pipe.write_frame(&bytes).is_ok())
-    } else {
-        false
-    };
-    if !imported_sent {
-        reset_native_session(shared);
-        return Err(Error::from(E_FAIL));
-    }
-    Ok(PreparedNativeSample {
-        sample: lease.sample,
-        release_committed,
-        lifecycle_revision,
-    })
-}
-
-fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
-    let com_initialized = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).is_ok() };
-    loop {
-        let Some(shared) = weak.upgrade() else {
-            if com_initialized {
-                unsafe { CoUninitialize() };
-            }
-            return;
-        };
-        let should_prepare = match shared.lock() {
-            Ok(state) => {
-                if state.queue.is_none() {
-                    if com_initialized {
-                        unsafe { CoUninitialize() };
-                    }
-                    return;
-                }
-                state.native_generation.is_some()
-                    && state.native_device.is_some()
-                    && state.state == MF_STREAM_STATE_RUNNING
-                    && !state.transitioning
-                    && state.native_prepared.is_none()
-                    && !state.native_inflight
-            }
-            Err(_) => {
-                if com_initialized {
-                    unsafe { CoUninitialize() };
-                }
-                return;
-            }
-        };
-        if !should_prepare {
-            thread::sleep(Duration::from_millis(10));
-            continue;
-        }
-        match prepare_native_sample(&shared) {
-            Ok(prepared) => {
-                let mut state = match shared.lock() {
-                    Ok(state) => state,
-                    Err(_) => {
-                        if com_initialized {
-                            unsafe { CoUninitialize() };
-                        }
-                        return;
-                    }
-                };
-                if state.native_generation.is_some()
-                    && state.state == MF_STREAM_STATE_RUNNING
-                    && !state.transitioning
-                    && state.lifecycle_revision == prepared.lifecycle_revision
-                    && state.native_prepared.is_none()
-                    && !state.native_inflight
-                {
-                    state.native_prepared = Some(prepared);
-                    let (ready_lock, ready_cv) = &*state.native_ready;
-                    if let Ok(mut revision) = ready_lock.lock() {
-                        *revision = revision.wrapping_add(1);
-                        ready_cv.notify_all();
-                    }
-                } else {
-                    drop(state);
-                    prepared.abort();
-                }
-            }
-            Err(_) => thread::sleep(Duration::from_millis(25)),
-        }
-    }
-}
-
-fn deliver_native_sample(
-    shared: &SharedStreamState,
-    token: Ref<'_, IUnknown>,
-) -> Result<crate::frame_provider::FrameOrigin> {
-    let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
-    let ready = Arc::clone(&lock(shared)?.native_ready);
-    let deadline = Instant::now() + Duration::from_millis(100);
-    loop {
-        let prepared = lock(shared)?.native_prepared.is_some();
-        if prepared || Instant::now() >= deadline {
-            break;
-        }
-        let wait = deadline.saturating_duration_since(Instant::now());
-        let guard = ready
-            .0
-            .lock()
-            .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))?;
-        let _ = ready
-            .1
-            .wait_timeout(guard, wait)
-            .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))?;
-    }
-    let _operation = lock(&lifecycle_operation)?;
-    let prepared = {
-        let mut state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        let prepared = state
-            .native_prepared
-            .take()
-            .ok_or_else(|| Error::from(windows::Win32::Foundation::E_PENDING))?;
-        state.native_inflight = true;
-        prepared
-    };
-    let (queue, sample_time, duration) = {
-        let mut state = lock(shared)?;
-        if prepared.lifecycle_revision != state.lifecycle_revision
-            || state.state != MF_STREAM_STATE_RUNNING
-            || state.transitioning
-        {
-            drop(state);
-            prepared.abort();
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        let now = unsafe { windows::Win32::Media::MediaFoundation::MFGetSystemTime() };
-        let sample_time = match state.sample_clock.next_timestamp(now) {
-            Some(sample_time) => sample_time,
-            None => {
-                drop(state);
-                prepared.abort();
-                return Err(Error::from(E_FAIL));
-            }
-        };
-        let queue = match state.queue.as_ref().cloned() {
-            Some(queue) => queue,
-            None => {
-                drop(state);
-                prepared.abort();
-                return Err(Error::from(MF_E_SHUTDOWN));
-            }
-        };
-        (prepared, queue, sample_time, state.sample_duration_100ns)
-    };
-    prepared.release_committed.store(true, Ordering::Release);
-    if let Err(error) = unsafe {
-        prepared.sample.SetSampleTime(sample_time)?;
-        prepared.sample.SetSampleDuration(duration)?;
-        if let Some(token) = token.as_ref() {
-            prepared
-                .sample
-                .SetUnknown(&MFSampleExtension_Token, token)?;
-        }
-        queue.QueueEventParamUnk(
-            MEMediaSample.0 as u32,
-            &GUID::zeroed(),
-            HRESULT(0),
-            &prepared.sample.cast::<IUnknown>()?,
-        )
-    } {
-        prepared.abort();
-        reset_native_session(shared);
-        return Err(error);
-    }
-    Ok(crate::frame_provider::FrameOrigin::Fresh)
-}
-
-fn send_native_ack(
-    pipe: &Arc<Mutex<WindowsNativePipeClient>>,
-    offer_id: u64,
-    ack: WindowsNativeChannelAck,
-) {
-    if let Ok(pipe) = pipe.lock() {
-        if let Ok(bytes) = (WindowsNativeWireMessage::Ack { offer_id, ack }).encode() {
-            let _ = pipe.write_frame(&bytes);
-        }
-    }
-}
-
-fn reset_native_session(shared: &SharedStreamState) {
-    let prepared = if let Ok(mut state) = shared.lock() {
-        state.native_pipe = None;
-        state.native_handshake = false;
-        state.native_handshake_identity = None;
-        state.native_channel = None;
-        state.native_inflight = false;
-        state.native_prepared.take()
-    } else {
-        None
-    };
-    if let Some(prepared) = prepared {
-        prepared.abort();
-    }
-}
-
 fn emit_metrics(snapshot: VcamMetricsSnapshot) {
     let requests_per_second = if snapshot.elapsed_ms == 0 {
         0.0
@@ -1320,47 +786,5 @@ fn emit_metrics(snapshot: VcamMetricsSnapshot) {
     super::emit_debug_message(&message);
 }
 
-fn create_sample(
-    allocator: Option<&IMFVideoSampleAllocator>,
-    frame: &OwnedNv12Frame,
-    token: Option<&IUnknown>,
-    sample_time_100ns: i64,
-    sample_duration_100ns: i64,
-) -> Result<IMFSample> {
-    unsafe {
-        let sample = if let Some(allocator) = allocator {
-            allocator.AllocateSample()?
-        } else {
-            let sample = MFCreateSample()?;
-            let buffer = MFCreateMemoryBuffer(frame.pixels.len() as u32)?;
-            sample.AddBuffer(&buffer)?;
-            sample
-        };
-
-        if sample.GetBufferCount()? == 0 {
-            return Err(Error::from(E_FAIL));
-        }
-        let buffer = sample.GetBufferByIndex(0)?;
-        let mut destination = std::ptr::null_mut();
-        let mut capacity = 0u32;
-        buffer.Lock(&mut destination, Some(&mut capacity), None)?;
-        let copy_result = if destination.is_null() {
-            Err(Error::from(E_FAIL))
-        } else {
-            let destination = std::slice::from_raw_parts_mut(destination, capacity as usize);
-            crate::copy_prepared_frame(&frame.pixels, destination)
-                .map_err(|_| Error::from(E_FAIL))
-                .and_then(|copied| buffer.SetCurrentLength(copied as u32))
-        };
-        let unlock_result = buffer.Unlock();
-        copy_result?;
-        unlock_result?;
-
-        sample.SetSampleTime(sample_time_100ns)?;
-        sample.SetSampleDuration(sample_duration_100ns)?;
-        if let Some(token) = token {
-            sample.SetUnknown(&MFSampleExtension_Token, token)?;
-        }
-        Ok(sample)
-    }
-}
+#[cfg(test)]
+mod tests;

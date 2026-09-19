@@ -9,6 +9,7 @@ pub(crate) struct SampleClock {
 }
 
 impl SampleClock {
+    #[cfg(test)]
     pub(crate) const fn new(duration_100ns: i64) -> Self {
         assert!(duration_100ns > 0, "sample duration must be positive");
         Self {

@@ -24,8 +24,8 @@ use windows::Win32::Storage::FileSystem::{
 };
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
-    PeekNamedPipe, WaitNamedPipeW, NAMED_PIPE_MODE, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
-    PIPE_TYPE_BYTE, PIPE_WAIT,
+    GetNamedPipeServerProcessId, PeekNamedPipe, WaitNamedPipeW, NAMED_PIPE_MODE,
+    PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 use windows::Win32::System::SystemServices::SECURITY_LOCAL_SERVICE_RID;
 use windows::Win32::System::Threading::{
@@ -366,7 +366,13 @@ impl WindowsNativePipeClient {
         unsafe { WaitNamedPipeW(PCWSTR(name.as_ptr()), 0).as_bool() }
     }
 
-    pub fn connect() -> Result<Self, WindowsNativePipeError> {
+    /// Connect to the producer only after the caller authenticates the
+    /// OS-reported server process. The native protocol transfers HANDLE values,
+    /// so a fixed pipe name without this reciprocal check is not a trust
+    /// boundary.
+    pub fn connect_with_server_validator(
+        validate: impl FnOnce(u32) -> bool,
+    ) -> Result<Self, WindowsNativePipeError> {
         let name = pipe_name_wide();
         let handle = unsafe {
             CreateFileW(
@@ -380,11 +386,23 @@ impl WindowsNativePipeClient {
             )?
         };
         let handle = unsafe { OwnedHandle::from_raw_handle(handle.0 as *mut _) };
-        Ok(Self { handle })
+        let client = Self { handle };
+        let mut process_id = 0u32;
+        unsafe {
+            GetNamedPipeServerProcessId(HANDLE(client.handle.as_raw_handle()), &mut process_id)?;
+        }
+        if process_id == 0 || !validate(process_id) {
+            return Err(WindowsNativePipeError::PeerRejected);
+        }
+        Ok(client)
     }
 
     pub fn read_frame(&self) -> Result<Vec<u8>, WindowsNativePipeError> {
         read_frame(HANDLE(self.handle.as_raw_handle()))
+    }
+
+    pub fn read_frame_timeout(&self, timeout: Duration) -> Result<Vec<u8>, WindowsNativePipeError> {
+        read_frame_timeout(HANDLE(self.handle.as_raw_handle()), timeout)
     }
 
     pub fn write_frame(&self, payload: &[u8]) -> Result<(), WindowsNativePipeError> {

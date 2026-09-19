@@ -5,18 +5,21 @@
 //! latest native frame and never waits on D3D11 or the Frame Server.
 
 use picoo_frame_hub::{
-    NativeVideoFrame, WindowsAdapterId, WindowsNativeChannel, WindowsNativeChannelAck,
-    WindowsNativePipeServer, WindowsNativeWireMessage, WindowsSharedSurfaceIdentity,
+    NativeVideoFrame, WindowsNativeChannel, WindowsNativeChannelAck, WindowsNativePipeServer,
+    WindowsNativeWireMessage, WindowsSharedSurfaceIdentity,
 };
 use picoo_gpu::{OutputColor, OutputFormat, RenderSpec, RenderedImage, WindowsRenderer};
-use std::os::windows::io::{AsHandle, FromRawHandle, OwnedHandle};
+use std::os::windows::io::{AsHandle, AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
+use windows::Win32::Foundation::HANDLE;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_DUP_HANDLE};
+use windows::Win32::System::IO::CancelSynchronousIo;
 
 struct State {
-    pending: Option<Arc<NativeVideoFrame>>,
+    latest: Option<Arc<NativeVideoFrame>>,
+    content_generation: u64,
     stopped: bool,
 }
 
@@ -30,7 +33,8 @@ impl NativeOutput {
     pub(crate) fn start() -> Result<Self, String> {
         let shared = Arc::new((
             Mutex::new(State {
-                pending: None,
+                latest: None,
+                content_generation: 1,
                 stopped: false,
             }),
             Condvar::new(),
@@ -55,9 +59,27 @@ impl NativeOutput {
     pub(crate) fn submit(&self, frame: Arc<NativeVideoFrame>) {
         let mut state = self.shared.0.lock().unwrap();
         if !state.stopped {
-            state.pending = Some(frame);
+            state.latest = Some(frame);
             self.shared.1.notify_one();
         }
+    }
+
+    pub(crate) fn clear(&self) {
+        let mut state = self.shared.0.lock().unwrap();
+        if state.stopped {
+            return;
+        }
+        state.latest = None;
+        state.content_generation = match state.content_generation.checked_add(1) {
+            Some(generation) => generation,
+            None => {
+                state.stopped = true;
+                u64::MAX
+            }
+        };
+        self.shared.1.notify_one();
+        drop(state);
+        self.server.disconnect_client();
     }
 }
 
@@ -67,44 +89,76 @@ impl Drop for NativeOutput {
         self.shared.1.notify_one();
         self.server.disconnect_client();
         if let Some(worker) = self.worker.take() {
+            // ConnectNamedPipe and the subsequent byte-stream reads are
+            // synchronous. Repeat cancellation until the worker observes the
+            // stop flag, covering the race where it enters an I/O call just
+            // after an earlier cancellation found no pending operation.
+            while !worker.is_finished() {
+                unsafe {
+                    let _ = CancelSynchronousIo(HANDLE(worker.as_raw_handle()));
+                }
+                thread::sleep(Duration::from_millis(1));
+            }
             let _ = worker.join();
         }
     }
 }
 
 struct Resources {
-    owner: (u64, u64),
+    owner: (u64, u64, u64, u64),
     spec: RenderSpec,
     resource_generation: u64,
     renderer: WindowsRenderer,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct NativeDemand {
+    output_size: (u32, u32),
+    output_revision: u64,
+}
+
+fn decode_native_demand(payload: &[u8]) -> Result<NativeDemand, String> {
+    let message = WindowsNativeWireMessage::decode(payload)
+        .map_err(|error| format!("native demand: {error:?}"))?;
+    let WindowsNativeWireMessage::Demand {
+        width,
+        height,
+        output_revision,
+    } = message
+    else {
+        return Err("native peer did not send output demand".into());
+    };
+    if !matches!((width, height), (1280, 720) | (1920, 1080)) {
+        return Err("native peer requested an unsupported output size".into());
+    }
+    Ok(NativeDemand {
+        output_size: (width, height),
+        output_revision,
+    })
+}
+
 fn prepare(
     resources: &mut Option<Resources>,
     frame: &NativeVideoFrame,
+    output_size: (u32, u32),
     next_resource_generation: &mut u64,
 ) -> Result<RenderedImage, String> {
     let description = frame.description();
-    let (mut width, mut height) = (
-        description.visible_rect.width,
-        description.visible_rect.height,
-    );
-    if matches!(
-        description.transform.rotation,
-        picoo_frame_hub::Rotation::Clockwise90 | picoo_frame_hub::Rotation::Clockwise270
-    ) {
-        std::mem::swap(&mut width, &mut height);
-    }
     let spec = RenderSpec {
-        width,
-        height,
+        width: output_size.0,
+        height: output_size.1,
         rotation: description.transform.rotation,
         mirror: description.transform.mirror,
         format: OutputFormat::Nv12,
         color: OutputColor::Bt709Limited,
     };
     let identity = frame.identity();
-    let owner = (identity.connection_generation, identity.decoder_generation);
+    let owner = (
+        identity.connection_generation,
+        identity.stream_epoch,
+        identity.decoder_generation,
+        description.config_revision,
+    );
     if resources
         .as_ref()
         .is_none_or(|current| current.owner != owner || current.spec != spec)
@@ -193,32 +247,50 @@ fn run_connected(
     next_resource_generation: &mut u64,
     next_backend_generation: &mut u64,
 ) -> Result<(), String> {
+    let demand = decode_native_demand(
+        &server
+            .read_frame_timeout(Duration::from_secs(1))
+            .map_err(|error| error.to_string())?,
+    )?;
+    let output_size = demand.output_size;
+    let output_revision = demand.output_revision;
     let mut resources = None;
     let mut channel: Option<WindowsNativeChannel> = None;
     let mut channel_key = None;
     let mut backend_generation = None;
     loop {
-        let frame = {
+        let (frame, content_generation) = {
             let (lock, ready) = &*shared;
             let mut state = lock.lock().unwrap();
-            while state.pending.is_none() && !state.stopped {
+            while state.latest.is_none() && !state.stopped {
                 state = ready.wait(state).unwrap();
             }
             if state.stopped {
                 return Ok(());
             }
-            state.pending.take().expect("pending frame checked")
+            (
+                state
+                    .latest
+                    .as_ref()
+                    .cloned()
+                    .expect("latest frame checked"),
+                state.content_generation,
+            )
         };
-        let image = prepare(&mut resources, &frame, next_resource_generation)?;
+        let image = prepare(
+            &mut resources,
+            &frame,
+            output_size,
+            next_resource_generation,
+        )?;
         let identity = frame.identity();
         let resources = resources.as_ref().expect("native resources initialized");
         let adapter = resources.renderer.adapter_id();
         let resource_generation = resources.resource_generation;
-        let output_revision = frame.description().config_revision as u64;
         let key = (
             identity.connection_generation,
             identity.stream_epoch,
-            identity.decoder_generation,
+            resource_generation,
             output_revision,
             adapter,
         );
@@ -307,6 +379,9 @@ fn run_connected(
         let descriptor = *transfer
             .descriptor()
             .ok_or_else(|| "native transfer missing descriptor".to_string())?;
+        if shared.0.lock().unwrap().content_generation != content_generation {
+            return Err("native content was invalidated before publication".into());
+        }
         let offer_id = channel
             .as_mut()
             .expect("channel initialized")
@@ -322,6 +397,10 @@ fn run_connected(
                 .map_err(|error| format!("native offer encode: {error:?}"))?,
             )
             .map_err(|error| error.to_string())?;
+        // A successful pipe write exposes the duplicated HANDLE value to the
+        // target process. From this point only that process may close it;
+        // remote-close recovery could race with handle-value reuse.
+        let lease = transfer.commit();
         let ack = WindowsNativeWireMessage::decode(
             &server
                 .read_frame_timeout(Duration::from_secs(1))
@@ -340,7 +419,7 @@ fn run_connected(
                     .map_err(|error| format!("native import ack: {error:?}"))?;
             }
             _ => return Err("native peer rejected surface".into()),
-        }
+        };
         let release = WindowsNativeWireMessage::decode(
             &server
                 .read_frame_timeout(Duration::from_secs(1))
@@ -361,13 +440,15 @@ fn run_connected(
             .expect("channel initialized")
             .acknowledge(offer_id, WindowsNativeChannelAck::Released)
             .map_err(|error| format!("native release ack: {error:?}"))?;
-        drop(transfer.commit());
+        drop(lease);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::next_generation;
+    use super::{decode_native_demand, next_generation, NativeDemand};
+    use picoo_frame_hub::WindowsNativeWireMessage;
+    use std::time::Duration;
 
     #[test]
     fn native_generations_are_monotonic_and_checked() {
@@ -381,5 +462,33 @@ mod tests {
             Err("native output generation exhausted".to_string())
         );
         assert_eq!(exhausted, u64::MAX);
+    }
+
+    #[test]
+    fn native_demand_fixes_the_negotiated_layout_before_rendering() {
+        let payload = WindowsNativeWireMessage::Demand {
+            width: 1920,
+            height: 1080,
+            output_revision: 9,
+        }
+        .encode()
+        .unwrap();
+        assert_eq!(
+            decode_native_demand(&payload),
+            Ok(NativeDemand {
+                output_size: (1920, 1080),
+                output_revision: 9,
+            })
+        );
+        assert!(decode_native_demand(&WindowsNativeWireMessage::Close.encode().unwrap()).is_err());
+    }
+
+    #[test]
+    fn drop_without_a_frame_server_client_cancels_blocking_accept() {
+        let started = std::time::Instant::now();
+        let output = super::NativeOutput::start().expect("native output");
+        std::thread::sleep(Duration::from_millis(25));
+        drop(output);
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 }

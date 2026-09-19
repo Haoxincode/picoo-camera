@@ -5975,6 +5975,7 @@ version = "0.1.1"
 dependencies = [
  "fast_image_resize",
  "picoo-frame-hub",
+ "thiserror 2.0.20",
  "windows 0.62.2",
  "windows-core 0.62.2",
  "winresource",

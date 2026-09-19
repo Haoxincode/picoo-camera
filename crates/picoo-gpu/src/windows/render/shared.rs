@@ -22,10 +22,10 @@ use windows::Win32::System::Threading::GetCurrentProcess;
 // The descriptor/identity types live in FrameHub so the producer and future
 // Frame Server importer cannot silently drift in field meaning.
 
-/// Owns the target-process handle until the control channel acknowledges that
-/// the descriptor was received. Dropping an uncommitted transfer closes the
-/// duplicated handle in the target process; `commit` transfers that ownership
-/// to the consumer, which must close it after importing the resource.
+/// Owns the target-process handle only until the descriptor is exposed to the
+/// consumer. Dropping before publication closes the duplicated handle in the
+/// target process; the caller must `commit` immediately after a successful
+/// publication because the consumer may close and reuse that numeric value.
 pub struct WindowsSharedSurfaceTransfer<'a> {
     target_process: BorrowedHandle<'a>,
     descriptor: Option<WindowsSharedSurfaceDescriptor>,

@@ -44,6 +44,28 @@ pub use writer::{
     SharedFrameRingWriter, SharedRingSubmitOutcome, SharedRingWriterEvent, SharedRingWriterStats,
 };
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SharedFrameKind {
+    #[default]
+    Live = 0,
+    Placeholder = 1,
+}
+
+impl SharedFrameKind {
+    pub(super) const fn from_wire(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Live),
+            1 => Some(Self::Placeholder),
+            _ => None,
+        }
+    }
+
+    const fn signal_bit(self) -> u64 {
+        self as u64
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SharedRingError {
     #[error("shared memory: {0}")]
@@ -67,6 +89,7 @@ pub enum SharedRingError {
 pub struct SharedFrameView<'a> {
     pub sequence: u64,
     pub timestamp_us: u64,
+    pub kind: SharedFrameKind,
     pub width: u32,
     pub height: u32,
     pub stride: u32,

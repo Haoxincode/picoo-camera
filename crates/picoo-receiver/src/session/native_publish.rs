@@ -61,17 +61,17 @@ impl ReceiverSession {
         if let Some(reason) = self.frames.publish(frame) {
             tracing::warn!(?reason, "native recording subscription ended");
         }
+        let latest = self
+            .frames
+            .latest()
+            .expect("published native frame")
+            .clone();
         if let Some(output) = &self.shared_ring {
-            let latest = self
-                .frames
-                .latest()
-                .expect("published native frame")
-                .clone();
             output.submit(latest.clone());
-            #[cfg(windows)]
-            if let Some(native_output) = &self.native_output {
-                native_output.submit(latest);
-            }
+        }
+        #[cfg(windows)]
+        if let Some(native_output) = &self.native_output {
+            native_output.submit(latest);
         }
         Ok(())
     }
@@ -81,6 +81,10 @@ impl ReceiverSession {
         if let Some(output) = &self.shared_ring {
             output.placeholder(self.placeholder_mode, false);
         }
+        #[cfg(windows)]
+        if let Some(native_output) = &self.native_output {
+            native_output.clear();
+        }
         Ok(())
     }
 
@@ -88,6 +92,10 @@ impl ReceiverSession {
         self.frames.clear();
         if let Some(output) = &self.shared_ring {
             output.placeholder(self.placeholder_mode, true);
+        }
+        #[cfg(windows)]
+        if let Some(native_output) = &self.native_output {
+            native_output.clear();
         }
         Ok(())
     }

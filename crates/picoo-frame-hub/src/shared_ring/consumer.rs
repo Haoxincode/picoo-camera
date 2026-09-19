@@ -9,7 +9,7 @@ use super::layout::{
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::mapping::SlotLockAttempt;
 use super::mapping::{map_shmem_err, ring_flink_path, ConsumerMapping, SharedMapping};
-use super::{SharedFrameView, SharedRingError};
+use super::{SharedFrameKind, SharedFrameView, SharedRingError};
 
 pub struct SharedFrameRingConsumer {
     mapping: ConsumerMapping,
@@ -83,6 +83,9 @@ impl SharedFrameRingConsumer {
             if meta.magic != RING_MAGIC {
                 return None;
             }
+            if meta.content_generation.load(Ordering::SeqCst) == 0 {
+                return None;
+            }
             super::demand::request(base);
             if meta.latest_sequence.load(Ordering::Acquire) == 0 {
                 return None;
@@ -111,6 +114,28 @@ impl SharedFrameRingConsumer {
                 }
             }
             None
+        }
+    }
+
+    /// Read the producer-owned semantic content signal without requesting or
+    /// locking any pixel slot. GpuNative uses this control-plane observation
+    /// to keep the CPU bridge dormant for live content.
+    pub fn content_kind(&self) -> Option<SharedFrameKind> {
+        self.content_signal()
+            .and_then(|signal| SharedFrameKind::from_wire((signal & 1) as u32))
+    }
+
+    /// Monotonic semantic revision plus its low-bit content kind. This reads
+    /// only the ring header and never creates pixel demand.
+    pub fn content_signal(&self) -> Option<u64> {
+        let base = self.mapping.as_ptr();
+        unsafe {
+            let meta = &*const_meta_at(base);
+            if meta.magic != RING_MAGIC {
+                return None;
+            }
+            let signal = meta.content_signal.load(Ordering::SeqCst);
+            (signal != 0).then_some(signal)
         }
     }
 
@@ -196,7 +221,8 @@ unsafe fn read_view<'a>(
         return None;
     }
     let len = slot.data_length as usize;
-    if len > max_frame_bytes || slot.pixel_format != PIXEL_FORMAT_NV12 {
+    let kind = SharedFrameKind::from_wire(slot.content_kind);
+    if len > max_frame_bytes || slot.pixel_format != PIXEL_FORMAT_NV12 || kind.is_none() {
         slot.reader_count.fetch_sub(1, Ordering::SeqCst);
         return None;
     }
@@ -204,6 +230,7 @@ unsafe fn read_view<'a>(
     Some(SharedFrameView {
         sequence,
         timestamp_us: slot.timestamp_us,
+        kind: kind.expect("validated shared frame kind"),
         width: slot.width,
         height: slot.height,
         stride: slot.stride,

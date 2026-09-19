@@ -10,7 +10,7 @@
 #include <time.h>
 
 enum {
-    PICOO_RING_MAGIC = 0x5049434F,
+    PICOO_RING_MAGIC = 0x50494351,
     PICOO_RING_META_SIZE = 64,
     PICOO_RING_SLOT_COUNT = 3,
     PICOO_RING_SLOT_META_SIZE = 64,
@@ -28,7 +28,8 @@ typedef struct PicooRingMeta {
     _Atomic uint64_t content_generation;
     _Atomic uint64_t cpu_demand_until_ms;
     _Atomic uint64_t cpu_request_sequence;
-    uint8_t padding[16];
+    _Atomic uint64_t content_signal;
+    uint8_t padding[8];
 } PicooRingMeta;
 
 typedef struct PicooSlotMeta {
@@ -43,7 +44,8 @@ typedef struct PicooSlotMeta {
     _Atomic uint32_t ready_state;
     _Atomic uint32_t reader_count;
     _Atomic uint64_t content_generation;
-    uint8_t padding[8];
+    uint32_t content_kind;
+    uint8_t padding[4];
 } PicooSlotMeta;
 
 _Static_assert(sizeof(PicooRingMeta) == PICOO_RING_META_SIZE,
@@ -60,7 +62,9 @@ _Static_assert(offsetof(PicooSlotMeta, reader_count) == 44,
 _Static_assert(offsetof(PicooRingMeta, content_generation) == 24, "content generation offset drifted");
 _Static_assert(offsetof(PicooRingMeta, cpu_demand_until_ms) == 32, "CPU demand offset drifted");
 _Static_assert(offsetof(PicooRingMeta, cpu_request_sequence) == 40, "CPU request offset drifted");
+_Static_assert(offsetof(PicooRingMeta, content_signal) == 48, "content signal offset drifted");
 _Static_assert(offsetof(PicooSlotMeta, content_generation) == 48, "slot generation offset drifted");
+_Static_assert(offsetof(PicooSlotMeta, content_kind) == 56, "slot content kind offset drifted");
 
 static PicooSlotMeta *picoo_slot(void *base, uint32_t max_frame_bytes,
                                  uint32_t index) {

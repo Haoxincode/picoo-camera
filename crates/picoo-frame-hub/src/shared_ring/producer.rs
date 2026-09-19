@@ -14,7 +14,7 @@ use super::lock::KernelLockGuard;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::mapping::SlotLockAttempt;
 use super::mapping::{map_shmem_err, ring_flink_path, ProducerMapping, SharedMapping};
-use super::SharedRingError;
+use super::{SharedFrameKind, SharedRingError};
 
 pub struct SharedFrameRingProducer {
     pub(super) mapping: Arc<ProducerMapping>,
@@ -190,12 +190,17 @@ impl SharedFrameRingProducer {
             meta.content_generation.store(1, Ordering::SeqCst);
             meta.cpu_demand_until_ms.store(0, Ordering::SeqCst);
             meta.cpu_request_sequence.store(0, Ordering::SeqCst);
+            meta.content_signal.store(
+                (1 << 1) | SharedFrameKind::Live.signal_bit(),
+                Ordering::SeqCst,
+            );
             for i in 0..RING_SLOT_COUNT {
                 let slot = &mut *slot_meta_at(base, self.max_frame_bytes, i);
                 slot.sequence.store(0, Ordering::Relaxed);
                 slot.content_generation.store(0, Ordering::Relaxed);
                 slot.ready_state.store(READY_EMPTY, Ordering::Relaxed);
                 slot.reader_count.store(0, Ordering::Relaxed);
+                slot.content_kind = SharedFrameKind::Live as u32;
             }
         }
     }
@@ -251,7 +256,36 @@ impl SharedFrameRingProducer {
         timestamp_us: u64,
         nv12: &[u8],
     ) -> Result<RingPublishOutcome, SharedRingError> {
+        self.publish_nv12_kind_in_generation(
+            generation,
+            SharedFrameKind::Live,
+            width,
+            height,
+            stride,
+            rotation,
+            timestamp_us,
+            nv12,
+        )
+    }
+
+    /// Publish content with an explicit semantic kind. Placeholder pixels are
+    /// never inferred from timestamps or dimensions by cross-process readers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_nv12_kind_in_generation(
+        &mut self,
+        generation: u64,
+        kind: SharedFrameKind,
+        width: u32,
+        height: u32,
+        stride: u32,
+        rotation: u32,
+        timestamp_us: u64,
+        nv12: &[u8],
+    ) -> Result<RingPublishOutcome, SharedRingError> {
         if generation == 0 || generation != self.content_fence().current() {
+            return Err(SharedRingError::ContentInvalidated);
+        }
+        if self.content_fence().kind() != Some(kind) {
             return Err(SharedRingError::ContentInvalidated);
         }
         if nv12.len() > self.max_frame_bytes {
@@ -321,6 +355,7 @@ impl SharedFrameRingProducer {
             slot.rotation = rotation;
             slot.pixel_format = PIXEL_FORMAT_NV12;
             slot.data_length = nv12.len() as u32;
+            slot.content_kind = kind as u32;
 
             let pixels = slot_pixels_at(base, self.max_frame_bytes, index);
             pixels[..nv12.len()].copy_from_slice(nv12);

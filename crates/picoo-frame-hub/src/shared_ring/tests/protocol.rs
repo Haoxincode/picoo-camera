@@ -26,7 +26,50 @@ fn producer_consumer_roundtrip_in_two_handles() {
 
     let view = consumer.latest_frame().expect("latest");
     assert_eq!(view.sequence, seq);
+    assert_eq!(view.kind, SharedFrameKind::Live);
     assert_eq!(view.nv12.len(), frame.len());
+    cleanup(&name);
+}
+
+#[test]
+fn explicit_placeholder_kind_roundtrips_without_timestamp_inference() {
+    let name = test_ring_name();
+    let max = nv12_byte_size(64, 64);
+    let mut producer = SharedFrameRingProducer::create(&name, max).expect("create");
+    let consumer = SharedFrameRingConsumer::open(&name, max).expect("open");
+    let frame = nv12_black(64, 64);
+    let generation = producer
+        .content_fence()
+        .invalidate_as(SharedFrameKind::Placeholder);
+    producer
+        .publish_nv12_kind_in_generation(
+            generation,
+            SharedFrameKind::Placeholder,
+            64,
+            64,
+            64,
+            0,
+            99,
+            &frame,
+        )
+        .expect("publish placeholder");
+
+    let view = consumer.latest_frame().expect("latest");
+    assert_eq!(view.kind, SharedFrameKind::Placeholder);
+    assert_eq!(consumer.content_kind(), Some(SharedFrameKind::Placeholder));
+    assert_eq!(view.timestamp_us, 99);
+    cleanup(&name);
+}
+
+#[test]
+fn content_kind_observation_never_creates_cpu_pixel_demand() {
+    let name = test_ring_name();
+    let max = nv12_byte_size(64, 64);
+    let producer = SharedFrameRingProducer::create(&name, max).expect("create");
+    let consumer = SharedFrameRingConsumer::open(&name, max).expect("open");
+    assert_eq!(producer.cpu_request_sequence(), None);
+    assert_eq!(consumer.content_kind(), Some(SharedFrameKind::Live));
+    assert_eq!(producer.cpu_request_sequence(), None);
     cleanup(&name);
 }
 
@@ -73,7 +116,25 @@ fn ring_layout_is_stable() {
     assert_eq!(std::mem::offset_of!(RingMeta, content_generation), 24);
     assert_eq!(std::mem::offset_of!(RingMeta, cpu_demand_until_ms), 32);
     assert_eq!(std::mem::offset_of!(RingMeta, cpu_request_sequence), 40);
+    assert_eq!(std::mem::offset_of!(RingMeta, content_signal), 48);
     assert_eq!(std::mem::offset_of!(SlotMeta, content_generation), 48);
+    assert_eq!(std::mem::offset_of!(SlotMeta, content_kind), 56);
+}
+
+#[test]
+fn previous_padding_only_abi_magic_is_rejected() {
+    let name = test_ring_name();
+    let max = nv12_byte_size(64, 64);
+    let producer = SharedFrameRingProducer::create(&name, max).expect("create");
+    unsafe {
+        (*meta_at(producer.mapping.as_ptr())).magic = 0x5049_434F;
+    }
+    assert!(matches!(
+        producer.validate_header(),
+        Err(SharedRingError::InvalidHeader)
+    ));
+    drop(producer);
+    cleanup(&name);
 }
 
 #[test]
@@ -124,7 +185,8 @@ fn miri_raw_layout_views_stay_aligned_and_within_mapping() {
             content_generation: AtomicU64::new(1),
             cpu_demand_until_ms: AtomicU64::new(0),
             cpu_request_sequence: AtomicU64::new(0),
-            _pad: [0; 16],
+            content_signal: AtomicU64::new(2),
+            _pad: [0; 8],
         });
         for index in 0..RING_SLOT_COUNT {
             slot_meta_at(mapping.base.as_ptr(), max_frame_bytes, index).write(SlotMeta {
@@ -139,7 +201,8 @@ fn miri_raw_layout_views_stay_aligned_and_within_mapping() {
                 ready_state: AtomicU32::new(RING_READY_DONE),
                 reader_count: AtomicU32::new(0),
                 content_generation: AtomicU64::new(1),
-                _pad: [0; 8],
+                content_kind: SharedFrameKind::Live as u32,
+                _pad: [0; 4],
             });
             let pixels = slot_pixels_at(mapping.base.as_ptr(), max_frame_bytes, index);
             pixels.fill(index as u8 + 1);

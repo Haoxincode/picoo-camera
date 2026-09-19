@@ -18,19 +18,18 @@ pub(super) struct PreparedFrameSet {
 impl PreparedFrameSet {
     fn placeholder(output: OutputSize) -> Self {
         Self {
-            key: SourceKey::Placeholder,
+            key: SourceKey::Placeholder(0),
             output,
             frame: placeholder_for_size(output.width, output.height),
         }
     }
 
-    pub(super) fn from_live(
+    pub(super) fn from_source(
         key: SourceKey,
         source: &OwnedNv12Frame,
         output: OutputSize,
         resources: &mut PreparationResources,
     ) -> Self {
-        debug_assert!(matches!(key, SourceKey::Live(_)));
         Self {
             key,
             output,

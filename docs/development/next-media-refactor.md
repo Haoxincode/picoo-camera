@@ -4,6 +4,51 @@
 
 产品原文：[Next v2](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)；目标：[ARCH-PICOO-MEDIA-002](../design-specs/architecture/0012-native-media-multi-output-boundary.md)；[稳定需求](../design-specs/requirements/next-media.md)。
 
+## 2026-09-19：Windows VCam GpuNative 固定输出协商与 MF sample 接线
+
+Windows Frame Server 现在在 native pipe 的第一条消息声明已协商的 720p/1080p 固定布局与
+`output_revision`。Receiver 只按该横向布局创建 NV12 RenderSpec；竖屏、旋转和镜像源在目标内
+contain，不再通过交换宽高生成与 MF 当前类型不一致的共享纹理。Producer 的资源身份同时包含连接、
+stream、decoder、源配置和独立资源 generation，Hello/Ready/Offer 全程核对 Consumer 的 output
+revision。
+
+MF Source 的 GpuNative worker 已接通 Demand→Hello/Ready→Offer/Imported/Released、同 adapter 且同
+D3D11 device 的 NV12 texture import、keyed-mutex lease 和合法 `MEMediaSample` QueueEvent。系统创建的
+DXGI buffer 直接保留 `IMFDXGIBuffer`/二维接口，tracked-sample 的最终引用回调才释放 key 0 并确认
+Released；释放或传输失败使当前 native session 失效。输出尺寸或帧率
+变化原子推进 checked output revision 并重建会话；独立 checked session revision 阻止旧 prepare、旧错误
+和迟到 release 回写新会话。绑定 manager 时 native 失败保持显式失败，不借 CpuBridge 冒充成功；没有
+manager 的客户端仍走原 Shared Frame Ring CpuBridge。D3D manager 的接纳不再查询瞬时 pipe 可用性，
+pipe 忙或尚未监听只会使 native 请求显式失败/重连；session revision 耗尽也保持 native fail-closed。
+Shared Frame Ring ABI 更新为 PICQ：头部新增 checked `Live/Placeholder` content signal，槽位携带同类
+kind，不再从时间戳或像素猜测隐私状态，旧 PICO padding-only ABI 会被拒绝。GpuNative Live 只读取该
+header control signal，不调用 `latest_frame`、不产生 CPU pixel demand；仅在 Placeholder 期间激活
+placeholder-only reader。Receiver 发布 waiting/reconnecting 时同步清除 retained native frame 并断开旧
+control channel；MF Source 在最终 QueueEvent 准入前复核同时绑定 mapping epoch 与 content signal 的
+live token，信号后的旧 prepared sample 及 Receiver 重启前旧 mapping sample 会推进 session 并丢弃。
+信号前已通过最终复核者视为 in-flight，不作跨进程撤回。Placeholder
+使用 source-owned memory sample，不复用 native 模式下未初始化的旧 CpuBridge allocator。该路径是产品
+占位语义，不是 native 失败后的 CpuBridge 降级；恢复 Live 会再次重建 native 会话。
+Producer 在没有更新解码帧时按 native sample 的释放节奏复用最新不可变源帧，不改变 source identity；
+Consumer 每次 RequestSample 仍从独立 SampleClock 分配新时间戳，因此 30fps 源可满足协商的 60fps，
+短暂源空档也不会仅因没有新 FrameBus publish 而返回 E_PENDING。Offer 成功写入 control channel 后
+Producer 立即 commit 远程 HANDLE 所有权，仅将 surface lease 保留到 Released，避免后续超时或错误
+路径对 Consumer 已关闭并复用的句柄值执行远程关闭；Consumer 先认证 server process 并验证 wire HANDLE，
+再用 OwnedHandle 在成功和所有拒绝路径恰好关闭一次。native worker 和 tracked-sample callback 分别持有 DLL ObjectTracker；
+Shutdown 反复取消 worker 的同步 pipe I/O 直至其观察 stop，再 join，即使 Frame Server 从未连接或最终
+sample 更晚释放也不会永久阻塞或在卸载后执行回调代码。
+该释放边界采用微软标准的
+[`MFCreateDXGISurfaceBuffer`](https://learn.microsoft.com/windows/win32/api/mfapi/nf-mfapi-mfcreatedxgisurfacebuffer)
+与 [`IMFTrackedSample::SetAllocator`](https://learn.microsoft.com/windows/win32/api/mfidl/nf-mfidl-imftrackedsample-setallocator)，
+不维护 Picoo 私有的 DXGI buffer 接口转发层；GpuNative 使用自有 producer surface allocator，CpuBridge
+才使用 Frame Server 提供的 allocator，语义对应
+[`MFSampleAllocatorUsage`](https://learn.microsoft.com/windows/win32/api/mfidl/ne-mfidl-mfsampleallocatorusage)。
+
+MF stream 已按职责拆成 CPU delivery、native delivery 和 COM/协商 owner，三个源文件均低于 800 行。
+Windows target 的 FrameHub/GPU/MF Source all-targets warnings-as-errors、Receiver tests check 与 wire
+契约测试通过；真实 Windows Frame Server 的四种格式、竖屏画面、设备丢失和会议软件消费仍属于最终
+平台验收，不能由 cross-target 编译替代。
+
 ## 2026-09-18：Windows VCam 正式帧率契约
 
 Windows MF Source 原先只把 30fps 写入旧的 NV12 协商类型，虽然 macOS Camera Extension 已有
@@ -13,8 +58,8 @@ Windows MF Source 原先只把 30fps 写入旧的 NV12 协商类型，虽然 mac
 
 Windows `SampleClock` 改为以 host-time 锚点和绝对槽号计算时间戳，避免把 30/60fps 的截断
 100ns 周期累加成长期漂移；慢请求跳过过期槽，Stop/Start 重新锚定。CPU bridge 的有界
-FrameProvider、Shared Frame Ring 和 RequestSample 最终 copy 边界未改变；GpuNative 尚未接入，
-本节不提升 `REQ-PICOO-NEXT-013/014` 为产品级验收完成。
+FrameProvider、Shared Frame Ring 和 RequestSample 最终 copy 边界未改变；本节记录的是当时的
+CpuBridge/时钟阶段，GpuNative 后续接线见上方 2026-09-19 记录。
 
 MF Source 的 `SetOutputType` 现在还会完整核对 NV12、progressive、BT.709 limited、方形像素、
 紧凑 stride、sample size 以及协商的尺寸/有理帧率；不再只看 frame size。Host Contract 已补上
@@ -26,10 +71,9 @@ Windows Source 的 `SetD3DManager` 不再是空实现：收到 Frame Server mana
 D3D11 device，拒绝 software adapter、`SINGLETHREADED` device 和未开启
 `ID3D11Multithread` protection 的 device，保留 manager/device/adapter LUID，并在 manager/device
 改变时推进 native resource generation；运行中的 source 不接受切换。
-没有 manager 仍保留显式 CpuBridge 路径；manager 已绑定但逐帧原生资源尚未接通时，`RequestSample`
-明确返回不支持的媒体类型错误，绝不静默改发 CPU `MEMediaSample`。这个前置绑定尚不等于逐帧
-GpuNative：跨进程资源名/权限、keyed-mutex 读取和合法 MF GPU sample 仍必须在下一步 Windows
-Host Contract 中接通并验证。
+没有 manager 仍保留显式 CpuBridge 路径；manager 已绑定时绝不静默改发 CPU `MEMediaSample`。
+本段是前置绑定的历史记录；逐帧资源与合法 MF GPU sample 已在上方 2026-09-19 批次接通，真实
+Windows Host Contract 仍待验收。
 
 Windows GPU renderer 现在提供了受约束的 Producer 侧共享资源交接原语：`RenderedImage` 可将
 BGRA NT handle 以只读共享权限复制到已经认证的目标进程，并随返回描述携带 adapter LUID、纹理尺寸、
@@ -59,8 +103,9 @@ GpuNative 可用时优先选择 GpuNative，否则才选择 CpuBridge；两者�
 
 Windows Receiver 已把已完成的 NV12 `NativeVideoFrame` 交给独立 GpuNative worker：worker 在
 目标进程已通过 Local Service 身份校验的 named pipe 上完成有界 Hello/Ready、逐帧 Offer/Imported/
-Released 确认，并在释放确认后才提交 producer transfer。pipe 仅承载控制描述符，不承载像素；ACL、
-目标 PID，以及 descriptor 中的 adapter LUID、格式、尺寸、source identity 和 output revision 均在
+Released 确认。Offer 写入成功即提交 producer transfer，因为目标进程 HANDLE 数值此时已暴露给
+Consumer；Released 只结束 surface lease。pipe 仅承载控制描述符，不承载像素；ACL、双方 OS PID/
+进程映像身份，以及 descriptor 中的 adapter LUID、格式、尺寸、source identity 和 output revision 均在
 producer/wire 边界核对；这不替代 Frame Server importer 的纹理准入。
 
 renderer/spec 重建和连接重建分别推进 `resource_generation` 与 `backend_generation`，两者通过
@@ -90,19 +135,18 @@ resource、backend 与 output revision，FrameOffer 最多保持三个，必须�
 它仍不等于 named-pipe ACL、HANDLE 传递或 MF sample 交付；这些必须在 Windows 原生 adapter 与 Host
 Contract 中逐项实现和验收。
 
-Frame Server 侧新增独立 `native_import` 准入边界：在任何 sample 组装前，使用已绑定的
+Frame Server 侧的独立 `native_import` 准入边界在任何 sample 组装前，使用已绑定的
 `IMFDXGIDeviceManager` device 打开目标进程句柄，核对 descriptor 的 adapter/格式/尺寸/key，比较
-纹理 `GetDevice` 的 COM identity，并检查 BGRA8、DEFAULT usage、单 array/mip、无 CPU access、
-`SHARED_NTHANDLE|SHARED_KEYEDMUTEX`。numeric HANDLE 在 `OpenSharedResource1` 后立即关闭（含失败路径），
-只把 COM texture/mutex 留给后续 adapter。当前仍没有 mutex lease-backed MF buffer、allocator、
-named-pipe ACL 或 RequestSample 接线，因此这只是 importer admission，不是 GpuNative 完成证据。
-同一模块还提供了带 keyed-mutex lease 的 BGRA `IMFMediaBuffer`/`IMFSample` 原语，但当前 Source
-仍协商 NV12；没有 BGRA→NV12 GPU bridge、Frame Server allocator 接管、worker 或 QueueEvent 接线，
-所以该 sample 原语也不能直接作为 `RequestSample` 输出。其 lease 记录 `ReleaseSync(0)` 失败，
-并通过共享状态句柄在最终 COM buffer drop 后观察；后续 control adapter 必须把该状态映射为资源
-代际失效/设备丢失，不能发送成功的 Released ack。
+纹理 `GetDevice` 的 COM identity，并检查 NV12、DEFAULT usage、单 array/mip、无 CPU access、
+`SHARED_NTHANDLE|SHARED_KEYEDMUTEX`。来自已认证 producer 的 numeric HANDLE 先以
+`GetHandleInformation` 拒绝零值、伪句柄和无效值，再立即进入 RAII；它保持到 importer 成功返回或任一
+拒绝/失败分支结束后恰好关闭一次，只把 COM texture/mutex 留给 sample adapter。系统
+`MFCreateDXGISurfaceBuffer` 返回的 buffer 不再被
+CPU-only COM wrapper 遮蔽，tracked `IMFSample` 已接入 native worker 与 QueueEvent；最终 sample 引用
+释放才调用 `ReleaseSync(0)` 并发送 Released。
+释放失败或 control transport 失败使对应 session 失效，旧 session callback 由 revision fence 隔离。
 
-## 当前交付状态（2026-09-08）
+## 当前交付状态（2026-09-19）
 
 40 项 Next 总需求尚未逐项验收闭环；仍有处理后录像、VCam双后端及多输出资源治理等实质开发，不以测试数量估算完成百分比。基础契约的 implemented/verified 不等于整个产品完成；下面的初次实施记录属于历史，不表示当前还未执行平台探针。
 
@@ -111,9 +155,9 @@ named-pipe ACL 或 RequestSample 接线，因此这只是 importer admission，�
 | 架构、无版本协议、旧路径删除 | 主要边界已调整 | 各功能替换时继续删除剩余旧实现 |
 | Windows/macOS 原生帧、GPU 预览、按需 CPU 输出 | 已接线，相关原生 CI 成功 | 真实显卡画质、全局预算、完整多 sink 验收 |
 | AVC/HEVC 与四种正式配置 | 双移动端已接线完整格式与事务；小米八组合原生合同及Android→Mac正式1080p60链路已验证 | iPhone真机、Windows HEVC实际设备、跨端画质与持续性能 |
-| 两平台 VCam 双后端 | 尚未完成 | GpuNative/CpuBridge、SampleClock、切换和真实系统 sample |
+| 两平台 VCam 双后端 | Windows GpuNative/CpuBridge 与 SampleClock 已接线；macOS CpuBridge 已有 | macOS GpuNative、两平台切换与真实系统 sample 验收 |
 | 原码流录像 | Mac生产状态机与样本矩阵已验证；Windows原生适配及共享Receiver/UI接线已实现，待新CI | Windows生产回调/bundle验证、真实磁盘故障与完整UI验收 |
-| 处理后录像 | Apple GPU目标硬编适配与八组合合成文件已验证 | Windows硬编、FrameBus订阅/采样/分段、完整worker与UI |
+| 处理后录像 | macOS/Windows 的 RenderedRecorder、平台硬编/mux、Receiver 与双模式桌面入口已接线 | Windows 原生 CI/文件探针、两平台真实磁盘故障与完整 UI 验收 |
 | 四组合发布验收 | 尚未完成 | 真机矩阵、画质、延迟、热稳态、设备丢失及隐私期限 |
 
 ## 初次实施记录（历史）

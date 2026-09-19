@@ -13,7 +13,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use picoo_frame_hub::{
-    NativeVideoFrame, PlaceholderMode, RingContentFence, RingPublishOutcome,
+    NativeVideoFrame, PlaceholderMode, RingContentFence, RingPublishOutcome, SharedFrameKind,
     SharedFrameRingProducer, SharedRingError, SharedRingSubmitOutcome,
 };
 use picoo_gpu::CpuImage;
@@ -40,6 +40,7 @@ enum Request {
 struct State {
     pending: Option<Request>,
     generation: u64,
+    kind: SharedFrameKind,
     stopped: bool,
     exports: u64,
     demand_waits: u64,
@@ -202,15 +203,17 @@ impl CpuOutput {
                                 picoo_media_decode::now_timestamp_us(),
                                 image.pixels(),
                             ),
-                            Prepared::Placeholder(pixels) => producer.publish_nv12_in_generation(
-                                generation,
-                                picoo_frame_hub::PLACEHOLDER_WIDTH,
-                                picoo_frame_hub::PLACEHOLDER_HEIGHT,
-                                picoo_frame_hub::PLACEHOLDER_WIDTH,
-                                0,
-                                0,
-                                pixels,
-                            ),
+                            Prepared::Placeholder(pixels) => producer
+                                .publish_nv12_kind_in_generation(
+                                    generation,
+                                    SharedFrameKind::Placeholder,
+                                    picoo_frame_hub::PLACEHOLDER_WIDTH,
+                                    picoo_frame_hub::PLACEHOLDER_HEIGHT,
+                                    picoo_frame_hub::PLACEHOLDER_WIDTH,
+                                    0,
+                                    0,
+                                    pixels,
+                                ),
                         };
                         match result {
                             Ok(RingPublishOutcome::Published { .. }) => {
@@ -287,7 +290,7 @@ impl CpuOutput {
     }
     pub(crate) fn invalidate(&self) {
         let mut state = self.shared.0.lock().unwrap();
-        self.advance_generation(&mut state);
+        self.advance_generation(&mut state, SharedFrameKind::Placeholder);
         state.pending = None;
         self.shared.1.notify_one();
     }
@@ -296,8 +299,12 @@ impl CpuOutput {
         if state.stopped {
             return SharedRingSubmitOutcome::Stopped;
         }
-        if invalidate {
-            self.advance_generation(&mut state);
+        let kind = match &request {
+            Request::Frame(_) => SharedFrameKind::Live,
+            Request::Placeholder(..) => SharedFrameKind::Placeholder,
+        };
+        if invalidate || state.kind != kind {
+            self.advance_generation(&mut state, kind);
             if state.stopped {
                 return SharedRingSubmitOutcome::Stopped;
             }
@@ -310,8 +317,9 @@ impl CpuOutput {
             SharedRingSubmitOutcome::Queued
         }
     }
-    fn advance_generation(&self, state: &mut State) {
-        state.generation = self.generation.invalidate();
+    fn advance_generation(&self, state: &mut State, kind: SharedFrameKind) {
+        state.kind = kind;
+        state.generation = self.generation.invalidate_as(kind);
         if state.generation == 0 {
             state.stopped = true;
             state.pending = None;
@@ -330,7 +338,7 @@ impl Drop for CpuOutput {
             let mut state = self.shared.0.lock().unwrap();
             state.stopped = true;
             state.pending = None;
-            self.advance_generation(&mut state);
+            self.advance_generation(&mut state, SharedFrameKind::Placeholder);
         }
         self.shared.1.notify_one();
         // A stuck GPU task retains its own leases on its worker. Never join it

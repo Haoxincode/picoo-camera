@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64};
 
 use super::SharedRingError;
 
-pub const RING_MAGIC: u32 = 0x5049_434F; // "PICO"
+pub const RING_MAGIC: u32 = 0x5049_4351; // "PICQ" — explicit content-signal ABI
 pub const PIXEL_FORMAT_NV12: u32 = 1;
 
 pub const DEFAULT_MAX_FRAME_BYTES: usize = 1920 * 1080 * 3 / 2;
@@ -26,7 +26,8 @@ pub(super) struct RingMeta {
     pub(super) content_generation: AtomicU64,
     pub(super) cpu_demand_until_ms: AtomicU64,
     pub(super) cpu_request_sequence: AtomicU64,
-    pub(super) _pad: [u8; 16],
+    pub(super) content_signal: AtomicU64,
+    pub(super) _pad: [u8; 8],
 }
 
 #[repr(C)]
@@ -42,7 +43,8 @@ pub(super) struct SlotMeta {
     pub(super) ready_state: AtomicU32,
     pub(super) reader_count: AtomicU32,
     pub(super) content_generation: AtomicU64,
-    pub(super) _pad: [u8; 8],
+    pub(super) content_kind: u32,
+    pub(super) _pad: [u8; 4],
 }
 
 pub(super) fn layout_size(max_frame_bytes: usize) -> usize {
