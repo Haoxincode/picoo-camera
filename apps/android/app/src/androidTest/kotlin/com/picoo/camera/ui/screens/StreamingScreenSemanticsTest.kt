@@ -118,6 +118,33 @@ class StreamingScreenSemanticsTest {
         composeRule.runOnIdle { assertEquals(1, changes) }
     }
 
+    @Test
+    fun disconnectedCameraSurfaceKeepsConnectionEntryOnTheMainPage() {
+        var opens = 0
+        setConnectedContent(
+            connected = false,
+            connectionTitle = "点击连接电脑",
+            connectionDetail = "自动发现或输入局域网 IP",
+            onConnectionClick = { opens += 1 },
+            onConnect = { opens += 1 },
+        )
+
+        composeRule.onNodeWithContentDescription("点击连接电脑").performClick()
+        composeRule.onNodeWithContentDescription("连接电脑").performClick()
+        composeRule.runOnIdle { assertEquals(2, opens) }
+    }
+
+    @Test
+    fun reconnectingStateKeepsConnectionEntryVisible() {
+        setConnectedContent(
+            reconnecting = true,
+            connectionTitle = "正在重连电脑",
+            connectionDetail = "连接恢复后会自动继续推流",
+        )
+
+        composeRule.onNodeWithContentDescription("正在重连电脑").assertIsEnabled()
+    }
+
     private fun controlWidth(contentDescription: String): Float =
         composeRule.onNodeWithContentDescription(contentDescription)
             .fetchSemanticsNode()
@@ -132,6 +159,12 @@ class StreamingScreenSemanticsTest {
         onDisconnect: () -> Unit = {},
         thermalLimited: Boolean = false,
         onChooseSourceFormat: () -> Unit = {},
+        connected: Boolean = true,
+        reconnecting: Boolean = false,
+        connectionTitle: String = "Studio PC 已连接",
+        connectionDetail: String = "点击顶部状态连接电脑",
+        onConnectionClick: () -> Unit = {},
+        onConnect: () -> Unit = onConnectionClick,
     ) {
         composeRule.setContent {
             PicooCameraTheme {
@@ -146,7 +179,7 @@ class StreamingScreenSemanticsTest {
                     thermalLimited = thermalLimited,
                     powerHint = "",
                     errorText = errorText,
-                    reconnecting = false,
+                    reconnecting = reconnecting,
                     packetLossLabel = "0% 丢包",
                     onRequestCamera = onRequestCamera,
                     onFlipCamera = {},
@@ -157,6 +190,11 @@ class StreamingScreenSemanticsTest {
                     evSupported = true,
                     onDisconnect = onDisconnect,
                     onStopReconnect = {},
+                    connected = connected,
+                    connectionTitle = connectionTitle,
+                    connectionDetail = connectionDetail,
+                    onConnectionClick = onConnectionClick,
+                    onConnect = onConnect,
                     previewContent = {
                         Box(
                             modifier = Modifier

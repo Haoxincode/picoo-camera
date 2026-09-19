@@ -27,6 +27,7 @@ final class SenderAppModel {
     private(set) var reconnectDelayMs: UInt64 = 0
 
     var manualEndpointText = ""
+    var isConnectionPresented = false
     var isManualConnectPresented = false
     var isSettingsPresented = false
     var autoConnectEnabled: Bool {
@@ -215,6 +216,7 @@ final class SenderAppModel {
     }
 
     func selectReceiver(_ receiver: ReceiverSummary) {
+        isConnectionPresented = false
         selectedReceiverID = receiver.id
         receiverName = receiver.displayName
         receiverEndpoint = receiver.endpoint
@@ -230,6 +232,7 @@ final class SenderAppModel {
         receiverName = endpoint.displayText
         receiverEndpoint = endpoint
         if connect(to: endpoint) {
+            isConnectionPresented = false
             isManualConnectPresented = false
         }
     }
@@ -548,6 +551,7 @@ final class SenderAppModel {
         pairingSecondsRemaining = 60
         lastHandledSessionError = ""
         isConnecting = false
+        isConnectionPresented = false
         errorMessage = nil
         mediaControlTask?.cancel()
         mediaControlTask = nil

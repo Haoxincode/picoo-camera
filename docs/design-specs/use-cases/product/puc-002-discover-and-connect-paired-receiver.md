@@ -10,7 +10,7 @@
 
 用户打开桌面端 Receiver。Receiver 启动后通过 mDNS/DNS-SD 广播 `_picoocam._udp.local` 服务，广播记录仅包含 `receiver_id`、`display_name`、`quic_port`、`pairing_state` 和 `public_key_fingerprint_prefix`，不包含用户身份、视频状态或完整密钥。
 
-用户打开手机端 Sender。Sender 浏览局域网内的 Receiver 列表，显示电脑显示名称、平台类型和就绪状态。对于已配对设备，Sender 可自动连接或等待用户点击连接；对于未配对设备，进入 [PUC-001](puc-001-first-install-and-pairing.md) 的配对流程。
+用户打开手机端 Sender。Sender 进入相机主页面，并在后台浏览局域网内的 Receiver。连接状态区域在发现到设备时提供即时连接入口；个人单设备场景下，唯一已配对设备可自动连接，多台设备才在 Connection Sheet 中显示设备选择。对于未配对设备，进入 [PUC-001](puc-001-first-install-and-pairing.md) 的配对流程。
 
 连接建立后，双方通过 PCP ControlEnvelope 可靠 Stream 完成 Hello、Capabilities、StartStream 等控制消息交换；Sender 通过 QUIC Datagram 发送受 FEC 保护的 H.264 视频片段；Receiver 重组、自适应 deadline 播放、解码并将画面提供给 LatestFrameStore 与虚拟摄像头。
 

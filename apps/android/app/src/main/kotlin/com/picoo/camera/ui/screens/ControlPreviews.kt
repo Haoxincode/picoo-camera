@@ -47,7 +47,6 @@ private fun SettingsScreenPreview() {
             sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
             onBack = {},
             onCheckPermissions = {},
-            onOpenPairedDevices = {},
             onToggleAutoConnect = {},
             onSelectDefaultSource = {},
         )

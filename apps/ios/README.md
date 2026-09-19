@@ -4,7 +4,7 @@
 
 ## 边界
 
-iOS Sender 使用 SwiftUI 承载设备列表、手动连接、配对和传输页面；使用 AVFoundation 管理相机与预览，使用 VideoToolbox 输出低延迟 H.264 Access Unit。编码后的数据通过 `PicooCore.xcframework` 的 C ABI 进入 Rust Core，原始摄像头帧不跨 FFI。
+iOS Sender 使用 SwiftUI 承载单一相机主页面；连接状态、设备发现、手动连接与配对通过主页面上的状态层和原生 Sheet 呈现，设置保留为独立页面。AVFoundation 管理相机与预览，VideoToolbox 输出低延迟 H.264 Access Unit。编码后的数据通过 `PicooCore.xcframework` 的 C ABI 进入 Rust Core，原始摄像头帧不跨 FFI。
 
 平台层负责：
 

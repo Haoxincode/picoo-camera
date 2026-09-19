@@ -44,6 +44,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -391,6 +392,8 @@ fun PicooSheetRow(
     subtitle: String? = null,
     selected: Boolean = false,
     danger: Boolean = false,
+    leadingContent: (@Composable () -> Unit)? = null,
+    trailingContent: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val colors = PicooTheme.colors
@@ -400,21 +403,45 @@ fun PicooSheetRow(
         modifier = Modifier
             .fillMaxWidth()
             .defaultMinSize(minHeight = dimensions.touchTarget)
-            .semantics { role = Role.Button },
+            .semantics {
+                role = Role.Button
+                this.selected = selected
+            },
         color = if (selected) colors.actionHighlight.copy(alpha = 0.10f) else Color.Transparent,
         contentColor = if (danger) colors.statusDanger else colors.contentPrimary,
     ) {
-        Column(
+        Row(
             modifier = Modifier.padding(horizontal = dimensions.space8, vertical = dimensions.space12),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = title, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    color = if (danger) colors.statusDanger else colors.contentMuted,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = dimensions.space2),
-                )
+            if (leadingContent != null) {
+                Box(
+                    modifier = Modifier
+                        .size(dimensions.iconEmphasis)
+                        .padding(end = dimensions.space8),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    leadingContent()
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = title, style = MaterialTheme.typography.bodyLarge)
+                if (subtitle != null) {
+                    Text(
+                        text = subtitle,
+                        color = if (danger) colors.statusDanger else colors.contentMuted,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = dimensions.space2),
+                    )
+                }
+            }
+            if (trailingContent != null) {
+                Box(
+                    modifier = Modifier.padding(start = dimensions.space8),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    trailingContent()
+                }
             }
         }
     }

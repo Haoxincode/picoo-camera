@@ -1,6 +1,6 @@
 package com.picoo.camera.ui
 
-/** REQ-PICOO-UI-003 — Sender product pages (PRD §17). */
+/** REQ-PICOO-UI-003 — internal Sender state; all non-settings states render in CameraShell. */
 enum class SenderTab {
     Devices,
     Pairing,

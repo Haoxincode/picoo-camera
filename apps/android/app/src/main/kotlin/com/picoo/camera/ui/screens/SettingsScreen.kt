@@ -73,7 +73,6 @@ fun SettingsScreen(
     sourceCandidates: List<VideoSourceFormat>?,
     onBack: () -> Unit,
     onCheckPermissions: () -> Unit,
-    onOpenPairedDevices: () -> Unit,
     onToggleAutoConnect: () -> Unit,
     onSelectDefaultSource: (VideoSourceFormat) -> Unit,
     modifier: Modifier = Modifier,
@@ -98,7 +97,7 @@ fun SettingsScreen(
                 navigationIcon = {
                     PicooIconButton(
                         onClick = onBack,
-                        contentDescription = "返回设备列表",
+                        contentDescription = "返回相机",
                     ) {
                         ReiconIcon(
                             icon = Reicon.NavigateBack,
@@ -222,10 +221,6 @@ fun SettingsScreen(
             errorText = errorText,
             onDismiss = { showPairedSheet = false },
             onRemove = { pendingRemoval = it },
-            onFallback = {
-                showPairedSheet = false
-                onOpenPairedDevices()
-            },
         )
     }
     if (showResolutionSheet) {
@@ -504,7 +499,6 @@ private fun PairedDevicesSheet(
     errorText: String?,
     onDismiss: () -> Unit,
     onRemove: (PicooNative.TrustedDevice) -> Unit,
-    onFallback: () -> Unit,
 ) {
     val colors = PicooTheme.colors
     val dimensions = PicooTheme.dimensions
@@ -533,7 +527,6 @@ private fun PairedDevicesSheet(
                 onClick = { onRemove(device) },
             )
         }
-        PicooSheetRow(title = "在设备列表中管理", onClick = onFallback)
         PicooSheetRow(title = "取消", onClick = onDismiss)
     }
 }

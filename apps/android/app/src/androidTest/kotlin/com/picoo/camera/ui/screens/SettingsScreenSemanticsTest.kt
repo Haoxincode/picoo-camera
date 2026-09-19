@@ -33,7 +33,6 @@ class SettingsScreenSemanticsTest {
                     sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
                     onBack = {},
                     onCheckPermissions = {},
-                    onOpenPairedDevices = {},
                     onToggleAutoConnect = { autoConnect = !autoConnect },
                     onSelectDefaultSource = {},
                 )

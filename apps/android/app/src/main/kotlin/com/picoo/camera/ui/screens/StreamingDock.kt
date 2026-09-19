@@ -47,10 +47,12 @@ internal fun CameraControlDock(
     flipRotation: Float,
     thermalLimited: Boolean,
     powerHint: String,
+    connected: Boolean,
     onCycleExposure: () -> Unit,
     onToggleMirror: () -> Unit,
     onToggleLock: () -> Unit,
     onDisconnect: () -> Unit,
+    onConnect: () -> Unit,
     onFlipCamera: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -148,19 +150,31 @@ internal fun CameraControlDock(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                DockActionButton(
-                    icon = Reicon.Disconnect,
-                    contentDescription = "断开连接",
-                    stateDescription = if (disconnectArmed) "等待再次确认" else "未确认",
-                    tint = if (disconnectArmed) {
-                        PicooCameraColors.DangerEmphasis
-                    } else {
-                        PicooCameraColors.Danger
-                    },
-                    enabled = !uiLocked,
-                    onClick = onDisconnect,
-                    modifier = Modifier.weight(1f),
-                )
+                if (connected) {
+                    DockActionButton(
+                        icon = Reicon.Disconnect,
+                        contentDescription = "断开连接",
+                        stateDescription = if (disconnectArmed) "等待再次确认" else "未确认",
+                        tint = if (disconnectArmed) {
+                            PicooCameraColors.DangerEmphasis
+                        } else {
+                            PicooCameraColors.Danger
+                        },
+                        enabled = !uiLocked,
+                        onClick = onDisconnect,
+                        modifier = Modifier.weight(1f),
+                    )
+                } else {
+                    DockActionButton(
+                        icon = Reicon.SecureConnection,
+                        contentDescription = "连接电脑",
+                        stateDescription = "打开连接面板",
+                        tint = PicooCameraColors.Selected,
+                        enabled = !uiLocked,
+                        onClick = onConnect,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 DockDivider()
                 DockActionButton(
                     icon = Reicon.SwitchCamera,

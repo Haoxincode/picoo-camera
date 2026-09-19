@@ -72,6 +72,13 @@ fun StreamingScreen(
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
     errorText: String? = null,
+    connected: Boolean = true,
+    connectionTitle: String = receiverName.ifBlank { "Picoo Camera" } + " 已连接",
+    connectionDetail: String = "点击顶部状态连接电脑",
+    onConnectionClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onConnect: () -> Unit = onConnectionClick,
+    connectionOverlay: (@Composable () -> Unit)? = null,
 ) {
     StreamingScreenContent(
         cameraGranted = cameraGranted,
@@ -99,6 +106,13 @@ fun StreamingScreen(
         reconnectAttempt = reconnectAttempt,
         reconnectDelayMs = reconnectDelayMs,
         errorText = errorText,
+        connected = connected,
+        connectionTitle = connectionTitle,
+        connectionDetail = connectionDetail,
+        onConnectionClick = onConnectionClick,
+        onOpenSettings = onOpenSettings,
+        onConnect = onConnect,
+        connectionOverlay = connectionOverlay,
         previewContent = {
             CameraPreviewSurface(
                 modifier = Modifier.fillMaxSize(),
@@ -144,6 +158,13 @@ internal fun StreamingScreenContent(
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
     errorText: String? = null,
+    connected: Boolean = true,
+    connectionTitle: String = receiverName.ifBlank { "Picoo Camera" } + " 已连接",
+    connectionDetail: String = "点击顶部状态连接电脑",
+    onConnectionClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onConnect: () -> Unit = onConnectionClick,
+    connectionOverlay: (@Composable () -> Unit)? = null,
 ) {
     val motion = PicooTheme.motion
     var uiLocked by remember { mutableStateOf(false) }
@@ -237,14 +258,18 @@ internal fun StreamingScreenContent(
 
         if (!immersive) {
             ConnectionHud(
-                receiverName = receiverName,
                 linkQualityChip = linkQualityChip,
                 bitrateMbps = bitrateMbps,
                 sourceLabel = sourceLabel,
                 packetLossLabel = packetLossLabel,
                 thermalLimited = thermalLimited,
                 enabled = !uiLocked,
+                connected = connected,
+                title = connectionTitle,
+                detail = connectionDetail,
                 onChooseSourceFormat = onChooseSourceFormat,
+                onConnectionClick = onConnectionClick,
+                onOpenSettings = onOpenSettings,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
             CameraControlDock(
@@ -256,6 +281,7 @@ internal fun StreamingScreenContent(
                 flipRotation = flipRotation,
                 thermalLimited = thermalLimited,
                 powerHint = powerHint,
+                connected = connected,
                 onCycleExposure = onCycleExposure,
                 onToggleMirror = onToggleMirror,
                 onToggleLock = {
@@ -265,6 +291,7 @@ internal fun StreamingScreenContent(
                 onDisconnect = {
                     if (disconnectArmed) onDisconnect() else disconnectArmed = true
                 },
+                onConnect = onConnect,
                 onFlipCamera = {
                     flipRotationTarget += 180f
                     flipBlurActive = true
@@ -294,6 +321,8 @@ internal fun StreamingScreenContent(
                 onStopReconnect = onStopReconnect,
             )
         }
+
+        connectionOverlay?.invoke()
     }
 }
 
