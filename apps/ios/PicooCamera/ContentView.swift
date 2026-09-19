@@ -732,58 +732,108 @@ private struct SettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("连接") {
-                    Toggle("打开 App 自动直连", isOn: $model.autoConnectEnabled)
-                    Picker("默认初始画质", selection: $model.preferredSourceFormat) {
-                        ForEach(model.camera.localSourceFormats ?? [], id: \.self) { source in
-                            Text(source.label).tag(source)
+            ScrollView {
+                VStack(alignment: .leading, spacing: PicooSpace.xl) {
+                    IOSSettingsSection(title: "连接") {
+                        Toggle(isOn: $model.autoConnectEnabled) {
+                            IOSSettingsText(
+                                title: "打开 App 自动直连",
+                                detail: "上次连接的电脑在线时自动连接"
+                            )
                         }
-                    }
-                }
+                        .tint(PicooColor.actionHighlight)
+                        .frame(minHeight: PicooIconSize.touchTarget)
 
-                Section("已配对信任电脑") {
-                    if model.trustedReceivers.isEmpty {
-                        Text("还没有已配对电脑")
-                            .foregroundStyle(PicooColor.contentMuted)
-                    } else {
-                        ForEach(model.trustedReceivers) { receiver in
-                            HStack(spacing: PicooSpace.md) {
-                                ReiconIcon(icon: .receiverDevice)
-                                    .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
-                                    .foregroundStyle(PicooColor.actionHighlight)
-                                VStack(alignment: .leading, spacing: PicooSpace.xxs) {
-                                    Text(receiver.name)
-                                    Text(shortFingerprint(receiver.certificateFingerprint))
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(PicooColor.contentMuted)
+                        IOSSettingsDivider()
+
+                        Menu {
+                            ForEach(model.camera.localSourceFormats ?? [], id: \.self) { source in
+                                Button {
+                                    model.preferredSourceFormat = source
+                                } label: {
+                                    HStack {
+                                        Text(source.label)
+                                        if source == model.preferredSourceFormat {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
                                 }
-                                Spacer()
-                                Button("撤销", role: .destructive) {
+                            }
+                        } label: {
+                            IOSSettingsRow(
+                                title: "默认初始画质",
+                                detail: "新连接的编码格式、分辨率与帧率",
+                                value: model.preferredSourceFormat.label,
+                                icon: .network
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    IOSSettingsSection(title: "设备与权限") {
+                        if model.trustedReceivers.isEmpty {
+                            IOSSettingsRow(
+                                title: "已配对信任电脑",
+                                detail: "首次配对成功后会显示在这里",
+                                value: "0 台",
+                                icon: .secureConnection,
+                                showsChevron: false
+                            )
+                        } else {
+                            ForEach(model.trustedReceivers) { receiver in
+                                Button {
                                     pendingRemoval = receiver
+                                } label: {
+                                    IOSSettingsRow(
+                                        title: receiver.name,
+                                        detail: "公钥指纹 \(shortFingerprint(receiver.certificateFingerprint))",
+                                        value: "撤销",
+                                        valueColor: PicooColor.statusDanger,
+                                        icon: .receiverDevice
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                if receiver.id != model.trustedReceivers.last?.id {
+                                    IOSSettingsDivider()
                                 }
                             }
                         }
+
+                        IOSSettingsDivider()
+
+                        Button {
+                            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                            UIApplication.shared.open(url)
+                        } label: {
+                            IOSSettingsRow(
+                                title: "相机权限",
+                                detail: "进入直播取景时按需请求",
+                                value: cameraPermissionLabel,
+                                valueColor: cameraPermissionLabel == "未授权"
+                                    ? PicooColor.statusWarning
+                                    : PicooColor.statusSuccess,
+                                icon: .secureConnection
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    IOSSettingsSection(title: "关于") {
+                        IOSSettingsRow(
+                            title: "Picoo Camera",
+                            detail: "无线低延迟摄像头",
+                            value: "v\(picooAppVersion)",
+                            valueColor: PicooColor.contentMuted,
+                            icon: .receiverDevice,
+                            showsChevron: false
+                        )
                     }
                 }
-
-                Section {
-                    LabeledContent("相机权限", value: cameraPermissionLabel)
-                    Button("打开系统设置") {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
-                    }
-                } header: {
-                    Text("权限")
-                } footer: {
-                    Text("相机权限只会在进入直播取景时请求。")
-                }
-
-                Section("关于") {
-                    LabeledContent("Picoo Camera", value: "v\(picooAppVersion)")
-                }
+                .padding(.horizontal, PicooSpace.xl)
+                .padding(.vertical, PicooSpace.lg)
             }
-            .navigationTitle("手机端设置")
+            .background(PicooColor.surfacePage)
+            .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
             .confirmationDialog(
                 "撤销信任？",
@@ -823,6 +873,112 @@ private struct SettingsSheet: View {
     private func shortFingerprint(_ value: String) -> String {
         let compact = value.replacingOccurrences(of: ":", with: "")
         return String(compact.prefix(12))
+    }
+}
+
+private struct IOSSettingsSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicooSpace.sm) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(PicooColor.contentMuted)
+                .padding(.horizontal, PicooSpace.sm)
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+        }
+    }
+}
+
+private struct IOSSettingsRow: View {
+    let title: String
+    let detail: String
+    let value: String
+    let valueColor: Color
+    let icon: PicooIcon
+    let showsChevron: Bool
+
+    init(
+        title: String,
+        detail: String,
+        value: String,
+        valueColor: Color = PicooColor.contentMuted,
+        icon: PicooIcon,
+        showsChevron: Bool = true
+    ) {
+        self.title = title
+        self.detail = detail
+        self.value = value
+        self.valueColor = valueColor
+        self.icon = icon
+        self.showsChevron = showsChevron
+    }
+
+    var body: some View {
+        HStack(spacing: PicooSpace.sm) {
+            ReiconIcon(icon: icon)
+                .frame(width: PicooIconSize.emphasis, height: PicooIconSize.emphasis)
+                .foregroundStyle(PicooColor.actionHighlight)
+
+            VStack(alignment: .leading, spacing: PicooSpace.xxs) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(PicooColor.contentPrimary)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(PicooColor.contentMuted)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: PicooSpace.sm)
+
+            HStack(spacing: PicooSpace.xs) {
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
+                    .multilineTextAlignment(.trailing)
+                if showsChevron {
+                    ReiconIcon(icon: .navigateBack)
+                        .frame(width: PicooIconSize.compact, height: PicooIconSize.compact)
+                        .rotationEffect(.degrees(180))
+                        .foregroundStyle(PicooColor.contentMuted)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: PicooIconSize.touchTarget, alignment: .center)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct IOSSettingsText: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicooSpace.xxs) {
+            Text(title)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(PicooColor.contentPrimary)
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(PicooColor.contentMuted)
+        }
+    }
+}
+
+private struct IOSSettingsDivider: View {
+    var body: some View {
+        Divider()
+            .overlay(PicooColor.borderDefault)
+            .padding(.leading, PicooIconSize.emphasis + PicooSpace.sm)
     }
 }
 

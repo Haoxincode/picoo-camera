@@ -17,14 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,7 +53,6 @@ import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooSheet
 import com.picoo.camera.ui.components.PicooSheetRow
-import com.picoo.camera.ui.components.PicooSurfacePanel
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
 import com.picoo.camera.ui.theme.PicooTheme
@@ -93,7 +90,7 @@ fun SettingsScreen(
         containerColor = colors.surfacePage,
         topBar = {
             TopAppBar(
-                title = { Text("手机端设置", style = MaterialTheme.typography.titleLarge) },
+                title = { Text("设置", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     PicooIconButton(
                         onClick = onBack,
@@ -131,13 +128,12 @@ fun SettingsScreen(
                             checked = autoConnectEnabled,
                             onClick = onToggleAutoConnect,
                             leadingContent = {
-                                SettingsIconContainer {
-                                    ReiconIcon(
-                                        icon = Reicon.Network,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(dimensions.iconEmphasis),
-                                    )
-                                }
+                                ReiconIcon(
+                                    icon = Reicon.Network,
+                                    contentDescription = null,
+                                    tint = colors.actionHighlight,
+                                    modifier = Modifier.size(dimensions.iconEmphasis),
+                                )
                             },
                         )
                         SettingsDivider()
@@ -146,9 +142,7 @@ fun SettingsScreen(
                             description = "新连接的编码格式、分辨率与帧率",
                             value = preferredSourceFormat.label,
                             onClick = { showResolutionSheet = true },
-                            leadingContent = {
-                                SettingsIconContainer { QualityGlyph() }
-                            },
+                            leadingContent = { QualityGlyph() },
                         )
                     }
                 }
@@ -160,13 +154,12 @@ fun SettingsScreen(
                             value = "$pairedDeviceCount 台",
                             onClick = { showPairedSheet = true },
                             leadingContent = {
-                                SettingsIconContainer {
-                                    ReiconIcon(
-                                        icon = Reicon.SecureConnection,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(dimensions.iconEmphasis),
-                                    )
-                                }
+                                ReiconIcon(
+                                    icon = Reicon.SecureConnection,
+                                    contentDescription = null,
+                                    tint = colors.actionHighlight,
+                                    modifier = Modifier.size(dimensions.iconEmphasis),
+                                )
                             },
                         )
                         SettingsDivider()
@@ -177,17 +170,20 @@ fun SettingsScreen(
                             valueColor = if (permissionsReady) colors.statusSuccess else colors.statusWarning,
                             onClick = onCheckPermissions,
                             leadingContent = {
-                                SettingsIconContainer {
-                                    ReiconIcon(
-                                        icon = if (permissionsReady) {
-                                            Reicon.SecureConnection
-                                        } else {
-                                            Reicon.Expired
-                                        },
-                                        contentDescription = null,
-                                        modifier = Modifier.size(dimensions.iconEmphasis),
-                                    )
-                                }
+                                ReiconIcon(
+                                    icon = if (permissionsReady) {
+                                        Reicon.SecureConnection
+                                    } else {
+                                        Reicon.Expired
+                                    },
+                                    contentDescription = null,
+                                    tint = if (permissionsReady) {
+                                        colors.statusSuccess
+                                    } else {
+                                        colors.statusWarning
+                                    },
+                                    modifier = Modifier.size(dimensions.iconEmphasis),
+                                )
                             },
                         )
                         if (!permissionsReady) {
@@ -255,27 +251,14 @@ private fun SettingsSection(
 ) {
     val colors = PicooTheme.colors
     val dimensions = PicooTheme.dimensions
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(dimensions.space12)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(width = dimensions.space4, height = dimensions.space24)
-                    .background(colors.actionHighlight, RoundedCornerShape(dimensions.space4)),
-            )
-            Text(
-                text = title,
-                color = colors.contentPrimary,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
-        PicooSurfacePanel(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column { content() }
-        }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(dimensions.space8)) {
+        Text(
+            text = title,
+            color = colors.contentMuted,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = dimensions.space8),
+        )
+        Column(modifier = Modifier.fillMaxWidth()) { content() }
     }
 }
 
@@ -298,8 +281,8 @@ private fun SettingsToggleRow(
             )
             .semantics(mergeDescendants = true) {}
             .defaultMinSize(minHeight = dimensions.touchTarget)
-            .padding(horizontal = dimensions.space16, vertical = dimensions.space16),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
+            .padding(horizontal = dimensions.space8, vertical = dimensions.space12),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingContent()
@@ -331,10 +314,10 @@ private fun SettingsValueRow(
         modifier = rowModifier
             .defaultMinSize(minHeight = dimensions.touchTarget)
             .padding(
-                horizontal = dimensions.space16,
-                vertical = dimensions.space16,
+                horizontal = dimensions.space8,
+                vertical = dimensions.space12,
             ),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingContent()
@@ -360,23 +343,6 @@ private fun SettingsValueRow(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun SettingsIconContainer(
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val colors = PicooTheme.colors
-    val dimensions = PicooTheme.dimensions
-    Surface(
-        modifier = modifier.size(dimensions.settingsIconContainer),
-        color = colors.surfaceAccent,
-        contentColor = colors.actionHighlight,
-        shape = RoundedCornerShape(dimensions.radiusIconContainer),
-    ) {
-        Box(contentAlignment = Alignment.Center) { content() }
     }
 }
 
