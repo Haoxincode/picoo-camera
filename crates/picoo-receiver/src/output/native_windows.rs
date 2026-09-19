@@ -75,12 +75,14 @@ impl Drop for NativeOutput {
 struct Resources {
     owner: (u64, u64),
     spec: RenderSpec,
+    resource_generation: u64,
     renderer: WindowsRenderer,
 }
 
 fn prepare(
     resources: &mut Option<Resources>,
     frame: &NativeVideoFrame,
+    next_resource_generation: &mut u64,
 ) -> Result<RenderedImage, String> {
     let description = frame.description();
     let (mut width, mut height) = (
@@ -107,9 +109,11 @@ fn prepare(
         .as_ref()
         .is_none_or(|current| current.owner != owner || current.spec != spec)
     {
+        let resource_generation = next_generation(next_resource_generation)?;
         *resources = Some(Resources {
             owner,
             spec,
+            resource_generation,
             renderer: WindowsRenderer::for_source(frame.image(), spec)
                 .map_err(|error| error.to_string())?,
         });
@@ -122,10 +126,19 @@ fn prepare(
         .map_err(|error| error.to_string())
 }
 
+fn next_generation(value: &mut u64) -> Result<u64, String> {
+    *value = value
+        .checked_add(1)
+        .ok_or_else(|| "native output generation exhausted".to_string())?;
+    Ok(*value)
+}
+
 fn run_worker(
     shared: Arc<(Mutex<State>, Condvar)>,
     server: Arc<WindowsNativePipeServer>,
 ) -> Result<(), String> {
+    let mut next_resource_generation = 0;
+    let mut next_backend_generation = 0;
     loop {
         if shared.0.lock().unwrap().stopped {
             return Ok(());
@@ -154,7 +167,13 @@ fn run_worker(
             }
         };
         let process = unsafe { OwnedHandle::from_raw_handle(process.0 as *mut _) };
-        match run_connected(Arc::clone(&shared), &server, process) {
+        match run_connected(
+            Arc::clone(&shared),
+            &server,
+            process,
+            &mut next_resource_generation,
+            &mut next_backend_generation,
+        ) {
             Ok(()) => return Ok(()),
             Err(error) => {
                 server.disconnect_client();
@@ -171,10 +190,13 @@ fn run_connected(
     shared: Arc<(Mutex<State>, Condvar)>,
     server: &WindowsNativePipeServer,
     process: OwnedHandle,
+    next_resource_generation: &mut u64,
+    next_backend_generation: &mut u64,
 ) -> Result<(), String> {
     let mut resources = None;
     let mut channel: Option<WindowsNativeChannel> = None;
     let mut channel_key = None;
+    let mut backend_generation = None;
     loop {
         let frame = {
             let (lock, ready) = &*shared;
@@ -187,13 +209,11 @@ fn run_connected(
             }
             state.pending.take().expect("pending frame checked")
         };
-        let image = prepare(&mut resources, &frame)?;
+        let image = prepare(&mut resources, &frame, next_resource_generation)?;
         let identity = frame.identity();
-        let adapter = resources
-            .as_ref()
-            .expect("native resources initialized")
-            .renderer
-            .adapter_id();
+        let resources = resources.as_ref().expect("native resources initialized");
+        let adapter = resources.renderer.adapter_id();
+        let resource_generation = resources.resource_generation;
         let output_revision = frame.description().config_revision as u64;
         let key = (
             identity.connection_generation,
@@ -211,8 +231,8 @@ fn run_connected(
                 );
                 return Err("native channel generation changed while connected".into());
             }
-            let resource_generation = 1;
-            let backend_generation = 1;
+            let backend_generation =
+                *backend_generation.get_or_insert(next_generation(next_backend_generation)?);
             let mut next = WindowsNativeChannel::new(
                 identity.connection_generation,
                 identity.stream_epoch,
@@ -271,8 +291,8 @@ fn run_connected(
             stream_epoch: identity.stream_epoch,
             decoder_generation: identity.decoder_generation,
             source_frame_id: identity.frame_id,
-            resource_generation: 1,
-            backend_generation: 1,
+            resource_generation,
+            backend_generation: backend_generation.expect("native channel initialized"),
             output_revision,
         };
         let transfer = unsafe {
