@@ -8,7 +8,7 @@ use gpui_kit::*;
 
 use crate::receiver_runtime::{await_receiver_reply, ReceiverSnapshot};
 
-use super::icons::reicon_named;
+use super::icons::{reicon_named, DesktopIcon};
 use super::widgets::status_badge;
 use super::{DesktopPage, PicooDesktopApp};
 
@@ -44,7 +44,7 @@ impl PicooDesktopApp {
                             .gap_2()
                             .text_sm()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(reicon_named("iphone", cx.theme().primary))
+                            .child(reicon_named(DesktopIcon::SenderDevice, cx.theme().primary))
                             .child("设备与连接"),
                     )
                     .child(
@@ -82,7 +82,10 @@ impl PicooDesktopApp {
                                 .p_6()
                                 .text_center()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(reicon_named("camera", cx.theme().muted_foreground))
+                                .child(reicon_named(
+                                    DesktopIcon::CameraPreview,
+                                    cx.theme().muted_foreground,
+                                ))
                                 .child(
                                     div()
                                         .text_sm()
@@ -150,7 +153,7 @@ impl PicooDesktopApp {
                                                     .whitespace_nowrap()
                                                     .child(
                                                         reicon_named(
-                                                            "clock",
+                                                            DesktopIcon::Time,
                                                             cx.theme().muted_foreground,
                                                         )
                                                         .size(rems(0.75))
@@ -171,7 +174,7 @@ impl PicooDesktopApp {
                                                     .whitespace_nowrap()
                                                     .child(
                                                         reicon_named(
-                                                            "key",
+                                                            DesktopIcon::PairingCode,
                                                             cx.theme().muted_foreground,
                                                         )
                                                         .size(rems(0.75))
@@ -199,8 +202,11 @@ impl PicooDesktopApp {
                                             .tooltip(identity_label.clone())
                                             .accessibility_label(identity_label)
                                             .child(
-                                                reicon_named("xmark", cx.theme().danger)
-                                                    .size(rems(0.875)),
+                                                reicon_named(
+                                                    DesktopIcon::Remove,
+                                                    cx.theme().danger,
+                                                )
+                                                .size(rems(0.875)),
                                             )
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.remove_trusted_device_request(

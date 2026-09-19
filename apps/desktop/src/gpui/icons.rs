@@ -1,59 +1,142 @@
 use gpui_kit::component::*;
 use gpui_kit::*;
 
+/// Product semantic icon names used by the desktop UI.
+///
+/// Keeping this mapping typed makes a missing or misspelled Reicon a compile-time
+/// error instead of silently rendering an unrelated fallback glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DesktopIcon {
+    NetworkActivity,
+    CameraPreview,
+    SwitchCamera,
+    Success,
+    NavigateBack,
+    Time,
+    CopyEndpoint,
+    ReceiverDevice,
+    Overheat,
+    Mirror,
+    Help,
+    HelpCenter,
+    Home,
+    Info,
+    SenderDevice,
+    InteractionLock,
+    InteractionUnlock,
+    PairingCode,
+    MobileSender,
+    Display,
+    VirtualCamera,
+    Connection,
+    DarkMode,
+    MoreActions,
+    Disconnect,
+    Start,
+    Discovering,
+    Refresh,
+    Onboarding,
+    Server,
+    Settings,
+    Security,
+    SecureConnection,
+    Sidebar,
+    SidebarCollapse,
+    SidebarExpand,
+    StopStream,
+    LightMode,
+    Diagnostics,
+    Network,
+    Rejected,
+    Remove,
+}
+
 pub(super) fn reicon_svg(data: &'static [u8], color: Hsla) -> Svg {
     svg().data(data).size_4().text_color(color)
 }
 
-pub(super) fn reicon_named(name: &str, color: Hsla) -> Svg {
-    let data: &'static [u8] = match name {
-        "activity" => include_bytes!("../../../../assets/icons/reicon/activity.svg"),
-        "camera" => include_bytes!("../../../../assets/icons/reicon/camera.svg"),
-        "camera-rotate" => include_bytes!("../../../../assets/icons/reicon/camera_rotate.svg"),
-        "check-circle-filled" => {
+pub(super) fn reicon_named(icon: DesktopIcon, color: Hsla) -> Svg {
+    let data: &'static [u8] = match icon {
+        DesktopIcon::NetworkActivity => {
+            include_bytes!("../../../../assets/icons/reicon/activity.svg")
+        }
+        DesktopIcon::CameraPreview => include_bytes!("../../../../assets/icons/reicon/camera.svg"),
+        DesktopIcon::SwitchCamera => {
+            include_bytes!("../../../../assets/icons/reicon/camera_rotate.svg")
+        }
+        DesktopIcon::Success => {
             include_bytes!("../../../../assets/icons/reicon/check_circle_filled.svg")
         }
-        "clock" => include_bytes!("../../../../assets/icons/reicon/clock.svg"),
-        "copy" => include_bytes!("../../../../assets/icons/reicon/copy.svg"),
-        "desktop" => include_bytes!("../../../../assets/icons/reicon/desktop.svg"),
-        "help" => include_bytes!("../../../../assets/icons/reicon/help.svg"),
-        "help-circle" => include_bytes!("../../../../assets/icons/reicon/help_circle.svg"),
-        "home" => include_bytes!("../../../../assets/icons/reicon/home.svg"),
-        "info" => include_bytes!("../../../../assets/icons/reicon/info.svg"),
-        "iphone" => include_bytes!("../../../../assets/icons/reicon/iphone.svg"),
-        "key" => include_bytes!("../../../../assets/icons/reicon/key.svg"),
-        "flip-horizontal" => include_bytes!("../../../../assets/icons/reicon/flip_horizontal.svg"),
-        "mobile" => include_bytes!("../../../../assets/icons/reicon/mobile.svg"),
-        "monitor" => include_bytes!("../../../../assets/icons/reicon/monitor.svg"),
-        "monitor-camera" => {
+        DesktopIcon::NavigateBack => {
+            include_bytes!("../../../../assets/icons/reicon/chevron_left.svg")
+        }
+        DesktopIcon::Time => include_bytes!("../../../../assets/icons/reicon/clock.svg"),
+        DesktopIcon::CopyEndpoint => include_bytes!("../../../../assets/icons/reicon/copy.svg"),
+        DesktopIcon::ReceiverDevice => {
+            include_bytes!("../../../../assets/icons/reicon/desktop.svg")
+        }
+        DesktopIcon::Overheat => include_bytes!("../../../../assets/icons/reicon/flame.svg"),
+        DesktopIcon::Mirror => {
+            include_bytes!("../../../../assets/icons/reicon/flip_horizontal.svg")
+        }
+        DesktopIcon::Help => include_bytes!("../../../../assets/icons/reicon/help.svg"),
+        DesktopIcon::HelpCenter => {
+            include_bytes!("../../../../assets/icons/reicon/help_circle.svg")
+        }
+        DesktopIcon::Home => include_bytes!("../../../../assets/icons/reicon/home.svg"),
+        DesktopIcon::Info => include_bytes!("../../../../assets/icons/reicon/info.svg"),
+        DesktopIcon::SenderDevice => include_bytes!("../../../../assets/icons/reicon/iphone.svg"),
+        DesktopIcon::InteractionLock => include_bytes!("../../../../assets/icons/reicon/lock.svg"),
+        DesktopIcon::InteractionUnlock => {
+            include_bytes!("../../../../assets/icons/reicon/unlock.svg")
+        }
+        DesktopIcon::PairingCode => include_bytes!("../../../../assets/icons/reicon/key.svg"),
+        DesktopIcon::MobileSender => include_bytes!("../../../../assets/icons/reicon/mobile.svg"),
+        DesktopIcon::Display => include_bytes!("../../../../assets/icons/reicon/monitor.svg"),
+        DesktopIcon::VirtualCamera => {
             include_bytes!("../../../../assets/icons/reicon/monitor_camera.svg")
         }
-        "monitor-phone" => include_bytes!("../../../../assets/icons/reicon/monitor_phone.svg"),
-        "moon" => include_bytes!("../../../../assets/icons/reicon/moon.svg"),
-        "more-horizontal" => include_bytes!("../../../../assets/icons/reicon/more_horizontal.svg"),
-        "play-filled" => include_bytes!("../../../../assets/icons/reicon/play_filled.svg"),
-        "radio" => include_bytes!("../../../../assets/icons/reicon/radio.svg"),
-        "refresh" => include_bytes!("../../../../assets/icons/reicon/refresh.svg"),
-        "rocket" => include_bytes!("../../../../assets/icons/reicon/rocket.svg"),
-        "server" => include_bytes!("../../../../assets/icons/reicon/server.svg"),
-        "settings" => include_bytes!("../../../../assets/icons/reicon/settings.svg"),
-        "sidebar" => include_bytes!("../../../../assets/icons/reicon/sidebar.svg"),
-        "sidebar-left" => include_bytes!("../../../../assets/icons/reicon/sidebar_left.svg"),
-        "sidebar-right" => include_bytes!("../../../../assets/icons/reicon/sidebar_right.svg"),
-        "shield" => include_bytes!("../../../../assets/icons/reicon/shield.svg"),
-        "shield-check" => include_bytes!("../../../../assets/icons/reicon/shield_check.svg"),
-        "sun" => include_bytes!("../../../../assets/icons/reicon/sun.svg"),
-        "tuning" => include_bytes!("../../../../assets/icons/reicon/tuning.svg"),
-        "wifi" => include_bytes!("../../../../assets/icons/reicon/wifi.svg"),
-        "xmark" => include_bytes!("../../../../assets/icons/reicon/xmark.svg"),
-        _ => include_bytes!("../../../../assets/icons/reicon/info.svg"),
+        DesktopIcon::Connection => {
+            include_bytes!("../../../../assets/icons/reicon/monitor_phone.svg")
+        }
+        DesktopIcon::DarkMode => include_bytes!("../../../../assets/icons/reicon/moon.svg"),
+        DesktopIcon::MoreActions => {
+            include_bytes!("../../../../assets/icons/reicon/more_horizontal.svg")
+        }
+        DesktopIcon::Disconnect => include_bytes!("../../../../assets/icons/reicon/phone_off.svg"),
+        DesktopIcon::Start => {
+            include_bytes!("../../../../assets/icons/reicon/play_filled.svg")
+        }
+        DesktopIcon::Discovering => include_bytes!("../../../../assets/icons/reicon/radio.svg"),
+        DesktopIcon::Refresh => include_bytes!("../../../../assets/icons/reicon/refresh.svg"),
+        DesktopIcon::Onboarding => include_bytes!("../../../../assets/icons/reicon/rocket.svg"),
+        DesktopIcon::Server => include_bytes!("../../../../assets/icons/reicon/server.svg"),
+        DesktopIcon::Settings => include_bytes!("../../../../assets/icons/reicon/settings.svg"),
+        DesktopIcon::Security => include_bytes!("../../../../assets/icons/reicon/shield.svg"),
+        DesktopIcon::SecureConnection => {
+            include_bytes!("../../../../assets/icons/reicon/shield_check.svg")
+        }
+        DesktopIcon::Sidebar => include_bytes!("../../../../assets/icons/reicon/sidebar.svg"),
+        DesktopIcon::SidebarCollapse => {
+            include_bytes!("../../../../assets/icons/reicon/sidebar_left.svg")
+        }
+        DesktopIcon::SidebarExpand => {
+            include_bytes!("../../../../assets/icons/reicon/sidebar_right.svg")
+        }
+        DesktopIcon::StopStream => include_bytes!("../../../../assets/icons/reicon/stop.svg"),
+        DesktopIcon::LightMode => include_bytes!("../../../../assets/icons/reicon/sun.svg"),
+        DesktopIcon::Diagnostics => include_bytes!("../../../../assets/icons/reicon/tuning.svg"),
+        DesktopIcon::Network => include_bytes!("../../../../assets/icons/reicon/wifi.svg"),
+        DesktopIcon::Rejected | DesktopIcon::Remove => {
+            include_bytes!("../../../../assets/icons/reicon/xmark.svg")
+        }
     };
     reicon_svg(data, color)
 }
 
 pub(super) fn reicon_button_content(
     label: &'static str,
-    icon: &'static str,
+    icon: DesktopIcon,
     color: Hsla,
 ) -> impl IntoElement {
     div()

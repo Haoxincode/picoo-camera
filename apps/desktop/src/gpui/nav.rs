@@ -9,7 +9,7 @@ use gpui_kit::*;
 
 use crate::receiver_runtime::ReceiverSnapshot;
 
-use super::icons::reicon_named;
+use super::icons::{reicon_named, DesktopIcon};
 use super::{DesktopSection, PicooDesktopApp};
 
 const SIDEBAR_EXPANDED_WIDTH: Pixels = px(204.);
@@ -74,15 +74,30 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .gap_2()
-                    .child(self.nav_button("连接", DesktopSection::Connect, "monitor-phone", cx))
+                    .child(self.nav_button(
+                        "连接",
+                        DesktopSection::Connect,
+                        DesktopIcon::Connection,
+                        cx,
+                    ))
                     .child(self.nav_button(
                         "虚拟摄像头",
                         DesktopSection::VirtualCamera,
-                        "monitor-camera",
+                        DesktopIcon::VirtualCamera,
                         cx,
                     ))
-                    .child(self.nav_button("网络", DesktopSection::Network, "wifi", cx))
-                    .child(self.nav_button("通用", DesktopSection::General, "settings", cx)),
+                    .child(self.nav_button(
+                        "网络",
+                        DesktopSection::Network,
+                        DesktopIcon::Network,
+                        cx,
+                    ))
+                    .child(self.nav_button(
+                        "通用",
+                        DesktopSection::General,
+                        DesktopIcon::Settings,
+                        cx,
+                    )),
             )
             .child(
                 div()
@@ -91,8 +106,13 @@ impl PicooDesktopApp {
                     .pt_3()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .child(self.nav_button("帮助", DesktopSection::Help, "help-circle", cx))
-                    .child(self.nav_button("关于", DesktopSection::About, "info", cx))
+                    .child(self.nav_button(
+                        "帮助",
+                        DesktopSection::Help,
+                        DesktopIcon::HelpCenter,
+                        cx,
+                    ))
+                    .child(self.nav_button("关于", DesktopSection::About, DesktopIcon::Info, cx))
                     .child(self.theme_button(cx)),
             );
         let sidebar = div()
@@ -165,9 +185,9 @@ impl PicooDesktopApp {
             .accessibility_label(label)
             .child(reicon_named(
                 if collapsed {
-                    "sidebar-right"
+                    DesktopIcon::SidebarExpand
                 } else {
-                    "sidebar-left"
+                    DesktopIcon::SidebarCollapse
                 },
                 cx.theme().foreground,
             ))
@@ -205,7 +225,11 @@ impl PicooDesktopApp {
                     .when(!self.sidebar_collapsed, |this| this.gap_2())
                     .child(
                         reicon_named(
-                            if is_dark { "sun" } else { "moon" },
+                            if is_dark {
+                                DesktopIcon::LightMode
+                            } else {
+                                DesktopIcon::DarkMode
+                            },
                             cx.theme().muted_foreground,
                         )
                         .size_4(),
@@ -233,7 +257,7 @@ impl PicooDesktopApp {
         &self,
         label: &'static str,
         section: DesktopSection,
-        icon: &'static str,
+        icon: DesktopIcon,
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let active = self.section == section;
@@ -242,7 +266,7 @@ impl PicooDesktopApp {
         } else {
             cx.theme().muted_foreground
         };
-        Button::new(format!("nav-{icon}"))
+        Button::new(format!("nav-{icon:?}"))
             .ghost()
             .w_full()
             .h_8()

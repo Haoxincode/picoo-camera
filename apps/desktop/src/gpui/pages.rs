@@ -11,7 +11,7 @@ use crate::diagnostics_export::export_diagnostics_to_file_with_hosts;
 use crate::prefs::LogLevel;
 use crate::receiver_runtime::ReceiverSnapshot;
 
-use super::icons::{reicon_named, reicon_svg};
+use super::icons::{reicon_named, reicon_svg, DesktopIcon};
 use super::widgets::{onboarding_step, page_header, section_header, settings_toggle_row};
 use super::PicooDesktopApp;
 
@@ -84,7 +84,7 @@ impl PicooDesktopApp {
             .max_w(rems(55.))
             .mx_auto()
             .gap_6()
-            .child(page_header("settings", "通用设置", "", cx))
+            .child(page_header(DesktopIcon::Settings, "通用设置", "", cx))
             .child(self.render_settings(cx))
     }
 
@@ -95,7 +95,7 @@ impl PicooDesktopApp {
             .mx_auto()
             .gap_5()
             .child(page_header(
-                "help-circle",
+                DesktopIcon::HelpCenter,
                 "帮助",
                 "连接手机前可依次检查以下项目",
                 cx,
@@ -111,30 +111,30 @@ impl PicooDesktopApp {
                     .bg(cx.theme().group_box)
                     .child(onboarding_step(
                         "1",
-                        "wifi",
+                        DesktopIcon::Network,
                         "确认手机与电脑连接到同一 Wi‑Fi",
                         cx,
                     ))
                     .child(onboarding_step(
                         "2",
-                        "radio",
+                        DesktopIcon::Discovering,
                         "确认路由器没有开启 AP 隔离",
                         cx,
                     ))
                     .child(onboarding_step(
                         "3",
-                        "server",
+                        DesktopIcon::Server,
                         "自动发现失败时，在手机端输入监听地址",
                         cx,
                     ))
                     .child(onboarding_step(
                         "4",
-                        "shield-check",
+                        DesktopIcon::SecureConnection,
                         "首次连接时核对两端显示的 6 位配对短码",
                         cx,
                     )),
             )
-            .child(section_header("tuning", "诊断", cx))
+            .child(section_header(DesktopIcon::Diagnostics, "诊断", cx))
             .child(
                 div()
                     .v_flex()
@@ -305,7 +305,7 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .gap_2p5()
-                    .child(section_header("desktop", "电脑名称", cx))
+                    .child(section_header(DesktopIcon::ReceiverDevice, "电脑名称", cx))
                     .child(
                         div()
                             .h_flex()
@@ -341,7 +341,7 @@ impl PicooDesktopApp {
                 div()
                     .v_flex()
                     .gap_2p5()
-                    .child(section_header("play-filled", "后台运行", cx))
+                    .child(section_header(DesktopIcon::Start, "后台运行", cx))
                     .child(
                         div()
                             .v_flex()
@@ -351,7 +351,7 @@ impl PicooDesktopApp {
                             .border_color(cx.theme().border)
                             .bg(cx.theme().group_box)
                             .child(settings_toggle_row(
-                                "play-filled",
+                                DesktopIcon::Start,
                                 "关闭窗口后继续在后台运行",
                                 background_description,
                                 Switch::new("continue-in-background")
@@ -368,7 +368,7 @@ impl PicooDesktopApp {
                                 cx,
                             ))
                             .child(settings_toggle_row(
-                                "refresh",
+                                DesktopIcon::Refresh,
                                 startup_label,
                                 "打开电脑并进入桌面后自动启动 Picoo Camera。",
                                 Switch::new("launch-at-startup")
@@ -398,7 +398,7 @@ impl PicooDesktopApp {
                     .border_color(cx.theme().border)
                     .text_xs()
                     .text_color(cx.theme().muted_foreground)
-                    .child(reicon_named("check-circle-filled", cx.theme().success))
+                    .child(reicon_named(DesktopIcon::Success, cx.theme().success))
                     .child("更改会自动保存"),
             )
     }

@@ -9,6 +9,7 @@ use crate::live_diagnostics::{
 use crate::receiver_runtime::ReceiverSnapshot;
 
 use super::connect::endpoint_label;
+use super::icons::DesktopIcon;
 use super::vcam::vcam_label_zh;
 use super::widgets::{network_detail_row, page_header, section_header, status_badge};
 use super::PicooDesktopApp;
@@ -61,39 +62,39 @@ impl PicooDesktopApp {
             .mx_auto()
             .gap_5()
             .child(page_header(
-                "wifi",
+                DesktopIcon::Network,
                 "网络",
                 "查看局域网连接、实时媒体链路与最近运行质量",
                 cx,
             ))
-            .child(section_header("activity", "当前诊断", cx))
+            .child(section_header(DesktopIcon::NetworkActivity, "当前诊断", cx))
             .child(self.render_diagnostic_analysis(&analysis, cx))
-            .child(section_header("wifi", "网络与传输", cx))
+            .child(section_header(DesktopIcon::Network, "网络与传输", cx))
             .child(
                 diagnostic_group(cx)
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "接收码率",
                         "Receiver 最近一个完整统计窗口",
                         format_bitrate(stats),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "radio",
+                        DesktopIcon::Discovering,
                         "链路延迟",
                         "QUIC 往返时延，不是端到端拍摄延迟",
                         format_milliseconds(stats.map(|stats| stats.rtt_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "timer",
+                        DesktopIcon::Time,
                         "端到端延迟",
                         "Sender 与 Receiver 时钟映射稳定后，从采集到当前统计快照",
                         format_milliseconds(stats.and_then(|stats| stats.end_to_end_latency_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "分段延迟",
                         "采集→编码 / 编码→到达 / 抖动驻留 / 解码 / 发布后帧龄",
                         format!(
@@ -107,28 +108,28 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
-                        "monitor",
+                        DesktopIcon::Display,
                         "时钟映射不确定度",
                         "基于低 RTT 样本拟合的当前误差上界；未稳定时不显示总延迟",
                         format_milliseconds(stats.and_then(|stats| stats.clock_uncertainty_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "网络抖动",
                         "完整视频帧到达间隔相对 PTS 间隔的波动",
                         format_milliseconds(stats.map(|stats| stats.jitter_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "server",
+                        DesktopIcon::Server,
                         "可观测丢片",
                         "已决视频帧内确认缺失的 fragment 比例，不代表网卡总丢包",
                         format_packet_loss(stats),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "Sender QUIC 待发送",
                         "手机端 Quinn Datagram 缓冲当前占用；持续增长代表排队延迟",
                         stats
@@ -137,7 +138,7 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "Sender 队列丢帧",
                         "手机端因有界发送队列或 Datagram 缓冲不足而整帧丢弃的累计值",
                         stats
@@ -146,74 +147,74 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
-                        "radio",
+                        DesktopIcon::Discovering,
                         "Sender QUIC 丢包",
                         "手机端 QUIC 路径累计确认丢失的包，占累计发送包比例",
                         sender_quic_loss.unwrap_or_else(|| "—".into()),
                         cx,
                     )),
             )
-            .child(section_header("monitor", "媒体处理", cx))
+            .child(section_header(DesktopIcon::Display, "媒体处理", cx))
             .child(
                 diagnostic_group(cx)
                     .child(network_detail_row(
-                        "camera",
+                        DesktopIcon::CameraPreview,
                         "实际 / 目标帧率",
                         "Receiver 解码提交帧率与当前协商目标",
                         actual_fps.unwrap_or_else(|| "—".into()),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "播放目标",
                         "由到达变化、帧周期和解码耗时计算的当前总时序预算",
                         format_milliseconds(stats.map(|stats| stats.jitter_buffer_target_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "实际缓冲停留",
                         "本窗口视频帧从首片到达至离开 Jitter Buffer 的平均时间",
                         format_milliseconds(stats.map(|stats| stats.jitter_buffer_actual_delay_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "队列跨度",
                         "当前已完成视频帧队列最新与最旧 PTS 的跨度",
                         format_milliseconds(stats.map(|stats| stats.jitter_buffer_occupancy_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "timer",
+                        DesktopIcon::Time,
                         "接收入口队列龄",
                         "Quinn 收到首个 Datagram 后，到 Receiver 开始处理该批次的本机等待峰值",
                         format_milliseconds(stats.map(|stats| stats.receive_queue_age_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "refresh",
+                        DesktopIcon::Refresh,
                         "入口过期整帧",
                         "进入重组前已超过媒体截止时间、按完整 Access Unit 淘汰的累计值",
                         format!("{} 帧", snapshot.ingress.receive_queue_expired_access_units),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "refresh",
+                        DesktopIcon::Refresh,
                         "最近重组丢弃",
                         "最近统计窗口内被重组层确认丢弃的 Access Unit",
                         format_count(stats.map(|stats| stats.reassembly_drop), "帧"),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "shield",
+                        DesktopIcon::Security,
                         "FEC 已恢复数据片",
                         "Receiver 本进程内无需重传、已由校验片即时恢复的累计 fragment",
                         format!("{} 片", snapshot.ingress.fec_recovered_fragments),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "refresh",
+                        DesktopIcon::Refresh,
                         "部分帧重组失败",
                         "至少收到一个数据片、但在自适应截止前仍无法完成的累计 Access Unit",
                         format!(
@@ -223,7 +224,7 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
-                        "refresh",
+                        DesktopIcon::Refresh,
                         "整帧未到",
                         "由连续 frame id 推断、截止前没有任何片到达的累计 Access Unit",
                         format!(
@@ -233,7 +234,7 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "本地时序恢复",
                         "容量淘汰 / 播放后晚到 / 完整帧超时，三类累计恢复次数",
                         format!(
@@ -245,39 +246,39 @@ impl PicooDesktopApp {
                         cx,
                     ))
                     .child(network_detail_row(
-                        "monitor",
+                        DesktopIcon::Display,
                         "最近解码丢帧",
                         "最近统计窗口内平台解码器未提交的帧",
                         format_count(stats.map(|stats| stats.decoder_drop), "帧"),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "activity",
+                        DesktopIcon::NetworkActivity,
                         "本地帧龄",
                         "已解码帧在 Receiver 本地的驻留时间",
                         format_milliseconds(stats.map(|stats| stats.frame_age_ms)),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "refresh",
+                        DesktopIcon::Refresh,
                         "关键帧恢复请求",
                         "Receiver 进程累计发送到可靠控制流的请求",
                         format!("{} 次", snapshot.ingress.keyframe_requests),
                         cx,
                     )),
             )
-            .child(section_header("monitor-camera", "输出链路", cx))
+            .child(section_header(DesktopIcon::VirtualCamera, "输出链路", cx))
             .child(
                 diagnostic_group(cx)
                     .child(network_detail_row(
-                        "monitor-camera",
+                        DesktopIcon::VirtualCamera,
                         "虚拟摄像头",
                         "操作系统当前枚举与激活状态",
                         vcam_label_zh(snapshot.virtual_camera).into(),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "server",
+                        DesktopIcon::Server,
                         "共享帧环",
                         "Receiver 向虚拟摄像头发布 NV12 帧的进程边界",
                         snapshot
@@ -288,9 +289,13 @@ impl PicooDesktopApp {
                         cx,
                     )),
             )
-            .child(section_header("activity", "最近 10 分钟", cx))
+            .child(section_header(
+                DesktopIcon::NetworkActivity,
+                "最近 10 分钟",
+                cx,
+            ))
             .child(self.render_history_summary(history, cx))
-            .child(section_header("radio", "自动发现", cx))
+            .child(section_header(DesktopIcon::Discovering, "自动发现", cx))
             .child(
                 div()
                     .h_flex()
@@ -331,25 +336,25 @@ impl PicooDesktopApp {
                         cx,
                     )),
             )
-            .child(section_header("tuning", "连接设置", cx))
+            .child(section_header(DesktopIcon::Diagnostics, "连接设置", cx))
             .child(
                 diagnostic_group(cx)
                     .child(network_detail_row(
-                        "server",
+                        DesktopIcon::Server,
                         "连接端口",
                         "视频与控制连接使用的 UDP 端口",
                         DEFAULT_QUIC_PORT.to_string(),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "wifi",
+                        DesktopIcon::Network,
                         "监听地址",
                         "手机自动发现不可用时可手动输入",
                         endpoint_label(snapshot),
                         cx,
                     ))
                     .child(network_detail_row(
-                        "monitor",
+                        DesktopIcon::Display,
                         "Receiver 状态",
                         "当前桌面接收端会话状态",
                         Self::status_label(snapshot.status).into(),
@@ -404,7 +409,7 @@ impl PicooDesktopApp {
         let has_samples = history.sample_count > 0;
         diagnostic_group(cx)
             .child(network_detail_row(
-                "activity",
+                DesktopIcon::NetworkActivity,
                 "采样范围",
                 "每秒一次，仅保存在当前桌面进程内存中",
                 if has_samples {
@@ -419,7 +424,7 @@ impl PicooDesktopApp {
                 cx,
             ))
             .child(network_detail_row(
-                "radio",
+                DesktopIcon::Discovering,
                 "峰值链路延迟 / 抖动",
                 "窗口内用于定位瞬时 Wi-Fi 波动的峰值",
                 if has_samples {
@@ -433,7 +438,7 @@ impl PicooDesktopApp {
                 cx,
             ))
             .child(network_detail_row(
-                "server",
+                DesktopIcon::Server,
                 "峰值可观测丢片 / 缓冲",
                 "丢片仍只覆盖 Receiver 能观察到的已决视频帧",
                 if has_samples {
@@ -448,7 +453,7 @@ impl PicooDesktopApp {
                 cx,
             ))
             .child(network_detail_row(
-                "camera",
+                DesktopIcon::CameraPreview,
                 "最低实际帧率",
                 "窗口内 Receiver 解码提交帧率的最低值",
                 if has_samples {
@@ -459,7 +464,7 @@ impl PicooDesktopApp {
                 cx,
             ))
             .child(network_detail_row(
-                "refresh",
+                DesktopIcon::Refresh,
                 "累计重组 / 解码丢帧",
                 "同一秒级窗口计数求和，不混用 Datagram 总数",
                 if has_samples {

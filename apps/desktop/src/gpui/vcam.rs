@@ -14,7 +14,7 @@ use crate::vcam_status::query_macos_vcam_status;
 use crate::vcam_status::vcam_setup_unavailable_message;
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint, vcam_setup_action_label};
 
-use super::icons::{reicon_button_content, reicon_named};
+use super::icons::{reicon_button_content, reicon_named, DesktopIcon};
 use super::widgets::{
     page_header, placeholder_choice_indicator, placeholder_preview, placeholder_title,
     section_header, status_badge, status_row,
@@ -503,7 +503,7 @@ impl PicooDesktopApp {
             .mx_auto()
             .gap_5()
             .child(page_header(
-                "monitor",
+                DesktopIcon::VirtualCamera,
                 "虚拟摄像头",
                 "管理系统虚拟摄像头和无视频流时的输出画面",
                 cx,
@@ -526,7 +526,10 @@ impl PicooDesktopApp {
                                 div()
                                     .h_flex()
                                     .gap_3()
-                                    .child(reicon_named("monitor", cx.theme().primary))
+                                    .child(reicon_named(
+                                        DesktopIcon::VirtualCamera,
+                                        cx.theme().primary,
+                                    ))
                                     .child(
                                         div()
                                             .v_flex()
@@ -576,7 +579,7 @@ impl PicooDesktopApp {
                                     .accessibility_label("重新检测")
                                     .child(reicon_button_content(
                                         "重新检测",
-                                        "refresh",
+                                        DesktopIcon::Refresh,
                                         cx.theme().primary,
                                     ))
                                     .disabled(self.vcam_setup_state.is_running())
@@ -595,7 +598,7 @@ impl PicooDesktopApp {
                                             .accessibility_label(self.vcam_setup_button_label())
                                             .child(reicon_button_content(
                                                 self.vcam_setup_button_label(),
-                                                "play-filled",
+                                                DesktopIcon::Start,
                                                 cx.theme().primary_foreground,
                                             ))
                                             .loading(self.vcam_setup_state.is_running())
@@ -625,7 +628,11 @@ impl PicooDesktopApp {
                     )
                     .children(self.render_vcam_setup_feedback(cx)),
             )
-            .child(section_header("camera", "无视频流画面", cx))
+            .child(section_header(
+                DesktopIcon::CameraPreview,
+                "无视频流画面",
+                cx,
+            ))
             .child(
                 div()
                     .v_flex()
