@@ -1,11 +1,11 @@
-//! FrameBus -> GPU -> hardware encoder -> MP4 owner — REQ-PICOO-MEDIA-082.
+//! FrameBus -> GPU -> hardware encoder -> MP4 owner — REQ-PICOO-MEDIA-082/085.
 //!
 //! The Receiver owns only the subscription endpoint and commands. Every GPU,
 //! encoder, mux and bundle operation remains on this dedicated worker.
 
+#[cfg(target_os = "macos")]
+use crate::{apple::AppleSegment as NativeSegment, apple_encoder::AppleEncoder as NativeEncoder};
 use crate::{
-    apple::AppleSegment,
-    apple_encoder::AppleEncoder,
     bundle::{
         GapReason, RecordingBundle, RecordingMode, RecordingState, SegmentMetadata, SourceRange,
     },
@@ -13,9 +13,17 @@ use crate::{
     worker::progress::Progress,
     AppendOutcome, RecordingError, RecordingResult,
 };
+#[cfg(windows)]
+use crate::{
+    windows::WindowsSegment as NativeSegment, windows_encoder::WindowsEncoder as NativeEncoder,
+};
 use picoo_bitstream::Codec;
 use picoo_frame_hub::{NativeFrameSubscription, NativeVideoFrame, Rotation, SubscriptionEnd};
-use picoo_gpu::{AppleRenderer, OutputColor, OutputFormat, RenderSpec};
+#[cfg(target_os = "macos")]
+use picoo_gpu::AppleRenderer as NativeRenderer;
+#[cfg(windows)]
+use picoo_gpu::WindowsRenderer as NativeRenderer;
+use picoo_gpu::{OutputColor, OutputFormat, RenderSpec, RenderedImage};
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
@@ -255,9 +263,9 @@ fn drain_and_finish(
 
 struct ActiveSegment {
     generation: u64,
-    renderer: AppleRenderer,
-    encoder: AppleEncoder,
-    native: Option<AppleSegment>,
+    renderer: NativeRenderer,
+    encoder: Option<NativeEncoder>,
+    native: Option<NativeSegment>,
     configuration_record: Option<Vec<u8>>,
     metadata: SegmentMetadata,
 }
@@ -342,12 +350,14 @@ impl RenderedRecorder {
         }
 
         let active = self.active.as_mut().expect("rendered segment active");
-        let image = active
-            .renderer
-            .render(frame.image())
-            .map_err(|error| RecordingError::Platform(error.to_string()))?;
+        let image = render_frame(&mut active.renderer, frame)?;
+        if active.encoder.is_none() {
+            active.encoder = Some(create_encoder(&image, self.config)?);
+        }
         let output = active
             .encoder
+            .as_mut()
+            .expect("first rendered image starts encoder")
             .encode(image, sample.segment_pts_us, sample.force_idr)?;
         if output.pts_us != sample.segment_pts_us {
             return Err(RecordingError::InvalidInput(
@@ -367,7 +377,7 @@ impl RenderedRecorder {
         if active.native.is_none() {
             active.metadata.configuration_sha256 = format!("{:x}", Sha256::digest(record));
             active.configuration_record = Some(record.to_vec());
-            active.native = Some(AppleSegment::new(
+            active.native = Some(NativeSegment::new(
                 &self.bundle.next_partial_path()?,
                 output.configuration,
                 self.config.fps,
@@ -425,15 +435,8 @@ impl RenderedRecorder {
             .map_err(|_| RecordingError::InvalidInput("source stream epoch overflow"))?;
         Ok(ActiveSegment {
             generation: sample.segment_generation,
-            renderer: AppleRenderer::new(spec)
-                .map_err(|error| RecordingError::Platform(error.to_string()))?,
-            encoder: AppleEncoder::new(
-                self.config.codec,
-                self.config.width,
-                self.config.height,
-                self.config.fps,
-                self.config.bitrate,
-            )?,
+            renderer: create_renderer(frame, spec)?,
+            encoder: None,
             native: None,
             configuration_record: None,
             metadata: SegmentMetadata {
@@ -510,6 +513,72 @@ impl RenderedRecorder {
     }
 }
 
+#[cfg(target_os = "macos")]
+fn create_renderer(
+    _frame: &NativeVideoFrame,
+    spec: RenderSpec,
+) -> Result<NativeRenderer, RecordingError> {
+    NativeRenderer::new(spec).map_err(|error| RecordingError::Platform(error.to_string()))
+}
+
+#[cfg(windows)]
+fn create_renderer(
+    frame: &NativeVideoFrame,
+    spec: RenderSpec,
+) -> Result<NativeRenderer, RecordingError> {
+    NativeRenderer::for_source(frame.image(), spec)
+        .map_err(|error| RecordingError::Platform(error.to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn render_frame(
+    renderer: &mut NativeRenderer,
+    frame: &NativeVideoFrame,
+) -> Result<RenderedImage, RecordingError> {
+    renderer
+        .render(frame.image())
+        .map_err(|error| RecordingError::Platform(error.to_string()))
+}
+
+#[cfg(windows)]
+fn render_frame(
+    renderer: &mut NativeRenderer,
+    frame: &NativeVideoFrame,
+) -> Result<RenderedImage, RecordingError> {
+    renderer
+        .render(frame)
+        .map_err(|error| RecordingError::Platform(error.to_string()))
+}
+
+#[cfg(target_os = "macos")]
+fn create_encoder(
+    _image: &RenderedImage,
+    config: RenderedRecordingConfig,
+) -> Result<NativeEncoder, RecordingError> {
+    NativeEncoder::new(
+        config.codec,
+        config.width,
+        config.height,
+        config.fps,
+        config.bitrate,
+    )
+}
+
+#[cfg(windows)]
+fn create_encoder(
+    image: &RenderedImage,
+    config: RenderedRecordingConfig,
+) -> Result<NativeEncoder, RecordingError> {
+    NativeEncoder::new(
+        image,
+        config.codec,
+        config.width,
+        config.height,
+        config.fps,
+        config.bitrate,
+    )
+}
+
 fn gap_range(
     previous: SourceRange,
     current: RenderedSample,
@@ -534,5 +603,5 @@ fn rotation_degrees(rotation: Rotation) -> u32 {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests;

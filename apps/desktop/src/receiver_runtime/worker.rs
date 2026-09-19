@@ -282,13 +282,13 @@ fn apply_receiver_command(
             let result = match request {
                 RecordingRequest::Encoded => runtime.receiver.start_encoded_recording(parent),
                 RecordingRequest::Rendered { codec, fps } => {
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     {
                         runtime
                             .receiver
                             .start_rendered_recording(parent, codec, fps)
                     }
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(not(any(target_os = "macos", windows)))]
                     {
                         let _ = (parent, codec, fps);
                         Err(ReceiverError::Protocol(
@@ -312,12 +312,12 @@ fn apply_receiver_command(
                     Ok(())
                 }
                 RecordingMode::Rendered => {
-                    #[cfg(target_os = "macos")]
+                    #[cfg(any(target_os = "macos", windows))]
                     {
                         runtime.receiver.stop_rendered_recording();
                         Ok(())
                     }
-                    #[cfg(not(target_os = "macos"))]
+                    #[cfg(not(any(target_os = "macos", windows)))]
                     {
                         Err(ReceiverError::Protocol(
                             "rendered recording is unavailable on this platform".into(),

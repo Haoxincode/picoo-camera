@@ -54,7 +54,7 @@ impl RecordingSnapshots {
             RecordingSnapshot::default()
         };
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let rendered = {
             let result = receiver.rendered_recording_result();
             let state = result
@@ -79,12 +79,12 @@ impl RecordingSnapshots {
                 result,
             }
         };
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         let rendered = RecordingSnapshot::default();
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         let rendered_source_supported = receiver.rendered_recording_source_supported();
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(not(any(target_os = "macos", windows)))]
         let rendered_source_supported = false;
 
         Self {

@@ -11,7 +11,7 @@ pub mod configuration_wait;
 #[cfg(any(target_os = "macos", windows))]
 pub mod encoded;
 pub mod ingress;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub mod rendered;
 pub mod rendered_timeline;
 pub mod reorder;

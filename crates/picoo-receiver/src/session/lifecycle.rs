@@ -17,7 +17,7 @@ impl ReceiverSession {
             self.report_recording_gap(picoo_recording::bundle::GapReason::SourceStopped);
             self.stop_encoded_recording();
         }
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", windows))]
         self.frames.reset_ordered_source();
         self.decoder_worker.reset();
         #[cfg(not(any(target_os = "macos", windows)))]
@@ -107,7 +107,7 @@ impl ReceiverSession {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, any(target_os = "macos", windows)))]
 mod tests {
     use super::*;
     use picoo_frame_hub::SubscriptionEnd;

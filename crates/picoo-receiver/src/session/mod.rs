@@ -99,7 +99,7 @@ pub struct ReceiverSession {
     current_stream_config: Option<Arc<StreamConfig>>,
     #[cfg(any(target_os = "macos", windows))]
     recording: Option<picoo_recording::worker::RecordingWorker>,
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     rendered_recording: Option<picoo_recording::rendered::RenderedRecordingWorker>,
     #[cfg(any(target_os = "macos", windows))]
     recording_configuration_wait: picoo_recording::configuration_wait::ConfigurationWait,
@@ -181,7 +181,7 @@ impl ReceiverSession {
             current_stream_config: None,
             #[cfg(any(target_os = "macos", windows))]
             recording: None,
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", windows))]
             rendered_recording: None,
             #[cfg(any(target_os = "macos", windows))]
             recording_configuration_wait: Default::default(),

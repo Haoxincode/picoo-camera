@@ -1101,3 +1101,9 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 - REQ-PICOO-MEDIA-084新增WindowsEncoder，只从hardware MFT枚举AVC/HEVC异步编码器，要求D3D11 aware并把已完成NV12目标所属的同一device绑定到DXGI manager；输入直接包装D3D11 surface，不做CPU readback或软件回退。固定八种codec/尺寸/fps的High/Main profile与level、码率、低延迟、GOP及逐帧IDR请求均显式提交；AVC按官方顺序在SetOutputType前设置零B帧，HEVC不要求其未支持的属性。
 - 单在途目标持有到对应输出取得；提前到达的NeedInput作为后续额度有界保存，拒绝声明跨对应ProcessOutput继续持有输入的MFT。NeedInput/HaveOutput和取样共用250ms期限，超期、事件异常、类型变化、PTS/强制IDR不符或原生错误均作废实例。强制IDR按CodecAPI要求使用VT_UI4，调用方输出buffer遵守MFT对齐。输出重新读取Annex B参数集，核对profile、尺寸、BT.709 limited及AU，再有界复制成四字节长度前缀交给WindowsSegment。
 - Windows MSVC目标的录像库及all-targets严格Clippy通过，覆盖八组合profile/level合同；同时修正既有FrameHub命名管道BOOL判断与GPU Windows共享类型生命周期/导入。本机不是Windows，未运行硬件MFT、故障注入或持续吞吐；RenderedRecorder、Receiver和桌面接线仍在后续批次完成，不把跨目标编译声明为原生验收。
+
+### 2026-09-19：Windows处理后录像共享工作者与桌面接入
+
+- REQ-PICOO-MEDIA-085把Windows原生renderer、硬件encoder与WindowsSegment接入既有RenderedRecorder；FrameBus有序订阅、绝对媒体时间采样、gap/代际/十秒分段、bundle及工作者生命周期不复制平台状态机。Windows renderer从首帧源图像取得D3D11设备，encoder延迟到首个已完成NV12目标后用同一设备初始化，全部仍由处理后录像owner线程持有。
+- Receiver在Windows与macOS共用独立原码流/处理后工作者、配置策略、会话重置和结果观察；桌面在两平台显示相同的双入口、格式选择、pending、错误和结果目录。非Apple/Windows平台仍明确不可用，不用原码流能力冒充处理后录像。
+- Windows MSVC目标的`picoo-recording` all-targets严格Clippy通过；Receiver与桌面测试目标完成跨目标编译，覆盖八组合策略及双工作者独立控制的共享测试。当前macOS主机不能执行Windows硬件MFT，真实MP4、双录制交互、故障注入与持续吞吐仍属于Windows平台验收，不以本批接线编译替代。

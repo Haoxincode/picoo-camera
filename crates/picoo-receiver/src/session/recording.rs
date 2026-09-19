@@ -11,7 +11,7 @@ use picoo_recording::{
 #[cfg(test)]
 use std::sync::Arc;
 use std::{path::PathBuf, time::Instant};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 use {
     picoo_bitstream::Codec,
     picoo_protocol::control::{StreamConfig, VideoCodec},
@@ -70,7 +70,7 @@ impl ReceiverSession {
             .is_some_and(RecordingWorker::stalled)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn start_rendered_recording(
         &mut self,
         parent: PathBuf,
@@ -109,42 +109,42 @@ impl ReceiverSession {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn stop_rendered_recording(&self) {
         if let Some(worker) = &self.rendered_recording {
             worker.stop();
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn rendered_recording_state(&self) -> Option<RecordingState> {
         self.rendered_recording
             .as_ref()
             .map(RenderedRecordingWorker::state)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn rendered_recording_stopping(&self) -> bool {
         self.rendered_recording
             .as_ref()
             .is_some_and(|worker| !worker.is_accepting() && worker.result().is_none())
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn rendered_recording_result(&self) -> Option<RecordingResult> {
         self.rendered_recording
             .as_ref()
             .and_then(RenderedRecordingWorker::result)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn rendered_recording_stalled(&self) -> bool {
         self.rendered_recording
             .as_ref()
             .is_some_and(RenderedRecordingWorker::stalled)
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     pub fn rendered_recording_source_supported(&self) -> bool {
         self.video_allowed()
             && self
@@ -238,7 +238,7 @@ impl ReceiverSession {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 fn rendered_config(
     source: &StreamConfig,
     codec: VideoCodec,
@@ -298,7 +298,7 @@ mod tests {
 
     static RECORDING_WORKER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn rendered_profiles_cover_the_complete_codec_size_and_rate_matrix() {
         for (wire_codec, codec, width, height, fps, bitrate) in [
@@ -342,7 +342,7 @@ mod tests {
         }
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", windows))]
     #[test]
     fn encoded_and_rendered_workers_have_independent_control_and_results() {
         let _worker_lock = RECORDING_WORKER_TEST_LOCK
