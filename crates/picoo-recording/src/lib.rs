@@ -11,6 +11,7 @@ pub mod configuration_wait;
 #[cfg(any(target_os = "macos", windows))]
 pub mod encoded;
 pub mod ingress;
+pub mod rendered_timeline;
 pub mod reorder;
 #[cfg(all(test, any(target_os = "macos", windows)))]
 mod test_fixtures;

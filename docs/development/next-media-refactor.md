@@ -1076,3 +1076,9 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 - 用户要求本次收尾后暂停。Windows11/iPhone真机后置；下次优先取得本批Windows生产路径CI证据，再继续RenderedRecorder和VCam双后端，不将旧容器探针成功算作新接线验收。
 
 本次完整cargo xtask test macos通过：身份1、FrameHub54（另2项原有忽略）及跨进程1、Decoder25、GPU10、Receiver117（另2项原有忽略）、录像35、GPUI Apple4、桌面73。共享fixture入口生成Apple/小米各八组bundle，独立Python/ffprobe检查16组全部通过（Complete、摘要/大小、解码帧数、PTS、色彩）。fmt、diff及文档检查通过。暂停时上一轮CI34176063406的Android/iOS/Rust成功，Windows/macOS仍在构建打包；本批保留本地提交，未push，避免取消在途CI。以上本机结果不代表新增Windows生产接线已原生验证。
+
+### 2026-09-19：处理后录像媒体时间采样
+
+- REQ-PICOO-MEDIA-081新增RenderedTimeline纯状态边界，按源媒体时间的绝对有理数槽选择30/60fps输出；槽边界使用与`floor(slot × 1_000_000 / fps)`精确互逆的判定，不累加截断帧周期。未到槽明确跳过，跨槽报告缺失数量并从零PTS、强制IDR的新段恢复。
+- 连接与stream身份只允许向前；同一源stream内Decoder或配置变化仍先要求frame ID和源PTS严格递增，且各自代际不得倒退。所有可失败的代际与时间计算先完成再提交状态，失败输入可安全重试。
+- 30/60槽边界、常见60fps向下取整PTS的60→30采样、gap切段、代际/配置切段、旧源回流、身份/PTS倒退及算术/代际耗尽测试已通过编译检查，subagent复审无P1/P2。本机`cargo check -p picoo-recording --tests`通过；测试二进制与Clippy build-script链接被尚未接受的Xcode许可（exit 69）阻断，未宣称执行通过。本批尚未接入FrameBus工作者、GPU处理、编码/mux owner或UI。

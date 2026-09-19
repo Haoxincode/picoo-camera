@@ -174,3 +174,4 @@
 | REQ-PICOO-MEDIA-079 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-019、020、024 | macOS处理后录像的硬件编码适配只接收已完成GPU目标，要求并核实VideoToolbox硬件AVC/HEVC、零重排和明确色彩；输入图像持有到编码回调结束，输出有界，错误/超期终止适配器，不读取CPU像素 | 合成GPU目标的硬件事实、AU配置/PTS/独立解码、输入规格拒绝及回调寿命；Recorder订阅/采样/UI另验 |
 
 | REQ-PICOO-MEDIA-080 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、020、022、024 | Windows原码流段使用MF原生压缩直通，AVC fragmented/HEVC普通MP4，系统维护description；每个样本以marker确认处理，最终化以回调确认，资源只在所属录制线程释放 | 已接入共享Recorder、Receiver与桌面入口；Mac共享合同回归通过，Windows八组合生产适配、回调与完整bundle仍待新CI及原生故障验收 |
+| REQ-PICOO-MEDIA-081 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-019、020、022 | 处理后录像按源媒体时间的30/60fps绝对槽采样，不累加截断周期；未到槽跳过，跨槽明确报告gap并从零开始强制IDR新段；连接、stream、Decoder或配置代际变化同样切段 | 60→30固定采样、跨槽gap/分段、代际/配置分段、身份与PTS倒退拒绝；FrameBus worker、GPU/Encoder/Mux和UI另验 |

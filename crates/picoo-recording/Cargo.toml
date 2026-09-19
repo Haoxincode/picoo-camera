@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 picoo-bitstream.workspace = true
+picoo-frame-hub.workspace = true
 picoo-packet.workspace = true
 picoo-protocol.workspace = true
 thiserror.workspace = true
