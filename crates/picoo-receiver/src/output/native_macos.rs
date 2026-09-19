@@ -210,7 +210,14 @@ fn run_worker(
             && pending.request.kind() == ContentKind::Placeholder
             && privacy_reset_revision != Some(revision)
         {
-            sink = None;
+            if !shutdown_sink(&mut sink) {
+                publish_failure(
+                    &events,
+                    revision,
+                    "CMIO sink teardown failed; output quarantined".into(),
+                );
+                return;
+            }
             resources = None;
             prepared_cache = None;
             privacy_reset_revision = Some(revision);
@@ -232,7 +239,14 @@ fn run_worker(
             Ok(layout) => layout,
             Err(error) => {
                 publish_failure(&events, revision, error.to_string());
-                sink = None;
+                if !shutdown_sink(&mut sink) {
+                    publish_failure(
+                        &events,
+                        revision,
+                        "CMIO sink teardown failed; output quarantined".into(),
+                    );
+                    return;
+                }
                 resources = None;
                 prepared_cache = None;
                 wait_for_change(&shared, revision, Duration::from_millis(250));
@@ -300,13 +314,24 @@ fn run_worker(
             Err(error) => {
                 drop(state);
                 publish_failure(&events, revision, error.to_string());
-                sink = None;
+                if !shutdown_sink(&mut sink) {
+                    publish_failure(
+                        &events,
+                        revision,
+                        "CMIO sink teardown failed; output quarantined".into(),
+                    );
+                    return;
+                }
                 resources = None;
                 prepared_cache = None;
                 wait_for_change(&shared, revision, Duration::from_millis(250));
             }
         }
     }
+}
+
+fn shutdown_sink(sink: &mut Option<MacCmioSink>) -> bool {
+    sink.take().is_none_or(MacCmioSink::shutdown)
 }
 
 fn publish_failure(events: &Mutex<Option<(u64, OutputEvent)>>, revision: u64, error: String) {

@@ -386,9 +386,9 @@ impl MacCmioSink {
         capacity == QUEUE_CAPACITY as i32 && (0..capacity).contains(&count) && count < capacity
     }
 
-    fn stop(&mut self) {
+    fn stop(&mut self) -> bool {
         if self.stopped {
-            return;
+            return true;
         }
         self.stopped = true;
         let stopped = unsafe { CMIODeviceStopStream(self.device, self.stream) } == 0;
@@ -403,6 +403,7 @@ impl MacCmioSink {
                 state.inflight.clear();
                 state.owner = None;
             }
+            true
         } else {
             // A failed stop/unregister/reset cannot prove that DAL no longer
             // reads queue tokens. Retain both queue and samples and fail
@@ -414,7 +415,12 @@ impl MacCmioSink {
                 "CMIO sink teardown could not isolate the output queue; retaining it"
             );
             std::mem::forget(self.queue.clone());
+            false
         }
+    }
+
+    pub(super) fn shutdown(mut self) -> bool {
+        self.stop()
     }
 }
 
@@ -434,7 +440,7 @@ fn unregister_queue_callback(stream: u32) -> Result<(), i32> {
 
 impl Drop for MacCmioSink {
     fn drop(&mut self) {
-        self.stop();
+        let _ = self.stop();
     }
 }
 
