@@ -1,5 +1,4 @@
 use gpui_kit::component::button::*;
-use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::notification::NotificationType;
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::switch::*;
@@ -95,7 +94,6 @@ impl PicooDesktopApp {
                     })
                     .children(snapshot.trusted_devices.iter().map(|device| {
                         let device_id = device.device_id.clone();
-                        let device_name = device.device_name.clone();
                         let identity_prefix = device.identity_prefix.clone();
                         let identity_label =
                             format!("删除 {}（身份 {}）", device.device_name, identity_prefix);
@@ -197,19 +195,16 @@ impl PicooDesktopApp {
                                     .child(
                                         Button::new(format!("remove-trusted-{}", device.device_id))
                                             .ghost()
+                                            .disabled(self.receiver_command_pending)
                                             .tooltip(identity_label.clone())
                                             .accessibility_label(identity_label)
                                             .child(
                                                 reicon_named("xmark", cx.theme().danger)
                                                     .size(rems(0.875)),
                                             )
-                                            .on_click(cx.listener(move |_, _, window, cx| {
-                                                PicooDesktopApp::open_remove_trusted_dialog(
-                                                    cx.entity().downgrade(),
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.remove_trusted_device_request(
                                                     device_id.clone(),
-                                                    device_name.clone(),
-                                                    identity_prefix.clone(),
-                                                    window,
                                                     cx,
                                                 );
                                             })),
@@ -248,14 +243,13 @@ impl PicooDesktopApp {
                                 Button::new("reset-all-pairings")
                                     .small()
                                     .danger()
-                                    .label("重置全部配对…")
-                                    .disabled(snapshot.trusted_device_count == 0)
-                                    .on_click(cx.listener(|_, _, window, cx| {
-                                        PicooDesktopApp::open_reset_trusted_dialog(
-                                            cx.entity().downgrade(),
-                                            window,
-                                            cx,
-                                        );
+                                    .label("重置全部配对")
+                                    .disabled(
+                                        snapshot.trusted_device_count == 0
+                                            || self.receiver_command_pending,
+                                    )
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.clear_trusted_devices_request(cx);
                                     })),
                             )
                             .child(
@@ -331,11 +325,14 @@ impl PicooDesktopApp {
                 cx.notify();
             });
             let _ = window_handle.update(cx, |_, window, cx| {
-                if succeeded && window.has_active_dialog(cx) {
-                    window.close_dialog(cx);
-                } else if let Some(message) = message {
-                    window.push_notification((NotificationType::Error, message), cx);
-                }
+                let notification = match message {
+                    Some(message) => (NotificationType::Error, message),
+                    None => (
+                        NotificationType::Success,
+                        format!("已删除配对：{device_id}"),
+                    ),
+                };
+                window.push_notification(notification, cx);
             });
         })
         .detach();
@@ -351,7 +348,6 @@ impl PicooDesktopApp {
         let window_handle = self.window_handle;
         cx.spawn(async move |this, cx| {
             let result = await_receiver_reply(reply).await;
-            let succeeded = result.is_ok();
             let notification = match &result {
                 Ok(removed) => (
                     NotificationType::Success,
@@ -374,71 +370,11 @@ impl PicooDesktopApp {
                 cx.notify();
             });
             let _ = window_handle.update(cx, |_, window, cx| {
-                if succeeded && window.has_active_dialog(cx) {
-                    window.close_dialog(cx);
-                }
                 window.push_notification(notification, cx);
             });
         })
         .detach();
         cx.notify();
-    }
-
-    pub(super) fn open_remove_trusted_dialog(
-        app: WeakEntity<Self>,
-        device_id: String,
-        device_name: String,
-        identity_prefix: String,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let app = app.clone();
-            let device_id = device_id.clone();
-            alert
-                .title(format!("删除“{device_name}”（身份 {identity_prefix}）？"))
-                .description("此设备下次连接时必须重新核对配对短码。")
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("删除")
-                        .ok_variant(ButtonVariant::Danger)
-                        .cancel_text("取消")
-                        .show_cancel(true),
-                )
-                .on_ok(move |_, _window, cx| {
-                    let device_id = device_id.clone();
-                    let _ = app.update(cx, |this, cx| {
-                        this.remove_trusted_device_request(device_id, cx)
-                    });
-                    false
-                })
-        });
-    }
-
-    pub(super) fn open_reset_trusted_dialog(
-        app: WeakEntity<Self>,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let app = app.clone();
-            alert
-                .title("重置全部配对？")
-                .description(
-                    "所有手机都会失去信任，当前连接会断开。再次连接时，必须在两端重新核对配对短码。",
-                )
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("重置配对")
-                        .ok_variant(ButtonVariant::Danger)
-                        .cancel_text("取消")
-                        .show_cancel(true),
-                )
-                .on_ok(move |_, _window, cx| {
-                    let _ = app.update(cx, |this, cx| this.clear_trusted_devices_request(cx));
-                    false
-                })
-        });
     }
 }
 

@@ -7,6 +7,8 @@ mod connect;
 #[cfg(test)]
 mod connect_tests;
 mod device;
+#[cfg(test)]
+mod device_tests;
 mod diagnostics;
 mod icons;
 mod identity_recovery;
