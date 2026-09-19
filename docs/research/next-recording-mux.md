@@ -44,7 +44,7 @@ REQ-PICOO-MEDIA-067复用仓库已有serde/serde_json、sha2 0.10及tempfile 3�
 
 ## 完整AU入口队列
 
-REQ-PICOO-MEDIA-068复用std::sync::mpsc::sync_channel及try_send，沿用FrameBus已有标准库通道实践；不新增crossbeam或自研无锁队列。单生产者Receiver、单消费者录制工作者没有多消费者需求。通道固定16项、每AU最大2MiB、配置最大64KiB，最坏待处理载荷约33MiB；250ms入口年龄上限由工作者检查。年龄超限和容量耗尽显式终止本次录像，正常关闭排空已接纳输入。排序/依赖链由录制工作者另外负责，通道只保留抵达次序。
+REQ-PICOO-MEDIA-068复用std::sync::mpsc::sync_channel及try_send，沿用FrameBus已有标准库通道实践；不新增crossbeam或自研无锁队列。单生产者Receiver、单消费者录制工作者没有多消费者需求。通道固定16项、每AU最大2MiB、配置最大64KiB，最坏待处理载荷约33MiB；入口年龄与每个AU携带的2秒绝对提交期限一致，由工作者检查。年龄超限和容量耗尽显式终止本次录像，正常关闭排空已接纳输入。排序/依赖链由录制工作者另外负责，通道只保留抵达次序。
 
 ## 原生取消的故障发现
 

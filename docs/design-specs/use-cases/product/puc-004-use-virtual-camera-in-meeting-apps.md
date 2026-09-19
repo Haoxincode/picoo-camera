@@ -8,7 +8,7 @@
 
 ## 场景
 
-Sender 与 Receiver 建立传输后，Receiver 将解码帧发布到 LatestFrameStore，并同步更新 Shared Frame Ring。虚拟摄像头组件从 Shared Frame Ring 读取最新 NV12 帧，向操作系统注册的标准摄像头设备输出画面。
+Sender 与 Receiver 建立传输后，Receiver 将解码帧发布到 LatestFrameStore，并按平台输出边界交付最新 NV12 帧：Windows 写入 Shared Frame Ring，由 Media Source 读取；macOS 通过 Host 的 CMIO Hardware output queue 交给 Camera Extension sink/source。虚拟摄像头组件再向操作系统注册的标准摄像头设备输出画面。
 
 用户在腾讯会议、Zoom、Microsoft Teams、OBS 或 Chrome/Edge/Safari 浏览器会议的视频设置中选择 `Picoo Camera`。会议软件看到的是来自手机摄像头的实时画面，音频仍使用电脑本地麦克风。
 
@@ -20,7 +20,7 @@ Sender 与 Receiver 建立传输后，Receiver 将解码帧发布到 LatestFrame
 - 目标会议软件能选择并使用 `Picoo Camera`；画面方向与比例由 Receiver 处理，不依赖会议软件自行旋转。
 - 无连接时显示定义的占位画面；不是黑屏死机或不可枚举设备。
 - 会议软件关闭并重新打开后，仍可选择 `Picoo Camera`。
-- 虚拟摄像头扩展/组件进程不直接持有 QUIC 连接、解码器或网络会话；只消费 Shared Frame Ring。
+- 虚拟摄像头扩展/组件进程不直接持有 QUIC 连接、解码器或网络会话；Windows 只消费 Shared Frame Ring，macOS 只消费授权 Host 提交的 CMIO sink sample。
 
 ## 边界
 

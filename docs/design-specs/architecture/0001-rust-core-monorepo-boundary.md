@@ -102,7 +102,8 @@ FFI 边界只允许：
 
 ### 在虚拟摄像头进程内持有网络会话
 
-不采用。Windows Media Source 与 macOS Camera Extension 只消费 Shared Frame Ring，不运行 QUIC、解码器或配对逻辑。
+不采用。Windows Media Source 只消费 Shared Frame Ring；macOS Camera Extension 通过公开
+`.source` / 授权 `.sink` 接收 Host 的 CMIO Hardware output queue。两者都不运行 QUIC、解码器或配对逻辑。
 
 ## 约束
 

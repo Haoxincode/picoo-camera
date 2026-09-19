@@ -155,7 +155,7 @@ CPU-only COM wrapper 遮蔽，tracked `IMFSample` 已接入 native worker 与 Qu
 | 架构、无版本协议、旧路径删除 | 主要边界已调整 | 各功能替换时继续删除剩余旧实现 |
 | Windows/macOS 原生帧、GPU 预览、按需 CPU 输出 | 已接线，相关原生 CI 成功 | 真实显卡画质、全局预算、完整多 sink 验收 |
 | AVC/HEVC 与四种正式配置 | 双移动端已接线完整格式与事务；小米八组合原生合同及Android→Mac正式1080p60链路已验证 | iPhone真机、Windows HEVC实际设备、跨端画质与持续性能 |
-| 两平台 VCam 双后端 | Windows GpuNative/CpuBridge 与 SampleClock 已接线；macOS CpuBridge 已有 | macOS GpuNative、两平台切换与真实系统 sample 验收 |
+| 两平台 VCam 双后端 | Windows GpuNative/CpuBridge 与 SampleClock 已接线；macOS GpuNative/CpuBridge 共用 CMIO sink/source 已接线 | 两平台真实系统 sample、切换、隐私与持续吞吐验收 |
 | 原码流录像 | Mac生产状态机与样本矩阵已验证；Windows原生适配及共享Receiver/UI接线已实现，待新CI | Windows生产回调/bundle验证、真实磁盘故障与完整UI验收 |
 | 处理后录像 | macOS/Windows 的 RenderedRecorder、平台硬编/mux、Receiver 与双模式桌面入口已接线 | Windows 原生 CI/文件探针、两平台真实磁盘故障与完整 UI 验收 |
 | 四组合发布验收 | 尚未完成 | 真机矩阵、画质、延迟、热稳态、设备丢失及隐私期限 |
@@ -1010,7 +1010,7 @@ d36e023 的 CI 34081393601 全平台成功。后续继续处理已提交源格�
 
 ### 2026-09-07：独立压缩AU通道
 
-- REQ-PICOO-MEDIA-068提供16项标准库有界通道，try_send不等待磁盘或消费者；每项绑定连接、StreamConfig、原始AssembledAccessUnit，共享Bytes；限制AU/配置尺寸及250ms队列年龄。正常停止排空，容量/年龄/输入身份错误进入粘性失败。
+- REQ-PICOO-MEDIA-068提供16项标准库有界通道，try_send不等待磁盘或消费者；每项绑定连接、StreamConfig、原始AssembledAccessUnit，共享Bytes；限制AU/配置尺寸及与 REQ-PICOO-MEDIA-078 相同的2秒绝对队列年龄。正常停止排空，容量/年龄/输入身份错误进入粘性失败。
 - 13项macOS隔离测试与Clippy通过，新增正常排空、抵达次序、共享载荷、满队列、超龄与消费者退出回归。通道不负责重排，也尚未接入Receiver，不能据此宣布产品录像可用。
 
 ### 2026-09-07：有序原码流分段状态机
@@ -1151,3 +1151,10 @@ Apple硬编新增错误目标拒绝且不消费首个PTS的测试；八组真实
 - REQ-PICOO-MEDIA-085把Windows原生renderer、硬件encoder与WindowsSegment接入既有RenderedRecorder；FrameBus有序订阅、绝对媒体时间采样、gap/代际/十秒分段、bundle及工作者生命周期不复制平台状态机。Windows renderer从首帧源图像取得D3D11设备，encoder延迟到首个已完成NV12目标后用同一设备初始化，全部仍由处理后录像owner线程持有。
 - Receiver在Windows与macOS共用独立原码流/处理后工作者、配置策略、会话重置和结果观察；桌面在两平台显示相同的双入口、格式选择、pending、错误和结果目录。非Apple/Windows平台仍明确不可用，不用原码流能力冒充处理后录像。
 - Windows MSVC目标的`picoo-recording` all-targets严格Clippy通过；Receiver与桌面测试目标完成跨目标编译，覆盖八组合策略及双工作者独立控制的共享测试。当前macOS主机不能执行Windows硬件MFT，真实MP4、双录制交互、故障注入与持续吞吐仍属于Windows平台验收，不以本批接线编译替代。
+
+### 2026-09-20：macOS VCam CMIO sink/source 与双后端接线
+
+- REQ-PICOO-VCAM-017 用同一 Camera Extension 设备的一对 `.source`/`.sink` 取代 App Group mmap 像素环。sink 只授权 Picoo Host signing ID；Host 通过官方 CMIO Hardware output queue 向精确 legacy UID 提交固定 720p/1080p × 30/60 NV12 sample。扩展只在 source 客户端取流时消费，缓存兼容图像并用独立 SampleClock 重复内容；无图像输出黑帧，格式事务同步两个流。
+- Mac VCam latest-only 工作者默认 GpuNative，直接提交统一 Apple renderer 的已完成 IOSurface-backed 目标；显式诊断环境变量才选择 CpuBridge，后者从同一目标逐行复制到独立三槽 IOSurface pool。prepared 结果在入队前与当前 revision 同锁复核，waiting/reconnecting 占位可淘汰尚未入队的 live；CMIO 队列满只重试最新结果，不建立历史队列。
+- CMIO sample 使用 host clock，队列 token 保留完整 sample 到系统移除；callback 核对 owner generation，避免旧连接迟到 callback 命中地址复用。stop 依次停流、注销 callback、确认 reset queue 成功后才清理 owner；任一步失败则保留 owner/in-flight 引用并停止重连。旧 Rust macOS App Group ring、Swift SharedRingReader、C17 原子桥与跨进程 harness 已删除；App Group 只保留为发布签名/System Extension capability。
+- Swift 6 strict-concurrency/warnings-as-errors 合成 harness 已通过：三槽 pool、30/60 有理数时钟、source/sink 双流、共享四格式选择和不匹配图像拒绝；生产 Extension 全部 Swift 源也用 Command Line Tools SDK 独立编译通过。Rust `picoo-gpu` 11 项与 FrameHub 56 项测试通过；Receiver 默认并行完整复跑 130 项通过、2 项原有忽略，包含 CMIO/native-macos 与连接回归。FrameHub/GPU/Receiver/recording/xtask all-targets 严格 Clippy、格式及 diff 检查通过；桌面 GPUI all-targets Clippy 与 release 构建通过，Clippy 仅以 `-A dead-code` 容纳既有未启用图标变体，测试目标构建后因本机重复加载 `libobjc` 中止、未宣称执行成功。本机 Xcode 许可尚未接受，因此未完成 Xcode bundle/package；已签名扩展真实 sink 消费、会议软件、双后端画质、设备丢失与持续吞吐仍属于共同平台验收，不被上述证据替代。
