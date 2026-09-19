@@ -364,3 +364,22 @@ fn run_connected(
         drop(transfer.commit());
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::next_generation;
+
+    #[test]
+    fn native_generations_are_monotonic_and_checked() {
+        let mut generation = 0;
+        assert_eq!(next_generation(&mut generation), Ok(1));
+        assert_eq!(next_generation(&mut generation), Ok(2));
+
+        let mut exhausted = u64::MAX;
+        assert_eq!(
+            next_generation(&mut exhausted),
+            Err("native output generation exhausted".to_string())
+        );
+        assert_eq!(exhausted, u64::MAX);
+    }
+}
