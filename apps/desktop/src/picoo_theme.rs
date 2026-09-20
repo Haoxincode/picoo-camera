@@ -1,7 +1,7 @@
 //! Picoo desktop semantic theme.
 //!
-//! The sRGB values below are the gamut-clamped equivalents of the OKLCH
-//! tokens in `picoo-camera-receiver.html`. Product UI consumes the resolved
+//! The sRGB values below are the gamut-clamped equivalents of Picoo
+//! semantic theme tokens. Product UI consumes the resolved
 //! semantic roles through `cx.theme()`; raw palette values stay in this file.
 
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};

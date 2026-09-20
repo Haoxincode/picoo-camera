@@ -4,7 +4,7 @@ import androidx.compose.ui.graphics.Color
 
 /**
  * 取景器曝光补偿的画面反馈（AC-M-LIVE-04）。
- * 不改 ISP，只叠一层明暗滤镜，档位与原型 `☀️ 自动 / 提亮 / 压暗` 对齐。
+ * 不改 ISP，只叠一层明暗滤镜，档位与产品语义「自动 / 提亮 / 压暗」对齐。
  */
 object ExposurePreview {
     fun overlayColor(ev: Int): Color = when {

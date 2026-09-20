@@ -1,42 +1,30 @@
-# picoo-camera
+# Picoo Camera
 
 仓库：`picoo-camera` · 产品名：**Picoo Camera**
 
 Picoo Camera 是一套局域网无线摄像头系统。用户在 Android 或 iPhone 上运行 Sender 应用，通过同一 Wi-Fi 将实时画面传输到 Windows 或 macOS 电脑，并注册为系统虚拟摄像头，供腾讯会议、Zoom、Microsoft Teams、OBS 等软件使用。
 
+产品行为、架构边界与验收以 [Design Specs](docs/design-specs/context.md) 为准。
+
 ## 文档
-
-### 产品基线文档
-
-- [无线手机摄像头系统：产品需求与技术设计文档 V1.0（2026-08-27）](docs/product/picoo-camera-prd-v1.0-2026-08-27.md) — 随已确认产品决策持续更新
-
-### Design Specs
-
-由产品基线拆分整理的产品设计与架构契约位于 [docs/design-specs/](docs/design-specs/)。
 
 - [Context 与追溯规则](docs/design-specs/context.md)
 - [Use Cases](docs/design-specs/use-cases/)
 - [Architecture](docs/design-specs/architecture/)
 - [Requirements](docs/design-specs/requirements/)
-
-### 开发与构建
-
-- [CI 与跨平台构建](docs/development/ci-and-build.md) — Cloud Agent 与 GitHub Actions 分工、各平台 runner 矩阵
+- [产品基线](docs/product/README.md)
+- [CI 与跨平台构建](docs/development/ci-and-build.md)
 
 ## 开发
 
 ```bash
-cargo test --workspace          # Rust Core 测试
-cargo xtask test protocol       # 协议测试套件
-cargo xtask build android       # Android（Gradle 就绪后）
-cargo xtask build windows       # Windows 桌面（windows-latest）
-cargo xtask build macos         # macOS GPUI Receiver（macOS host）
-cargo xtask build ios           # iOS device/simulator XCFramework（macOS + Xcode）
+cargo test --workspace
+cargo xtask test protocol
+cargo xtask build android
+cargo xtask build windows
+cargo xtask build macos
+cargo xtask build ios
 ```
-
-### 前端 UI 交互原型
-
-- [Picoo Camera Receiver 桌面端 UI 交互原型](picoo-camera-receiver.html) — 当前桌面端 Receiver（GPUI）的连接、预览、虚拟摄像头与设置设计基线。
 
 ## 平台支持
 

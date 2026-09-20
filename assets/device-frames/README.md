@@ -1,12 +1,11 @@
 # 设备外框 SVG
 
-这里保存桌面 Receiver「开始使用」硬件拓扑使用的真机外框，直接从
-[`picoo-camera-receiver.html`](../../picoo-camera-receiver.html) 中抽取，确保 GPUI 原生实现与 HTML 原型使用同一份几何结构。
+这里保存桌面 Receiver「开始使用」硬件拓扑使用的真机外框。GPUI 与 Android 派生资源都消费这些文件，SVG 是几何事实源。
 
-- `iphone-16-max.svg`：原型中的深色模式 iPhone 16 Max 外框，源自
+- `iphone-16-max.svg`：深色模式 iPhone 16 Max 外框，源自
   [`sneas/telephone`](https://github.com/sneas/telephone)，固定上游 commit
   `c1644a3d49dcd50ebf8c76306409c4b1d9b7a2b4`，MIT 许可证见同目录 `LICENSE`。
-- `macbook-pro-light.svg` / `macbook-pro-dark.svg`：Picoo HTML 原型自行定义的
+- `macbook-pro-light.svg` / `macbook-pro-dark.svg`：Picoo 自行定义的
   MacBook Pro 外框，不属于 `sneas/telephone`。
 - `generic-phone.svg`：Picoo 自行绘制的中性手机缩略机框，用于可信设备列表；保留
   屏幕、金属边框、听筒与镜头层次，但不冒充具体手机品牌或操作系统。

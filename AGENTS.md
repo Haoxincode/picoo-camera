@@ -30,7 +30,7 @@
 
 ## 外部 UI Skills（只 vendor，不改内容）
 
-框架怎么写，用 `.agents/skills/` 里从上游拷来的 Skill。Picoo 长什么样，仍以 Design Specs 和 HTML 原型为准。不要装 `frontend-design` 或 Material Design 3 Skill。
+框架怎么写，用 `.agents/skills/` 里从上游拷来的 Skill。Picoo 长什么样，仍以 Design Specs 为准。不要装 `frontend-design` 或 Material Design 3 Skill。
 
 | 场景 | Skill | 来源 |
 | --- | --- | --- |

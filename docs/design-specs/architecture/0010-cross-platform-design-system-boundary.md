@@ -31,9 +31,8 @@ Picoo Camera 的 Sender 与 Receiver 承担不同任务，也使用不同原生 
 | Android | Compose `MaterialTheme` + Picoo `CompositionLocal` | Compose 导航、Sheet、焦点、手势、语义树与 48dp 触控目标 |
 | iOS | Asset Catalog Any/Dark + `Color`/`Font`/Environment 扩展 | SwiftUI Navigation、Sheet、Dynamic Type、VoiceOver 与 44pt 触控目标 |
 | Windows / macOS | `gpui_kit::component::Theme` + Picoo 语义扩展 | GPUI Kit 中 GPUI Component 层的窗口、键盘、焦点、Overlay、Tooltip 与组件尺寸 |
-| HTML 原型 | CSS custom properties / Tailwind 语义映射 | 只作为经 Design Spec 对齐后的可视化验收入口，不是运行时依赖 |
 
-Tailwind 类名可以表达比例和语义，但不得进入原生运行时。Compose Styles 仍是实验性能力，不作为
+比例和语义通过共享 token 表达，不得作为 CSS/Tailwind 类名进入原生运行时。Compose Styles 仍是实验性能力，不作为
 Picoo 设计系统成立的前提；若未来引入，必须只适配本契约，不得产生第二套 token 或组件语义。
 
 ### 控制界面与相机界面
@@ -75,8 +74,7 @@ Picoo 使用两种有明确职责的视觉上下文：
 
 - Android：本地 Vector Drawable + 类型安全的语义枚举；
 - iOS：SVG Image Set + 类型安全的语义封装，不允许业务页面拼接 Asset 字符串；
-- GPUI：编译期嵌入的共享 SVG + 穷尽语义映射，未知名称不得静默替换为其他图标；
-- HTML：引用同一 SVG 子集或等价的内联源，不复制另一套路径数据。
+- GPUI：编译期嵌入的共享 SVG + 穷尽语义映射，未知名称不得静默替换为其他图标。
 
 Icon 契约分为三层：
 
@@ -152,7 +150,7 @@ Feature screen 不得反向定义全局 token，不得直接从另一平台复�
 
 ### 运行时共享 Tailwind、WebView 或跨端 UI Framework
 
-不采用。Tailwind 只用于原型和 token 表达；运行时继续使用 Compose、SwiftUI 与 GPUI。
+不采用。运行时继续使用 Compose、SwiftUI 与 GPUI。
 
 ### 平台各自挑选“相似”系统 Icon
 
@@ -160,7 +158,7 @@ Feature screen 不得反向定义全局 token，不得直接从另一平台复�
 
 ## 约束
 
-- Design Spec 是设计语义的第一事实源；HTML 原型更新到本架构后才可作为新移动端视觉验收证据。
+- Design Spec 是设计语义的第一事实源。
 - 颜色、字体、间距、圆角、Icon、状态和动效必须可追溯到共享或组件 token。
 - 任何新增功能 Icon 都必须先确定语义、上游名称和适用状态，再进入平台代码。
 - 共享设计契约不得侵入 Rust Core、媒体、协议或会话状态机。

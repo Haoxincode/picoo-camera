@@ -3,9 +3,6 @@
 - **Requirement ID**: `REQ-PICOO-UI-0001`
 - **Area**: `PICOO-UI`
 - **Status**: `planned`
-- **Design Visualizations**:
-  - Desktop Receiver: [`picoo-camera-receiver.html`](../../../picoo-camera-receiver.html)
-  - Mobile Sender: [`picoo-camera-sender.html`](../../../picoo-camera-sender.html)（旧版深色视觉；按本规范刷新前不得作为新移动端实现依据）
 - **Supported Use Cases**:
   - [BUC-001](../use-cases/business/buc-001-phone-as-wireless-meeting-camera.md)
   - [PUC-001](../use-cases/product/puc-001-first-install-and-pairing.md)
@@ -77,7 +74,7 @@ context 的普通 Card 颜色模拟取景 HUD。
 
 ### 2.4 Reicon 功能 Icon 契约
 
-- [ ] **AC-DSYS-06（单一 Icon 事实源）**：功能 Icon 统一使用固定 commit 的 Reicon 24×24 子集，`assets/icons/reicon/*.svg` 是唯一矢量事实源。Android Vector Drawable、iOS SVG Image Set、GPUI 编译期 SVG 与 HTML 可视化必须可追溯到该目录；不得使用 Emoji、Material Icons、SF Symbols、Lucide 或临时手绘图标替代产品功能 Icon。
+- [ ] **AC-DSYS-06（单一 Icon 事实源）**：功能 Icon 统一使用固定 commit 的 Reicon 24×24 子集，`assets/icons/reicon/*.svg` 是唯一矢量事实源。Android Vector Drawable、iOS SVG Image Set 与 GPUI 编译期 SVG 必须可追溯到该目录；不得使用 Emoji、Material Icons、SF Symbols、Lucide 或临时手绘图标替代产品功能 Icon。
 - [ ] **AC-DSYS-07（语义映射）**：业务代码依赖语义 Icon，而不是任意文件名或字符串。相同意图在全端使用相同 Source glyph；未知、缺失或拼错名称必须在构建或测试中失败，禁止静默替换成 `info` 等其他图标。
 
 | Semantic icon | Reicon Source glyph | 主要用途 |
@@ -182,12 +179,12 @@ context 的普通 Card 颜色模拟取景 HUD。
 ### 4.1 技术选型与组件基线
 - [ ] **AC-D-TECH-01**：Windows 与 macOS 共用同一套 Rust GPUI 代码，**严禁引入 Electron、Tauri、WebView 或内嵌浏览器运行环境**。
 - [ ] **AC-D-TECH-02**：视频监视器核心自定义组件必须封装为 **`VideoSurface`**，绑定 LatestFrameStore 解码帧，保持 16:9 画幅与断流占位画面平滑切换。
-- [ ] **AC-D-TECH-03（GPUI Kit / gpui-component 与 Tailwind CSS 4.0 对齐）**：
+- [ ] **AC-D-TECH-03（GPUI Kit / gpui-component 与语义 token）**：
   - 桌面应用必须只声明 `gpui-kit` facade，并使用其中的 `gpui_kit::component` 完整样式组件体系；不得在应用 crate 重复声明独立的 GPUI、platform、base 或 component 依赖；
-  - `ARCH-PICOO-UI-002` 与本规范中的共享 token 是视觉比例和语义角色的事实源；HTML 原型中的 Tailwind CSS 4.0 类名与 `@theme` 变量是该契约的可视化映射，不是在 Rust 中保留 CSS/Web 运行时的要求；
+  - `ARCH-PICOO-UI-002` 与本规范中的共享 token 是视觉比例和语义角色的事实源；不得在 Rust 中保留 CSS/Web 运行时；
   - 间距、字号、图标和普通布局尺寸必须映射为 GPUI 的 `rem` scale helper 或 `gpui_kit::component` 语义尺寸，产品颜色、圆角与阴影必须集中映射到 Picoo 语义主题，禁止在页面调用点散落原始色值和普通布局 `px(...)`；
-  - Button、Switch、AlertDialog、滚动条等交互必须保留 GPUI Kit 中 GPUI Component 层的跨平台键盘、焦点、禁用态和 dismissal 契约；HTML 仅负责外观与信息架构，不能以像素复刻为由降级这些行为；
-  - 允许且必须保留经产品确认的原型覆盖项：默认窗口与最小窗口均为 1440×900、不记忆上次窗口尺寸、连接页使用可用宽度而不保留 HTML 的 1160px 上限、实时预览严格保持 16:9；窗口边界属于平台物理尺寸，可使用 `px(...)`。
+  - Button、Switch、AlertDialog、滚动条等交互必须保留 GPUI Kit 中 GPUI Component 层的跨平台键盘、焦点、禁用态和 dismissal 契约；不得以像素复刻为由降级这些行为；
+  - 允许且必须保留经产品确认的覆盖项：默认窗口与最小窗口均为 1440×900、不记忆上次窗口尺寸、连接页使用可用宽度、实时预览严格保持 16:9；窗口边界属于平台物理尺寸，可使用 `px(...)`。
 - [ ] **AC-D-TECH-04（Windows 产品进程）**：从资源管理器或开机启动打开桌面端时不得附带命令行窗口，状态检测也不得启动 `reg.exe` 等控制台子进程；普通权限启动只通过无注册表写入能力的 API 检测并启动已安装的虚拟摄像头，不得自动尝试写系统级 COM 注册表。修复注册只由 MSI 或用户明确触发的修复动作承担；显式修复必须触发 Windows UAC、避免阻塞 GPUI 线程和重复提交，并在当前虚拟摄像头界面内显示等待、成功或失败结果。
 - [ ] **AC-D-TECH-05（macOS 图标启动）**：从 Finder、Dock 或 `open` 启动打包后的 `Picoo Camera.app` 必须及时显示主窗口；CMIO sink/source 输出初始化不得阻塞主线程启动，暂不可用时应降级为页面内状态而不是留下无窗口进程。
 - [ ] **AC-D-TECH-06（实时预览资源上界）**：连续视频帧不得作为唯一 ID 的静态图片永久累积在 GPUI Sprite Atlas。macOS 使用 `surface(CVPixelBuffer)` 原生视频合成路径并将 CoreVideo 缓冲硬限制为 3 个；其他平台回退到 `RenderImage` 时必须在替换帧时显式驱逐旧 atlas entry。预览缓冲耗尽时丢弃旧帧，不得反压 LatestFrameStore。720p30/1080p30 持续推流时 CPU/GPU 帧资源数量必须保持常数上界，停止推流后不得随历史帧数保留内存。
@@ -199,16 +196,16 @@ context 的普通 Card 颜色模拟取景 HUD。
   - 连接工作区在 1440×900 最小窗口内不得依赖页面级滚动；Live 顶栏不得通过隐藏指标、折叠操作、缩短按钮文案或切换为 icon-only 模式适应窗口，窗口最小尺寸就是完整产品布局的支持边界；可信设备列表独立持有纵向溢出，滚动条贴合列表所属面板尾边；分栏间距与内容 inset 使用统一 `rem` scale，不得以固定像素分别修正。
 - [ ] **AC-D-HOST-02（主机识别卡片）**：
   - 顶部展示纯粹设备名 `Studio PC`（彻底移除生硬的 `（本机）` 括号文字）；
-  - 搭配绿色状态徽标 `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> 接收端已就绪`；
+  - 搭配绿色状态圆点与文案「接收端已就绪」；
   - 设备名下方不显示说明副标题；左侧标题分割线必须与右侧「设备与连接」标题分割线水平对齐；
   - 未收到配对请求时显示 `等待请求`；收到未配对 Sender 请求后，居中呈现本次握手的大号等宽 6 位配对短码（`482 917`）与局域网 IP 直连胶囊（`192.168.1.108:4433`，带一键复制）。
 - [ ] **AC-D-SETTINGS-04（设置页面归属）**：
   - 通用页只显示电脑名称与桌面生命周期偏好，不得混入虚拟摄像头占位画面、可信设备管理或诊断选项；
   - 无视频流占位画面归属虚拟摄像头页，自动接受与可信设备管理归属连接页“设备与连接”卡片，日志级别与脱敏诊断导出归属帮助页诊断区。
 - [ ] **AC-D-ONBOARDING-03（开始使用与硬件拓扑）**：
-  - 左卡片底部包含与 HTML 原型一致的开始使用 3 步指南（1. 打开 Picoo Camera → 2. 选择此电脑 → 3. 核对短码并确认）；
+  - 左卡片底部包含开始使用 3 步指南（1. 打开 Picoo Camera → 2. 选择此电脑 → 3. 核对短码并确认）；
   - “开始使用”与“设备与连接”使用相同标题字号和字重；真机拓扑卡片的上边界与“开始使用”标题对齐，下边界与第 3 步对齐；
-  - 包含真机硬件互联拓扑图（手机 ➔ 无线波纹 ➔ 电脑），iPhone 必须保留原型中的左右金属边框、侧键与高光；拓扑卡片只呈现硬件连接 SVG，下方不附加状态文案；
+  - 包含真机硬件互联拓扑图（手机 ➔ 无线波纹 ➔ 电脑），iPhone 必须保留左右金属边框、侧键与高光；拓扑卡片只呈现硬件连接 SVG，下方不附加状态文案；
   - 真机拓扑作为一个完整构图使用比例槽位随卡片等比收缩，并设置舒适最大宽度；在 1440px 最小窗口、Sidebar 展开态与界面缩放后，手机、无线波纹和电脑必须完整保留在拓扑卡片内，不得依赖裁掉溢出内容掩盖布局错误；
   - “自动接受可信设备”使用设置行的次级字号，不得与卡片标题争夺层级。
 
@@ -256,7 +253,7 @@ context 的普通 Card 颜色模拟取景 HUD。
   - 最小化、最大化、关闭等平台窗口装饰由 `gpui_kit::component::TitleBar` 统一提供；Sidebar 折叠控制使用 Reicon Filled `sidebar-left` / `sidebar-right`，与导航图标保持同一图标体系。
 - [ ] **AC-D-NAV-03（可折叠图标 Sidebar）**：
   - 桌面窗口使用贴边的单层工作区，不展示独立品牌标题栏，不保留工作区外侧留白，也不使用第二层圆角边框包裹 Sidebar 与主内容区；Sidebar 只拥有与主内容相邻的分割线；
-  - Sidebar 默认展开并保持 HTML 原型的 `204px` 宽度，两端均可切换为 `48px` 图标态；“连接”必须保留在 Sidebar 导航列表并与其他导航项使用相同结构。折叠按钮位于 Sidebar 分割线右侧，通过共享行高和顶部 inset 与“连接”导航图标严格处于同一水平中心线；
+  - Sidebar 默认展开并保持 `204px` 宽度，两端均可切换为 `48px` 图标态；“连接”必须保留在 Sidebar 导航列表并与其他导航项使用相同结构。折叠按钮位于 Sidebar 分割线右侧，通过共享行高和顶部 inset 与“连接”导航图标严格处于同一水平中心线；
   - 导航区域遵循官方 Sidebar 的紧凑密度：常规导航行高为 `32px`、功能图标为 `16px`，图标与文案使用 `8px` 语义间距；导航功能图标继续使用 Reicon；
   - 折叠按钮遵循 `gpui_kit::component::SidebarToggleButton` 的紧凑 `ghost + small` 几何与状态语义，展开态显示 Reicon Filled `sidebar-left`，折叠态显示 Reicon Filled `sidebar-right`；应用层继续提供稳定控件 ID、中文悬浮提示与无障碍名称；
   - 展开与折叠必须复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 裁剪宽度过渡：导航内容先按目标态排版，外层宽度连续插值，Sidebar 背景与右侧分隔线逐帧跟随外层宽度，主内容与折叠按钮随 Sidebar 边界平滑移动，不得瞬间跳变或逐帧挤压导航文案；
@@ -300,7 +297,7 @@ context 的普通 Card 颜色模拟取景 HUD。
 
 | 验收项分类 | 对应验证方式 | 关联 Use Case | 视觉/交互证据 |
 | :--- | :--- | :--- | :--- |
-| **共享主题与组件状态** | token 引用检查 + Light/Dark 截图 + Focus/Disabled/Error 状态测试 | ARCH-PICOO-UI-002 | 桌面与刷新后的移动原型 + 原生截图 |
+| **共享主题与组件状态** | token 引用检查 + Light/Dark 截图 + Focus/Disabled/Error 状态测试 | ARCH-PICOO-UI-002 | 桌面与移动端原生截图 |
 | **Reicon 事实源与语义映射** | 共享 SVG/平台适配/引用完整性检查 + 无障碍名称测试 | ARCH-PICOO-UI-002 | Icon 清单与各平台代表控件截图 |
 | **双端短码核对与确认** | 单元测试 + 双端联动模拟 + Dynamic Type/文字缩放截图 | PUC-001 | 首次配对场景 |
 | **已配对快速直连** | 单元测试 + 状态快照检查 + DeviceRow 对齐检查 | PUC-002 | 已配对直连场景 |
