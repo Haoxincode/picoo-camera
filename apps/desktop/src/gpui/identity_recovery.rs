@@ -5,6 +5,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use picoo_receiver::ReceiverError;
 
+use super::blocking::spawn_os_thread;
 use crate::receiver_runtime::{repair_receiver_identity_and_reset_trust, reset_receiver_trust};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,11 +90,9 @@ impl IdentityRecoveryView {
 
         let kind = self.kind;
         let display_name = self.display_name.clone();
-        let recovery = cx
-            .background_executor()
-            .spawn_dedicated(move |_| async move { kind.recover(&display_name) });
+        let recovery = spawn_os_thread(cx, move || kind.recover(&display_name));
         cx.spawn(async move |this, cx| {
-            let result = recovery.await;
+            let result = recovery.await.unwrap_or_else(Err);
             let _ = this.update(cx, |this, cx| {
                 this.state = match result {
                     Ok(()) => PairingRecoveryState::Succeeded,

@@ -283,6 +283,123 @@ impl CodecConfiguration {
     pub fn pps(&self) -> &[Bytes] {
         &self.pps
     }
+
+    /// After the platform encoder has declared BT.709 limited SDR, write that
+    /// colour into AVC VUI when the hardware omitted or left it unspecified.
+    /// HEVC still requires the native record to already carry explicit BT.709.
+    pub fn with_explicit_bt709_sdr(self) -> Result<Self, BitstreamError> {
+        match self.codec {
+            Codec::Avc => {
+                if self.sps.len() != 1 || self.pps.len() != 1 {
+                    return Err(BitstreamError::Unsupported("multiple AVC parameter sets"));
+                }
+                let sps = crate::avc_vui::ensure_bt709_limited(&self.sps[0])?;
+                if sps.as_slice() == self.sps[0].as_ref() {
+                    return Ok(self);
+                }
+                Self::from_avc_parameter_sets(&sps, &self.pps[0])
+            }
+            Codec::Hevc => {
+                let color = self
+                    .source_facts()?
+                    .color
+                    .ok_or(BitstreamError::Unsupported("missing source color"))?;
+                if color.full_range || (color.primaries, color.transfer, color.matrix) != (1, 1, 1)
+                {
+                    return Err(BitstreamError::Unsupported("source is not BT.709 SDR"));
+                }
+                Ok(self)
+            }
+        }
+    }
+
+    /// Replace an in-band AVC SPS that only lacks admitted BT.709 VUI.
+    /// Other parameter-set identity conflicts stay fatal.
+    pub fn align_access_unit(&self, data: &[u8]) -> Result<Vec<u8>, BitstreamError> {
+        let format = if data.starts_with(&[0, 0, 1]) || data.starts_with(&[0, 0, 0, 1]) {
+            crate::NalFormat::AnnexB
+        } else {
+            crate::NalFormat::LengthPrefixed(self.nal_length_size)
+        };
+        let Ok(picture) = crate::AccessUnit::parse(self.codec, format, data) else {
+            // Session-order tests submit opaque payloads. Production Android
+            // AUs are already canonical length-prefixed before this rewrite.
+            return Ok(data.to_vec());
+        };
+        let mut nals = Vec::with_capacity(picture.nals().len());
+        let mut changed = false;
+        for nal in picture.nals() {
+            let kind = crate::access_unit::nal_type(self.codec, nal)?;
+            let sets = match (self.codec, kind) {
+                (Codec::Avc, 7) | (Codec::Hevc, 33) => Some(self.sps()),
+                (Codec::Avc, 8) | (Codec::Hevc, 34) => Some(self.pps()),
+                (Codec::Hevc, 32) => Some(self.vps()),
+                _ => None,
+            };
+            if let Some(sets) = sets {
+                if sets.iter().any(|set| set.as_ref() == *nal) {
+                    nals.push(nal.to_vec());
+                } else if self.codec == Codec::Avc
+                    && kind == 7
+                    && sets.len() == 1
+                    && avc_sps_may_align(nal, &sets[0])?
+                {
+                    nals.push(sets[0].to_vec());
+                    changed = true;
+                } else {
+                    return Err(BitstreamError::Malformed(
+                        "in-band parameter set differs from configuration",
+                    ));
+                }
+            } else {
+                nals.push(nal.to_vec());
+            }
+        }
+        if !changed {
+            return Ok(data.to_vec());
+        }
+        let aligned = nals.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        crate::access_unit::write_nals(&aligned, matches!(format, crate::NalFormat::AnnexB))
+    }
+}
+
+fn avc_sps_may_align(incoming: &[u8], admitted: &[u8]) -> Result<bool, BitstreamError> {
+    let incoming = crate::VideoSpsFacts::parse_avc(incoming)?;
+    let admitted = crate::VideoSpsFacts::parse_avc(admitted)?;
+    Ok((
+        incoming.coded_width,
+        incoming.coded_height,
+        incoming.visible_x,
+        incoming.visible_y,
+        incoming.visible_width,
+        incoming.visible_height,
+        incoming.pixel_aspect_ratio,
+        incoming.chroma_location,
+    ) == (
+        admitted.coded_width,
+        admitted.coded_height,
+        admitted.visible_x,
+        admitted.visible_y,
+        admitted.visible_width,
+        admitted.visible_height,
+        admitted.pixel_aspect_ratio,
+        admitted.chroma_location,
+    ) && admitted.color
+        == Some(crate::VideoColorFacts {
+            full_range: false,
+            primaries: 1,
+            transfer: 1,
+            matrix: 1,
+        })
+        && matches!(
+            incoming.color,
+            None | Some(crate::VideoColorFacts {
+                full_range: false,
+                primaries: 2,
+                transfer: 2,
+                matrix: 2,
+            })
+        ))
 }
 fn length_size(minus_one: u8) -> Result<NalLengthSize, BitstreamError> {
     match minus_one {

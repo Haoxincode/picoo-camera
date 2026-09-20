@@ -4,7 +4,8 @@ use super::runtime::MfRuntimeGuard;
 use crate::{DecodeError, DecodedFrame, NativeDecodedFormat};
 use picoo_bitstream::VideoSpsFacts;
 use picoo_frame_hub::{
-    ChromaSiting, D3D11ImageLease, ImageSize, NativeImage, PixelAspectRatio, VisibleRect,
+    remaining_visible_after_decoder, ChromaSiting, D3D11ImageLease, ImageSize, NativeImage,
+    PixelAspectRatio, VisibleRect,
 };
 use picoo_gpu::WindowsGpuContext;
 use windows::Win32::Media::MediaFoundation::*;
@@ -102,19 +103,24 @@ unsafe fn describe(
         Err(error) => return Err(platform(error)),
         _ => return Err(DecodeError::ConfigurationMismatch),
     };
-    if (rect.width, rect.height) != (facts.visible_width, facts.visible_height)
-        || rect
-            .x
-            .checked_add(rect.width)
-            .is_none_or(|right| right > width)
-        || rect
-            .y
-            .checked_add(rect.height)
-            .is_none_or(|bottom| bottom > height)
-        || !rect.x.is_multiple_of(2)
-        || !rect.y.is_multiple_of(2)
-        || facts.chroma_location != 0
-    {
+    let admitted = VisibleRect {
+        x: facts.visible_x,
+        y: facts.visible_y,
+        width: facts.visible_width,
+        height: facts.visible_height,
+    };
+    let Some(rect) = remaining_visible_after_decoder(
+        admitted,
+        ImageSize {
+            width: facts.coded_width,
+            height: facts.coded_height,
+        },
+        ImageSize { width, height },
+        rect,
+    ) else {
+        return Err(DecodeError::ConfigurationMismatch);
+    };
+    if facts.chroma_location != 0 {
         return Err(DecodeError::ConfigurationMismatch);
     }
     Ok(NativeDecodedFormat {

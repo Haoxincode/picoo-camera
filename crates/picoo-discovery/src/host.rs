@@ -53,7 +53,7 @@ pub fn score_advertise_candidate(interface_name: &str, ip: Ipv4Addr) -> i32 {
         || lower.contains("wireless")
     {
         score += 200;
-    } else if lower.contains("ethernet") || lower.contains("eth") || lower.contains("en0") {
+    } else if lower.contains("ethernet") || lower.contains("eth") || is_macos_en_interface(&lower) {
         score += 150;
     }
 
@@ -62,6 +62,42 @@ pub fn score_advertise_candidate(interface_name: &str, ip: Ipv4Addr) -> i32 {
     }
 
     score
+}
+
+fn is_macos_en_interface(name: &str) -> bool {
+    name.strip_prefix("en")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Name of the interface that owns `ip`, if it is currently up.
+pub fn interface_name_for_ipv4(ip: Ipv4Addr) -> Option<String> {
+    netdev::get_interfaces().into_iter().find_map(|iface| {
+        iface
+            .ipv4
+            .iter()
+            .any(|network| network.addr() == ip)
+            .then_some(iface.name)
+    })
+}
+
+/// Interface names the mDNS daemon must not use for the current advertise address.
+///
+/// Prefer disabling these by name instead of `IfKind::All`, which tears down the
+/// already-polled sockets and can leave incoming PTR queries unread.
+pub fn mdns_disable_interface_names(advertise: Ipv4Addr) -> Vec<String> {
+    netdev::get_interfaces()
+        .into_iter()
+        .filter(|iface| {
+            let owns_advertise_ip = iface.ipv4.iter().any(|network| network.addr() == advertise);
+            let virtual_adapter = is_virtual_or_tunnel_interface(&iface.name)
+                || iface
+                    .friendly_name
+                    .as_deref()
+                    .is_some_and(is_virtual_or_tunnel_interface);
+            !owns_advertise_ip || virtual_adapter
+        })
+        .map(|iface| iface.name)
+        .collect()
 }
 
 fn is_virtual_or_tunnel_interface(interface_name: &str) -> bool {
@@ -86,6 +122,7 @@ fn is_virtual_or_tunnel_interface(interface_name: &str) -> bool {
         "ppp",
         "tap",
         "tun",
+        "bridge",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
@@ -234,6 +271,19 @@ mod tests {
         assert_eq!(
             select_advertise_ipv4_with_interfaces(&ifaces),
             Some("192.168.8.110".parse().unwrap())
+        );
+    }
+
+    #[test]
+    fn macos_wifi_en1_beats_bridge_aliases() {
+        let ifaces = [
+            ("bridge100".into(), "192.168.139.3".parse().unwrap()),
+            ("bridge101".into(), "192.168.97.0".parse().unwrap()),
+            ("en1".into(), "192.168.8.100".parse().unwrap()),
+        ];
+        assert_eq!(
+            select_advertise_ipv4_with_interfaces(&ifaces),
+            Some("192.168.8.100".parse().unwrap())
         );
     }
 }

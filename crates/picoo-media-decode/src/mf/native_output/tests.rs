@@ -82,11 +82,20 @@ fn native_aperture_comes_from_mf_instead_of_sps_crop_guessing() {
 }
 
 #[test]
-fn native_description_rejects_missing_crop_fractional_aperture_and_missing_color() {
+fn native_description_rejects_fractional_aperture_and_missing_color() {
     let image = crate::native_fixture::upload(192, 96, 192, &vec![128; 192 * 96 * 3 / 2]).unwrap();
     unsafe {
         let media = media();
-        assert!(describe(&media, &facts(), &image).is_err());
+        let described = describe(&media, &facts(), &image).unwrap();
+        assert_eq!(
+            described.visible_rect,
+            VisibleRect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64
+            }
+        );
         aperture(&media, 1);
         assert!(describe(&media, &facts(), &image).is_err());
         aperture(&media, 0);

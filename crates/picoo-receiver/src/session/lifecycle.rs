@@ -33,6 +33,8 @@ impl ReceiverSession {
         self.last_sender_stats = None;
         self.last_decoded_fps = 0;
         self.last_media_error = None;
+        self.last_decode_skip = None;
+        self.decoder_completions_skipped = 0;
         self.current_stream_config = None;
         self.admitted_access_unit_budget = None;
         self.waiting_for_stream_config_epoch = None;

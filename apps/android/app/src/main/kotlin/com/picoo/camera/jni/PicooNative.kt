@@ -170,6 +170,8 @@ object PicooNative {
 
     /**
      * Validate explicitly selected MediaCodec AVC/HEVC Annex B codec-config.
+     * AVC records missing BT.709 VUI are admitted only after MediaFormat already
+     * declared limited SDR; HEVC still requires explicit native colour.
      * @return Standard avcC/hvcC record, or null when native CSD is rejected.
      */
     external fun parseCodecConfiguration(codec: Int, data: ByteArray): ByteArray?

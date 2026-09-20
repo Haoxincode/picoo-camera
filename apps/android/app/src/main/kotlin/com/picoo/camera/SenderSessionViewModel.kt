@@ -620,24 +620,40 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         }
         val liveSession = isLiveSession()
         val senderHandle = runtime.senderHandle
-        if (liveSession && !cameraGranted) {
-            if (senderHandle != 0L) PicooNative.markPermissionRequired(senderHandle)
-        } else if (liveSession) {
+        if (!cameraGranted) {
+            if (liveSession && senderHandle != 0L) {
+                PicooNative.markPermissionRequired(senderHandle)
+            }
+            if (encoder.state == CaptureState.Opening ||
+                encoder.state == CaptureState.Previewing
+            ) {
+                encoder.stopPreview()
+                uiState.encoderState = encoder.state
+            }
+            return
+        }
+        if (liveSession) {
             if (senderHandle != 0L) PicooNative.clearPermissionRequired(senderHandle)
-            if (encoder.state == CaptureState.Idle && !encoderReconfiguration.isPending) {
+            val needsLiveEpoch = !encoderReconfiguration.isPending &&
+                (encoder.state == CaptureState.Idle ||
+                    (encoder.state == CaptureState.Previewing && !encoder.encodingEnabled))
+            if (needsLiveEpoch) {
                 if (!beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) return
                 streamConfigDirty.set(true)
             }
+            encoder.setEncodingEnabled(true)
             if (encoder.state == CaptureState.Error) return
             encoder.startPreview()
             if (senderHandle != 0L && PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                 encoder.requestKeyFrame()
             }
             uiState.encoderState = encoder.state
-        } else if (encoder.state == CaptureState.Opening ||
-            encoder.state == CaptureState.Previewing
-        ) {
-            encoder.stopPreview()
+        } else {
+            encoder.setEncodingEnabled(false)
+            if (encoder.state == CaptureState.Error) {
+                encoder.stopPreview()
+            }
+            encoder.startPreview()
             uiState.encoderState = encoder.state
         }
     }

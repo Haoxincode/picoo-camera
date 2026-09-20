@@ -14,6 +14,7 @@ use crate::vcam_status::query_macos_vcam_status;
 use crate::vcam_status::vcam_setup_unavailable_message;
 use crate::vcam_status::{detect_vcam_status, vcam_repair_hint, vcam_setup_action_label};
 
+use super::blocking::spawn_os_thread;
 use super::icons::{reicon_button_content, reicon_named, DesktopIcon};
 use super::widgets::{
     page_header, placeholder_choice_indicator, placeholder_preview, placeholder_title,
@@ -96,6 +97,20 @@ fn resolve_pending_macos_vcam_status(
     }
 }
 
+#[cfg(target_os = "macos")]
+fn apply_vcam_query_failure(this: &mut PicooDesktopApp, err: String) {
+    tracing::warn!("Camera Extension status query failed: {err}");
+    let bundled = detect_vcam_status();
+    let status = pending_macos_vcam_display_status(
+        this.prefs.pending_macos_camera_extension.as_ref(),
+        bundled,
+    );
+    this.vcam_status = status;
+    this.runtime.set_virtual_camera_status(status);
+    this.vcam_setup_state =
+        VcamSetupState::Failed(format!("无法读取 Camera Extension 系统状态：{err}"));
+}
+
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn pending_macos_vcam_display_status(
     pending: Option<&PendingMacosCameraExtension>,
@@ -124,11 +139,20 @@ impl PicooDesktopApp {
             self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Detect);
             cx.notify();
 
-            let query = cx.background_executor().spawn_dedicated(|_| async move {
+            let query = spawn_os_thread(cx, || {
                 (query_macos_vcam_status(), current_macos_boot_session())
             });
             cx.spawn(async move |this, cx| {
-                let (result, boot_session) = query.await;
+                let (result, boot_session) = match query.await {
+                    Ok(pair) => pair,
+                    Err(err) => {
+                        let _ = this.update(cx, |this, cx| {
+                            apply_vcam_query_failure(this, err);
+                            cx.notify();
+                        });
+                        return;
+                    }
+                };
                 let _ = this.update(cx, |this, cx| {
                     match result {
                         Ok(status) => {
@@ -166,19 +190,7 @@ impl PicooDesktopApp {
                                 this.vcam_setup_state = VcamSetupState::Idle;
                             }
                         }
-                        Err(err) => {
-                            tracing::warn!("Camera Extension status query failed: {err}");
-                            let bundled = detect_vcam_status();
-                            let status = pending_macos_vcam_display_status(
-                                this.prefs.pending_macos_camera_extension.as_ref(),
-                                bundled,
-                            );
-                            this.vcam_status = status;
-                            this.runtime.set_virtual_camera_status(status);
-                            this.vcam_setup_state = VcamSetupState::Failed(format!(
-                                "无法读取 Camera Extension 系统状态：{err}"
-                            ));
-                        }
+                        Err(err) => apply_vcam_query_failure(this, err),
                     }
                     cx.notify();
                 });
@@ -259,7 +271,7 @@ impl PicooDesktopApp {
             self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Activate);
             cx.notify();
 
-            let repair = cx.background_executor().spawn_dedicated(|_| async move {
+            let repair = spawn_os_thread(cx, || {
                 crate::vcam_register::repair_system_registration_elevated()?;
                 match detect_vcam_status() {
                     status @ (VirtualCameraStatus::Active | VirtualCameraStatus::Installed) => {
@@ -271,7 +283,7 @@ impl PicooDesktopApp {
                 }
             });
             cx.spawn(async move |this, cx| {
-                let repair_result = repair.await;
+                let repair_result = repair.await.unwrap_or_else(Err);
                 let _ = this.update(cx, |this, cx| {
                     match repair_result {
                         Ok(status) => {
@@ -309,11 +321,9 @@ impl PicooDesktopApp {
             self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Activate);
             cx.notify();
 
-            let activation = cx
-                .background_executor()
-                .spawn_dedicated(|_| async move { crate::macos_system_extension::activate() });
+            let activation = spawn_os_thread(cx, crate::macos_system_extension::activate);
             cx.spawn(async move |this, cx| {
-                let result = activation.await;
+                let result = activation.await.unwrap_or_else(Err);
                 let _ = this.update(cx, |this, cx| {
                     match result {
                         Ok(crate::macos_system_extension::LifecycleOutcome::Completed) => {
@@ -378,11 +388,9 @@ impl PicooDesktopApp {
         self.vcam_setup_state = VcamSetupState::Running(VcamSetupOperation::Deactivate);
         cx.notify();
 
-        let deactivation = cx
-            .background_executor()
-            .spawn_dedicated(|_| async move { crate::macos_system_extension::deactivate() });
+        let deactivation = spawn_os_thread(cx, crate::macos_system_extension::deactivate);
         cx.spawn(async move |this, cx| {
-            let result = deactivation.await;
+            let result = deactivation.await.unwrap_or_else(Err);
             let _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(crate::macos_system_extension::LifecycleOutcome::Completed) => {

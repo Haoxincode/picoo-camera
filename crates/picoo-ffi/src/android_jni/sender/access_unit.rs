@@ -68,6 +68,7 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_submitEncoderAccess
                 return Err(-1);
             };
             let Ok(record) = picoo_bitstream::CodecConfiguration::parse(codec, record.into())
+                .and_then(|record| record.with_explicit_bt709_sdr())
             else {
                 return Err(-2);
             };

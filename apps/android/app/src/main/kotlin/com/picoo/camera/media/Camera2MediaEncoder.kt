@@ -73,6 +73,7 @@ class Camera2MediaEncoder(
     internal var lastEstimateAtMs = System.currentTimeMillis()
     @Volatile internal var targetBitrateBps: Int = initialBitrateBps
     @Volatile internal var lastAppliedBitrateBps: Int = targetBitrateBps
+    @Volatile internal var encodingEnabled: Boolean = true
 
     internal val deviceSession = Camera2DeviceSession(this)
     internal val videoEncoder = MediaCodecVideoEncoder(this)
@@ -156,6 +157,31 @@ class Camera2MediaEncoder(
         videoEncoder.release()
         videoEncoder.resetCounters()
         lifecycle.setState(CaptureState.Idle)
+    }
+
+    /**
+     * Start or drop the MediaCodec path without tearing down the local
+     * TextureView. Disconnect must not freeze the viewfinder on the last frame.
+     */
+    fun setEncodingEnabled(enabled: Boolean) {
+        if (encodingEnabled == enabled) return
+        encodingEnabled = enabled
+        if (enabled) {
+            val camera = cameraDevice ?: return
+            if (lifecycle.state == CaptureState.Opening ||
+                lifecycle.state == CaptureState.Previewing
+            ) {
+                videoEncoder.setupEncoderAndSession(camera, lifecycle.cameraGeneration.get())
+            }
+            return
+        }
+        // Camera2 still owns the compositor OES target until the capture
+        // session is closed. Releasing it first fails the session and the
+        // TextureView freezes on its last buffer.
+        deviceSession.closeCaptureSession()
+        videoEncoder.release()
+        videoEncoder.resetCounters()
+        deviceSession.scheduleCaptureSessionRebuild(previewSurfaceTexture)
     }
 
     override fun switchCamera() {

@@ -41,15 +41,9 @@ pub(super) fn prepare(
     backend: OutputBackend,
 ) -> Result<PreparedImage, PrepareError> {
     let description = frame.description();
-    let crop = description.visible_rect;
-    if crop.x != 0
-        || crop.y != 0
-        || crop.width != frame.image().width()
-        || crop.height != frame.image().height()
-        || description.pixel_aspect_ratio.numerator != description.pixel_aspect_ratio.denominator
-    {
+    if description.pixel_aspect_ratio.numerator != description.pixel_aspect_ratio.denominator {
         return Err(PrepareError::Failed(
-            "unsupported native source crop or pixel aspect".into(),
+            "unsupported native source pixel aspect".into(),
         ));
     }
     let spec = RenderSpec {
@@ -94,7 +88,7 @@ pub(super) fn prepare(
         }
         resources
             .renderer
-            .render(frame.image())
+            .render_frame(frame)
             .map_err(|error| match error {
                 picoo_gpu::RenderError::PoolFull => PrepareError::Backpressure,
                 error => PrepareError::Failed(error.to_string()),
@@ -102,7 +96,7 @@ pub(super) fn prepare(
     } else {
         resources
             .renderer
-            .render(frame.image())
+            .render_frame(frame)
             .map_err(|error| match error {
                 picoo_gpu::RenderError::PoolFull => PrepareError::Backpressure,
                 error => PrepareError::Failed(error.to_string()),

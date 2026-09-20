@@ -218,9 +218,22 @@ impl PreviewPipeline {
     }
 
     pub(crate) fn clear(&mut self) -> bool {
-        if self.last_submitted_frame.take().is_none() {
+        let had_work = {
+            let state = self.shared.0.lock().unwrap();
+            self.last_submitted_frame.is_some()
+                || state.pending.is_some()
+                || state.completed.is_some()
+        };
+        if !had_work {
             return false;
         }
+        self.invalidate_source();
+        true
+    }
+
+    pub(crate) fn invalidate_source(&mut self) {
+        self.last_submitted_frame = None;
+        self.last_submitted_sequence = 0;
         let mut state = self.shared.0.lock().unwrap();
         match state.generation.checked_add(1) {
             Some(next) => state.generation = next,
@@ -228,7 +241,6 @@ impl PreviewPipeline {
         }
         state.pending = None;
         state.completed = None;
-        true
     }
 
     pub(crate) fn take_prepared(&mut self) -> Option<PreparedPreview> {
@@ -249,6 +261,7 @@ impl Drop for PreviewPipeline {
 
 fn preview_worker(shared: Arc<(Mutex<WorkerState>, Condvar)>) {
     let mut platform_resources = new_platform_preview_resources();
+    let mut active_generation = 0;
     loop {
         let request = {
             let (state, ready) = &*shared;
@@ -263,12 +276,18 @@ fn preview_worker(shared: Arc<(Mutex<WorkerState>, Condvar)>) {
         };
 
         let generation = request.generation;
+        if generation != active_generation {
+            platform_resources = new_platform_preview_resources();
+            active_generation = generation;
+        }
         let prepared = prepare_preview(request, &mut platform_resources);
         let mut state = shared.0.lock().unwrap();
         if state.stopped {
             return;
         }
         if state.generation != generation {
+            platform_resources = new_platform_preview_resources();
+            active_generation = state.generation;
             continue;
         }
         if let Some(prepared) = prepared {
@@ -473,6 +492,14 @@ mod tests {
                 "check interval {check_interval:?} produced {fps:.2} fps"
             );
         }
+    }
+
+    #[test]
+    fn clear_without_a_submitted_frame_is_a_no_op() {
+        let mut pipeline = PreviewPipeline::new();
+        assert!(!pipeline.clear());
+        pipeline.invalidate_source();
+        assert!(!pipeline.clear());
     }
 
     #[test]

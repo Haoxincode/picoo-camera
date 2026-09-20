@@ -11,8 +11,9 @@ pub struct VideoSurface {
 }
 
 impl VideoSurface {
-    pub fn clear(&mut self, _cx: &mut App) {
+    pub fn clear(&mut self) {
         self.native_surface = None;
+        self.last_sequence = 0;
     }
 
     pub fn present(&mut self, preview: PreparedPreview, _cx: &mut App) -> bool {
@@ -55,5 +56,13 @@ mod tests {
 
         assert!(surface.accepts_sequence(1));
         assert!(!surface.accepts_sequence(1));
+    }
+
+    #[test]
+    fn clear_allows_a_new_source_to_present_from_sequence_one() {
+        let mut surface = VideoSurface::default();
+        assert!(surface.accepts_sequence(8));
+        surface.clear();
+        assert!(surface.accepts_sequence(1));
     }
 }

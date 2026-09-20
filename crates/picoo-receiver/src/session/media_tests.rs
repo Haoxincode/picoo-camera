@@ -431,6 +431,35 @@ fn stale_connection_generation_cannot_publish_into_current_stream() {
 }
 
 #[test]
+fn live_decode_timeline_follows_sender_control_generation() {
+    let mut receiver = receiver_for_generation(2);
+    receiver.control_generation = Some(8);
+    let current = AccessUnitTimeline {
+        connection_generation: 8,
+        stream_generation: 2,
+        frame_id: 9,
+        source_pts_us: 42_000,
+        encoded_at_us: 45_000,
+        received_at_us: 50_000,
+        decode_submitted_at_us: 55_000,
+        kind: FrameKind::Key,
+    };
+    assert!(receiver.decoder_timeline_is_current(current));
+    assert_eq!(receiver.media_connection_generation(), 8);
+    let transport_session = AccessUnitTimeline {
+        connection_generation: 1,
+        stream_generation: 2,
+        frame_id: 9,
+        source_pts_us: 42_000,
+        encoded_at_us: 45_000,
+        received_at_us: 50_000,
+        decode_submitted_at_us: 55_000,
+        kind: FrameKind::Key,
+    };
+    assert!(!receiver.decoder_timeline_is_current(transport_session));
+}
+
+#[test]
 fn zero_generation_fixture_cannot_bypass_current_timeline() {
     let receiver = receiver_for_generation(2);
     let timeline = AccessUnitTimeline {

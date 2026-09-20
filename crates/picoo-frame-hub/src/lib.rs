@@ -23,9 +23,9 @@ pub use frame_bus::{
 };
 pub use latest_frame_store::{LatestFrameStore, VideoFrame};
 pub use native_frame::{
-    ChromaSiting, FrameDescription, FrameIdentity, FrameTimeline, ImageSize,
-    InvalidFrameDescription, NativeVideoFrame, PixelAspectRatio, PresentationTransform, Rotation,
-    SourceColor, VisibleRect,
+    remaining_visible_after_decoder, ChromaSiting, FrameDescription, FrameIdentity, FrameTimeline,
+    ImageSize, InvalidFrameDescription, NativeVideoFrame, PixelAspectRatio, PresentationTransform,
+    Rotation, SourceColor, VisibleRect,
 };
 pub use native_image::NativeImage;
 #[cfg(target_os = "macos")]

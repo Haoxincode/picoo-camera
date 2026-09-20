@@ -6,7 +6,11 @@ use std::time::{Duration, Instant};
 use mdns_sd::{DaemonEvent, IfKind, Receiver, ServiceDaemon, ServiceInfo};
 use thiserror::Error;
 
+use crate::host::interface_name_for_ipv4;
 use crate::types::{ReceiverAdvertisement, SERVICE_TYPE};
+
+const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(15);
+const ANNOUNCE_RETRIES: u8 = 2;
 
 #[derive(Debug, Error)]
 pub enum DiscoveryError {
@@ -25,6 +29,9 @@ pub struct MdnsAdvertiser {
     advertise_ip: Option<IpAddr>,
     last_error: Option<String>,
     announcement_started: Option<Instant>,
+    last_host: Option<String>,
+    last_advertisement: Option<ReceiverAdvertisement>,
+    announce_retries: u8,
 }
 
 impl MdnsAdvertiser {
@@ -41,6 +48,9 @@ impl MdnsAdvertiser {
             advertise_ip: None,
             last_error: None,
             announcement_started: None,
+            last_host: None,
+            last_advertisement: None,
+            announce_retries: 0,
         })
     }
 
@@ -50,30 +60,18 @@ impl MdnsAdvertiser {
         host_ip: &str,
         advertisement: &ReceiverAdvertisement,
     ) -> Result<(), DiscoveryError> {
-        let ip: IpAddr = host_ip
-            .parse()
-            .map_err(|_| DiscoveryError::InvalidHost(host_ip.into()))?;
-        let hostname = format!("{}.local.", advertisement.receiver_id);
-        let instance = advertisement.display_name.clone();
-        let txt = advertisement.to_txt_properties();
-        let properties: Vec<(&str, &str)> = txt.iter().map(|(k, v)| (*k, v.as_str())).collect();
-
-        let info = ServiceInfo::new(
-            SERVICE_TYPE,
-            &instance,
-            &hostname,
-            ip,
-            advertisement.quic_port,
-            &properties[..],
-        )
-        .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
-
+        let (ip, info) = build_service_info(host_ip, advertisement)?;
         let fullname = info.get_fullname().to_string();
         let instance_changed = self
             .fullname
             .as_deref()
             .is_some_and(|current| !current.eq_ignore_ascii_case(&fullname));
-        let interface_changed = self.advertise_ip != Some(ip);
+        // First registration still pins the daemon to the LAN NIC. Only a later
+        // address change unregisters; `None != Some(ip)` used to disable every
+        // interface before the first enable completed, so register ran with no
+        // sockets and never emitted Announce.
+        let interface_changed = self.advertise_ip.is_some_and(|current| current != ip);
+        let first_pin = self.advertise_ip.is_none();
 
         // mdns-sd supports updating an existing service by registering the same
         // fullname again. Unregistering first emits an mDNS goodbye; Android NSD
@@ -85,17 +83,8 @@ impl MdnsAdvertiser {
             self.unregister_service()?;
         }
 
-        if interface_changed {
-            // Advertise only on the interface that owns the LAN address selected by
-            // `local_advertise_ipv4`. Leaving the daemon on its all-interface default
-            // lets VPN/Hyper-V/WSL adapters become mDNS egress candidates on desktop
-            // platforms even though the TXT/A record contains the Wi-Fi address.
-            self.daemon
-                .disable_interface(IfKind::All)
-                .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
-            self.daemon
-                .enable_interface(ip)
-                .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+        if first_pin || interface_changed {
+            self.pin_daemon_to_advertise_ip(ip)?;
             self.advertise_ip = Some(ip);
         }
 
@@ -103,6 +92,9 @@ impl MdnsAdvertiser {
             self.registered = false;
         }
         self.last_error = None;
+        self.announce_retries = 0;
+        self.last_host = Some(host_ip.to_owned());
+        self.last_advertisement = Some(advertisement.clone());
         self.daemon
             .register(info)
             .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
@@ -117,7 +109,12 @@ impl MdnsAdvertiser {
     /// an active broadcast made the desktop report discovery online even when
     /// Windows Firewall or an interface error prevented any announcement.
     pub fn poll(&mut self) -> bool {
-        let before = (self.registered, self.last_error.clone());
+        let before = (
+            self.registered,
+            self.last_error.clone(),
+            self.announce_retries,
+        );
+        let mut reannounce = false;
         while let Ok(event) = self.monitor.try_recv() {
             match event {
                 // This daemon owns one Picoo service, so a successful announce
@@ -125,6 +122,7 @@ impl MdnsAdvertiser {
                 DaemonEvent::Announce(_, _) => {
                     self.registered = self.fullname.is_some();
                     self.last_error = None;
+                    self.announce_retries = 0;
                 }
                 DaemonEvent::Error(error) => {
                     self.registered = false;
@@ -134,18 +132,79 @@ impl MdnsAdvertiser {
                     self.registered = false;
                     self.last_error = Some(format!("advertise interface {ip} disappeared"));
                 }
+                DaemonEvent::IpAdd(ip) if self.advertise_ip == Some(ip) && !self.registered => {
+                    self.last_error = None;
+                    reannounce = true;
+                }
                 _ => {}
             }
+        }
+        if reannounce {
+            self.reannounce();
         }
         if !self.registered
             && self.last_error.is_none()
             && self
                 .announcement_started
-                .is_some_and(|start| start.elapsed() >= Duration::from_secs(5))
+                .is_some_and(|start| start.elapsed() >= ANNOUNCE_TIMEOUT)
         {
-            self.last_error = Some("mDNS announcement timed out".into());
+            if self.announce_retries < ANNOUNCE_RETRIES {
+                self.announce_retries += 1;
+                self.reannounce();
+            } else {
+                self.last_error = Some("mDNS announcement timed out".into());
+            }
         }
-        before != (self.registered, self.last_error.clone())
+        before
+            != (
+                self.registered,
+                self.last_error.clone(),
+                self.announce_retries,
+            )
+    }
+
+    fn pin_daemon_to_advertise_ip(&mut self, ip: IpAddr) -> Result<(), DiscoveryError> {
+        // Windows virtual switches stay in the daemon's default all-interface
+        // set and will otherwise become mDNS egress. macOS must not use
+        // IfKind::All: that deregisters the already-polled Wi-Fi socket, so
+        // unsolicited Announce still fires while incoming Android PTR queries
+        // sit unread in Recv-Q.
+        if cfg!(windows) {
+            self.daemon
+                .disable_interface(IfKind::All)
+                .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+        } else if let IpAddr::V4(v4) = ip {
+            for name in crate::host::mdns_disable_interface_names(v4) {
+                let _ = self.daemon.disable_interface(name.as_str());
+            }
+        }
+        let mut kinds = vec![IfKind::Addr(ip)];
+        if let IpAddr::V4(v4) = ip {
+            if let Some(name) = interface_name_for_ipv4(v4) {
+                kinds.push(IfKind::Name(name));
+            }
+        }
+        self.daemon
+            .enable_interface(kinds)
+            .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+        Ok(())
+    }
+
+    fn reannounce(&mut self) {
+        let (Some(host), Some(advertisement)) =
+            (self.last_host.clone(), self.last_advertisement.clone())
+        else {
+            return;
+        };
+        let Ok((_, info)) = build_service_info(&host, &advertisement) else {
+            return;
+        };
+        let fullname = info.get_fullname().to_string();
+        if self.daemon.register(info).is_ok() {
+            self.fullname = Some(fullname);
+            self.announcement_started = Some(Instant::now());
+            self.last_error = None;
+        }
     }
 
     /// Drop the current service registration without shutting down the daemon.
@@ -187,6 +246,29 @@ impl MdnsAdvertiser {
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
+}
+
+fn build_service_info(
+    host_ip: &str,
+    advertisement: &ReceiverAdvertisement,
+) -> Result<(IpAddr, ServiceInfo), DiscoveryError> {
+    let ip: IpAddr = host_ip
+        .parse()
+        .map_err(|_| DiscoveryError::InvalidHost(host_ip.into()))?;
+    let hostname = format!("{}.local.", advertisement.receiver_id);
+    let instance = advertisement.display_name.clone();
+    let txt = advertisement.to_txt_properties();
+    let properties: Vec<(&str, &str)> = txt.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    let info = ServiceInfo::new(
+        SERVICE_TYPE,
+        &instance,
+        &hostname,
+        ip,
+        advertisement.quic_port,
+        &properties[..],
+    )
+    .map_err(|e| DiscoveryError::Mdns(e.to_string()))?;
+    Ok((ip, info))
 }
 
 impl Drop for MdnsAdvertiser {
@@ -233,7 +315,9 @@ mod tests {
         );
         advertiser.register("192.0.2.1", &ad).expect("queued");
         assert!(advertiser.is_starting());
-        advertiser.announcement_started = Some(Instant::now() - Duration::from_secs(6));
+        advertiser.announce_retries = ANNOUNCE_RETRIES;
+        advertiser.announcement_started =
+            Some(Instant::now() - ANNOUNCE_TIMEOUT - Duration::from_secs(1));
         assert!(
             advertiser.poll(),
             "initial failure must notify even before an announcement"
@@ -241,6 +325,25 @@ mod tests {
         assert!(!advertiser.is_starting());
         assert!(!advertiser.is_registered());
         assert_eq!(advertiser.last_error(), Some("mDNS announcement timed out"));
+    }
+
+    #[test]
+    fn announce_timeout_retries_before_failing() {
+        let mut advertiser = MdnsAdvertiser::new().expect("daemon");
+        let ad = ReceiverAdvertisement::new(
+            "picoo-retry-announce",
+            "Retry announce",
+            ReceiverPlatform::Macos,
+            4433,
+            "abcd",
+        );
+        advertiser.register("192.0.2.1", &ad).expect("queued");
+        advertiser.announcement_started =
+            Some(Instant::now() - ANNOUNCE_TIMEOUT - Duration::from_secs(1));
+        assert!(advertiser.poll());
+        assert!(advertiser.is_starting());
+        assert!(advertiser.last_error().is_none());
+        assert_eq!(advertiser.announce_retries, 1);
     }
 
     #[test]

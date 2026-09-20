@@ -103,6 +103,8 @@ pub struct ReceiverSnapshot {
     /// Whether the daemon has confirmed an actual mDNS announcement.
     pub discovery_available: bool,
     pub discovery_starting: bool,
+    /// Last mDNS advertiser error; None while starting or online.
+    pub discovery_error: Option<String>,
     pub pairing_short_code: Option<String>,
     pub pairing_ttl_seconds: u64,
     /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
@@ -136,6 +138,8 @@ pub struct ReceiverSnapshot {
     pub vcam_output_error: Option<String>,
     /// Last production decoder failure; cleared after a real frame is committed.
     pub media_error: Option<String>,
+    /// Sender PCP connection generation; changes on every new phone session.
+    pub control_generation: Option<u64>,
 }
 
 pub(crate) struct ReceiverRuntime {
@@ -392,6 +396,10 @@ impl ReceiverRuntime {
                 .as_ref()
                 .is_some_and(MdnsAdvertiser::is_registered),
             discovery_starting: self.mdns.as_ref().is_some_and(MdnsAdvertiser::is_starting),
+            discovery_error: self
+                .mdns
+                .as_ref()
+                .and_then(|advertiser| advertiser.last_error().map(str::to_owned)),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
             pairing_ttl_seconds: self
                 .receiver
@@ -448,6 +456,7 @@ impl ReceiverRuntime {
                 .map(str::to_owned)
                 .or_else(|| self.vcam_output_error.clone()),
             media_error: self.receiver.last_media_error().map(str::to_string),
+            control_generation: self.receiver.control_generation(),
         }
     }
 

@@ -360,6 +360,17 @@ impl<T: PicooTransport> SenderSession<T> {
             self.set_stream_config(config);
             config_staged = true;
         }
+        let aligned = self
+            .pending_stream_config
+            .as_ref()
+            .map(|config| {
+                config
+                    .configuration
+                    .align_access_unit(data)
+                    .map_err(SenderError::CodecConfiguration)
+            })
+            .transpose()?;
+        let data = aligned.as_deref().unwrap_or(data);
         // Applying transactions publish the candidate epoch from the IDR
         // admission below. A committed generation can publish now, before any
         // corresponding datagram is flushed.

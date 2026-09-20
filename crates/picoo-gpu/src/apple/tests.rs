@@ -16,6 +16,63 @@ fn red_source(declare_color: bool) -> NativeImage {
     source_fixture(declare_color, false)
 }
 
+fn padded_source() -> NativeImage {
+    let mut pool = OutputPool::new(RenderSpec {
+        width: 64,
+        height: 80,
+        rotation: Rotation::None,
+        mirror: false,
+        color: OutputColor::Bt709Limited,
+        format: crate::OutputFormat::Nv12,
+    })
+    .unwrap();
+    let buffer = pool.acquire().unwrap();
+    unsafe {
+        assert_eq!(
+            CVPixelBufferLockBaseAddress(&buffer, CVPixelBufferLockFlags::empty()),
+            0
+        );
+        let y_base = CVPixelBufferGetBaseAddressOfPlane(&buffer, 0).cast::<u8>();
+        let y_stride = CVPixelBufferGetBytesPerRowOfPlane(&buffer, 0);
+        for y in 0..80 {
+            let value = if y < 64 { 160 } else { 16 };
+            for x in 0..64 {
+                *y_base.add(y * y_stride + x) = value;
+            }
+        }
+        let uv_base = CVPixelBufferGetBaseAddressOfPlane(&buffer, 1).cast::<u8>();
+        let uv_stride = CVPixelBufferGetBytesPerRowOfPlane(&buffer, 1);
+        for y in 0..40 {
+            for x in 0..64 {
+                *uv_base.add(y * uv_stride + x) = 128;
+            }
+        }
+        assert_eq!(
+            CVPixelBufferUnlockBaseAddress(&buffer, CVPixelBufferLockFlags::empty()),
+            0
+        );
+        for (key, value) in [
+            (
+                kCVImageBufferYCbCrMatrixKey,
+                kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+            ),
+            (
+                kCVImageBufferColorPrimariesKey,
+                kCVImageBufferColorPrimaries_ITU_R_709_2,
+            ),
+            (
+                kCVImageBufferTransferFunctionKey,
+                kCVImageBufferTransferFunction_ITU_R_709_2,
+            ),
+        ] {
+            buffer.set_attachment(key, value.as_ref(), CVAttachmentMode::ShouldPropagate);
+        }
+        NativeImage::Apple(
+            picoo_frame_hub::ApplePixelBufferLease::retain_completed(&buffer).unwrap(),
+        )
+    }
+}
+
 fn source_fixture(declare_color: bool, quadrants: bool) -> NativeImage {
     let mut pool = OutputPool::new(spec(OutputColor::Bt709Limited)).unwrap();
     let buffer = pool.acquire().unwrap();
@@ -143,6 +200,31 @@ fn slow_consumer_cannot_expand_pool_or_overwrite_retained_output() {
     assert_eq!(sample(&fourth, 640, 360), old_pixels);
     drop((clone, third, fourth));
     assert!(renderer.render(&source).is_ok());
+}
+
+#[test]
+fn remaining_visible_crop_excludes_coded_padding() {
+    let source = padded_source();
+    let mut output_spec = spec(OutputColor::Bt709Limited);
+    output_spec.width = 64;
+    output_spec.height = 64;
+    let mut renderer = AppleRenderer::new(output_spec).unwrap();
+    let output = renderer
+        .render_visible(
+            &source,
+            picoo_frame_hub::VisibleRect {
+                x: 0,
+                y: 0,
+                width: 64,
+                height: 64,
+            },
+        )
+        .unwrap();
+    let luma = sample(&output, 32, 32)[0];
+    assert!(
+        (i32::from(luma) - 160).abs() <= 6,
+        "visible crop should keep the picture rows, got {luma}"
+    );
 }
 
 #[test]

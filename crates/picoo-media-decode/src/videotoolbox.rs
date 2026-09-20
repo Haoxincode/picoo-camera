@@ -13,6 +13,9 @@ use std::sync::Mutex;
 use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFRetained, CFString, CFType};
 use objc2_core_media::{CMBlockBuffer, CMFormatDescription, CMSampleBuffer};
 use objc2_core_video::{
+    kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2,
+    kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2,
+    kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2,
     kCVPixelBufferIOSurfacePropertiesKey, kCVPixelBufferMetalCompatibilityKey,
     kCVPixelBufferPixelFormatTypeKey, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
     CVImageBuffer,
@@ -86,16 +89,53 @@ impl VideoToolboxDecoder {
         let nv12_format = CFNumber::new_i64(kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange as i64);
         let surface = CFDictionary::<CFString, CFType>::empty();
         let metal = CFBoolean::new(true);
-        let image_attributes = CFDictionary::<CFString, CFType>::from_slices(
-            &unsafe {
-                [
-                    kCVPixelBufferPixelFormatTypeKey,
-                    kCVPixelBufferIOSurfacePropertiesKey,
-                    kCVPixelBufferMetalCompatibilityKey,
-                ]
-            },
-            &[nv12_format.as_ref(), surface.as_ref(), metal.as_ref()],
+        let facts = configuration
+            .source_facts()
+            .map_err(|error| DecodeError::Platform(error.to_string()))?;
+        let admitted_bt709 = matches!(
+            facts.color,
+            Some(picoo_bitstream::VideoColorFacts {
+                full_range: false,
+                primaries: 1,
+                transfer: 1,
+                matrix: 1,
+            })
         );
+        // Destination attributes request the already-admitted BT.709. This is
+        // not a post-hoc relabel of a published buffer.
+        let image_attributes = if admitted_bt709 {
+            CFDictionary::<CFString, CFType>::from_slices(
+                &unsafe {
+                    [
+                        kCVPixelBufferPixelFormatTypeKey,
+                        kCVPixelBufferIOSurfacePropertiesKey,
+                        kCVPixelBufferMetalCompatibilityKey,
+                        kCVImageBufferColorPrimariesKey,
+                        kCVImageBufferTransferFunctionKey,
+                        kCVImageBufferYCbCrMatrixKey,
+                    ]
+                },
+                &[
+                    nv12_format.as_ref(),
+                    surface.as_ref(),
+                    metal.as_ref(),
+                    unsafe { kCVImageBufferColorPrimaries_ITU_R_709_2.as_ref() },
+                    unsafe { kCVImageBufferTransferFunction_ITU_R_709_2.as_ref() },
+                    unsafe { kCVImageBufferYCbCrMatrix_ITU_R_709_2.as_ref() },
+                ],
+            )
+        } else {
+            CFDictionary::<CFString, CFType>::from_slices(
+                &unsafe {
+                    [
+                        kCVPixelBufferPixelFormatTypeKey,
+                        kCVPixelBufferIOSurfacePropertiesKey,
+                        kCVPixelBufferMetalCompatibilityKey,
+                    ]
+                },
+                &[nv12_format.as_ref(), surface.as_ref(), metal.as_ref()],
+            )
+        };
         let callback = VTDecompressionOutputCallbackRecord {
             decompressionOutputCallback: Some(decompression_output_callback),
             decompressionOutputRefCon: (&*self.output as *const OutputContext)

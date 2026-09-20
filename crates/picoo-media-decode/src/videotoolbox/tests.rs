@@ -351,6 +351,41 @@ fn unverified_hevc_leading_picture_sequences_are_rejected_before_session_creatio
 }
 
 #[test]
+fn xiaomi_product_hevc_1080p60_keeps_admitted_visible_picture() {
+    let record = include_bytes!("../../probes/xiaomi-product-formats/2-1080-60.config");
+    let access_unit = include_bytes!("../../probes/xiaomi-product-formats/2-1080-60.au");
+    let facts =
+        picoo_bitstream::CodecConfiguration::parse(Codec::Hevc, bytes::Bytes::from_static(record))
+            .unwrap()
+            .source_facts()
+            .unwrap();
+    assert_eq!(
+        (
+            facts.coded_width,
+            facts.coded_height,
+            facts.visible_width,
+            facts.visible_height
+        ),
+        (1920, 1088, 1920, 1080)
+    );
+    let config = StreamConfig {
+        codec: picoo_protocol::control::VideoCodec::Hevc as i32,
+        width: 1920,
+        height: 1080,
+        codec_configuration: record.to_vec(),
+        ..Default::default()
+    };
+    let mut decoder = VideoToolboxDecoder::new();
+    let frame = decoder
+        .decode_fixture(access_unit, Some(&config))
+        .expect("Xiaomi HEVC 1080p60 decode")
+        .into_fixture_frame()
+        .expect("Xiaomi HEVC 1080p60 frame");
+    let visible = frame.description().native_format.visible_rect;
+    assert_eq!((visible.width, visible.height), (1920, 1080), "{visible:?}");
+}
+
+#[test]
 fn failed_native_session_preparation_preserves_working_decoder() {
     let mut decoder = VideoToolboxDecoder::new();
     let config = hevc_config();

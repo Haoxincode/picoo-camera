@@ -71,7 +71,7 @@ internal class Camera2DeviceSession(
      * avoids a check-then-force-unwrap race and the identity check prevents a
      * stale bind/unbind callback from rebuilding the current session.
      */
-    private fun scheduleCaptureSessionRebuild(
+    internal fun scheduleCaptureSessionRebuild(
         expectedPreviewSurfaceTexture: SurfaceTexture?,
     ) {
         encoder.cameraHandler.post {
@@ -83,7 +83,10 @@ internal class Camera2DeviceSession(
                 return@post
             }
             val camera = encoder.cameraDevice ?: return@post
-            if (encoder.encodingCompositor == null) {
+            if (encoder.encodingEnabled && encoder.encodingCompositor == null) {
+                return@post
+            }
+            if (!encoder.encodingEnabled && encoder.previewSurface == null) {
                 return@post
             }
             val codecGenerationSnapshot = encoder.lifecycle.codecGeneration.get()
@@ -228,7 +231,11 @@ internal class Camera2DeviceSession(
                 }
                 encoder.cameraDevice = camera
             }
-            encoder.videoEncoder.setupEncoderAndSession(camera, generation)
+            if (encoder.encodingEnabled) {
+                encoder.videoEncoder.setupEncoderAndSession(camera, generation)
+            } else {
+                rebuildCaptureSession(camera, encoder.lifecycle.codecGeneration.get())
+            }
         }
 
         override fun onClosed(camera: CameraDevice) {
@@ -257,7 +264,7 @@ internal class Camera2DeviceSession(
         }
     }
 
-    /** Create / replace Camera2 session using preview + compositor OES input. */
+    /** Create / replace Camera2 session using preview and optional compositor OES input. */
     fun rebuildCaptureSession(
         camera: CameraDevice,
         codecGenerationSnapshot: Long = encoder.lifecycle.codecGeneration.get(),
@@ -274,11 +281,15 @@ internal class Camera2DeviceSession(
                 ) {
                     return@synchronized
                 }
-                val encodingTarget = encoder.encodingCompositor?.cameraInputSurface ?: run {
+                val encodingTarget = encoder.encodingCompositor?.cameraInputSurface
+                if (encoder.encodingEnabled && encodingTarget == null) {
                     encodingSurfaceMissing = true
                     return@synchronized
                 }
                 val previewTarget = encoder.previewSurface
+                if (previewTarget == null && encodingTarget == null) {
+                    return@synchronized
+                }
                 val targets = buildList {
                     previewTarget?.let { surface ->
                         add(
@@ -289,13 +300,15 @@ internal class Camera2DeviceSession(
                             },
                         )
                     }
-                    add(
-                        OutputConfiguration(encodingTarget).apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
-                            }
-                        },
-                    )
+                    encodingTarget?.let { surface ->
+                        add(
+                            OutputConfiguration(surface).apply {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
+                                }
+                            },
+                        )
+                    }
                 }
                 val callback = object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
@@ -346,7 +359,9 @@ internal class Camera2DeviceSession(
                                 camera === encoder.cameraDevice
                             ) {
                                 encoder.lifecycle.setState(CaptureState.Previewing)
-                                encoder.videoEncoder.requestSyncFrame()
+                                if (encodingTarget != null) {
+                                    encoder.videoEncoder.requestSyncFrame()
+                                }
                             } else {
                                 session.close()
                             }
@@ -401,11 +416,16 @@ internal class Camera2DeviceSession(
     private fun buildCaptureRequest(
         camera: CameraDevice,
         previewTarget: Surface?,
-        encodingTarget: Surface,
+        encodingTarget: Surface?,
     ): Result<CaptureRequest> = runCatching {
-            camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+            val template = if (encodingTarget != null) {
+                CameraDevice.TEMPLATE_RECORD
+            } else {
+                CameraDevice.TEMPLATE_PREVIEW
+            }
+            camera.createCaptureRequest(template).apply {
                 previewTarget?.let { addTarget(it) }
-                addTarget(encodingTarget)
+                encodingTarget?.let { addTarget(it) }
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(
                     CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
@@ -464,7 +484,8 @@ internal class Camera2DeviceSession(
         val camera = encoder.cameraDevice ?: return
         val session = encoder.captureSession ?: return
         val previewTarget = encoder.previewSurface
-        val encodingTarget = encoder.encodingCompositor?.cameraInputSurface ?: return
+        val encodingTarget = encoder.encodingCompositor?.cameraInputSurface
+        if (previewTarget == null && encodingTarget == null) return
         val request = buildCaptureRequest(camera, previewTarget, encodingTarget).getOrElse {
             encoder.lastError = "exposure request failed: ${it.message}"
             return

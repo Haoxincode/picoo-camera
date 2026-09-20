@@ -20,7 +20,7 @@ use objc2_core_image::{
 use objc2_core_video::*;
 use objc2_foundation::{NSDictionary, NSNumber};
 use objc2_metal::MTLCreateSystemDefaultDevice;
-use picoo_frame_hub::NativeImage;
+use picoo_frame_hub::{NativeImage, NativeVideoFrame, VisibleRect};
 
 use crate::{OutputColor, RenderError, RenderSpec, Rotation};
 use pool::OutputPool;
@@ -113,12 +113,38 @@ impl AppleRenderer {
     /// Input and output owners stay live through success and failure completion.
     /// A busy consumer returns PoolFull before any GPU work is submitted.
     pub fn render(&mut self, source: &NativeImage) -> Result<RenderedImage, RenderError> {
-        // Dedicated Rust worker threads do not have a Cocoa event-loop pool.
-        // Drain temporary graph/command objects after each completed render.
-        autoreleasepool(|_| self.render_completed(source))
+        self.render_visible(
+            source,
+            VisibleRect {
+                x: 0,
+                y: 0,
+                width: source.width(),
+                height: source.height(),
+            },
+        )
     }
 
-    fn render_completed(&mut self, source: &NativeImage) -> Result<RenderedImage, RenderError> {
+    /// Same as [`Self::render`], but keeps only the remaining visible crop.
+    /// 1080p AVC commonly arrives as 1920×1088 storage with a 1920×1080 picture.
+    pub fn render_visible(
+        &mut self,
+        source: &NativeImage,
+        visible: VisibleRect,
+    ) -> Result<RenderedImage, RenderError> {
+        // Dedicated Rust worker threads do not have a Cocoa event-loop pool.
+        // Drain temporary graph/command objects after each completed render.
+        autoreleasepool(|_| self.render_completed(source, visible))
+    }
+
+    pub fn render_frame(&mut self, frame: &NativeVideoFrame) -> Result<RenderedImage, RenderError> {
+        self.render_visible(frame.image(), frame.description().visible_rect)
+    }
+
+    fn render_completed(
+        &mut self,
+        source: &NativeImage,
+        visible: VisibleRect,
+    ) -> Result<RenderedImage, RenderError> {
         let source_buffer = source.apple().ok_or(RenderError::DeviceUnavailable)?;
         // SAFETY: Read-only metadata access. Unknown interpretation must not be
         // guessed by Core Image or silently fixed by mutating a published source.
@@ -180,6 +206,7 @@ impl AppleRenderer {
                 source_buffer.pixel_buffer(),
                 Some(&options),
             );
+            let image = image.imageByCroppingToRect(visible_crop_rect(source, visible)?);
             let image = self.transform(&image);
             let destination =
                 CIRenderDestination::initWithPixelBuffer(CIRenderDestination::alloc(), &output);
@@ -239,4 +266,37 @@ impl AppleRenderer {
                 .imageByCroppingToRect(bounds)
         }
     }
+}
+
+fn visible_crop_rect(source: &NativeImage, visible: VisibleRect) -> Result<CGRect, RenderError> {
+    let right = visible
+        .x
+        .checked_add(visible.width)
+        .ok_or(RenderError::InvalidDimensions)?;
+    let bottom = visible
+        .y
+        .checked_add(visible.height)
+        .ok_or(RenderError::InvalidDimensions)?;
+    if visible.width == 0
+        || visible.height == 0
+        || !visible.x.is_multiple_of(2)
+        || !visible.y.is_multiple_of(2)
+        || !visible.width.is_multiple_of(2)
+        || !visible.height.is_multiple_of(2)
+        || right > source.width()
+        || bottom > source.height()
+    {
+        return Err(RenderError::InvalidDimensions);
+    }
+    Ok(CGRect {
+        origin: CGPoint {
+            x: f64::from(visible.x),
+            // Core Image uses lower-left; Picoo visible_rect is top-left.
+            y: f64::from(source.height() - bottom),
+        },
+        size: CGSize {
+            width: f64::from(visible.width),
+            height: f64::from(visible.height),
+        },
+    })
 }

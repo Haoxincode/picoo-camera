@@ -3,6 +3,7 @@
 
 pub mod avc;
 mod avc_facts;
+mod avc_vui;
 mod hevc_configuration;
 mod hevc_facts;
 mod sps_facts;

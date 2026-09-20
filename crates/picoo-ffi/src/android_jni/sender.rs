@@ -583,7 +583,9 @@ pub extern "system" fn Java_com_picoo_camera_jni_PicooNative_parseCodecConfigura
             picoo_bitstream::CodecConfiguration::from_hevc_annex_b(&data)
         }
     };
-    let Ok(configuration) = configuration else {
+    let Ok(configuration) =
+        configuration.and_then(|configuration| configuration.with_explicit_bt709_sdr())
+    else {
         return ptr::null_mut();
     };
     env.byte_array_from_slice(configuration.record())

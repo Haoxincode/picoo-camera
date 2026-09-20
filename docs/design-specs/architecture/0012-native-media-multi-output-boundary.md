@@ -52,7 +52,7 @@ Windows Frame Server 是虚拟摄像头固定输出布局与 SampleClock 的 own
 
 Apple 图像、硬件 codec 与 GPU 分别复用 CoreVideo/IOSurface、VideoToolbox 和显式 Metal/Core Image；选型和框架颜色合同见 [Apple GPU 研究](../../research/next-apple-gpu.md)。GPUI 的 surface 资源必须由真实 Metal command buffer 完成回调释放；框架缺少该合同的地方只修补资源交接，不把 Picoo 配置、输出协调或像素处理放进 UI 框架。
 
-编码尺寸与原生 allocation 尺寸分别来自 SPS 和平台输出；可见区域扣除 Decoder 已应用的裁剪，禁止再次裁剪同一边。未知 SPS PAR/色彩仍为未知；Apple adapter 使用 CoreVideo 实际 clean aperture、以方形像素表示的 nominal display size 和明确色彩 attachments 建立原生输出描述，并拒绝与已声明编码事实冲突的结果。平台输出缺失 BT.709 色彩依据时拒绝发布，不通过修改共享 attachment 使检查通过。
+编码尺寸与原生 allocation 尺寸分别来自 SPS 和平台输出；可见区域扣除 Decoder 已应用的裁剪，禁止再次裁剪同一边。平台若发布完整 coded allocation 且未给出剩余裁剪，剩余可见区域使用已准入 SPS 画面；平台 clean/aperture 已等于该画面时不得再裁同一边。未知 SPS PAR/色彩仍为未知；Apple adapter 使用 CoreVideo 实际 clean aperture、以方形像素表示的 nominal display size 和明确色彩 attachments 建立原生输出描述，并拒绝与已声明编码事实冲突的结果。平台输出缺失 BT.709 色彩依据时拒绝发布，不通过修改共享 attachment 使检查通过。
 
 源配置入口只接受精确的正式尺寸组合（1280×720 / 1920×1080），无 480p 或任意高度归档。用户请求不按 Receiver 最大高度静默替换；不能满足的组合必须明确拒绝。码率策略查询对未知高度返回错误，C/JNI 数值接口以 0 表示不支持，不将其当作可用目标码率（REQ-PICOO-MEDIA-028）。
 
@@ -134,7 +134,7 @@ iOS 编码配置必须带 codec；VideoToolbox session/profile 与每输入快�
 
 Decoder offer 分开表达原生编码存储与正式可见图像：1080p 可对应 1920×1080 或 1920×1088 存储，可见尺寸仍是 1920×1080。codec level 准入按编码工作量，不能因裁剪变小而降低；最终 supports 对存储和 crop 位置仍严格相等。准备请求只指定尚未取得参数集的可见尺寸，因此可选择含合法存储 padding 的同一条 offer，不从 codec 名称猜测 SPS 裁剪。
 
-Android 每个编码 generation 从不可变 CaptureProfile 取得 codec、尺寸、fps 和镜头意图，MediaCodec 请求与 Core 配置请求使用相同字段。恢复持有完整旧 CaptureProfile，并校验 codec/fps/尺寸与 Core 恢复指令一致；不能只还原高度而保留失败候选的 codec、帧率或镜头。原生 CSD 与 AU 仍由该 generation 的回调快照携带，硬件能力准入独立执行。
+Android 每个编码 generation 从不可变 CaptureProfile 取得 codec、尺寸、fps 和镜头意图，MediaCodec 请求与 Core 配置请求使用相同字段。恢复持有完整旧 CaptureProfile，并校验 codec/fps/尺寸与 Core 恢复指令一致；不能只还原高度而保留失败候选的 codec、帧率或镜头。原生 CSD 与 AU 仍由该 generation 的回调快照携带，硬件能力准入独立执行。MediaFormat 的 BT.709 标签不能代替位流 VUI：公开 SDK 的 `Surface` 不提供 `setDataSpace`，不以隐藏 API 声明 dataspace。若硬件 SPS 仍缺色彩或仅为 unspecified CICP，适配层在确认 limited SDR 后写入明确 VUI，并让带内 SPS 与已提交记录一致。不能给 full-range 或其他矩阵补色。
 
 移动端公开 FFI 只通过带配置快照的完整编码事件提交 AU；不提供独立 ingest、flush 或 started 入口，避免调用方绕过配置与媒体的事务边界。Core 内部状态机仍可分解事实处理，失败与恢复控制独立于媒体提交。
 

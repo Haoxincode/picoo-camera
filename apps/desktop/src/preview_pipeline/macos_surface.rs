@@ -19,13 +19,16 @@ impl PlatformPreviewResources {
     ) -> Option<CVPixelBuffer> {
         let description = frame.description();
         let rect = description.visible_rect;
-        if rect.x != 0
-            || rect.y != 0
-            || rect.width != frame.image().width()
-            || rect.height != frame.image().height()
+        if rect.width == 0
+            || rect.height == 0
             || description.pixel_aspect_ratio.numerator
                 != description.pixel_aspect_ratio.denominator
         {
+            tracing::warn!(
+                visible = ?rect,
+                par = ?description.pixel_aspect_ratio,
+                "native preview rejected remaining crop or non-square pixels"
+            );
             return None;
         }
         let (mut width, mut height) = (rect.width, rect.height);
@@ -54,12 +57,29 @@ impl PlatformPreviewResources {
             );
             self.spec = Some(spec);
         }
-        let output = self
-            .renderer
-            .as_mut()?
-            .render(frame.image())
-            .map_err(|error| tracing::warn!(%error, "native preview render failed"))
-            .ok()?;
+        let output = match self.renderer.as_mut()?.render_frame(frame) {
+            Ok(output) => output,
+            Err(picoo_gpu::RenderError::PoolFull) => {
+                // Reconnect and GPUI can keep the previous pool's three
+                // outputs alive. A new renderer owns a fresh allocation set.
+                tracing::warn!("native preview pool full; recreating renderer");
+                self.renderer = Some(
+                    AppleRenderer::new(spec)
+                        .map_err(|error| tracing::warn!(%error, "native preview context failed"))
+                        .ok()?,
+                );
+                self.spec = Some(spec);
+                self.renderer
+                    .as_mut()?
+                    .render_frame(frame)
+                    .map_err(|error| tracing::warn!(%error, "native preview render failed"))
+                    .ok()?
+            }
+            Err(error) => {
+                tracing::warn!(%error, "native preview render failed");
+                return None;
+            }
+        };
         // SAFETY: The completed immutable output remains retained during this
         // bridge. GPUI's binding receives its own +1 reference to the same CF
         // object, with no pixel mapping or intermediate image allocation.

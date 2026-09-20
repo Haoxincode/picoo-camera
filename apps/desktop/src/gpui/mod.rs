@@ -2,6 +2,7 @@
 //!
 //! Desktop navigation and receiver states driven by [`ReceiverRuntime`] snapshots.
 
+mod blocking;
 mod bootstrap;
 mod connect;
 #[cfg(test)]
@@ -107,6 +108,7 @@ struct PicooDesktopApp {
     preview_pipeline: PreviewPipeline,
     preview_viewport: PreviewViewportTracker,
     video_surface: VideoSurface,
+    preview_source: (Option<u64>, Option<u32>),
     display_name_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
     vcam_status: VirtualCameraStatus,

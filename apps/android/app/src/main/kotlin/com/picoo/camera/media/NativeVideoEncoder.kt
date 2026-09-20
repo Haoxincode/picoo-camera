@@ -19,7 +19,7 @@ internal data class NativeEncoderFormat(
     val bitrateBps: Int,
 )
 
-/** Official MediaCodec Surface adapter — REQ-PICOO-MEDIA-026. */
+/** Official MediaCodec Surface adapter — REQ-PICOO-MEDIA-026 / REQ-PICOO-MEDIA-086. */
 internal object NativeVideoEncoder {
     fun validateOutput(format: MediaFormat, request: NativeEncoderFormat): Result<Unit> = runCatching {
         check(format.getString(MediaFormat.KEY_MIME) == request.codec.mime) { "Encoder changed codec" }

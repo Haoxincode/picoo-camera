@@ -138,6 +138,9 @@ pub struct ReceiverSession {
     advertised_max_height: u32,
     /// Most recent production decode failure, cleared after a real frame lands.
     last_media_error: Option<String>,
+    /// Why a completed decode was not published; diagnostic only.
+    last_decode_skip: Option<String>,
+    decoder_completions_skipped: u64,
     decoder_recovery: DecoderRecovery,
     /// Sender-selected generation carried by every PCP ControlEnvelope.
     control_generation: Option<u64>,
@@ -206,6 +209,8 @@ impl ReceiverSession {
             last_decoded_fps: 0,
             advertised_max_height: 1080,
             last_media_error: None,
+            last_decode_skip: None,
+            decoder_completions_skipped: 0,
             decoder_recovery: DecoderRecovery::new(),
             control_generation: None,
             next_control_message_id: 1,
@@ -294,6 +299,30 @@ impl ReceiverSession {
 
     pub fn last_media_error(&self) -> Option<&str> {
         self.last_media_error.as_deref()
+    }
+
+    pub fn last_decode_skip(&self) -> Option<&str> {
+        self.last_decode_skip.as_deref()
+    }
+
+    pub fn decoder_completions(&self) -> u64 {
+        self.decoder_completions
+    }
+
+    pub fn decoder_completions_skipped(&self) -> u64 {
+        self.decoder_completions_skipped
+    }
+
+    pub fn control_generation(&self) -> Option<u64> {
+        self.control_generation
+    }
+
+    pub(super) fn media_connection_generation(&self) -> u64 {
+        self.control_generation.unwrap_or_else(|| {
+            self.transport
+                .active_session()
+                .map_or(0, |session| session.0)
+        })
     }
 
     pub fn last_vcam_output_error(&self) -> Option<&str> {
@@ -428,10 +457,7 @@ impl ReceiverSession {
                         break;
                     };
                     self.publish_timeline_access_unit(EncodedAccessUnit {
-                        connection_generation: self
-                            .transport
-                            .active_session()
-                            .map_or(0, |session| session.0),
+                        connection_generation: self.media_connection_generation(),
                         stream_generation: frame.stream_generation,
                         frame_id: frame.frame_id,
                         source_pts_us: frame.pts_us,
@@ -474,11 +500,7 @@ impl ReceiverSession {
 
     fn media_schedule_decision(&self, now_us: u64, max_queue_age_us: u64) -> MediaScheduleDecision {
         let front = self.jitter.front_frame_descriptor();
-        let connection_generation = self.control_generation.unwrap_or_else(|| {
-            self.transport
-                .active_session()
-                .map_or(0, |session| session.0)
-        });
+        let connection_generation = self.media_connection_generation();
         let recovery_admission = front.map_or(RecoveryAdmission::Ready, |frame| {
             self.decoder_recovery
                 .admission(connection_generation, frame)

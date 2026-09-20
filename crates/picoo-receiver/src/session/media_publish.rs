@@ -63,9 +63,23 @@ impl ReceiverSession {
                         .is_current_generation(decoder_generation);
                     let timeline_current = self.decoder_timeline_is_current(timeline);
                     if !decoder_generation_current || !timeline_current {
+                        self.note_decode_skip(
+                            timeline,
+                            decoder_generation,
+                            if !decoder_generation_current {
+                                "stale decoder generation"
+                            } else {
+                                "stale connection or stream timeline"
+                            },
+                        );
                         continue;
                     }
                     if !self.decoder_recovery.accepts_completion(timeline) {
+                        self.note_decode_skip(
+                            timeline,
+                            decoder_generation,
+                            "decoder still awaiting a matching refresh",
+                        );
                         continue;
                     }
                     self.handle_decoder_result(timeline, decoded_at, result)?;
@@ -84,21 +98,45 @@ impl ReceiverSession {
 
     pub(super) fn decoder_timeline_is_current(&self, timeline: AccessUnitTimeline) -> bool {
         let connection_matches = timeline.connection_generation == 0
-            || self.control_generation.map_or_else(
-                || {
+            || match self.control_generation {
+                Some(generation) => generation == timeline.connection_generation,
+                None => {
                     self.permit_unpaired_video
-                        && self
-                            .transport
-                            .active_session()
-                            .is_some_and(|session| session.0 == timeline.connection_generation)
-                },
-                |generation| generation == timeline.connection_generation,
-            );
+                        && self.media_connection_generation() == timeline.connection_generation
+                }
+            };
         let stream_matches = self.current_stream_config.as_ref().map_or_else(
             || self.permit_unpaired_video && self.transport.active_session().is_some(),
             |config| u64::from(config.stream_epoch) == timeline.stream_generation,
         );
         connection_matches && stream_matches
+    }
+
+    fn note_decode_skip(
+        &mut self,
+        timeline: AccessUnitTimeline,
+        decoder_generation: u64,
+        reason: &str,
+    ) {
+        self.decoder_completions_skipped = self.decoder_completions_skipped.saturating_add(1);
+        self.last_decode_skip = Some(format!(
+            "{reason}: au_conn={} control={:?} session={:?} au_epoch={} stream={:?} decoder_gen={}",
+            timeline.connection_generation,
+            self.control_generation,
+            self.transport.active_session().map(|session| session.0),
+            timeline.stream_generation,
+            self.current_stream_config
+                .as_ref()
+                .map(|config| config.stream_epoch),
+            decoder_generation
+        ));
+        tracing::warn!(
+            reason,
+            au_conn = timeline.connection_generation,
+            control = ?self.control_generation,
+            skip = self.decoder_completions_skipped,
+            "native decode completion was not published"
+        );
     }
 
     fn handle_decoder_result(
@@ -134,6 +172,11 @@ impl ReceiverSession {
                 || !self.decoder_timeline_is_current(timeline)
                 || !self.decoder_recovery.accepts_completion(timeline)
             {
+                self.note_decode_skip(
+                    timeline,
+                    token.decoder_generation,
+                    "completed picture failed current-timeline publication gate",
+                );
                 continue;
             }
             let stream_config = token.stream_config.as_deref();
