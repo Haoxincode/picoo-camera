@@ -24,6 +24,16 @@ class StreamingScreenSemanticsTest {
     val composeRule = createComposeRule()
 
     @Test
+    fun sourcePreparationFailureIsVisibleAndFormatSelectionRemainsAvailable() {
+        val message = "前置镜头在当前方向不支持 H.264 · 1080p · 60 fps"
+        var selections = 0
+        setConnectedContent(errorText = message, onChooseSourceFormat = { selections++ })
+        composeRule.onNodeWithText(message).assertTextEquals(message)
+        composeRule.onNodeWithContentDescription("切换画质，当前 H.264 · 720p · 60 fps").performClick()
+        composeRule.runOnIdle { assertEquals(1, selections) }
+    }
+
+    @Test
     fun connectedControlsUseEqualWidthsWithinEachRow() {
         setConnectedContent()
 
@@ -97,6 +107,44 @@ class StreamingScreenSemanticsTest {
         )
     }
 
+    @Test
+    fun thermalWarningKeepsExplicitResolutionControlAvailable() {
+        var changes = 0
+        setConnectedContent(thermalLimited = true, onChooseSourceFormat = { changes += 1 })
+        composeRule.onNodeWithText("设备温度较高，请注意散热或停止推流")
+            .assertTextEquals("设备温度较高，请注意散热或停止推流")
+        composeRule.onNodeWithContentDescription("切换画质，当前 H.264 · 720p · 60 fps")
+            .assertIsEnabled().performClick()
+        composeRule.runOnIdle { assertEquals(1, changes) }
+    }
+
+    @Test
+    fun disconnectedCameraSurfaceKeepsConnectionEntryOnTheMainPage() {
+        var opens = 0
+        setConnectedContent(
+            connected = false,
+            connectionTitle = "点击连接电脑",
+            connectionDetail = "自动发现或输入局域网 IP",
+            onConnectionClick = { opens += 1 },
+            onConnect = { opens += 1 },
+        )
+
+        composeRule.onNodeWithContentDescription("点击连接电脑").performClick()
+        composeRule.onNodeWithContentDescription("连接电脑").performClick()
+        composeRule.runOnIdle { assertEquals(2, opens) }
+    }
+
+    @Test
+    fun reconnectingStateKeepsConnectionEntryVisible() {
+        setConnectedContent(
+            reconnecting = true,
+            connectionTitle = "正在重连电脑",
+            connectionDetail = "连接恢复后会自动继续推流",
+        )
+
+        composeRule.onNodeWithContentDescription("正在重连电脑").assertIsEnabled()
+    }
+
     private fun controlWidth(contentDescription: String): Float =
         composeRule.onNodeWithContentDescription(contentDescription)
             .fetchSemanticsNode()
@@ -104,10 +152,19 @@ class StreamingScreenSemanticsTest {
             .width
 
     private fun setConnectedContent(
+        errorText: String? = null,
         cameraGranted: Boolean = true,
         cameraPermissionPermanentlyDenied: Boolean = false,
         onRequestCamera: () -> Unit = {},
         onDisconnect: () -> Unit = {},
+        thermalLimited: Boolean = false,
+        onChooseSourceFormat: () -> Unit = {},
+        connected: Boolean = true,
+        reconnecting: Boolean = false,
+        connectionTitle: String = "Studio PC 已连接",
+        connectionDetail: String = "点击顶部状态连接电脑",
+        onConnectionClick: () -> Unit = {},
+        onConnect: () -> Unit = onConnectionClick,
     ) {
         composeRule.setContent {
             PicooCameraTheme {
@@ -116,22 +173,28 @@ class StreamingScreenSemanticsTest {
                     cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
                     receiverName = "Studio PC",
                     linkQualityChip = "稳定 · 63ms",
-                    resolutionLabel = "720p",
+                    sourceLabel = "H.264 · 720p · 60 fps",
                     bitrateMbps = "1.9 Mbps",
                     localPreviewMirrored = false,
-                    thermalForced720 = false,
+                    thermalLimited = thermalLimited,
                     powerHint = "",
-                    reconnecting = false,
+                    errorText = errorText,
+                    reconnecting = reconnecting,
                     packetLossLabel = "0% 丢包",
                     onRequestCamera = onRequestCamera,
                     onFlipCamera = {},
-                    onToggleResolution = {},
+                    onChooseSourceFormat = onChooseSourceFormat,
                     onToggleMirror = {},
                     onCycleExposure = {},
                     exposureEv = 0,
                     evSupported = true,
                     onDisconnect = onDisconnect,
                     onStopReconnect = {},
+                    connected = connected,
+                    connectionTitle = connectionTitle,
+                    connectionDetail = connectionDetail,
+                    onConnectionClick = onConnectionClick,
+                    onConnect = onConnect,
                     previewContent = {
                         Box(
                             modifier = Modifier

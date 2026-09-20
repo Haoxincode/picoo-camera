@@ -82,8 +82,7 @@ nonisolated struct SenderStreamConfiguration: Equatable, Sendable {
     let streamEpoch: UInt32
     let mirrored: Bool
     let rotation: UInt32
-    let sequenceParameterSet: Data
-    let pictureParameterSet: Data
+    let codecConfiguration: EncodedCodecConfiguration
 }
 
 nonisolated enum SenderCameraCommand: Equatable, Sendable {
@@ -98,6 +97,8 @@ nonisolated struct SenderEncoderDirective: Equatable, Sendable {
     let id: UInt64
     let kind: UInt32
     let targetHeight: UInt32
+    let targetCodec: UInt32
+    let targetFps: UInt32
     let targetBitrateBps: UInt32
     let streamEpoch: UInt32
 }
@@ -112,11 +113,13 @@ nonisolated enum SenderEncoderFailureOutcome: Int32, Sendable {
 nonisolated struct SenderSessionSnapshot: Equatable, Sendable {
     let status: PicooSenderStatus
     let currentBitrateBps: UInt32
-    let activeHeight: UInt32
-    let receiverMaxHeight: UInt32
     let streamEpoch: UInt32
     let reconnectAttempt: UInt32
     let reconnectDelayMs: UInt64
+    /// nil means no decoder evidence; [] means no formal preparation candidates.
+    let receiverSourceFormats: [VideoSourceFormat]?
+    /// Last admitted source, retained across disconnects; separate from streaming status.
+    let lastCommittedSourceFormat: VideoSourceFormat?
 }
 
 nonisolated struct TrustedReceiverSummary: Identifiable, Equatable, Sendable {
@@ -177,22 +180,49 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             return SenderSessionSnapshot(
                 status: .disconnected,
                 currentBitrateBps: 0,
-                activeHeight: 0,
-                receiverMaxHeight: 0,
                 streamEpoch: Self.initialStreamEpoch,
                 reconnectAttempt: 0,
-                reconnectDelayMs: 0
+                reconnectDelayMs: 0,
+                receiverSourceFormats: nil,
+                lastCommittedSourceFormat: nil
             )
         }
         return SenderSessionSnapshot(
             status: PicooSenderStatus(code: value.status),
             currentBitrateBps: value.current_bitrate_bps,
-            activeHeight: value.active_height,
-            receiverMaxHeight: value.receiver_max_height,
             streamEpoch: value.stream_epoch,
             reconnectAttempt: value.reconnect_attempt,
-            reconnectDelayMs: value.reconnect_delay_ms
+            reconnectDelayMs: value.reconnect_delay_ms,
+            receiverSourceFormats: Self.sourceFormats(from: value),
+            lastCommittedSourceFormat: Self.committedSourceFormat(from: value)
         )
+    }
+
+    static func committedSourceFormat(from value: PicooSenderSnapshot) -> VideoSourceFormat? {
+        let format = value.last_committed_source_format
+        if format.codec == 0 {
+            precondition(format.height == 0 && format.fps == 0, "Invalid absent committed source")
+            return nil
+        }
+        guard let source = VideoSourceFormat(codec: format.codec, height: format.height, framesPerSecond: format.fps) else {
+            preconditionFailure("Invalid native committed source")
+        }
+        return source
+    }
+
+    static func sourceFormats(from value: PicooSenderSnapshot) -> [VideoSourceFormat]? {
+        guard value.receiver_capabilities_known else { return nil }
+        precondition(value.receiver_source_format_count <= 8, "Invalid native source candidate count")
+        var formats = value.receiver_source_formats
+        return withUnsafeBytes(of: &formats) { bytes in
+            bytes.bindMemory(to: PicooSourceFormat.self)
+                .prefix(Int(value.receiver_source_format_count)).map { format in
+                    guard let source = VideoSourceFormat(codec: format.codec, height: format.height, framesPerSecond: format.fps) else {
+                        preconditionFailure("Invalid native source candidate")
+                    }
+                    return source
+                }
+        }
     }
 
     var pairingShortCode: String {
@@ -257,69 +287,34 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         try check(picoo_sender_disconnect(sender), operation: "sender_disconnect")
     }
 
-    func setStreamConfiguration(_ configuration: SenderStreamConfiguration) throws {
-        let code = configuration.sequenceParameterSet.withUnsafeBytes { sequenceBytes in
-            configuration.pictureParameterSet.withUnsafeBytes { pictureBytes in
-                picoo_sender_set_stream_config(
-                    sender,
-                    configuration.width,
-                    configuration.height,
-                    configuration.framesPerSecond,
-                    configuration.bitrateBps,
-                    configuration.mirrored ? 1 : 0,
-                    configuration.rotation,
-                    sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
-                    UInt(sequenceBytes.count),
-                    pictureBytes.bindMemory(to: UInt8.self).baseAddress,
-                    UInt(pictureBytes.count)
-                )
-            }
-        }
-        try check(code, operation: "sender_set_stream_config")
-    }
-
     func send(
         _ accessUnit: EncodedAccessUnit,
         streamConfiguration: SenderStreamConfiguration?
     ) throws -> EncoderSubmitResult {
-        let configuration = streamConfiguration ?? SenderStreamConfiguration(
-            width: accessUnit.width,
-            height: accessUnit.height,
-            framesPerSecond: accessUnit.framesPerSecond,
-            bitrateBps: accessUnit.bitrateBps,
-            streamEpoch: accessUnit.streamEpoch,
-            mirrored: false,
-            rotation: accessUnit.rotation,
-            sequenceParameterSet: Data(),
-            pictureParameterSet: Data()
-        )
         var outcome = PicooEncoderSubmitOutcome()
         let submitCode = accessUnit.data.withUnsafeBytes { accessUnitBytes in
-            configuration.sequenceParameterSet.withUnsafeBytes { sequenceBytes in
-                configuration.pictureParameterSet.withUnsafeBytes { pictureBytes in
-                    picoo_sender_submit_encoder_event(
-                        sender,
-                        accessUnitBytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(accessUnitBytes.count),
-                        accessUnit.isKeyframe ? 1 : 0,
-                        accessUnit.presentationTimeUs,
-                        accessUnit.encodedAtUs,
-                        accessUnit.streamEpoch,
-                        accessUnit.encoderGeneration,
-                        accessUnit.width,
-                        accessUnit.height,
-                        accessUnit.framesPerSecond,
-                        accessUnit.bitrateBps,
-                        configuration.mirrored ? 1 : 0,
-                        accessUnit.rotation,
-                        streamConfiguration == nil ? 0 : 1,
-                        sequenceBytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(sequenceBytes.count),
-                        pictureBytes.bindMemory(to: UInt8.self).baseAddress,
-                        UInt(pictureBytes.count),
-                        &outcome
-                    )
-                }
+            accessUnit.codecConfiguration.record.withUnsafeBytes { recordBytes in
+                picoo_sender_submit_encoder_event(
+                    sender,
+                    accessUnitBytes.bindMemory(to: UInt8.self).baseAddress,
+                    UInt(accessUnitBytes.count),
+                    accessUnit.isKeyframe ? 1 : 0,
+                    accessUnit.presentationTimeUs,
+                    accessUnit.encodedAtUs,
+                    accessUnit.streamEpoch,
+                    accessUnit.encoderGeneration,
+                    accessUnit.width,
+                    accessUnit.height,
+                    accessUnit.framesPerSecond,
+                    accessUnit.bitrateBps,
+                    streamConfiguration?.mirrored == true ? 1 : 0,
+                    accessUnit.rotation,
+                    streamConfiguration == nil ? 0 : 1,
+                    accessUnit.codecConfiguration.codec,
+                    recordBytes.bindMemory(to: UInt8.self).baseAddress,
+                    UInt(recordBytes.count),
+                    &outcome
+                )
             }
         }
         try check(submitCode, operation: "sender_submit_encoder_event")
@@ -342,6 +337,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
             id: directive.id,
             kind: directive.kind,
             targetHeight: directive.target_height,
+            targetCodec: directive.target_codec,
+            targetFps: directive.target_fps,
             targetBitrateBps: directive.target_bitrate_bps,
             streamEpoch: directive.stream_epoch
         )
@@ -385,8 +382,8 @@ nonisolated final class PicooSenderSession: @unchecked Sendable {
         )
     }
 
-    func beginStreamReconfiguration(targetHeight: UInt32) -> UInt32 {
-        picoo_sender_begin_stream_reconfiguration(sender, targetHeight)
+    func beginStreamReconfiguration(targetHeight: UInt32, codec: UInt32, framesPerSecond: UInt32) -> UInt32 {
+        picoo_sender_begin_stream_reconfiguration(sender, targetHeight, codec, framesPerSecond)
     }
 
     func encoderTransactionID(for streamEpoch: UInt32) -> UInt64 {

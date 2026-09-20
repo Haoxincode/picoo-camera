@@ -9,11 +9,14 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use picoo_frame_hub::{waiting_placeholder, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
-use picoo_frame_hub::{SharedFrameRingConsumer, DEFAULT_MAX_FRAME_BYTES};
+use picoo_frame_hub::{SharedFrameKind, SharedFrameRingConsumer, DEFAULT_MAX_FRAME_BYTES};
 
 use crate::{format::nv12_len, DEFAULT_RING_NAME};
 
+mod content_observer;
 mod preparation;
+pub(crate) use content_observer::LiveContentToken;
+use content_observer::RingContentObserver;
 use preparation::{
     PlaceholderFrames, PreparationCounters, PreparationResources, PreparedFrameSet, PreparedFrames,
 };
@@ -48,8 +51,10 @@ struct RingFrameReader {
     consumer: Option<SharedFrameRingConsumer>,
     last_sequence: u64,
     live_revision: u64,
+    placeholder_revision: u64,
     last_live: Option<OwnedNv12Frame>,
     last_live_at: Option<Instant>,
+    current_placeholder: Option<OwnedNv12Frame>,
     next_generation_probe: Instant,
     producer_alive: bool,
 }
@@ -57,7 +62,7 @@ struct RingFrameReader {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SourceKey {
     Live(u64),
-    Placeholder,
+    Placeholder(u64),
 }
 
 struct SourceSnapshot {
@@ -75,8 +80,10 @@ impl RingFrameReader {
             consumer: None,
             last_sequence: 0,
             live_revision: 0,
+            placeholder_revision: 0,
             last_live: None,
             last_live_at: None,
+            current_placeholder: None,
             next_generation_probe: Instant::now(),
             producer_alive: false,
         }
@@ -91,51 +98,64 @@ impl RingFrameReader {
                 .as_ref()
                 .expect("live origin requires a complete frame")
                 .clone(),
-            FrameOrigin::Placeholder => OwnedNv12Frame {
-                width: PLACEHOLDER_WIDTH,
-                height: PLACEHOLDER_HEIGHT,
-                stride: PLACEHOLDER_WIDTH,
-                pixels: waiting_placeholder().into(),
-            },
+            FrameOrigin::Placeholder => {
+                self.current_placeholder
+                    .clone()
+                    .unwrap_or_else(|| OwnedNv12Frame {
+                        width: PLACEHOLDER_WIDTH,
+                        height: PLACEHOLDER_HEIGHT,
+                        stride: PLACEHOLDER_WIDTH,
+                        pixels: waiting_placeholder().into(),
+                    })
+            }
         };
         AcquiredNv12Frame { frame, origin }
     }
 
     fn refresh_source(&mut self) -> FrameOrigin {
         let now = Instant::now();
-        if now >= self.next_generation_probe {
-            self.next_generation_probe = now + GENERATION_PROBE_INTERVAL;
-            if self
-                .consumer
-                .as_ref()
-                .is_some_and(|consumer| !consumer.is_current_generation())
-            {
-                // REQ-PICOO-FRAME-007: a new Receiver mapping starts its
-                // sequence at one, so detach must reset deduplication.
-                self.consumer = None;
-                self.last_sequence = 0;
-                self.producer_alive = false;
+        self.probe_consumer(now);
+
+        let placeholder_signaled = self
+            .consumer
+            .as_ref()
+            .and_then(SharedFrameRingConsumer::content_kind)
+            == Some(SharedFrameKind::Placeholder);
+        if placeholder_signaled {
+            if self.current_placeholder.is_none() {
+                self.placeholder_revision = self.placeholder_revision.wrapping_add(1).max(1);
             }
-            if self.consumer.is_none() {
-                self.consumer = self.open_consumer().ok();
+            self.last_live = None;
+            self.last_live_at = None;
+            if let Some(consumer) = &self.consumer {
+                if let Some(view) = consumer.latest_frame() {
+                    let expected = nv12_len(view.width, view.height);
+                    let valid = view.kind == SharedFrameKind::Placeholder
+                        && view.sequence != self.last_sequence
+                        && view.stride == view.width
+                        && expected == Some(view.nv12.len());
+                    if valid {
+                        self.last_sequence = view.sequence;
+                        self.placeholder_revision =
+                            self.placeholder_revision.wrapping_add(1).max(1);
+                        self.current_placeholder = Some(OwnedNv12Frame {
+                            width: view.width,
+                            height: view.height,
+                            stride: view.stride,
+                            pixels: Arc::<[u8]>::from(view.nv12),
+                        });
+                    }
+                }
             }
-            #[cfg(windows)]
-            {
-                self.producer_alive = self
-                    .consumer
-                    .as_ref()
-                    .is_some_and(SharedFrameRingConsumer::has_live_producer);
-            }
-            #[cfg(not(windows))]
-            {
-                self.producer_alive = self.consumer.is_some();
-            }
+            return FrameOrigin::Placeholder;
         }
 
+        self.current_placeholder = None;
         if let Some(consumer) = &self.consumer {
             if let Some(view) = consumer.latest_frame() {
                 let expected = nv12_len(view.width, view.height);
-                let valid = view.sequence != self.last_sequence
+                let valid = view.kind == SharedFrameKind::Live
+                    && view.sequence != self.last_sequence
                     && view.stride == view.width
                     && expected == Some(view.nv12.len());
                 if valid {
@@ -170,6 +190,48 @@ impl RingFrameReader {
         FrameOrigin::Placeholder
     }
 
+    fn probe_consumer(&mut self, now: Instant) {
+        if now >= self.next_generation_probe {
+            self.next_generation_probe = now + GENERATION_PROBE_INTERVAL;
+            let mut generation_detached = false;
+            if self
+                .consumer
+                .as_ref()
+                .is_some_and(|consumer| !consumer.is_current_generation())
+            {
+                // REQ-PICOO-FRAME-007: a new Receiver mapping starts its
+                // sequence at one, so detach must reset deduplication.
+                self.consumer = None;
+                self.last_sequence = 0;
+                self.current_placeholder = None;
+                self.producer_alive = false;
+                generation_detached = true;
+            }
+            if self.consumer.is_none() {
+                self.consumer = self.open_consumer().ok();
+                if generation_detached && self.consumer.is_some() {
+                    // A replacement mapping is a new privacy generation. Do
+                    // not carry the prior producer's pixels into it; the
+                    // short hold only applies while the old mapping is
+                    // unavailable and the replacement has not attached.
+                    self.last_live = None;
+                    self.last_live_at = None;
+                }
+            }
+            #[cfg(windows)]
+            {
+                self.producer_alive = self
+                    .consumer
+                    .as_ref()
+                    .is_some_and(SharedFrameRingConsumer::has_live_producer);
+            }
+            #[cfg(not(windows))]
+            {
+                self.producer_alive = self.consumer.is_some();
+            }
+        }
+    }
+
     fn snapshot(&mut self, output: OutputSize, demand_revision: u64) -> SourceSnapshot {
         match self.refresh_source() {
             FrameOrigin::Fresh | FrameOrigin::Cached => SourceSnapshot {
@@ -179,8 +241,8 @@ impl RingFrameReader {
                 demand_revision,
             },
             FrameOrigin::Placeholder => SourceSnapshot {
-                key: SourceKey::Placeholder,
-                frame: None,
+                key: SourceKey::Placeholder(self.placeholder_revision),
+                frame: self.current_placeholder.clone(),
                 output,
                 demand_revision,
             },
@@ -188,14 +250,7 @@ impl RingFrameReader {
     }
 
     fn open_consumer(&self) -> Result<SharedFrameRingConsumer, picoo_frame_hub::SharedRingError> {
-        #[cfg(windows)]
-        if self.ring_name == DEFAULT_RING_NAME {
-            return SharedFrameRingConsumer::open_file(
-                picoo_frame_hub::windows_shared_ring_path(&self.ring_name),
-                DEFAULT_MAX_FRAME_BYTES,
-            );
-        }
-        SharedFrameRingConsumer::open(&self.ring_name, DEFAULT_MAX_FRAME_BYTES)
+        open_consumer(&self.ring_name)
     }
 
     #[cfg(test)]
@@ -205,8 +260,10 @@ impl RingFrameReader {
             consumer: None,
             last_sequence: 0,
             live_revision: 0,
+            placeholder_revision: 0,
             last_live: None,
             last_live_at: None,
+            current_placeholder: None,
             next_generation_probe: Instant::now(),
             producer_alive: false,
         }
@@ -221,8 +278,7 @@ struct OutputSize {
 
 impl OutputSize {
     fn new(width: u32, height: u32) -> Option<Self> {
-        matches!((width, height), (854, 480) | (1280, 720) | (1920, 1080))
-            .then_some(Self { width, height })
+        matches!((width, height), (1280, 720) | (1920, 1080)).then_some(Self { width, height })
     }
 
     const fn bit(self) -> u8 {
@@ -231,19 +287,14 @@ impl OutputSize {
 
     const fn slot(self) -> usize {
         match (self.width, self.height) {
-            (854, 480) => 0,
-            (1280, 720) => 1,
-            (1920, 1080) => 2,
-            _ => 3,
+            (1280, 720) => 0,
+            (1920, 1080) => 1,
+            _ => 2,
         }
     }
 }
 
-const OUTPUT_SIZES: [OutputSize; 3] = [
-    OutputSize {
-        width: 854,
-        height: 480,
-    },
+const OUTPUT_SIZES: [OutputSize; 2] = [
     OutputSize {
         width: 1280,
         height: 720,
@@ -257,6 +308,7 @@ const OUTPUT_SIZES: [OutputSize; 3] = [
 struct WorkerState {
     stopped: bool,
     active_outputs: u8,
+    placeholder_only_outputs: u8,
     demand_revision: u64,
     prepared: PreparedFrames,
 }
@@ -272,6 +324,7 @@ impl WorkerControl {
             state: Mutex::new(WorkerState {
                 stopped: false,
                 active_outputs: 0,
+                placeholder_only_outputs: 0,
                 demand_revision: 0,
                 prepared: PreparedFrames::new(placeholders),
             }),
@@ -279,7 +332,7 @@ impl WorkerControl {
         }
     }
 
-    fn wait_until_active(&self) -> Option<(u8, u64)> {
+    fn wait_until_active(&self) -> Option<(u8, u8, u64)> {
         let mut state = self
             .state
             .lock()
@@ -290,7 +343,11 @@ impl WorkerControl {
                 .wait(state)
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
         }
-        (!state.stopped).then_some((state.active_outputs, state.demand_revision))
+        (!state.stopped).then_some((
+            state.active_outputs,
+            state.placeholder_only_outputs,
+            state.demand_revision,
+        ))
     }
 
     fn wait_for_poll(&self, demand_revision: u64) -> bool {
@@ -313,6 +370,7 @@ impl WorkerControl {
         &self,
         output: OutputSize,
         active: bool,
+        placeholder_only: bool,
         placeholder: Arc<PreparedFrameSet>,
     ) -> bool {
         let mut state = self
@@ -323,12 +381,21 @@ impl WorkerControl {
             return false;
         }
         let previous = state.active_outputs;
+        let previous_placeholder_only = state.placeholder_only_outputs;
         if active {
             state.active_outputs |= output.bit();
+            if placeholder_only {
+                state.placeholder_only_outputs |= output.bit();
+            } else {
+                state.placeholder_only_outputs &= !output.bit();
+            }
         } else {
             state.active_outputs &= !output.bit();
+            state.placeholder_only_outputs &= !output.bit();
         }
-        if state.active_outputs == previous {
+        if state.active_outputs == previous
+            && state.placeholder_only_outputs == previous_placeholder_only
+        {
             return false;
         }
         state.demand_revision = state.demand_revision.wrapping_add(1).max(1);
@@ -387,6 +454,7 @@ impl WorkerControl {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         state.stopped = true;
         state.active_outputs = 0;
+        state.placeholder_only_outputs = 0;
         state.demand_revision = 0;
         self.wake.notify_all();
     }
@@ -410,8 +478,10 @@ struct WorkerHandles {
 /// storage under a short pointer lock (REQ-PICOO-VCAM-010).
 pub(crate) struct FrameProvider {
     placeholders: Arc<PlaceholderFrames>,
-    last_delivered_live_revisions: [AtomicU64; 3],
+    last_delivered_live_revisions: [AtomicU64; 2],
     control: Arc<WorkerControl>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    content: Mutex<RingContentObserver>,
     #[cfg(test)]
     preparation_counters: Arc<PreparationCounters>,
     workers: Mutex<Option<WorkerHandles>>,
@@ -424,6 +494,7 @@ impl FrameProvider {
     }
 
     fn with_reader(reader: RingFrameReader) -> io::Result<Self> {
+        let content = Mutex::new(RingContentObserver::new(reader.ring_name.clone()));
         let placeholders = Arc::new(PlaceholderFrames::new());
         let control = Arc::new(WorkerControl::new(&placeholders));
         let preparation_counters = Arc::new(PreparationCounters::default());
@@ -447,7 +518,15 @@ impl FrameProvider {
                     let next = match (snapshot.key, snapshot.frame.as_ref()) {
                         (SourceKey::Live(_), Some(frame)) => {
                             counters_for_worker.record(snapshot.output);
-                            Arc::new(PreparedFrameSet::from_live(
+                            Arc::new(PreparedFrameSet::from_source(
+                                snapshot.key,
+                                frame,
+                                snapshot.output,
+                                &mut resources,
+                            ))
+                        }
+                        (SourceKey::Placeholder(_), Some(frame)) => {
+                            Arc::new(PreparedFrameSet::from_source(
                                 snapshot.key,
                                 frame,
                                 snapshot.output,
@@ -481,6 +560,7 @@ impl FrameProvider {
             placeholders,
             last_delivered_live_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
             control,
+            content,
             #[cfg(test)]
             preparation_counters,
             workers: Mutex::new(Some(WorkerHandles {
@@ -496,7 +576,20 @@ impl FrameProvider {
         };
         if self
             .control
-            .set_output_active(output, active, self.placeholders.get(output))
+            .set_output_active(output, active, false, self.placeholders.get(output))
+        {
+            self.last_delivered_live_revisions[output.slot()].store(0, Ordering::Release);
+        }
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) fn set_placeholder_output_active(&self, width: u32, height: u32, active: bool) {
+        let Some(output) = OutputSize::new(width, height) else {
+            return;
+        };
+        if self
+            .control
+            .set_output_active(output, active, true, self.placeholders.get(output))
         {
             self.last_delivered_live_revisions[output.slot()].store(0, Ordering::Release);
         }
@@ -507,7 +600,7 @@ impl FrameProvider {
         let prepared = self.control.prepared(requested);
         let frame = prepared.output(width, height)?;
         let origin = match prepared.key {
-            SourceKey::Placeholder => {
+            SourceKey::Placeholder(_) => {
                 self.last_delivered_live_revisions[requested.slot()].store(0, Ordering::Release);
                 FrameOrigin::Placeholder
             }
@@ -524,6 +617,22 @@ impl FrameProvider {
         Some(AcquiredNv12Frame { frame, origin })
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) fn content_kind(&self) -> SharedFrameKind {
+        self.content
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .kind()
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) fn live_content_token(&self) -> Option<LiveContentToken> {
+        self.content
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .live_token()
+    }
+
     pub(crate) fn shutdown(&self) {
         self.control.stop();
         let workers = self
@@ -538,9 +647,8 @@ impl FrameProvider {
     }
 
     #[cfg(test)]
-    fn preparation_counts(&self) -> (u64, u64, u64) {
+    fn preparation_counts(&self) -> (u64, u64) {
         (
-            self.preparation_counters.output_480.load(Ordering::Relaxed),
             self.preparation_counters.output_720.load(Ordering::Relaxed),
             self.preparation_counters
                 .output_1080
@@ -554,6 +662,19 @@ impl FrameProvider {
     }
 }
 
+fn open_consumer(
+    ring_name: &str,
+) -> Result<SharedFrameRingConsumer, picoo_frame_hub::SharedRingError> {
+    #[cfg(windows)]
+    if ring_name == DEFAULT_RING_NAME {
+        return SharedFrameRingConsumer::open_file(
+            picoo_frame_hub::windows_shared_ring_path(ring_name),
+            DEFAULT_MAX_FRAME_BYTES,
+        );
+    }
+    SharedFrameRingConsumer::open(ring_name, DEFAULT_MAX_FRAME_BYTES)
+}
+
 impl Drop for FrameProvider {
     fn drop(&mut self) {
         self.shutdown();
@@ -565,13 +686,29 @@ fn run_ring_reader(
     source_tx: mpsc::SyncSender<SourceSnapshot>,
     control: &WorkerControl,
 ) {
-    let mut last_sent: [Option<(SourceKey, u64)>; 3] = [None; 3];
-    while let Some((active_outputs, demand_revision)) = control.wait_until_active() {
+    let mut last_sent: [Option<(SourceKey, u64)>; 2] = [None; 2];
+    while let Some((active_outputs, placeholder_only_outputs, demand_revision)) =
+        control.wait_until_active()
+    {
         for output in OUTPUT_SIZES {
             if active_outputs & output.bit() == 0 {
                 continue;
             }
-            let snapshot = reader.snapshot(output, demand_revision);
+            let snapshot = if placeholder_only_outputs & output.bit() != 0 {
+                let now = Instant::now();
+                reader.probe_consumer(now);
+                if reader
+                    .consumer
+                    .as_ref()
+                    .and_then(SharedFrameRingConsumer::content_kind)
+                    != Some(SharedFrameKind::Placeholder)
+                {
+                    continue;
+                }
+                reader.snapshot(output, demand_revision)
+            } else {
+                reader.snapshot(output, demand_revision)
+            };
             let request_key = (snapshot.key, demand_revision);
             let slot = output.slot();
             if Some(request_key) != last_sent[slot] {

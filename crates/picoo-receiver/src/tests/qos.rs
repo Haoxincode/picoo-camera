@@ -27,6 +27,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
         .expect("listen");
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     sender
         .connect(Endpoint {
             host: bind.ip().to_string(),
@@ -74,11 +75,11 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
     let soak_au: Vec<u8> = {
         use openh264::encoder::Encoder;
         use openh264::formats::YUVBuffer;
-        use picoo_packet::extract_sps_pps;
+        use picoo_bitstream::avc::extract_sps_pps;
         use picoo_sender::StreamConfigParams;
 
-        let width = 160usize;
-        let height = 120usize;
+        let width = 1280usize;
+        let height = 720usize;
         let mut planes = vec![128u8; width * height * 3 / 2];
         for y in 0..height {
             for x in 0..width {
@@ -86,7 +87,13 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
             }
         }
         let yuv = YUVBuffer::from_vec(planes, width, height);
-        let mut encoder = Encoder::new().expect("openh264 encoder");
+        let mut encoder = Encoder::with_api_config(
+            openh264::OpenH264API::from_source(),
+            openh264::encoder::EncoderConfig::new()
+                .profile(openh264::encoder::Profile::High)
+                .vui(openh264::encoder::VuiConfig::bt709()),
+        )
+        .expect("openh264 encoder");
         let annex = encoder.encode(&yuv).expect("encode").to_vec();
         let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
         sender.set_stream_config(StreamConfigParams {
@@ -97,8 +104,9 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
             stream_epoch: 1,
             mirrored: false,
             rotation: 0,
-            sps,
-            pps,
+            configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+                .unwrap()
+                .into(),
         });
         for _ in 0..50 {
             receiver.pump().expect("rx");
@@ -108,7 +116,7 @@ fn run_paired_loopback_soak(soak_secs: u64, sample_every: u64) {
             }
             std::thread::sleep(Duration::from_millis(2));
         }
-        annex
+        super::wire_avc(&annex)
     };
     #[cfg(any(windows, target_vendor = "apple"))]
     let soak_au: Vec<u8> = b"soak-frame-stub".to_vec();
@@ -207,6 +215,7 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
 
     let lossy = LossyVideoTransport::new(QuicSenderTransport::new(), loss_ratio);
     let mut sender = SenderSession::new(lossy);
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
@@ -238,36 +247,50 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
 
     let mut frames_seen = 0u64;
-    let mut last_au = receiver.ingress_stats().access_units;
+    let mut last_frame = None;
+    let mut last_decoded = receiver.ingress_stats().decoded_frames;
     let mut stalled_since = Instant::now();
+    let source_clock = Instant::now();
     for frame_id in 1..=400u64 {
-        // Prefer keyframes so a drop does not permanently break the stub decode chain.
-        let is_key = frame_id % 5 == 1;
+        // Model a 30fps source with a real microsecond media clock and honor
+        // refresh requests as a production encoder does. A one-microsecond PTS
+        // increment at 500fps measured synthetic clock drift/overload, not loss.
+        let deadline = Instant::now() + Duration::from_micros(33_333);
+        let requested = sender.take_keyframe_request();
+        let is_key = requested || frame_id % 5 == 1;
         let payload = format!("lossy-au-{frame_id}");
-        let _ =
-            video_send_accepted(sender.ingest_and_flush(payload.as_bytes(), is_key, frame_id, 1));
-        for _ in 0..12 {
+        video_send_accepted(sender.ingest_and_flush(
+            payload.as_bytes(),
+            is_key,
+            source_clock.elapsed().as_micros() as u64,
+            1,
+        ));
+        while Instant::now() < deadline {
             receiver.pump().expect("rx");
-            sender.pump().ok();
+            sender.pump().expect("tx");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        if receiver.latest_frame().is_some() {
-            frames_seen += 1;
+        if let Some(frame) = receiver.latest_frame() {
+            if last_frame
+                .as_ref()
+                .is_none_or(|previous| !std::sync::Arc::ptr_eq(previous, frame))
+            {
+                frames_seen += 1;
+                last_frame = Some(std::sync::Arc::clone(frame));
+            }
         }
-        let au = receiver.ingress_stats().access_units;
-        if au != last_au {
+        let decoded = receiver.ingress_stats().decoded_frames;
+        if decoded != last_decoded {
             stalled_since = Instant::now();
-            last_au = au;
+            last_decoded = decoded;
         }
-        // The production failure deadline is hard-bounded at 300ms. Allow that
-        // deadline plus one source-frame/control-loop margin, but reject a
-        // receiver that remains wedged after its recovery budget.
+        // Preserve the production recovery deadline plus one source-frame margin.
         assert!(
             stalled_since.elapsed() < Duration::from_millis(350),
-            "session stalled under {loss_ratio} loss after frame_id={frame_id} au={au} stats={:?} awaiting_refresh={}",
+            "session stalled under {loss_ratio} loss after frame_id={frame_id} decoded={decoded} stats={:?} awaiting_refresh={}",
             receiver.ingress_stats(),
             receiver.awaiting_decoder_refresh_for_test(),
         );
-        std::thread::sleep(Duration::from_millis(2));
     }
 
     let observed = sender.transport().observed_drop_ratio();
@@ -291,13 +314,19 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     for frame_id in 401..=430u64 {
         let payload = format!("recover-au-{frame_id}");
         sender
-            .ingest_and_flush(payload.as_bytes(), true, frame_id, 1)
+            .ingest_and_flush(
+                payload.as_bytes(),
+                true,
+                source_clock.elapsed().as_micros() as u64,
+                1,
+            )
             .expect("recover ingest");
-        for _ in 0..8 {
+        let deadline = Instant::now() + Duration::from_micros(33_333);
+        while Instant::now() < deadline {
             receiver.pump().expect("rx");
-            sender.pump().ok();
+            sender.pump().expect("tx");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(2));
     }
     assert!(
         receiver.latest_frame().is_some(),
@@ -310,30 +339,34 @@ fn paired_loopback_remains_usable_under_five_percent_loss() {
     while t_stats.elapsed() < Duration::from_millis(1100) {
         let payload = format!("recover-au-{recover_id}");
         sender
-            .ingest_and_flush(payload.as_bytes(), true, recover_id, 1)
+            .ingest_and_flush(
+                payload.as_bytes(),
+                true,
+                source_clock.elapsed().as_micros() as u64,
+                1,
+            )
             .expect("recover keep-alive");
         recover_id += 1;
-        for _ in 0..6 {
+        let deadline = Instant::now() + Duration::from_micros(33_333);
+        while Instant::now() < deadline {
             receiver.pump().expect("rx");
-            sender.pump().ok();
+            sender.pump().expect("tx");
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(20));
     }
-    for _ in 0..20 {
-        receiver.pump().ok();
-        sender.pump().ok();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    // Measure while the recovery source is live. A fixed number of sleeps
+    // after stopping capture measures idle host scheduling, not live recovery.
+    // The preceding 1100ms phase already pumps through a complete stats window.
     // Direct LatestFrameStore age (decode timestamp → now) — PRD §21 recovery bound.
     let frame = receiver.latest_frame().expect("recovered frame");
-    let now_us = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_micros() as u64)
-        .unwrap_or(0);
-    let hub_age_ms = now_us.saturating_sub(frame.timestamp_us) as f64 / 1000.0;
+    #[cfg(any(target_os = "macos", windows))]
+    let hub_age_ms = frame.timeline().decoded_at.elapsed().as_secs_f64() * 1000.0;
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let hub_age_ms = frame.decoded_at.elapsed().as_secs_f64() * 1000.0;
     assert!(
         hub_age_ms < 1_000.0,
-        "LatestFrameStore age piled up after recovery: {hub_age_ms}ms (PRD §21 <1s)"
+        "LatestFrameStore age piled up during live recovery: {hub_age_ms}ms (PRD §21 <1s); live_window={:?}; sent_until={recover_id}; stats={:?}",
+        t_stats.elapsed(), receiver.last_stats()
     );
     if let Some(stats) = receiver.last_stats() {
         assert!(
@@ -371,6 +404,7 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
         })
         .expect("listen");
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    sender.set_stream_config(super::configured_source());
     super::trust_receiver(&mut sender, &mut receiver);
     sender
         .connect(Endpoint {
@@ -411,8 +445,8 @@ fn paired_loopback_e2e_latency_p50_under_budget() {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
-                if frame.sequence > last_seq {
-                    last_seq = frame.sequence;
+                if super::source_frame_id(frame) > last_seq {
+                    last_seq = super::source_frame_id(frame);
                     observed = Some(t0.elapsed().as_secs_f64() * 1000.0);
                     break;
                 }
@@ -455,7 +489,35 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(0.05);
-    let (au, sps, pps) = openh264_au(160, 120, 17);
+    // A real 30fps prediction chain, not the same IDR mislabeled as delta.
+    use openh264::encoder::{Encoder, EncoderConfig, FrameRate, FrameType, Profile, VuiConfig};
+    use openh264::formats::YUVBuffer;
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        EncoderConfig::new()
+            .profile(Profile::High)
+            .vui(VuiConfig::bt709())
+            .max_frame_rate(FrameRate::from_hz(30.0))
+            .skip_frames(false),
+    )
+    .expect("encoder");
+    let input = YUVBuffer::from_vec(vec![128; 1280 * 720 * 3 / 2], 1280, 720);
+    let mut frames = Vec::new();
+    let mut parameters = None;
+    for frame in 0..120 {
+        if frame % 5 == 0 {
+            encoder.force_intra_frame();
+        }
+        let encoded = encoder.encode(&input).expect("encode");
+        let keyframe = encoded.frame_type() == FrameType::IDR;
+        assert_eq!(keyframe, frame % 5 == 0);
+        let annex = encoded.to_vec();
+        if parameters.is_none() {
+            parameters = picoo_bitstream::avc::extract_sps_pps(&annex);
+        }
+        frames.push((super::wire_avc(&annex), keyframe));
+    }
+    let (sps, pps) = parameters.expect("SPS/PPS");
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -501,15 +563,16 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     }
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 1280,
+        height: 720,
         fps: 30,
         bitrate_bps: 400_000,
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -521,21 +584,29 @@ fn paired_openh264_remains_usable_under_five_percent_loss() {
     }
 
     let mut frames_seen = 0u64;
+    let mut last_frame = 0;
     let mut backpressure_events = 0u64;
     let mut last_au = receiver.ingress_stats().access_units;
     let mut stalled = 0u32;
-    for frame_id in 1..=120u64 {
-        let is_key = frame_id % 5 == 1;
-        if !video_send_accepted(sender.ingest_and_flush(&au, is_key, frame_id, 1)) {
+    for (index, (au, is_key)) in frames.iter().enumerate() {
+        // Pace at the declared source rate. A burst at hundreds of fps tests
+        // scheduler overload, not the product's 5% network-loss contract.
+        let deadline = Instant::now() + Duration::from_secs_f64(1.0 / 30.0);
+        let frame_id = index as u64 + 1;
+        if !video_send_accepted(sender.ingest_and_flush(au, *is_key, frame_id * 33_333, 1)) {
             backpressure_events += 1;
         }
-        for _ in 0..16 {
-            receiver.pump().ok();
-            sender.pump().ok();
+        while Instant::now() < deadline {
+            receiver.pump().expect("receiver pump");
+            sender.pump().expect("sender pump");
+            if let Some(frame) = receiver.latest_frame() {
+                let id = super::source_frame_id(frame);
+                if id > last_frame {
+                    last_frame = id;
+                    frames_seen += 1;
+                }
+            }
             std::thread::sleep(Duration::from_micros(100));
-        }
-        if receiver.latest_frame().is_some_and(|f| f.timestamp_us > 0) {
-            frames_seen += 1;
         }
         let au_n = receiver.ingress_stats().access_units;
         if au_n == last_au {
@@ -566,7 +637,7 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
     use picoo_transport::{Endpoint, QuicSenderTransport};
     use std::time::Instant;
 
-    let (au, sps, pps) = openh264_au(160, 120, 21);
+    let (au, sps, pps) = openh264_au(1280, 720, 21);
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
@@ -609,15 +680,16 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
         std::thread::sleep(Duration::from_millis(2));
     }
     sender.set_stream_config(StreamConfigParams {
-        width: 160,
-        height: 120,
+        width: 1280,
+        height: 720,
         fps: 30,
         bitrate_bps: 400_000,
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -640,8 +712,8 @@ fn paired_openh264_e2e_latency_p50_under_budget() {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
-                if frame.sequence > last_seq && frame.timestamp_us > 0 {
-                    last_seq = frame.sequence;
+                if super::source_frame_id(frame) > last_seq && frame.timestamp_us > 0 {
+                    last_seq = super::source_frame_id(frame);
                     observed = Some(t0.elapsed().as_secs_f64() * 1000.0);
                     break;
                 }

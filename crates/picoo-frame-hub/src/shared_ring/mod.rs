@@ -8,6 +8,9 @@ use lock::KernelLockGuard;
 use thiserror::Error;
 
 mod consumer;
+mod content_fence;
+mod demand;
+pub use content_fence::RingContentFence;
 mod layout;
 mod lock;
 mod mapping;
@@ -16,8 +19,6 @@ mod writer;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod file_mapping;
-#[cfg(target_os = "macos")]
-mod macos_app_group;
 #[cfg(target_os = "windows")]
 mod windows_machine;
 
@@ -27,12 +28,7 @@ mod tests;
 pub use consumer::SharedFrameRingConsumer;
 pub use layout::{
     DEFAULT_MAX_FRAME_BYTES, PIXEL_FORMAT_NV12, RING_MAGIC, RING_META_SIZE, RING_READY_DONE,
-    RING_SLOT_COUNT, RING_SLOT_META_SIZE, RING_VERSION,
-};
-#[cfg(target_os = "macos")]
-pub use macos_app_group::{
-    macos_app_group_identifier, macos_app_group_ring_path, MACOS_APP_GROUP_INFO_KEY,
-    MACOS_UNSIGNED_BUILD_INFO_KEY,
+    RING_SLOT_COUNT, RING_SLOT_META_SIZE,
 };
 pub use producer::{RingPublishOutcome, SharedFrameRingProducer};
 #[cfg(target_os = "windows")]
@@ -41,27 +37,50 @@ pub use writer::{
     SharedFrameRingWriter, SharedRingSubmitOutcome, SharedRingWriterEvent, SharedRingWriterStats,
 };
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum SharedFrameKind {
+    #[default]
+    Live = 0,
+    Placeholder = 1,
+}
+
+impl SharedFrameKind {
+    pub(super) const fn from_wire(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(Self::Live),
+            1 => Some(Self::Placeholder),
+            _ => None,
+        }
+    }
+
+    const fn signal_bit(self) -> u64 {
+        self as u64
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SharedRingError {
     #[error("shared memory: {0}")]
     Shmem(String),
     #[error("file mapping {path}: {message}")]
     FileMapping { path: PathBuf, message: String },
-    #[error("macOS App Group container is unavailable: {0}")]
-    AppGroupUnavailable(String),
     #[error("a Shared Frame Ring producer is already active for {0}")]
     ProducerAlreadyRunning(PathBuf),
     #[error("invalid layout")]
     InvalidLayout,
     #[error("frame too large: {0} > max {1}")]
     FrameTooLarge(usize, usize),
-    #[error("invalid magic/version")]
+    #[error("shared ring content was invalidated")]
+    ContentInvalidated,
+    #[error("invalid ring header")]
     InvalidHeader,
 }
 
 pub struct SharedFrameView<'a> {
     pub sequence: u64,
     pub timestamp_us: u64,
+    pub kind: SharedFrameKind,
     pub width: u32,
     pub height: u32,
     pub stride: u32,

@@ -1,18 +1,19 @@
 //! Sender→receiver loopback helpers for desktop diagnostics and tests.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use bytes::Bytes;
+use crate::ReceiverFrame;
 use picoo_session::ReceiverStatus;
+use std::sync::Arc;
 
 use super::ReceiverSession;
 use crate::{ReceiverError, ReceiverIdentity};
 
-/// Run sender→receiver loopback until one access unit reaches LatestFrameStore.
+/// Run sender→receiver loopback until one access unit reaches the source frame bus.
 ///
 /// Uses the unpaired test bypass — prefer [`run_paired_loopback_access_unit`] for
 /// product-path validation (REQ-PICOO-PAIRING-003).
-pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
+pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Arc<ReceiverFrame>, ReceiverError> {
     use picoo_sender::SenderSession;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
@@ -51,11 +52,17 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     // Production senders never enter Streaming before pairing has committed.
     sender.ingest_and_flush_unchecked_for_test(payload, true, 1, 1)?;
 
-    for _ in 0..200 {
+    let video_deadline = Instant::now()
+        + if cfg!(target_os = "macos") {
+            Duration::from_secs(15)
+        } else {
+            Duration::from_millis(400)
+        };
+    while Instant::now() < video_deadline {
         receiver.pump()?;
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            return Ok(frame.pixel_data.clone());
+            return Ok(Arc::clone(frame));
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -63,12 +70,14 @@ pub fn run_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> 
     Err(ReceiverError::LoopbackTimeout)
 }
 
-/// Pairing/session loopback: first-time pairing (short code) then video → LatestFrameStore.
+/// Pairing/session loopback: first-time pairing (short code) then video → the source frame bus.
 ///
 /// This explicitly uses `StubDecoder` for arbitrary fixture bytes. It validates
 /// the paired transport/session path, not a platform's production H.264 decoder.
 /// Does **not** use `permit_unpaired_video` (REQ-PICOO-PAIRING-003).
-pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, ReceiverError> {
+pub fn run_paired_loopback_access_unit(
+    payload: &[u8],
+) -> Result<Arc<ReceiverFrame>, ReceiverError> {
     use picoo_sender::SenderSession;
     use picoo_session::SenderStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
@@ -85,6 +94,20 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
     })?;
 
     let mut sender = SenderSession::new(QuicSenderTransport::new());
+    let (sps, pps) = picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR)
+        .expect("valid diagnostic fixture");
+    sender.set_stream_config(picoo_sender::StreamConfigParams {
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+    });
     sender.connect(Endpoint {
         host: bind.ip().to_string(),
         port: bind.port(),
@@ -140,7 +163,7 @@ pub fn run_paired_loopback_access_unit(payload: &[u8]) -> Result<Bytes, Receiver
         receiver.pump()?;
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            return Ok(frame.pixel_data.clone());
+            return Ok(Arc::clone(frame));
         }
         std::thread::sleep(Duration::from_millis(2));
     }

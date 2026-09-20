@@ -1,0 +1,86 @@
+# Windows 原生图像与 GPU 边界
+
+关联 ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-009、016、029，2026-09-06。
+
+现有 GPUI Kit 锁定的 gpui-pre-windows 0.3.3 使用 D3D11；directx_renderer.rs 的 draw_surfaces 当前只返回 Ok，不提供视频表面绘制。因此不能把 macOS surface API 直接视为 Windows 已实现。框架资源适配只能拥有纹理导入、GPU 读取寿命和绘制，不接收 Picoo 配置或 codec 事务。
+
+原生图像选择官方 D3D11 + Media Foundation 的 IMFDXGIBuffer，而不是把 GPU 图像映射到 CPU 再上传。复用仓库已有 windows-rs 0.62.2，MIT OR Apache-2.0，最低 Rust 1.82；项目当前 stable 高于基线。API 核对当前绑定中的 IMFDXGIBuffer::GetResource/GetSubresourceIndex、ID3D11Texture2D::GetDesc、MFCreateDXGISurfaceBuffer；均早于 Windows 11 项目最低平台。增加的 feature 是已被 MF Decoder 依赖树采用的官方类型投影，不引入 C/C++ 编译器、FFmpeg 或另一套 GPU runtime。
+
+候选 wgpu 面向跨后端 GPU 工作，但本项目 Windows codec 与 GPUI 都使用 D3D11，引入 D3D12/Vulkan 资源互操作会增加同步与 adapter 边界。此处不采用；D3D11 VideoProcessor/共享资源是后续目标图像处理与原生交接候选，仍须逐项查询硬件支持。
+
+解码图像 owner 必须保留原始 IMFSample 和纹理/subresource；仅保留 ID3D11Texture2D 不足以阻止 MF allocator 将数组 slice 重新交给解码器。构造入口为 unsafe 已完成且不可变的输出边界；安全接口仅公开几何，平台 GPU 访问同样要求持有 owner 到 GPU 完成。该边界不提供 CPU map、像素或 stride，不替代输出 GPU 完成 fence。
+
+Windows CI 的 WARP 只可用于标准资源对象、COM 保留和边界拒绝的诊断测试，不作为硬件解码、显卡矩阵、吞吐或生产设备工厂验收。生产链路仍必须拒绝软件 codec/GPU。
+
+GPU context 采用官方 DXGI adapter、D3D11CreateDevice 和 ID3D11Multithread。Decoder 使用 MFCreateDXGIDeviceManager/ResetDevice 建立自己的固定 manager，只在初始化时 ResetDevice；GPU context 不暴露 manager，也不承担 MF 初始化。MF/COM runtime 由平台 codec 工作者管理，不在可跨线程图像/context 的 Drop 中 CoUninitialize。context 不是某 codec 的硬件能力证明，生产设备入口先拒绝 DXGI_ADAPTER_FLAG_SOFTWARE；WARP 明确排除。公开 for_adapter 接口允许后续平台预览与解码选择同一 adapter，不用新增 sink 触发整个源 device 重建。
+
+
+## MFT 硬件模式准入
+
+微软 [AVDecVideoAcceleration_H264](https://learn.microsoft.com/en-us/windows/win32/codecapi/avdecvideoacceleration-h264-property) 明确说明该属性在 Media Foundation/IMFTransform 路径无效，不能通过 SetValue(true) 声明已开启硬解。
+
+官方 [D3D11 MF 解码接入](https://learn.microsoft.com/en-us/windows/win32/medfound/supporting-direct3d-11-video-decoding-in-media-foundation) 要求先检查 MF_SA_D3D11_AWARE，再通过 MFT_MESSAGE_SET_D3D_MANAGER 传入 DXGI manager。驱动 profile、NV12 output format 与完整 decoder configuration 由 D3D11 VideoDevice 查询；输入/输出类型必须在 manager 已绑定时协商。
+
+文档规定不支持硬件组合时 SetInputType/SetOutputType 返回 MF_E_UNSUPPORTED_D3D_TYPE。标准 Topology Loader 的软件回退是发送 SET_D3D_MANAGER(NULL)，然后重新协商。Picoo 直接管理 MFT，因此必须把此错误作为明确准入失败，禁止清空 manager 后重试。完成帧还必须是同一设备的合法 IMFDXGIBuffer；普通 IMFMediaBuffer 不能进入原生源。MFT 的包装器是否被称作 software decoder 或是否注册为异步 hardware MFT，不足以代替这些实际契约；不能只凭 factory 标签宣称或否定 DXVA。
+
+参考微软 [H.264 Decoder](https://learn.microsoft.com/en-us/windows/win32/medfound/h-264-video-decoder)：DXVA 支持 Main-compatible Baseline/Main/High，1920×1088 为其说明的保证尺寸上限。Picoo 仍按当前 codec/profile/实际 coded size/驱动能力验证，不能将该文档替代所有显卡与 HEVC 的验收。
+
+生产工厂接入复用已有 WindowsGpuContext，并使用官方 ID3D11VideoDevice::CheckVideoDecoderFormat/GetVideoDecoderConfigCount 对 H264_VLD_NOFGT + NV12 + coded size 查询驱动配置。它不提供 60fps 热稳态吞吐保证，MFT SetInputType/SetOutputType 与实际输出仍是独立准入。GetResource/GetDevice/IUnknown 检查实际 sample 所属设备，CPU sample 或另一个 device 均拒绝。首个非 software adapter 的初始化失败直接报告，不为新增 sink 或运行故障重选 source adapter。
+
+GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fence::GetCompletedValue/SetEventOnCompletion：Signal 只允许 immediate context，完成值覆盖此前工作，但 HRESULT 失败不构成已完成证据。尚未将未处理 signal/注册失败寿命的通用 callback tracker 加入产品；资源保留与失败清理须先闭合，再替换源 CPU 读取。
+
+## GPU 完成事件
+
+复用当前 windows-rs 的 [ID3D11DeviceContext3::Flush1](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_3/nf-d3d11_3-id3d11devicecontext3-flush1) 与 D3D11_CONTEXT_TYPE_ALL：官方支持传入 Win32 event 建立异步完成查询，返回 void，不需要应用自行维护 Signal 值。Windows 11 产品基线满足 D3D11.3/4；接口查询在提交前失败则明确拒绝，不回退轮询。每工作独立事件，避免复用 fence/event 时的世代混淆。
+
+[RegisterDeviceRemovedEvent](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_4/nf-d3d11_4-id3d11device4-registerdeviceremovedevent) 可使用同一事件，已移除设备会立即置位；回调检查 GetDeviceRemovedReason，不能把移除误认作成功完成。事件注销先于句柄释放。复用官方 CreateThreadpoolWait/SetThreadpoolWait；wait 为一次性，不重新 arm，CloseThreadpoolWait 可在自己的完成回调内异步清理，不在回调中等待自身结束。泛型 owner 的析构或通知异常不能穿越系统 callback ABI。
+
+## 原生几何与颜色处理
+
+复用 ID3D11VideoDevice/VideoContext1、VideoProcessorEnumerator1 的格式转换查询。官方 [VideoProcessorSetStreamMirror](https://learn.microsoft.com/en-us/windows/win32/api/d3d11_1/nf-d3d11_1-id3d11videocontext1-videoprocessorsetstreammirror) 规定 rotation、mirror、source clipping 的顺序；不能把未经转换的 SPS/native crop 直接放入旋转后的 source rect。成熟平台接口覆盖缩放、旋转、镜像和颜色，不引入自研 YUV shader 或另一套 GPU runtime。Windows 输出先采用可精确表达的 DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709，不把 Apple 现有混合标签的 Bt601Full 直接映射成 DXGI P601 并宣称等价。驱动缺少正式颜色或变换能力时明确拒绝。
+
+## 输出专用 CPU 导出
+
+复用 D3D11 CopyResource、staging texture 与 Map/Unmap，使用现有完成事件。官方 [DXGI_FORMAT_NV12](https://learn.microsoft.com/en-us/windows/win32/api/dxgiformat/ne-dxgiformat-dxgi_format) 规定 staging/initData 的长度为 rowPitch × (height + height/2)，Y 平面为前 rowPitch × height，UV 为余下行；两者行 pitch 一致，宽高必须为偶数。导出只复制目标有效 width，不把 padding 当像素。
+
+官方 [D3D11_MAP_FLAG_DO_NOT_WAIT](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ne-d3d11-d3d11_map_flag) 使仍被 GPU 占用的资源返回 DXGI_ERROR_WAS_STILL_DRAWING；READ mapping 支持该标志。使用前已等待完成事件，若它仍报告 busy 则明确失败，不增加轮询或隐藏等待。三槽 CPU 输出池直接提取自现有 Apple 实现并由两端复用，无新增通用池库、像素转换库或源 CPU 接口。
+
+## 从源图像采用 device
+
+现有 D3D11 device 提供官方 GetCreationFlags、IDXGIDevice::GetAdapter、GetImmediateContext；输出 worker 通过这些只读身份查询采用同一个 device，不通过 adapter LUID 另造一个 device。检查 SINGLETHREADED 创建标志并拒绝，软件 adapter 同样拒绝，之后沿用已有多线程保护逻辑。WindowsRenderer::for_source 与 CpuExporter::for_image 只建立工作者 wrapper；固定 pipeline/pool 由工作者继续复用。MF manager 已移到 Decoder，故独立 GPU 输出初始化不再触发 MFCreateDXGIDeviceManager。
+
+## MF 运行时线程与样本寿命
+
+微软 [MFShutdown](https://learn.microsoft.com/en-us/windows/win32/api/mfapi/nf-mfapi-mfshutdown) 要求与每次 MFStartup 配对，且禁止从 work queue thread 调用。复用 std::thread、mpsc 与 Arc 实现最小运行时 owner，不引入另一套执行器；最后引用关闭 channel，专用线程才 Shutdown。全进程 16 个 cohort 许可在创建线程前保留并直到退出才释放。COM apartment 用非 Send guard 单独维持，不能随跨线程 sample owner 移动。FrameHub 只接收不透明 Send + Sync 生命周期引用，不依赖 Decoder 或 GPU crate。
+
+## 完整 AU 的输出时间关联
+
+微软 [Time Stamps and Durations](https://learn.microsoft.com/en-us/windows/win32/medfound/time-stamps-and-durations) 要求 MFT 尽可能保留输入时间；含完整单张画面的输入不需要应用猜测输出属于哪次 ProcessInput。Picoo 使用官方 SetSampleTime/GetSampleTime，每个提交具有不同的内部时间键；duration 按正式 fps 转为 100ns 并截断，源 PTS 独立保留，不用重复源 PTS 当唯一键。缺失、插值成未知值或重复返回的键明确拒绝。此原生适配用标准 BTreeMap，容量 16，不新增第三方关联表、回调调度器或无界历史。真实 MF 回归必须证明所用 H.264 MFT 的时间对应；其他 codec 的映射不能从本测试推断。
+
+## BGRA 显示目标与 NT 共享访问
+
+沿用 Video Processor 格式/颜色转换查询，BGRA8 显示契约精确选择 DXGI_FORMAT_B8G8R8A8_UNORM + DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709；不把 gamma 2.2 名称写成已证明任意 sRGB 转换等价。与 NV12 的 pixel format 分开声明，不扩展 CPU exporter 去读取 BGRA 源或引入通用像素转换库。
+
+官方 [CreateSharedHandle](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgiresource1-createsharedhandle) 要求 D3D11_RESOURCE_MISC_SHARED_NTHANDLE + SHARED_KEYEDMUTEX，每个共享 allocation 只能创建一次 NT handle；后续可 DuplicateHandle，释放必须 CloseHandle。采用 std::os::windows::io::OwnedHandle，不建立自有 handle 回收器或使用旧 GetSharedHandle。
+
+官方 [AcquireSync](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgikeyedmutex-acquiresync) 特别警告 SUCCEEDED 不足：WAIT_TIMEOUT 和 WAIT_ABANDONED 也是正值。当前 windows-rs AcquireSync 包装成 Result，会丢失这个区别，因此最小绑定边界直接读取 vtable HRESULT 并要求 exact S_OK。0ms 获取不阻塞 UI/其他输出；不递归获取，不以完成帧数推测释放。原图像 lease 与访问锁随 GPU completion 一起持有；它们各自防止不同的错误，不能只保留 handle。
+
+核对 gpui-pre 0.3.3：Windows PaintSurface 当前没有图像字段，SurfaceSource/surface/paint_surface 的图像入口只在 macOS 编译；gpui-pre-windows 0.3.3 的 draw_surfaces 为空。接入需同时补齐框架表面描述和 Windows 消费者，不应只修改应用选择 surface 元素。框架补丁不得依赖 Picoo 配置、Decoder 或输出事务；此消费部分尚未实现。
+
+WindowsDisplayReader 采用 GPUI 所用的实际 ID3D11Device，以官方 OpenSharedResource1/CreateShaderResourceView 导入既有 BGRA allocation，WindowsGpuContext 继续负责线程保护和完成提交。相同图像的重复 UI 绘制通过 Weak<ReadAccess> 共用尚存活的访问权；不能缓存 Weak<Surface>，因为即使没有强 reader，它也会阻止输出池 Arc::get_mut 判定独占。忙碌只跳过本次绘制，不等待、不复制。
+
+框架接入选用当前 gpui-pre / gpui-pre-windows 0.3.3 发布包的最小 surface 扩展，许可证 Apache-2.0，包校验和保存在 vendor 下 ORIGIN.json。继续使用现有 Windows 11/D3D11 与 Rust 构建基线，不增加另一套窗口或 GPU 框架依赖。现有 PolychromeSprite shader 已覆盖 BGRA 纹理采样与 content mask；不采用 CPU atlas 上传或另引 wgpu 的设备/颜色转换层。新增接口仅传递原生 view 和同步绘制回调，GPU 完成仍归资源提供者，避免 GPUI 反向依赖 Picoo。Windows 编译与实际像素回归未完成前不认定框架接入验收通过。
+
+## MF 原生输出描述
+
+采用官方 IMFTransform::GetOutputAvailableType/GetOutputCurrentType 与 MF_MT_MINIMUM_DISPLAY_APERTURE（MFVideoArea，MFOffset 为整数+16bit fraction）。保留 advertised media type 上的原生描述后提交类型，不从源 SPS crop 直接猜测纹理中的坐标。缺少 display aperture 时按 MF frame size 的全画面解释，并要求它与源 visible size 一致；分数坐标、越界、非偶数 NV12 crop、非 square PAR 及缺失/冲突 BT.709 limited 标记均拒绝。源码 SPS 仍记录原 coded size，native image 保留实际 allocation 尺寸；两者不是 CPU stride。Windows Video Processor 当前只接收 left chroma。
+
+诊断上传复用现有 MF runtime owner 与官方 CreateTexture2D 初始数据/MFCreateDXGISurfaceBuffer，只有 test/test-codecs 可调用；共享一个有界诊断 runtime，每个调用线程仍单独维护 COM apartment。这个测试入口不属于产品 Decoder 回退。
+
+## 处理后录像硬件编码
+
+候选一是让Sink Writer自动插入encoder并开启`MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS`；该属性只是允许选择硬件，不能禁止软件回退，也不能提供本产品需要的逐AU配置、IDR与一入一出验证，因此不采用。候选二是FFmpeg、oneVPL或厂商SDK；它们会增加另一套D3D11/MF互操作、部署和codec选择边界，而Windows 10/11已提供官方AVC/HEVC encoder MFT，当前阶段不采用。
+
+采用`MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, NV12, AVC/HEVC)`。微软明确规定hardware MFT属于异步模型，因此直接实现`METransformNeedInput`/`METransformHaveOutput`事件驱动，不把同步MFT或系统inbox软件encoder列为候选。NeedInput可先于当前HaveOutput到达，作为后续输入额度有界保存，不能按请求/响应严格交替解释；产品仍在取得当前输出后才消费下一额度。AVC/HEVC官方encoder均要求先设output type再设input type；HEVC最小Windows 10符合产品基线。低延迟属性要求不因重排增加sample延迟并期望一入一出，本产品仍逐帧核对输出PTS、IDR和压缩语法，不能只信属性。类型协商后拒绝`MFT_INPUT_STREAM_HOLDS_BUFFERS`，调用方输出sample使用MFT声明的`cbSize`与`cbAlignment`。
+
+目标NV12纹理已经由Windows Video Processor在固定D3D11 device上完成。编码器从该纹理device建立DXGI manager并要求MFT声明D3D11 aware，随后用`MFCreateDXGISurfaceBuffer`包装输入；RenderedImage owner保留到对应输出取回，禁止CPU map/readback。硬件枚举、D3D manager与surface输入三项共同构成准入证据；缺任一项即明确不可用，不重选source adapter或改用软件。

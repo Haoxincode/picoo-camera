@@ -1,4 +1,8 @@
-use std::sync::{Arc, Mutex};
+use picoo_frame_hub::{
+    WindowsAdapterId, WindowsNativeChannel, WindowsNativePipeClient, WindowsSharedSurfaceIdentity,
+};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::{self, JoinHandle};
 
 use windows::core::{implement, Error, IUnknown, Interface, Ref, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{E_FAIL, E_INVALIDARG};
@@ -6,34 +10,39 @@ use windows::Win32::Media::KernelStreaming::PINNAME_VIDEO_CAPTURE;
 use windows::Win32::Media::MediaFoundation::{
     IMFAsyncCallback, IMFAsyncResult, IMFMediaEvent, IMFMediaEventGenerator_Impl,
     IMFMediaEventQueue, IMFMediaSource, IMFMediaStream2, IMFMediaStream2_Impl, IMFMediaStream_Impl,
-    IMFMediaType, IMFMediaTypeHandler, IMFSample, IMFSampleAllocatorControl,
-    IMFSampleAllocatorControl_Impl, IMFStreamDescriptor, IMFVideoSampleAllocator, MEMediaSample,
-    MEStreamStarted, MEStreamStopped, MFCreateEventQueue, MFCreateMediaType, MFCreateMemoryBuffer,
-    MFCreateSample, MFCreateStreamDescriptor, MFFrameSourceTypes_Color, MFMediaType_Video,
-    MFNominalRange_16_235, MFSampleAllocatorUsage, MFSampleAllocatorUsage_UsesProvidedAllocator,
-    MFSampleExtension_Token, MFVideoFormat_NV12, MFVideoInterlace_Progressive,
-    MFVideoPrimaries_BT709, MFVideoTransFunc_709, MFVideoTransferMatrix_BT709,
-    MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES,
-    MF_DEVICESTREAM_FRAMESERVER_SHARED, MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID,
-    MF_E_INVALIDREQUEST, MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION,
-    MF_E_MEDIA_SOURCE_WRONGSTATE, MF_E_SHUTDOWN, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AVG_BITRATE,
-    MF_MT_COMPRESSED, MF_MT_DEFAULT_STRIDE, MF_MT_FIXED_SIZE_SAMPLES, MF_MT_FRAME_RATE,
-    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO,
-    MF_MT_SAMPLE_SIZE, MF_MT_SUBTYPE, MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE,
-    MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX, MF_STREAM_STATE, MF_STREAM_STATE_RUNNING,
-    MF_STREAM_STATE_STOPPED,
+    IMFMediaType, IMFMediaTypeHandler, IMFSampleAllocatorControl, IMFSampleAllocatorControl_Impl,
+    IMFStreamDescriptor, IMFVideoSampleAllocator, MEStreamStarted, MEStreamStopped,
+    MFCreateEventQueue, MFCreateMediaType, MFCreateStreamDescriptor, MFFrameSourceTypes_Color,
+    MFMediaType_Video, MFNominalRange_16_235, MFSampleAllocatorUsage,
+    MFSampleAllocatorUsage_UsesCustomAllocator, MFSampleAllocatorUsage_UsesProvidedAllocator,
+    MFVideoFormat_NV12, MFVideoInterlace_Progressive, MFVideoPrimaries_BT709, MFVideoTransFunc_709,
+    MFVideoTransferMatrix_BT709, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS,
+    MF_DEVICESTREAM_ATTRIBUTE_FRAMESOURCE_TYPES, MF_DEVICESTREAM_FRAMESERVER_SHARED,
+    MF_DEVICESTREAM_STREAM_CATEGORY, MF_DEVICESTREAM_STREAM_ID, MF_E_INVALIDREQUEST,
+    MF_E_INVALIDSTREAMNUMBER, MF_E_INVALID_STATE_TRANSITION, MF_E_SHUTDOWN,
+    MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AVG_BITRATE, MF_MT_COMPRESSED, MF_MT_DEFAULT_STRIDE,
+    MF_MT_FIXED_SIZE_SAMPLES, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
+    MF_MT_MAJOR_TYPE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SAMPLE_SIZE, MF_MT_SUBTYPE,
+    MF_MT_TRANSFER_FUNCTION, MF_MT_VIDEO_NOMINAL_RANGE, MF_MT_VIDEO_PRIMARIES, MF_MT_YUV_MATRIX,
+    MF_STREAM_STATE, MF_STREAM_STATE_RUNNING, MF_STREAM_STATE_STOPPED,
 };
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{IAgileObject, IAgileObject_Impl};
 
 use crate::format::{
-    is_supported_output_size, nv12_len, FRAME_RATE_DEN, FRAME_RATE_NUM, SAMPLE_DURATION_100NS,
+    is_supported_frame_rate, is_supported_output_size, nv12_len, sample_duration_100ns,
+    DEFAULT_FRAME_RATE_DEN, DEFAULT_FRAME_RATE_NUM, FRAME_RATES,
 };
-use crate::frame_provider::{FrameProvider, OwnedNv12Frame};
+use crate::frame_provider::FrameProvider;
 use crate::metrics::{VcamMetrics, VcamMetricsSnapshot};
 use crate::sample_clock::SampleClock;
 
+use super::d3d_manager::NativeDeviceBinding;
 use super::{lock, ObjectTracker};
+
+mod cpu;
+mod delivery;
+mod native;
 
 pub(super) type SharedStreamState = Arc<Mutex<StreamState>>;
 
@@ -48,11 +57,33 @@ pub(super) struct StreamState {
     sample_clock: SampleClock,
     output_width: u32,
     output_height: u32,
+    native_output_revision: u64,
+    frame_rate_num: u32,
+    frame_rate_den: u32,
+    sample_duration_100ns: i64,
     state: MF_STREAM_STATE,
     transitioning: bool,
     lifecycle_revision: u64,
     lifecycle_operation: Arc<Mutex<()>>,
     stream_id: u32,
+    /// `Some(generation)` means SetD3DManager admitted native output. The
+    /// native sample path must consume this generation; CPU delivery is not a
+    /// permitted fallback while it is set.
+    native_generation: Option<u64>,
+    native_adapter: Option<WindowsAdapterId>,
+    native_device: Option<NativeDeviceBinding>,
+    native_pipe: Option<Arc<Mutex<WindowsNativePipeClient>>>,
+    native_session_revision: u64,
+    native_session_exhausted: bool,
+    native_placeholder_active: bool,
+    native_handshake: bool,
+    native_handshake_identity: Option<(u64, u64, u64, u64, u64)>,
+    native_channel: Option<Arc<Mutex<WindowsNativeChannel>>>,
+    native_prepared: Option<native::PreparedNativeSample>,
+    native_inflight: bool,
+    native_last_delivered_identity: Option<WindowsSharedSurfaceIdentity>,
+    native_ready: Arc<(Mutex<u64>, Condvar)>,
+    native_worker: Option<JoinHandle<()>>,
 }
 
 // SAFETY: the Media Foundation objects stored here are the platform's
@@ -73,15 +104,27 @@ impl MediaStream {
     pub fn create() -> Result<(IMFMediaStream2, SharedStreamState)> {
         unsafe {
             let queue = MFCreateEventQueue()?;
-            let type_480 = create_nv12_media_type(854, 480)?;
-            let type_720 = create_nv12_media_type(1280, 720)?;
-            let type_1080 = create_nv12_media_type(1920, 1080)?;
-            let descriptor = MFCreateStreamDescriptor(
-                0,
-                &[Some(type_480), Some(type_720.clone()), Some(type_1080)],
-            )?;
+            let mut media_types = Vec::with_capacity(2 * FRAME_RATES.len());
+            for (width, height) in [(1280, 720), (1920, 1080)] {
+                for (frame_rate_num, frame_rate_den) in FRAME_RATES {
+                    media_types.push(Some(create_nv12_media_type(
+                        width,
+                        height,
+                        frame_rate_num,
+                        frame_rate_den,
+                    )?));
+                }
+            }
+            let descriptor = MFCreateStreamDescriptor(0, &media_types)?;
             let handler: IMFMediaTypeHandler = descriptor.GetMediaTypeHandler()?;
-            handler.SetCurrentMediaType(&type_720)?;
+            // The type at index 0 is the registered 720p30 default. Reuse the
+            // descriptor-owned object instead of setting an equivalent type
+            // that is not one of its advertised entries.
+            let default_type = media_types
+                .first()
+                .and_then(|media_type| media_type.as_ref())
+                .ok_or_else(|| Error::from(E_INVALIDARG))?;
+            handler.SetCurrentMediaType(default_type)?;
             let frames = Arc::new(FrameProvider::new().map_err(|_| Error::from(E_FAIL))?);
 
             descriptor.SetGUID(&MF_DEVICESTREAM_STREAM_CATEGORY, &PINNAME_VIDEO_CAPTURE)?;
@@ -96,19 +139,56 @@ impl MediaStream {
                 source: None,
                 queue: Some(queue),
                 descriptor: Some(descriptor),
-                current_type: Some(type_720),
+                current_type: Some(default_type.clone()),
                 allocator: None,
                 frames,
                 metrics: VcamMetrics::new(),
-                sample_clock: SampleClock::new(SAMPLE_DURATION_100NS),
+                sample_clock: SampleClock::for_frame_rate(
+                    DEFAULT_FRAME_RATE_NUM,
+                    DEFAULT_FRAME_RATE_DEN,
+                )
+                .ok_or_else(|| Error::from(E_INVALIDARG))?,
                 output_width: 1280,
                 output_height: 720,
+                native_output_revision: 1,
+                frame_rate_num: DEFAULT_FRAME_RATE_NUM,
+                frame_rate_den: DEFAULT_FRAME_RATE_DEN,
+                sample_duration_100ns: sample_duration_100ns(
+                    DEFAULT_FRAME_RATE_NUM,
+                    DEFAULT_FRAME_RATE_DEN,
+                )
+                .ok_or_else(|| Error::from(E_INVALIDARG))?,
                 state: MF_STREAM_STATE_STOPPED,
                 transitioning: false,
                 lifecycle_revision: 0,
                 lifecycle_operation: Arc::new(Mutex::new(())),
                 stream_id: 0,
+                native_generation: None,
+                native_adapter: None,
+                native_device: None,
+                native_pipe: None,
+                native_session_revision: 1,
+                native_session_exhausted: false,
+                native_placeholder_active: false,
+                native_handshake: false,
+                native_handshake_identity: None,
+                native_channel: None,
+                native_prepared: None,
+                native_inflight: false,
+                native_last_delivered_identity: None,
+                native_ready: Arc::new((Mutex::new(0), Condvar::new())),
+                native_worker: None,
             }));
+            let worker_state = Arc::downgrade(&shared);
+            let worker_tracker = ObjectTracker::new();
+            let worker = thread::Builder::new()
+                .name("picoo-vcam-native-preparer".into())
+                .spawn(move || {
+                    let _tracker = worker_tracker;
+                    native::native_prepare_loop(worker_state);
+                })
+                .map_err(|_| Error::from(E_FAIL))?;
+            lock(&shared)?.native_worker = Some(worker);
             let interface = Self {
                 shared: Arc::clone(&shared),
                 _tracker: ObjectTracker::new(),
@@ -124,6 +204,34 @@ pub(super) fn attach_source(shared: &SharedStreamState, source: IMFMediaSource) 
     Ok(())
 }
 
+pub(super) fn set_native_generation(
+    shared: &SharedStreamState,
+    generation: Option<u64>,
+    binding: Option<NativeDeviceBinding>,
+) -> Result<()> {
+    let prepared = {
+        let mut state = lock(shared)?;
+        if state.queue.is_none() {
+            return Err(Error::from(MF_E_SHUTDOWN));
+        }
+        if state.state == MF_STREAM_STATE_RUNNING || state.transitioning {
+            return Err(Error::from(MF_E_INVALIDREQUEST));
+        }
+        state.native_generation = generation;
+        state.native_placeholder_active = false;
+        state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+        state.native_adapter = binding
+            .as_ref()
+            .map(|binding| WindowsAdapterId::from_luid(binding.adapter.low, binding.adapter.high));
+        state.native_device = binding;
+        native::reset_native_session_state(&mut state)
+    };
+    if let Some(prepared) = prepared {
+        prepared.abort();
+    }
+    Ok(())
+}
+
 pub(super) fn descriptor(shared: &SharedStreamState) -> Result<IMFStreamDescriptor> {
     lock(shared)?
         .descriptor
@@ -135,7 +243,7 @@ pub(super) fn descriptor(shared: &SharedStreamState) -> Result<IMFStreamDescript
 pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
-    let (queue, allocator, frames) = {
+    let (queue, allocator, frames, prepared, worker) = {
         let mut state = lock(shared)?;
         state.state = MF_STREAM_STATE_STOPPED;
         state.transitioning = false;
@@ -143,21 +251,32 @@ pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
         state.source = None;
         state.descriptor = None;
         state.current_type = None;
+        let prepared = native::reset_native_session_state(&mut state);
         (
             state.queue.take(),
             state.allocator.take(),
             Arc::clone(&state.frames),
+            prepared,
+            state.native_worker.take(),
         )
     };
+    if let Some(prepared) = prepared {
+        prepared.abort();
+    }
     frames.shutdown();
     if let Some(allocator) = allocator {
         unsafe {
             let _ = allocator.UninitializeSampleAllocator();
         }
     }
-    if let Some(queue) = queue {
-        unsafe { queue.Shutdown()? };
+    let queue_result = match queue {
+        Some(queue) => unsafe { queue.Shutdown() },
+        None => Ok(()),
+    };
+    if let Some(worker) = worker {
+        let _ = worker.join();
     }
+    queue_result?;
     Ok(())
 }
 
@@ -167,7 +286,7 @@ pub(super) fn set_stream_state(
 ) -> Result<()> {
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
     let _operation = lock(&lifecycle_operation)?;
-    let (previous, queue, allocator, current_type, frames, output_width, output_height) = {
+    let (previous, queue, allocator, current_type, frames, output_width, output_height, cpu_bridge) = {
         let mut state = lock(shared)?;
         if state.queue.is_none() {
             return Err(Error::from(MF_E_SHUTDOWN));
@@ -186,7 +305,14 @@ pub(super) fn set_stream_state(
             .queue
             .clone()
             .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
-        let allocator = state.allocator.clone();
+        // GpuNative owns producer surfaces and therefore reports/uses a
+        // custom allocator. The Frame Server allocator is only initialized
+        // for the CpuBridge path.
+        let allocator = if state.native_generation.is_none() {
+            state.allocator.clone()
+        } else {
+            None
+        };
         let current_type = state.current_type.clone();
         state.transitioning = true;
         (
@@ -197,6 +323,7 @@ pub(super) fn set_stream_state(
             Arc::clone(&state.frames),
             state.output_width,
             state.output_height,
+            state.native_generation.is_none(),
         )
     };
 
@@ -226,7 +353,7 @@ pub(super) fn set_stream_state(
                 }
                 return Err(error);
             }
-            frames.set_output_active(output_width, output_height, true);
+            frames.set_output_active(output_width, output_height, cpu_bridge);
             let event_result = unsafe {
                 queue.QueueEventParamVar(
                     MEStreamStarted.0 as u32,
@@ -236,12 +363,17 @@ pub(super) fn set_stream_state(
                 )
             };
             if let Err(error) = event_result {
-                let mut state = lock(shared)?;
-                if state.state == requested {
-                    state.state = previous;
-                    state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                let prepared = {
+                    let mut state = lock(shared)?;
+                    if state.state == requested {
+                        state.state = previous;
+                        state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
+                    }
+                    native::reset_native_session_state(&mut state)
+                };
+                if let Some(prepared) = prepared {
+                    prepared.abort();
                 }
-                drop(state);
                 frames.set_output_active(output_width, output_height, false);
                 if let Some(allocator) = allocator {
                     unsafe {
@@ -274,6 +406,13 @@ pub(super) fn set_stream_state(
                 }
                 return Err(error);
             }
+            let prepared = {
+                let mut state = lock(shared)?;
+                native::reset_native_session_state(&mut state)
+            };
+            if let Some(prepared) = prepared {
+                prepared.abort();
+            }
             frames.set_output_active(output_width, output_height, false);
             let event_result = unsafe {
                 queue.QueueEventParamVar(
@@ -297,7 +436,7 @@ pub(super) fn set_stream_state(
                         state.lifecycle_revision = state.lifecycle_revision.wrapping_add(1);
                     }
                     drop(state);
-                    frames.set_output_active(output_width, output_height, true);
+                    frames.set_output_active(output_width, output_height, cpu_bridge);
                 }
                 return Err(error);
             }
@@ -352,32 +491,75 @@ pub(super) fn set_output_media_type(
     if !is_supported_output_size(width, height) {
         return Err(Error::from(E_INVALIDARG));
     }
-
-    let mut state = lock(shared)?;
-    if state.transitioning {
-        return Err(Error::from(MF_E_INVALIDREQUEST));
+    let packed_rate = unsafe { media_type.GetUINT64(&MF_MT_FRAME_RATE)? };
+    let frame_rate_num = (packed_rate >> 32) as u32;
+    let frame_rate_den = packed_rate as u32;
+    if !is_supported_frame_rate(frame_rate_num, frame_rate_den) {
+        return Err(Error::from(E_INVALIDARG));
     }
-    if state.state != MF_STREAM_STATE_STOPPED {
-        return if (state.output_width, state.output_height) == (width, height) {
-            Ok(())
-        } else {
-            Err(Error::from(MF_E_INVALIDREQUEST))
-        };
-    }
-    let descriptor = state
-        .descriptor
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
+    let sample_duration = sample_duration_100ns(frame_rate_num, frame_rate_den)
+        .ok_or_else(|| Error::from(E_INVALIDARG))?;
     unsafe {
-        descriptor
-            .GetMediaTypeHandler()?
-            .SetCurrentMediaType(media_type)?;
+        validate_output_media_type(media_type, width, height, frame_rate_num, frame_rate_den)?;
     }
-    state.current_type = Some(media_type.clone());
-    state.output_width = width;
-    state.output_height = height;
+
+    let prepared = {
+        let mut state = lock(shared)?;
+        if state.transitioning {
+            return Err(Error::from(MF_E_INVALIDREQUEST));
+        }
+        if state.state != MF_STREAM_STATE_STOPPED {
+            return if (state.output_width, state.output_height) == (width, height)
+                && state.frame_rate_num == frame_rate_num
+                && state.frame_rate_den == frame_rate_den
+            {
+                Ok(())
+            } else {
+                Err(Error::from(MF_E_INVALIDREQUEST))
+            };
+        }
+        let changed = (state.output_width, state.output_height) != (width, height)
+            || state.frame_rate_num != frame_rate_num
+            || state.frame_rate_den != frame_rate_den;
+        let next_output_revision = next_output_revision(state.native_output_revision, changed)
+            .ok_or_else(|| Error::from(E_FAIL))?;
+        let descriptor = state
+            .descriptor
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
+        unsafe {
+            descriptor
+                .GetMediaTypeHandler()?
+                .SetCurrentMediaType(media_type)?;
+        }
+        state.current_type = Some(media_type.clone());
+        state.output_width = width;
+        state.output_height = height;
+        state.native_output_revision = next_output_revision;
+        state.frame_rate_num = frame_rate_num;
+        state.frame_rate_den = frame_rate_den;
+        state.sample_duration_100ns = sample_duration;
+        state.sample_clock = SampleClock::for_frame_rate(frame_rate_num, frame_rate_den)
+            .ok_or_else(|| Error::from(E_INVALIDARG))?;
+        if changed {
+            native::reset_native_session_state(&mut state)
+        } else {
+            None
+        }
+    };
+    if let Some(prepared) = prepared {
+        prepared.abort();
+    }
     Ok(())
+}
+
+fn next_output_revision(current: u64, changed: bool) -> Option<u64> {
+    if changed {
+        current.checked_add(1)
+    } else {
+        Some(current)
+    }
 }
 
 pub(super) fn allocator_usage(
@@ -397,7 +579,11 @@ pub(super) fn allocator_usage(
         if !input_stream_id.is_null() {
             input_stream_id.write(state.stream_id);
         }
-        usage.write(MFSampleAllocatorUsage_UsesProvidedAllocator);
+        usage.write(if state.native_generation.is_some() {
+            MFSampleAllocatorUsage_UsesCustomAllocator
+        } else {
+            MFSampleAllocatorUsage_UsesProvidedAllocator
+        });
     }
     Ok(())
 }
@@ -449,7 +635,7 @@ impl IMFMediaStream_Impl for MediaStream_Impl {
 
     fn RequestSample(&self, token: Ref<'_, IUnknown>) -> Result<()> {
         let delivery_started = std::time::Instant::now();
-        let result = deliver_sample(&self.shared, token);
+        let result = delivery::deliver_sample(&self.shared, token);
         let origin = result.as_ref().ok().copied();
         let snapshot = lock(&self.shared)?
             .metrics
@@ -496,8 +682,16 @@ fn stream_queue(shared: &SharedStreamState) -> Result<IMFMediaEventQueue> {
         .ok_or_else(|| Error::from(MF_E_SHUTDOWN))
 }
 
-fn create_nv12_media_type(width: u32, height: u32) -> Result<IMFMediaType> {
+fn create_nv12_media_type(
+    width: u32,
+    height: u32,
+    frame_rate_num: u32,
+    frame_rate_den: u32,
+) -> Result<IMFMediaType> {
     if !is_supported_output_size(width, height) {
+        return Err(Error::from(E_INVALIDARG));
+    }
+    if !is_supported_frame_rate(frame_rate_num, frame_rate_den) {
         return Err(Error::from(E_INVALIDARG));
     }
     let sample_size =
@@ -505,8 +699,8 @@ fn create_nv12_media_type(width: u32, height: u32) -> Result<IMFMediaType> {
             .map_err(|_| Error::from(E_INVALIDARG))?;
     let average_bitrate = sample_size
         .checked_mul(8)
-        .and_then(|bits_per_frame| bits_per_frame.checked_mul(FRAME_RATE_NUM))
-        .and_then(|bits_per_second| bits_per_second.checked_div(FRAME_RATE_DEN))
+        .and_then(|bits_per_frame| bits_per_frame.checked_mul(frame_rate_num))
+        .and_then(|bits_per_second| bits_per_second.checked_div(frame_rate_den))
         .ok_or_else(|| Error::from(E_INVALIDARG))?;
     unsafe {
         let media_type = MFCreateMediaType()?;
@@ -522,7 +716,7 @@ fn create_nv12_media_type(width: u32, height: u32) -> Result<IMFMediaType> {
         media_type.SetUINT32(&MF_MT_DEFAULT_STRIDE, width)?;
         media_type.SetUINT64(
             &MF_MT_FRAME_RATE,
-            pack_u32_pair(FRAME_RATE_NUM, FRAME_RATE_DEN),
+            pack_u32_pair(frame_rate_num, frame_rate_den),
         )?;
         media_type.SetUINT64(&MF_MT_PIXEL_ASPECT_RATIO, pack_u32_pair(1, 1))?;
         media_type.SetUINT32(&MF_MT_YUV_MATRIX, MFVideoTransferMatrix_BT709.0 as u32)?;
@@ -537,73 +731,40 @@ fn pack_u32_pair(high: u32, low: u32) -> u64 {
     ((high as u64) << 32) | low as u64
 }
 
-fn deliver_sample(
-    shared: &SharedStreamState,
-    token: Ref<'_, IUnknown>,
-) -> Result<crate::frame_provider::FrameOrigin> {
-    let (frames, lifecycle_operation, lifecycle_revision, output_width, output_height) = {
-        let state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        (
-            Arc::clone(&state.frames),
-            Arc::clone(&state.lifecycle_operation),
-            state.lifecycle_revision,
-            state.output_width,
-            state.output_height,
-        )
-    };
-    let acquired = frames
-        .acquire_for_output(output_width, output_height)
-        .ok_or_else(|| Error::from(E_FAIL))?;
-    let frame_origin = acquired.origin;
-    let frame = acquired.frame;
-    if nv12_len(frame.width, frame.height) != Some(frame.pixels.len()) {
-        return Err(Error::from(E_FAIL));
+unsafe fn validate_output_media_type(
+    media_type: &IMFMediaType,
+    width: u32,
+    height: u32,
+    frame_rate_num: u32,
+    frame_rate_den: u32,
+) -> Result<()> {
+    if media_type.GetGUID(&MF_MT_MAJOR_TYPE)? != MFMediaType_Video
+        || media_type.GetGUID(&MF_MT_SUBTYPE)? != MFVideoFormat_NV12
+        || media_type.GetUINT32(&MF_MT_COMPRESSED)? != 0
+        || media_type.GetUINT32(&MF_MT_INTERLACE_MODE)? != MFVideoInterlace_Progressive.0 as u32
+        || media_type.GetUINT32(&MF_MT_FIXED_SIZE_SAMPLES)? != 1
+        || media_type.GetUINT32(&MF_MT_ALL_SAMPLES_INDEPENDENT)? != 1
+        || media_type.GetUINT32(&MF_MT_DEFAULT_STRIDE)? != width
+        || media_type.GetUINT32(&MF_MT_YUV_MATRIX)? != MFVideoTransferMatrix_BT709.0 as u32
+        || media_type.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE)? != MFNominalRange_16_235.0 as u32
+        || media_type.GetUINT32(&MF_MT_VIDEO_PRIMARIES)? != MFVideoPrimaries_BT709.0 as u32
+        || media_type.GetUINT32(&MF_MT_TRANSFER_FUNCTION)? != MFVideoTransFunc_709.0 as u32
+    {
+        return Err(Error::from(E_INVALIDARG));
     }
-    // Pixel conversion intentionally happens outside the lifecycle operation.
-    // Revalidate immediately before touching MF objects so a Stop/Shutdown can
-    // never uninitialize the allocator or overtake this sample event.
-    let _operation = lock(&lifecycle_operation)?;
-    let (allocator, queue, sample_time_100ns) = {
-        let mut state = lock(shared)?;
-        if state.state != MF_STREAM_STATE_RUNNING
-            || state.transitioning
-            || state.lifecycle_revision != lifecycle_revision
-            || (state.output_width, state.output_height) != (output_width, output_height)
-        {
-            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
-        }
-        let allocator = state.allocator.as_ref().cloned();
-        let queue = state
-            .queue
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| Error::from(MF_E_SHUTDOWN))?;
-        let now_100ns = unsafe { windows::Win32::Media::MediaFoundation::MFGetSystemTime() };
-        let sample_time_100ns = state
-            .sample_clock
-            .next_timestamp(now_100ns)
-            .ok_or_else(|| Error::from(E_FAIL))?;
-        (allocator, queue, sample_time_100ns)
-    };
-    let sample = create_sample(
-        allocator.as_ref(),
-        &frame,
-        token.as_ref(),
-        sample_time_100ns,
-    )?;
-
-    unsafe {
-        queue.QueueEventParamUnk(
-            MEMediaSample.0 as u32,
-            &GUID::zeroed(),
-            HRESULT(0),
-            &sample.cast::<IUnknown>()?,
-        )?;
+    if media_type.GetUINT64(&MF_MT_FRAME_SIZE)? != pack_u32_pair(width, height)
+        || media_type.GetUINT64(&MF_MT_FRAME_RATE)? != pack_u32_pair(frame_rate_num, frame_rate_den)
+        || media_type.GetUINT64(&MF_MT_PIXEL_ASPECT_RATIO)? != pack_u32_pair(1, 1)
+    {
+        return Err(Error::from(E_INVALIDARG));
     }
-    Ok(frame_origin)
+    let sample_size =
+        u32::try_from(nv12_len(width, height).ok_or_else(|| Error::from(E_INVALIDARG))?)
+            .map_err(|_| Error::from(E_INVALIDARG))?;
+    if media_type.GetUINT32(&MF_MT_SAMPLE_SIZE)? != sample_size {
+        return Err(Error::from(E_INVALIDARG));
+    }
+    Ok(())
 }
 
 fn emit_metrics(snapshot: VcamMetricsSnapshot) {
@@ -625,46 +786,5 @@ fn emit_metrics(snapshot: VcamMetricsSnapshot) {
     super::emit_debug_message(&message);
 }
 
-fn create_sample(
-    allocator: Option<&IMFVideoSampleAllocator>,
-    frame: &OwnedNv12Frame,
-    token: Option<&IUnknown>,
-    sample_time_100ns: i64,
-) -> Result<IMFSample> {
-    unsafe {
-        let sample = if let Some(allocator) = allocator {
-            allocator.AllocateSample()?
-        } else {
-            let sample = MFCreateSample()?;
-            let buffer = MFCreateMemoryBuffer(frame.pixels.len() as u32)?;
-            sample.AddBuffer(&buffer)?;
-            sample
-        };
-
-        if sample.GetBufferCount()? == 0 {
-            return Err(Error::from(E_FAIL));
-        }
-        let buffer = sample.GetBufferByIndex(0)?;
-        let mut destination = std::ptr::null_mut();
-        let mut capacity = 0u32;
-        buffer.Lock(&mut destination, Some(&mut capacity), None)?;
-        let copy_result = if destination.is_null() {
-            Err(Error::from(E_FAIL))
-        } else {
-            let destination = std::slice::from_raw_parts_mut(destination, capacity as usize);
-            crate::copy_prepared_frame(&frame.pixels, destination)
-                .map_err(|_| Error::from(E_FAIL))
-                .and_then(|copied| buffer.SetCurrentLength(copied as u32))
-        };
-        let unlock_result = buffer.Unlock();
-        copy_result?;
-        unlock_result?;
-
-        sample.SetSampleTime(sample_time_100ns)?;
-        sample.SetSampleDuration(SAMPLE_DURATION_100NS)?;
-        if let Some(token) = token {
-            sample.SetUnknown(&MFSampleExtension_Token, token)?;
-        }
-        Ok(sample)
-    }
-}
+#[cfg(test)]
+mod tests;

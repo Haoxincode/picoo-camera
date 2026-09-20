@@ -1,0 +1,46 @@
+[package]
+name = "picoo-recording"
+description = "Bounded recording and native media mux adapters — ARCH-PICOO-MEDIA-002"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+picoo-bitstream.workspace = true
+picoo-frame-hub.workspace = true
+picoo-packet.workspace = true
+picoo-protocol.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+sha2 = "0.10"
+
+[target.'cfg(windows)'.dependencies]
+picoo-gpu.workspace = true
+windows-core = "0.62.2"
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+picoo-gpu.workspace = true
+objc2-video-toolbox = { version = "0.3.2", default-features = false, features = ["std", "VTCompressionSession", "VTCompressionProperties", "VTSession", "VTErrors", "objc2", "block2", "objc2-core-media", "objc2-core-video"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVPixelBuffer", "CVImageBuffer", "CVBuffer"] }
+objc2 = "0.6.4"
+block2 = "0.6.2"
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSObject", "NSString", "NSURL", "NSError"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFData", "CFNumber", "CFDictionary", "CFArray", "CFString", "CFPropertyList"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMBase", "CMBlockBuffer", "CMFormatDescription", "CMSampleBuffer", "CMTime"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVAssetWriter", "AVAssetWriterInput", "AVMediaFormat", "objc2-core-media", "block2"] }
+
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+picoo-frame-hub.workspace = true
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["AVAsset", "AVAssetTrack", "AVAssetReader", "AVAssetReaderOutput"] }

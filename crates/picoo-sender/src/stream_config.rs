@@ -1,7 +1,7 @@
 //! StreamConfig helpers — REQ-PICOO-PROTOCOL-005.
 
-use picoo_protocol::control::StreamConfig;
-use picoo_rate_control::BitrateLadder;
+use picoo_bitstream::{Codec, CodecConfiguration};
+use picoo_protocol::control::{StreamConfig, VideoProfile};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamConfigParams {
@@ -13,90 +13,67 @@ pub struct StreamConfigParams {
     pub mirrored: bool,
     /// Clockwise rotation degrees applied by Receiver/VCam (0/90/180/270).
     pub rotation: u32,
-    pub sps: Vec<u8>,
-    pub pps: Vec<u8>,
-}
-
-impl Default for StreamConfigParams {
-    fn default() -> Self {
-        Self {
-            width: 1280,
-            height: 720,
-            fps: 30,
-            bitrate_bps: BitrateLadder::for_height(720).initial_bps,
-            stream_epoch: 1,
-            mirrored: false,
-            rotation: 0,
-            sps: Vec::new(),
-            pps: Vec::new(),
-        }
-    }
+    pub configuration: std::sync::Arc<CodecConfiguration>,
 }
 
 impl StreamConfigParams {
-    pub fn to_proto(&self) -> StreamConfig {
-        let (profile, level) = self.h264_profile_level();
-        StreamConfig {
-            codec: "h264".into(),
-            profile,
-            level,
+    pub fn source_format(&self) -> crate::SourceFormat {
+        crate::SourceFormat {
+            codec: self.configuration.codec(),
+            height: self.height,
+            fps: self.fps,
+        }
+    }
+
+    pub fn to_proto(&self) -> Result<StreamConfig, picoo_bitstream::BitstreamError> {
+        if !matches!(self.fps, 30 | 60) || !matches!(self.rotation, 0 | 90 | 180 | 270) {
+            return Err(picoo_bitstream::BitstreamError::Unsupported(
+                "source frame rate or rotation",
+            ));
+        }
+        let configuration = &self.configuration;
+        configuration.validate_visible_size(self.width, self.height)?;
+        let color = configuration.source_facts()?.color.ok_or(
+            picoo_bitstream::BitstreamError::Unsupported("missing source color"),
+        )?;
+        if (color.primaries, color.transfer, color.matrix) != (1, 1, 1) {
+            return Err(picoo_bitstream::BitstreamError::Unsupported(
+                "source is not BT.709 SDR",
+            ));
+        }
+        if configuration.nal_length_size() != picoo_bitstream::NalLengthSize::Four {
+            return Err(picoo_bitstream::BitstreamError::Unsupported(
+                "wire requires four-byte NAL lengths",
+            ));
+        }
+        let (codec, profile) = match configuration.codec() {
+            Codec::Avc => (
+                picoo_protocol::control::VideoCodec::Avc,
+                VideoProfile::AvcHigh,
+            ),
+            Codec::Hevc => (
+                picoo_protocol::control::VideoCodec::Hevc,
+                VideoProfile::HevcMain,
+            ),
+        };
+        Ok(StreamConfig {
+            codec: codec as i32,
+            profile: profile as i32,
+            level_idc: u32::from(configuration.level_idc()),
             width: self.width,
             height: self.height,
             fps: self.fps,
             bitrate: self.bitrate_bps,
-            rotation: Self::normalize_rotation(self.rotation),
+            rotation: self.rotation,
             mirrored: self.mirrored,
-            color_range: "limited".into(),
-            sps: self.sps.clone(),
-            pps: self.pps.clone(),
+            color_range: if color.full_range {
+                picoo_protocol::control::ColorRange::Full
+            } else {
+                picoo_protocol::control::ColorRange::Limited
+            } as i32,
+            codec_configuration: configuration.record().to_vec(),
             stream_epoch: self.stream_epoch,
-        }
-    }
-
-    pub fn normalize_rotation(degrees: u32) -> u32 {
-        match degrees % 360 {
-            0 | 90 | 180 | 270 => degrees % 360,
-            other => {
-                // Snap to nearest quarter-turn for tolerant senders.
-                let snapped = ((other as f64) / 90.0).round() as u32 * 90;
-                snapped % 360
-            }
-        }
-    }
-
-    /// SPS is the codec source of truth. Platform encoders may fall back from
-    /// Main to Baseline at runtime, so a hard-coded profile can disagree with
-    /// the Access Units even when the FFI configuration is otherwise valid.
-    fn h264_profile_level(&self) -> (String, String) {
-        let sps = self.sps_payload();
-        let Some(profile_idc) = sps.get(1).copied() else {
-            return ("baseline".into(), "3.1".into());
-        };
-        let profile = match profile_idc {
-            66 => "baseline",
-            77 => "main",
-            88 => "extended",
-            100 => "high",
-            110 => "high-10",
-            122 => "high-4:2:2",
-            244 => "high-4:4:4",
-            _ => "unknown",
-        };
-        let level = sps
-            .get(3)
-            .map(|level_idc| format!("{}.{}", level_idc / 10, level_idc % 10))
-            .unwrap_or_else(|| "3.1".into());
-        (profile.into(), level)
-    }
-
-    fn sps_payload(&self) -> &[u8] {
-        if self.sps.starts_with(&[0, 0, 0, 1]) {
-            &self.sps[4..]
-        } else if self.sps.starts_with(&[0, 0, 1]) {
-            &self.sps[3..]
-        } else {
-            &self.sps
-        }
+        })
     }
 }
 
@@ -104,42 +81,71 @@ impl StreamConfigParams {
 mod tests {
     use super::*;
 
-    #[test]
-    fn to_proto_carries_rotation() {
-        let cfg = StreamConfigParams {
+    fn hevc() -> StreamConfigParams {
+        StreamConfigParams {
+            width: 64,
+            height: 64,
+            fps: 60,
+            bitrate_bps: 3_000_000,
+            stream_epoch: 7,
+            mirrored: true,
             rotation: 90,
-            ..Default::default()
-        };
-        assert_eq!(cfg.to_proto().rotation, 90);
+            configuration: CodecConfiguration::parse(
+                Codec::Hevc,
+                bytes::Bytes::from_static(include_bytes!(
+                    "../../picoo-testkit/fixtures/hevc-64x64-bt709-config.bin"
+                )),
+            )
+            .unwrap()
+            .into(),
+        }
     }
 
     #[test]
-    fn normalize_rotation_snaps_nearby_values() {
-        assert_eq!(StreamConfigParams::normalize_rotation(0), 0);
-        assert_eq!(StreamConfigParams::normalize_rotation(91), 90);
-        assert_eq!(StreamConfigParams::normalize_rotation(200), 180);
-        assert_eq!(StreamConfigParams::normalize_rotation(450), 90);
+    fn native_hevc_record_cannot_be_labelled_avc_by_sender() {
+        let source = hevc();
+        let config = source.to_proto().unwrap();
+        assert_eq!(
+            config.codec,
+            picoo_protocol::control::VideoCodec::Hevc as i32
+        );
+        assert_eq!(config.profile, VideoProfile::HevcMain as i32);
+        assert_eq!(config.fps, 60);
+        assert_eq!(config.rotation, 90);
+        assert_eq!(config.stream_epoch, 7);
+        let record =
+            CodecConfiguration::parse(Codec::Hevc, config.codec_configuration.into()).unwrap();
+        assert_eq!(&record, source.configuration.as_ref());
+        assert_eq!(config.level_idc, u32::from(record.level_idc()));
     }
 
     #[test]
-    fn stream_config_derives_main_level_4_from_sps() {
-        let cfg = StreamConfigParams {
-            sps: vec![0x67, 77, 0, 40, 0xaa],
-            ..Default::default()
-        };
-        let proto = cfg.to_proto();
-        assert_eq!(proto.profile, "main");
-        assert_eq!(proto.level, "4.0");
+    fn declared_geometry_must_match_native_sps_before_serialization() {
+        let mut source = hevc();
+        source.width = 1280;
+        source.height = 720;
+        assert!(source.to_proto().is_err());
+        source.width = 64;
+        source.height = 64;
+        assert!(source.to_proto().is_ok());
     }
 
     #[test]
-    fn stream_config_derives_annex_b_baseline_from_sps() {
-        let cfg = StreamConfigParams {
-            sps: vec![0, 0, 0, 1, 0x67, 66, 0, 31],
-            ..Default::default()
-        };
-        let proto = cfg.to_proto();
-        assert_eq!(proto.profile, "baseline");
-        assert_eq!(proto.level, "3.1");
+    fn unsupported_source_attributes_are_rejected_without_rounding() {
+        let mut source = hevc();
+        source.rotation = 91;
+        assert!(source.to_proto().is_err());
+        source.rotation = 90;
+        let mut record = source.configuration.record().to_vec();
+        record[21] &= !3;
+        source.configuration = CodecConfiguration::parse(Codec::Hevc, record.into())
+            .unwrap()
+            .into();
+        assert!(source.to_proto().is_err());
+        source = hevc();
+        for fps in [0, 24, 120] {
+            source.fps = fps;
+            assert!(source.to_proto().is_err());
+        }
     }
 }

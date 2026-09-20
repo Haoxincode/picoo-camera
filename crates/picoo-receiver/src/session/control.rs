@@ -7,7 +7,7 @@ use super::ReceiverSession;
 use crate::ReceiverError;
 use picoo_protocol::control::{
     camera_command, control_envelope::Payload as ControlPayload, CameraCommand, Capabilities,
-    EncoderCommand, Resolution, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
+    EncoderCommand, SenderStats as SenderStatsMsg, SessionError, StreamConfig,
 };
 use picoo_protocol::{receiver_payload_allowed, ReceiverControlPhase};
 use picoo_session::StreamState;
@@ -163,18 +163,75 @@ impl ReceiverSession {
         self.send_control_payload(session, ControlPayload::CameraCommand(command))
     }
 
-    fn handle_stream_config(
+    pub(super) fn handle_stream_config(
         &mut self,
         session: SessionId,
         config: StreamConfig,
     ) -> Result<(), ReceiverError> {
+        // Validate actual source before retaining any untrusted pending configuration.
+        let format = config
+            .validated_video_format()
+            .map_err(|error| ReceiverError::Protocol(error.to_string()))?;
+        let budget = match &self.decoder_readiness {
+            super::decoder_capabilities::DecoderReadiness::Pending => {
+                if self
+                    .pending_decoder_configuration
+                    .as_ref()
+                    .is_some_and(|pending| {
+                        pending.session == session
+                            && pending.control_generation == self.control_generation
+                            && pending.config.stream_epoch > config.stream_epoch
+                    })
+                {
+                    return Ok(());
+                }
+                self.pending_decoder_configuration =
+                    Some(super::decoder_capabilities::PendingConfiguration {
+                        session,
+                        control_generation: self.control_generation,
+                        config,
+                    });
+                return Ok(());
+            }
+            super::decoder_capabilities::DecoderReadiness::Unavailable(error) => {
+                return Err(ReceiverError::Decode(
+                    picoo_media_decode::DecodeError::Platform(error.clone()),
+                ));
+            }
+            super::decoder_capabilities::DecoderReadiness::Ready(caps) => {
+                if config.height > self.advertised_max_height
+                    || !caps.supports(&format, config.level_idc, 1)
+                {
+                    return Err(ReceiverError::Protocol(
+                        "source format was not admitted by native decoder".into(),
+                    ));
+                }
+                caps.offers
+                    .iter()
+                    .find(|offer| offer.format.as_ref() == Some(&format))
+                    .expect("admitted offer")
+                    .max_access_unit_bytes
+            }
+        };
         let previous_epoch = self.current_stream_config.as_ref().map(|c| c.stream_epoch);
         if previous_epoch.is_some_and(|epoch| config.stream_epoch < epoch) {
             return Ok(());
         }
         let config_epoch = config.stream_epoch;
         let epoch_bumped = previous_epoch.is_some_and(|epoch| config.stream_epoch > epoch);
+        self.config_revision = self.config_revision.checked_add(1).ok_or_else(|| {
+            ReceiverError::Protocol("source configuration revision exhausted".into())
+        })?;
         self.current_stream_config = Some(std::sync::Arc::new(config));
+        self.admitted_access_unit_budget = Some(budget);
+        #[cfg(windows)]
+        if let Some(output) = &self.shared_ring {
+            output.invalidate();
+        }
+        #[cfg(target_os = "macos")]
+        if let Some(output) = &self.native_output {
+            output.placeholder(self.placeholder_mode, false);
+        }
         if previous_epoch != Some(config_epoch) {
             self.reset_clock_sync(config_epoch);
         }
@@ -217,30 +274,24 @@ impl ReceiverSession {
         Ok(())
     }
 
-    fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
-        // Advertise 480p / 720p / 1080p ladder (REQ-PICOO-UI-0001 AC-M-LIVE-01 + PUC-005).
-        let mut resolutions = vec![
-            Resolution {
-                width: 854,
-                height: 480,
-            },
-            Resolution {
-                width: 1280,
-                height: 720,
-            },
-        ];
-        if self.advertised_max_height >= 1080 {
-            resolutions.push(Resolution {
-                width: 1920,
-                height: 1080,
-            });
-        }
+    pub(super) fn send_capabilities(&mut self, session: SessionId) -> Result<(), ReceiverError> {
+        let super::decoder_capabilities::DecoderReadiness::Ready(caps) = &self.decoder_readiness
+        else {
+            return Ok(());
+        };
         let capabilities = Capabilities {
-            codecs: vec!["h264".into()],
-            resolutions,
-            fps: vec![30],
-            front_camera: true,
-            back_camera: true,
+            offers: caps
+                .offers
+                .iter()
+                .filter(|offer| {
+                    offer
+                        .format
+                        .as_ref()
+                        .and_then(|format| format.visible_rect.as_ref())
+                        .is_some_and(|rect| rect.height <= self.advertised_max_height)
+                })
+                .cloned()
+                .collect(),
         };
         self.send_control_payload(session, ControlPayload::Capabilities(capabilities))
     }
@@ -266,5 +317,101 @@ impl ReceiverSession {
             ));
         }
         self.force_decoder_recovery_request(RecoveryReason::ManualRepair)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use picoo_protocol::control::VideoCodec;
+    use std::sync::Arc;
+
+    #[test]
+    fn invalid_record_cannot_mutate_committed_source_or_release_future_media() {
+        let record = include_bytes!("../../../picoo-bitstream/tests/fixtures/avc-720p-config.bin");
+        let parsed = picoo_bitstream::CodecConfiguration::parse(
+            picoo_bitstream::Codec::Avc,
+            bytes::Bytes::copy_from_slice(record),
+        )
+        .unwrap();
+        let valid = StreamConfig {
+            codec: VideoCodec::Avc as i32,
+            profile: picoo_protocol::control::VideoProfile::AvcHigh as i32,
+            level_idc: u32::from(parsed.level_idc()),
+            codec_configuration: record.to_vec(),
+            stream_epoch: 5,
+            width: 1280,
+            height: 720,
+            ..Default::default()
+        };
+        let mut invalid = Vec::new();
+        for length in 0..7 {
+            invalid.push(StreamConfig {
+                codec_configuration: record[..length].to_vec(),
+                ..valid.clone()
+            });
+        }
+        invalid.push(StreamConfig {
+            profile: 0,
+            ..valid.clone()
+        });
+        invalid.push(StreamConfig {
+            level_idc: valid.level_idc + 1,
+            ..valid.clone()
+        });
+        invalid.push(StreamConfig {
+            width: 1920,
+            height: 1080,
+            ..valid.clone()
+        });
+        for mut candidate in invalid {
+            let mut receiver = ReceiverSession::new();
+            let committed = Arc::new(valid.clone());
+            receiver.current_stream_config = Some(committed.clone());
+            receiver.config_revision = 9;
+            receiver.waiting_for_stream_config_epoch = Some(6);
+            candidate.stream_epoch = 6;
+            assert!(receiver
+                .handle_stream_config(SessionId(1), candidate)
+                .is_err());
+            assert!(Arc::ptr_eq(
+                receiver.current_stream_config.as_ref().unwrap(),
+                &committed
+            ));
+            assert_eq!(receiver.config_revision, 9);
+            assert_eq!(receiver.waiting_for_stream_config_epoch, Some(6));
+        }
+    }
+
+    #[test]
+    fn unsupported_codec_does_not_replace_committed_configuration_or_clock() {
+        let mut receiver = ReceiverSession::new();
+        let committed = Arc::new(StreamConfig {
+            codec: VideoCodec::Avc as i32,
+            stream_epoch: 5,
+            width: 1280,
+            height: 720,
+            ..Default::default()
+        });
+        receiver.current_stream_config = Some(committed.clone());
+        receiver.waiting_for_stream_config_epoch = Some(6);
+        for codec in [0, -1, 99] {
+            let result = receiver.handle_stream_config(
+                SessionId(1),
+                StreamConfig {
+                    codec,
+                    stream_epoch: 6,
+                    ..Default::default()
+                },
+            );
+            assert!(
+                matches!(result, Err(ReceiverError::Protocol(message)) if message.contains("unknown stream codec"))
+            );
+            assert!(Arc::ptr_eq(
+                receiver.current_stream_config.as_ref().unwrap(),
+                &committed
+            ));
+            assert_eq!(receiver.waiting_for_stream_config_epoch, Some(6));
+        }
     }
 }

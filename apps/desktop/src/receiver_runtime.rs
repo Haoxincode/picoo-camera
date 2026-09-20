@@ -26,9 +26,14 @@ use crate::live_diagnostics::{HistorySummary, LiveMetricsHistory};
 use crate::prefs::DesktopPreferences;
 pub use picoo_receiver::DEFAULT_SHARED_RING_NAME;
 
+mod recording;
+#[allow(unused_imports)]
+pub use recording::{RecordingSnapshot, RecordingSnapshots};
 mod worker;
 #[cfg(feature = "gpui-ui")]
 pub use worker::await_receiver_reply;
+#[allow(unused_imports)]
+pub use worker::RecordingRequest;
 pub use worker::{ReceiverReply, ReceiverRuntimeHandle};
 
 #[cfg(any(target_os = "macos", windows))]
@@ -90,12 +95,16 @@ impl ReceiverRuntimeConfig {
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)] // GPUI shell reads fields when `gpui-ui` is enabled.
 pub struct ReceiverSnapshot {
+    pub recordings: RecordingSnapshots,
     pub status: ReceiverStatus,
     pub bind_addr: Option<SocketAddr>,
     /// Unicast IPv4 advertised through mDNS and shown for manual IP connection.
     pub advertise_host: String,
-    /// Whether the mDNS advertiser was created successfully for this runtime.
+    /// Whether the daemon has confirmed an actual mDNS announcement.
     pub discovery_available: bool,
+    pub discovery_starting: bool,
+    /// Last mDNS advertiser error; None while starting or online.
+    pub discovery_error: Option<String>,
     pub pairing_short_code: Option<String>,
     pub pairing_ttl_seconds: u64,
     /// Link jitter from last ReceiverStats (REQ-PICOO-UI-0001 AC-D-LIVE-02).
@@ -125,10 +134,12 @@ pub struct ReceiverSnapshot {
     pub active_sender: Option<ActiveSenderSummary>,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub virtual_camera: crate::model::VirtualCameraStatus,
-    /// None when Shared Frame Ring attach succeeded (REQ-PICOO-FRAME-003 / PUC-004).
-    pub shared_ring_error: Option<String>,
+    /// None when the platform VCam output transport is connected.
+    pub vcam_output_error: Option<String>,
     /// Last production decoder failure; cleared after a real frame is committed.
     pub media_error: Option<String>,
+    /// Sender PCP connection generation; changes on every new phone session.
+    pub control_generation: Option<u64>,
 }
 
 pub(crate) struct ReceiverRuntime {
@@ -142,7 +153,7 @@ pub(crate) struct ReceiverRuntime {
     advertised_trusted_count: usize,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
-    shared_ring_error: Option<String>,
+    vcam_output_error: Option<String>,
     metrics_history: LiveMetricsHistory,
     trusted_snapshot_cache: RefCell<TrustedSnapshotCache>,
 }
@@ -160,16 +171,17 @@ impl ReceiverRuntime {
             .with_identity(config.identity.clone())
             .with_loaded_trusted_store(config.trusted_store, &config.trusted_store_path);
 
-        let shared_ring_error = match receiver.attach_shared_ring(&config.shared_ring_name) {
-            Ok(()) => None,
-            Err(err) => {
-                tracing::error!(
-                    ring = %config.shared_ring_name,
-                    "Shared Frame Ring unavailable — VCam will stay on placeholder: {err}"
-                );
-                Some(err.to_string())
-            }
-        };
+        let vcam_output_error =
+            match receiver.attach_virtual_camera_output(&config.shared_ring_name) {
+                Ok(()) => None,
+                Err(err) => {
+                    tracing::error!(
+                        output = %config.shared_ring_name,
+                        "virtual camera output unavailable — VCam will stay on placeholder: {err}"
+                    );
+                    Some(err.to_string())
+                }
+            };
 
         let bind = receiver.listen(Endpoint {
             host: config.bind_host,
@@ -228,7 +240,7 @@ impl ReceiverRuntime {
             display_name: config.identity.display_name().to_owned(),
             advertised_trusted_count: trusted_count,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
-            shared_ring_error,
+            vcam_output_error,
             metrics_history: LiveMetricsHistory::default(),
             trusted_snapshot_cache: RefCell::new(TrustedSnapshotCache::default()),
         })
@@ -375,6 +387,7 @@ impl ReceiverRuntime {
         let receiver_stats = self.receiver.last_stats().and_then(sanitize_receiver_stats);
         let (trusted_devices, trusted_identity_replacement) = self.trusted_snapshot();
         ReceiverSnapshot {
+            recordings: RecordingSnapshots::capture(&self.receiver),
             status: self.receiver.status(),
             bind_addr: self.bind_addr,
             advertise_host: self.advertise_host.clone(),
@@ -382,6 +395,11 @@ impl ReceiverRuntime {
                 .mdns
                 .as_ref()
                 .is_some_and(MdnsAdvertiser::is_registered),
+            discovery_starting: self.mdns.as_ref().is_some_and(MdnsAdvertiser::is_starting),
+            discovery_error: self
+                .mdns
+                .as_ref()
+                .and_then(|advertiser| advertiser.last_error().map(str::to_owned)),
             pairing_short_code: self.receiver.pairing_short_code().map(str::to_string),
             pairing_ttl_seconds: self
                 .receiver
@@ -432,12 +450,13 @@ impl ReceiverRuntime {
             display_name: self.display_name.clone(),
             active_sender,
             virtual_camera: self.virtual_camera,
-            shared_ring_error: self
+            vcam_output_error: self
                 .receiver
-                .last_shared_ring_error()
+                .last_vcam_output_error()
                 .map(str::to_owned)
-                .or_else(|| self.shared_ring_error.clone()),
+                .or_else(|| self.vcam_output_error.clone()),
             media_error: self.receiver.last_media_error().map(str::to_string),
+            control_generation: self.receiver.control_generation(),
         }
     }
 

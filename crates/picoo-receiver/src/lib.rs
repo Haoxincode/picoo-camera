@@ -6,6 +6,12 @@
 
 pub mod media_scheduler;
 pub mod runtime;
+#[cfg(any(target_os = "macos", windows))]
+pub use picoo_frame_hub::NativeVideoFrame as ReceiverFrame;
+#[cfg(not(any(target_os = "macos", windows)))]
+pub use picoo_frame_hub::VideoFrame as ReceiverFrame;
+#[cfg(any(target_os = "macos", windows))]
+mod output;
 mod session;
 
 use std::time::Duration;
@@ -19,13 +25,16 @@ use thiserror::Error;
 pub use session::{run_loopback_access_unit, run_paired_loopback_access_unit};
 pub use session::{ReceiverSession, TrustedIdentityCandidate, TrustedIdentityReplacement};
 
-pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera-v1";
+pub const DEFAULT_SHARED_RING_NAME: &str = "picoo-camera";
 
 /// Pairing short-code / challenge lifetime (matches Android PairingScreen TTL).
 pub const PAIRING_CHALLENGE_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]
 pub enum ReceiverError {
+    #[cfg(any(target_os = "macos", windows))]
+    #[error("recording: {0}")]
+    Recording(#[from] picoo_recording::RecordingError),
     #[error("transport: {0}")]
     Transport(#[from] TransportError),
     #[cfg(any(test, feature = "loopback-diagnostics"))]

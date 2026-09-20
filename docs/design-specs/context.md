@@ -1,5 +1,7 @@
 # Design Specs Context：管理规范、追溯规则与概念对齐
 
+> 2026-09-06：用户已采纳 [Next v2 产品方案](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md) 并开始破坏性重构。本文旧基线中的 H.264-only/30fps、公共 CPU 帧、CPU 预览、无录像及旧版本约束不再作为新实现目标；未冲突的安全与业务约束继续有效。新架构为 ARCH-PICOO-MEDIA-002，验收按 REQ-PICOO-NEXT；不得把旧实现状态视为新版完成。
+
 仓库名：`picoo-camera` · 产品名：**Picoo Camera**
 
 这份文件不是 Picoo Camera 的产品总览。它是 `docs/design-specs/` 下的管理上下文，用于统一 Design Specs 的文档空间、长期评审层、需求分解流程、追溯 ID 规则和核心术语。
@@ -103,9 +105,9 @@ User request / product requirement
 | `Sender` | 运行在 Android 或 iPhone 上的手机端应用，负责摄像头采集、硬件编码和向 Receiver 发送视频。 | 不称为 Client 或 Mobile App 作为架构角色名；UI 层可显示产品名。 |
 | `Receiver` | 运行在 Windows 或 macOS 上的桌面应用，负责发现、配对、接收、解码、预览和驱动虚拟摄像头。 | 不称为 Server 作为用户可见产品名；协议层 Receiver 承担 QUIC Server 角色。 |
 | `Rust Core` | 由多个 `picoo-*` crate 组成的共享业务核心，统一协议、传输、会话、配对、分包、抖动缓冲、码率控制、指标和 FFI。 | 不负责各平台 Camera、MediaCodec、VideoToolbox、虚拟摄像头安装 UI 和系统权限弹窗。 |
-| `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 为 `picoocam`；不维护数字版本或旧协议兼容解析器。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
-| `LatestFrameStore` | 桌面端解码帧的同进程容量一出口，发布 `Arc<VideoFrame>`，同时服务 GPUI Preview Worker 与 Shared Frame Ring Writer。 | 一条视频流只解码一次；消费者持有共享不可变帧，变慢时只跳过旧帧，不反压 Decoder。 |
-| `Shared Frame Ring` | 主应用与虚拟摄像头扩展/组件之间的跨进程三槽 NV12 帧共享区。Windows 使用 Named Shared Memory；macOS 使用 App Group mmap。 | ready state、reader lease 与进程恢复只属于跨进程 Ring；不得套用到 `LatestFrameStore`。第一版不依赖 IOSurface 或跨进程 GPU 纹理共享。 |
+| `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 固定为 `picoocam`；协议、FFI、IPC 不加版本号或版本协商，直接修改当前契约，不维护旧接口或迁移器。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
+| `FrameBus` / `NativeVideoFrame` | 原生源图像与提交时身份、描述、时间绑定；FrameBus 分开提供 latest 和有界有序订阅。 | 不含 CPU 像素/stride；预览与输出持有自己的 GPU 完成 lease。LatestFrameStore 是尚未替换平台的旧实现名称，不是新架构目标。 |
+| `Shared Frame Ring` | CPU 输出后端的跨进程 NV12 共享区；不是公共源帧，也不是 GpuNative 交接。 | ready state、reader lease 与进程恢复属于跨进程 sink，不套用到 FrameBus；各平台独立验证 GpuNative/CpuBridge。 |
 | `Virtual Camera` | 向操作系统注册的标准摄像头设备，统一名称为 `Picoo Camera`。 | Windows 使用 MF Virtual Camera；macOS 使用 CMIO Camera Extension。 |
 | `Pairing` | 首次加密连接建立后，Receiver 基于本次挑战生成六位配对短码并通过可靠控制 Stream 发给 Sender；两端显示相同短码，用户分别确认一致后固定双方公钥并建立可信设备关系。 | 短码是本次握手的人工核对值，不由用户输入，也不负责解析网络地址；未配对设备不得接收视频或驱动虚拟摄像头输出。 |
 | `stream_epoch` | 标识一次连续视频流世代的递增计数，用于摄像头切换、分辨率变化、编码器重建和连接恢复后的帧重组隔离。 | Receiver 不得将不同 epoch 的片段组成同一帧。 |
@@ -113,7 +115,7 @@ User request / product requirement
 
 ## 产品边界摘要
 
-Picoo Camera 第一版约束：
+以下仅为历史产品基线，冲突处采用 ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT：
 
 - 仅在同一 Wi-Fi 局域网内工作，不依赖云服务器、账号系统、USB、ADB、浏览器或公网穿透。
 - 支持 Android/iOS Sender 与 Windows/macOS Receiver 的四种组合。

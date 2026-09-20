@@ -44,20 +44,20 @@ fun StreamingScreen(
     cameraPermissionPermanentlyDenied: Boolean,
     receiverName: String,
     linkQualityChip: String,
-    resolutionLabel: String,
+    sourceLabel: String,
     bitrateMbps: String,
     previewBufferWidth: Int,
     previewBufferHeight: Int,
     previewSensorOrientationDegrees: Int,
     previewFrontFacing: Boolean,
     localPreviewMirrored: Boolean,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     powerHint: String,
     reconnecting: Boolean,
     packetLossLabel: String,
     onRequestCamera: () -> Unit,
     onFlipCamera: () -> Unit,
-    onToggleResolution: () -> Unit,
+    onChooseSourceFormat: () -> Unit,
     onToggleMirror: () -> Unit,
     onCycleExposure: () -> Unit,
     exposureEv: Int,
@@ -71,22 +71,30 @@ fun StreamingScreen(
     networkUnstable: Boolean = false,
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
+    errorText: String? = null,
+    connected: Boolean = true,
+    connectionTitle: String = receiverName.ifBlank { "Picoo Camera" } + " 已连接",
+    connectionDetail: String = "点击顶部状态连接电脑",
+    onConnectionClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onConnect: () -> Unit = onConnectionClick,
+    connectionOverlay: (@Composable () -> Unit)? = null,
 ) {
     StreamingScreenContent(
         cameraGranted = cameraGranted,
         cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
         receiverName = receiverName,
         linkQualityChip = linkQualityChip,
-        resolutionLabel = resolutionLabel,
+        sourceLabel = sourceLabel,
         bitrateMbps = bitrateMbps,
         localPreviewMirrored = localPreviewMirrored,
-        thermalForced720 = thermalForced720,
+        thermalLimited = thermalLimited,
         powerHint = powerHint,
         reconnecting = reconnecting,
         packetLossLabel = packetLossLabel,
         onRequestCamera = onRequestCamera,
         onFlipCamera = onFlipCamera,
-        onToggleResolution = onToggleResolution,
+        onChooseSourceFormat = onChooseSourceFormat,
         onToggleMirror = onToggleMirror,
         onCycleExposure = onCycleExposure,
         exposureEv = exposureEv,
@@ -97,6 +105,14 @@ fun StreamingScreen(
         networkUnstable = networkUnstable,
         reconnectAttempt = reconnectAttempt,
         reconnectDelayMs = reconnectDelayMs,
+        errorText = errorText,
+        connected = connected,
+        connectionTitle = connectionTitle,
+        connectionDetail = connectionDetail,
+        onConnectionClick = onConnectionClick,
+        onOpenSettings = onOpenSettings,
+        onConnect = onConnect,
+        connectionOverlay = connectionOverlay,
         previewContent = {
             CameraPreviewSurface(
                 modifier = Modifier.fillMaxSize(),
@@ -120,16 +136,16 @@ internal fun StreamingScreenContent(
     cameraPermissionPermanentlyDenied: Boolean,
     receiverName: String,
     linkQualityChip: String,
-    resolutionLabel: String,
+    sourceLabel: String,
     bitrateMbps: String,
     localPreviewMirrored: Boolean,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     powerHint: String,
     reconnecting: Boolean,
     packetLossLabel: String,
     onRequestCamera: () -> Unit,
     onFlipCamera: () -> Unit,
-    onToggleResolution: () -> Unit,
+    onChooseSourceFormat: () -> Unit,
     onToggleMirror: () -> Unit,
     onCycleExposure: () -> Unit,
     exposureEv: Int,
@@ -141,13 +157,20 @@ internal fun StreamingScreenContent(
     networkUnstable: Boolean = false,
     reconnectAttempt: Int = 0,
     reconnectDelayMs: Long = 0L,
+    errorText: String? = null,
+    connected: Boolean = true,
+    connectionTitle: String = receiverName.ifBlank { "Picoo Camera" } + " 已连接",
+    connectionDetail: String = "点击顶部状态连接电脑",
+    onConnectionClick: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
+    onConnect: () -> Unit = onConnectionClick,
+    connectionOverlay: (@Composable () -> Unit)? = null,
 ) {
     val motion = PicooTheme.motion
     var uiLocked by remember { mutableStateOf(false) }
     var disconnectArmed by remember { mutableStateOf(false) }
     var flipRotationTarget by remember { mutableFloatStateOf(0f) }
     var flipBlurActive by remember { mutableStateOf(false) }
-    var thermalToast by remember { mutableStateOf(false) }
     var immersive by remember { mutableStateOf(false) }
     var focusRingCenter by remember { mutableStateOf(Offset.Zero) }
     var focusRingActive by remember { mutableStateOf(false) }
@@ -173,12 +196,6 @@ internal fun StreamingScreenContent(
         if (flipBlurActive) {
             delay(PicooCameraDimensions.FlipBlurMillis)
             flipBlurActive = false
-        }
-    }
-    LaunchedEffect(thermalToast) {
-        if (thermalToast) {
-            delay(PicooCameraDimensions.ToastVisibleMillis)
-            thermalToast = false
         }
     }
 
@@ -241,20 +258,18 @@ internal fun StreamingScreenContent(
 
         if (!immersive) {
             ConnectionHud(
-                receiverName = receiverName,
                 linkQualityChip = linkQualityChip,
                 bitrateMbps = bitrateMbps,
-                resolutionLabel = resolutionLabel,
+                sourceLabel = sourceLabel,
                 packetLossLabel = packetLossLabel,
-                thermalForced720 = thermalForced720,
+                thermalLimited = thermalLimited,
                 enabled = !uiLocked,
-                onToggleResolution = {
-                    if (thermalForced720 && resolutionLabel.contains("720", ignoreCase = true)) {
-                        thermalToast = true
-                    } else {
-                        onToggleResolution()
-                    }
-                },
+                connected = connected,
+                title = connectionTitle,
+                detail = connectionDetail,
+                onChooseSourceFormat = onChooseSourceFormat,
+                onConnectionClick = onConnectionClick,
+                onOpenSettings = onOpenSettings,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
             CameraControlDock(
@@ -264,8 +279,9 @@ internal fun StreamingScreenContent(
                 uiLocked = uiLocked,
                 disconnectArmed = disconnectArmed,
                 flipRotation = flipRotation,
-                thermalForced720 = thermalForced720,
+                thermalLimited = thermalLimited,
                 powerHint = powerHint,
+                connected = connected,
                 onCycleExposure = onCycleExposure,
                 onToggleMirror = onToggleMirror,
                 onToggleLock = {
@@ -275,6 +291,7 @@ internal fun StreamingScreenContent(
                 onDisconnect = {
                     if (disconnectArmed) onDisconnect() else disconnectArmed = true
                 },
+                onConnect = onConnect,
                 onFlipCamera = {
                     flipRotationTarget += 180f
                     flipBlurActive = true
@@ -284,12 +301,18 @@ internal fun StreamingScreenContent(
             )
         }
 
-        if (thermalToast) {
-            CameraToast(
-                text = "设备偏热保护中，1080P 暂不可选",
-                modifier = Modifier.align(Alignment.TopCenter),
+        errorText?.let { message ->
+            Text(
+                text = message,
+                color = PicooCameraColors.Content,
+                style = PicooCameraTypography.Status,
+                modifier = Modifier.align(Alignment.Center)
+                    .padding(PicooTheme.dimensions.space24)
+                    .background(PicooCameraColors.SurfaceRaised)
+                    .padding(PicooTheme.dimensions.space16),
             )
         }
+
         if (reconnecting) {
             ReconnectOverlay(
                 networkUnstable = networkUnstable,
@@ -298,6 +321,8 @@ internal fun StreamingScreenContent(
                 onStopReconnect = onStopReconnect,
             )
         }
+
+        connectionOverlay?.invoke()
     }
 }
 

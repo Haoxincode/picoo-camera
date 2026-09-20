@@ -18,12 +18,13 @@ mod contract_harness;
 mod windows_source;
 
 pub use format::{
-    is_supported_output_size, nv12_len, DEFAULT_HEIGHT, DEFAULT_WIDTH, FRAME_RATE_DEN,
-    FRAME_RATE_NUM, SAMPLE_DURATION_100NS,
+    is_supported_frame_rate, is_supported_output_size, nv12_len, sample_duration_100ns,
+    DEFAULT_FRAME_RATE_DEN, DEFAULT_FRAME_RATE_NUM, DEFAULT_HEIGHT, DEFAULT_WIDTH, FRAME_RATES,
+    SAMPLE_DURATION_100NS,
 };
 pub use sample_copy::{copy_prepared_frame, SampleCopyError};
 
-pub const DEFAULT_RING_NAME: &str = "picoo-camera-v1";
+pub const DEFAULT_RING_NAME: &str = "picoo-camera";
 pub const FRIENDLY_NAME: &str = "Picoo Camera";
 
 #[cfg(windows)]

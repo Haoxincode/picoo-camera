@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use picoo_frame_hub::VideoFrame;
+use crate::ReceiverFrame;
 use picoo_transport::TransportEventWake;
 
 use crate::ReceiverError;
@@ -68,12 +68,12 @@ pub trait ReceiverRuntimeAdapter: 'static {
     fn pump(&mut self) -> Result<(), ReceiverError>;
     fn next_wake_delay(&self) -> Duration;
     fn snapshot(&self) -> Self::Snapshot;
-    fn latest_frame(&self) -> Option<Arc<VideoFrame>>;
+    fn latest_frame(&self) -> Option<Arc<ReceiverFrame>>;
 }
 
 struct RuntimeShared<Snapshot> {
     snapshot: RwLock<Arc<Snapshot>>,
-    latest_frame: RwLock<Option<Arc<VideoFrame>>>,
+    latest_frame: RwLock<Option<Arc<ReceiverFrame>>>,
     closed: AtomicBool,
 }
 
@@ -178,7 +178,7 @@ where
         )
     }
 
-    pub fn latest_frame(&self) -> Option<Arc<VideoFrame>> {
+    pub fn latest_frame(&self) -> Option<Arc<ReceiverFrame>> {
         self.shared
             .latest_frame
             .read()
@@ -285,9 +285,12 @@ fn run_owner_loop<Adapter>(
             .latest_frame
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if latest.as_ref().map(|frame| frame.sequence)
-            != published.as_ref().map(|frame| frame.sequence)
-        {
+        let changed = match (latest.as_ref(), published.as_ref()) {
+            (Some(next), Some(previous)) => !Arc::ptr_eq(next, previous),
+            (None, None) => false,
+            _ => true,
+        };
+        if changed {
             *published = latest;
         }
         drop(published);

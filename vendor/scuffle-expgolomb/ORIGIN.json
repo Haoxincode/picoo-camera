@@ -1,0 +1,11 @@
+{
+  "crate": "scuffle-expgolomb",
+  "version": "0.1.5",
+  "registry": "https://crates.io/crates/scuffle-expgolomb/0.1.5",
+  "sha256": "48d21330974c941e4c0aedc1e7255ea809e8cbac51e135209f6d67843ad1b94d",
+  "upstream_repository": "https://github.com/scufflecloud/scuffle",
+  "license": "MIT OR Apache-2.0",
+  "local_changes": [
+    "Check unsigned and signed Exp-Golomb decoding overflow; preserve representable u64 values"
+  ]
+}

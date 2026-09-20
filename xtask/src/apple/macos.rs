@@ -192,26 +192,34 @@ pub(crate) fn test_macos(sh: &Shell) -> Result<()> {
     }
 
     let _deployment_target = sh.push_env("MACOSX_DEPLOYMENT_TARGET", "15.0");
-    let reader_harness = build_macos_shared_ring_reader_harness(sh)?;
-    let _reader_harness = sh.push_env("PICOO_MACOS_RING_READER_HARNESS", &reader_harness);
+    let extension_harness = build_macos_camera_extension_harness(sh)?;
+    cmd!(sh, "{extension_harness} output-pool").run()?;
+    cmd!(sh, "{extension_harness} output-clock").run()?;
     test_macos_system_identity_store(sh)?;
-    cmd!(sh, "cargo test -p picoo-frame-hub --lib").run()?;
-    cmd!(
+    super::native_tests::run(sh, &["-p", "picoo-frame-hub", "--lib"], &[])?;
+    for package in [
+        "picoo-media-decode",
+        "picoo-gpu",
+        "picoo-receiver",
+        "picoo-recording",
+    ] {
+        super::native_tests::run(sh, &["-p", package, "--lib"], &[])?;
+    }
+    crate::test_suite::recording_fixtures(sh, "apple")?;
+    super::native_tests::run(
         sh,
-        "cargo test -p picoo-frame-hub --lib shared_ring::tests::macos::macos_rust_swift_cross_process_ring_contract -- --ignored --exact"
-    )
-    .run()?;
-    cmd!(sh, "cargo test -p picoo-media-decode").run()?;
-    cmd!(
-        sh,
-        "cargo test -p picoo-receiver --lib paired_avcc_length_prefixed_au_reaches_latest_frame_store"
-    )
-    .run()?;
-    cmd!(
-        sh,
-        "cargo test -p picoo-receiver --lib macos_videotoolbox_abr_epoch_resolution_recovery"
-    )
-    .run()?;
+        &[
+            "-p",
+            "picoo-desktop",
+            "-p",
+            "gpui-pre-apple",
+            "--features",
+            "picoo-desktop/gpui-ui",
+            "--lib",
+        ],
+        &[],
+    )?;
+    super::native_tests::run(sh, &["-p", "picoo-desktop", "--features", "gpui-ui"], &[])?;
 
     // REQ-PICOO-MEDIA-012 / STACK-001: the Apple product must not regain
     // OpenH264's native build chain after moving decode to VideoToolbox.
@@ -304,21 +312,27 @@ fn test_macos_system_identity_store(sh: &Shell) -> Result<()> {
     Ok(())
 }
 
-fn build_macos_shared_ring_reader_harness(sh: &Shell) -> Result<PathBuf> {
+fn build_macos_camera_extension_harness(sh: &Shell) -> Result<PathBuf> {
     let source_dir = Path::new("extensions/macos-camera-extension");
-    let atomic_source = source_dir.join("SharedRingAtomic.c");
-    let atomic_header = source_dir.join("SharedRingAtomic.h");
-    let reader_source = source_dir.join("SharedRingReader.swift");
-    let harness_source = source_dir.join("tests/SharedRingReaderHarness.swift");
+    let harness_source = source_dir.join("tests/CameraExtensionHarness.swift");
+    let pool_source = source_dir.join("OutputPixelBufferPool.swift");
+    let pool_tests = source_dir.join("tests/OutputPixelBufferPoolTests.swift");
+    let clock_source = source_dir.join("OutputSampleClock.swift");
+    let clock_tests = source_dir.join("tests/OutputSampleClockTests.swift");
+    let provider_source = source_dir.join("PicooCameraProvider.swift");
+    let sink_source = source_dir.join("PicooCameraSink.swift");
     for source in [
-        &atomic_source,
-        &atomic_header,
-        &reader_source,
         &harness_source,
+        &pool_source,
+        &pool_tests,
+        &clock_source,
+        &clock_tests,
+        &provider_source,
+        &sink_source,
     ] {
         if !source.is_file() {
             bail!(
-                "macOS Shared Frame Ring test source is missing {}",
+                "macOS Camera Extension test source is missing {}",
                 source.display()
             );
         }
@@ -326,20 +340,14 @@ fn build_macos_shared_ring_reader_harness(sh: &Shell) -> Result<PathBuf> {
 
     let output_dir = std::env::current_dir()?.join("target/apple/macos-tests");
     std::fs::create_dir_all(&output_dir)?;
-    let atomic_object = output_dir.join("SharedRingAtomic.o");
-    let harness = output_dir.join("picoo-shared-ring-reader-harness");
+    let harness = output_dir.join("picoo-camera-extension-harness");
     cmd!(
         sh,
-        "xcrun --sdk macosx clang -std=c17 -Wall -Wextra -Werror -arch arm64 -mmacosx-version-min=15.0 -c {atomic_source} -o {atomic_object}"
-    )
-    .run()?;
-    cmd!(
-        sh,
-        "xcrun --sdk macosx swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macos15.0 -import-objc-header {atomic_header} {reader_source} {harness_source} {atomic_object} -framework CoreVideo -o {harness}"
+        "xcrun --sdk macosx swiftc -parse-as-library -swift-version 6 -strict-concurrency=complete -warnings-as-errors -target arm64-apple-macos15.0 {pool_source} {pool_tests} {clock_source} {clock_tests} {provider_source} {sink_source} {harness_source} -framework CoreVideo -framework CoreMedia -framework CoreMediaIO -framework IOKit -o {harness}"
     )
     .run()?;
     if !harness.is_file() {
-        bail!("macOS Shared Frame Ring reader harness was not produced");
+        bail!("macOS Camera Extension harness was not produced");
     }
     Ok(harness)
 }

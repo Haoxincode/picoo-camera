@@ -1,23 +1,23 @@
 package com.picoo.camera.ui
 
-import android.widget.Toast
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.platform.LocalContext
 import com.picoo.camera.SenderSessionViewModel
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.ExposureCompensation
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LocalPreviewMirror
-import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
-import com.picoo.camera.ui.screens.DevicesScreen
-import com.picoo.camera.ui.screens.PairingScreen
+import com.picoo.camera.ui.screens.ConnectionSheet
+import com.picoo.camera.ui.screens.PairingCameraOverlay
+import com.picoo.camera.ui.screens.PairingWaitCameraOverlay
 import com.picoo.camera.ui.screens.SettingsScreen
+import com.picoo.camera.ui.screens.SourceFormatSheet
 import com.picoo.camera.ui.screens.StreamingScreen
 import com.picoo.camera.ui.screens.WaitOutcome
-import com.picoo.camera.ui.screens.WaitScreen
 
 @Composable
 internal fun SenderTabContent(
@@ -31,7 +31,6 @@ internal fun SenderTabContent(
     onRequestNotifications: () -> Unit,
     displayRotationDegrees: () -> Int,
 ) {
-    val context = LocalContext.current
     val uiState = sessionModel.uiState
     var errorText by uiState::errorText
     var hostText by uiState::hostText
@@ -48,10 +47,10 @@ internal fun SenderTabContent(
     var autoConnectEnabled by uiState::autoConnectEnabled
     var suppressAutoConnect by uiState::suppressAutoConnect
     var localPreviewMirrored by uiState::localPreviewMirrored
-    var resolutionLabel by uiState::resolutionLabel
-    var preferredResolutionLabel by uiState::preferredResolutionLabel
+    var showSourceSheet by rememberSaveable { mutableStateOf(false) }
+    var connectionSheetOpen by rememberSaveable { mutableStateOf(false) }
     var powerHint by uiState::powerHint
-    var thermalForced720 by uiState::thermalForced720
+    var thermalLimited by uiState::thermalLimited
     var linkQualityChip by uiState::linkQualityChip
     var adaptiveBitrateBps by uiState::adaptiveBitrateBps
     var exposureEv by uiState::exposureEv
@@ -60,7 +59,6 @@ internal fun SenderTabContent(
     var discoveryComplete by uiState::discoveryComplete
     var discoveryEnabled by uiState::discoveryEnabled
     var discoverySearchGeneration by uiState::discoverySearchGeneration
-    var wifiPillText by uiState::wifiPillText
     var pairingRemainingSeconds by uiState::pairingRemainingSeconds
     var pairingExpired by uiState::pairingExpired
     var waitOutcome by uiState::waitOutcome
@@ -75,76 +73,33 @@ internal fun SenderTabContent(
     val bitrateMbps = "%.1f Mbps".format(adaptiveBitrateBps / 1_000_000.0)
     val pairingDisplayName = selectedReceiverName.ifBlank { connectedReceiverName }
 
-    when (senderTab) {
-        SenderTab.Devices -> DevicesScreen(
-            discoveredList = discoveredList,
-            pairedDevices = pairedDevices,
-            pairedReceiverIds = pairedReceiverIds,
-            nearbyWifiGranted = nearbyWifiGranted,
-            discoveryComplete = discoveryComplete,
-            wifiPillText = wifiPillText,
-            errorText = errorText,
-            manualEndpointText = manualEndpointText,
-            manualConnecting = uiState.connectionStartedAtMs != 0L &&
-                selectedReceiverId.startsWith("manual-") &&
-                senderStatus in setOf(
-                    PicooNative.STATUS_CONNECTING,
-                    PicooNative.STATUS_NEGOTIATING,
-                    PicooNative.STATUS_RECONNECTING,
-                ),
-            onSelectReceiver = { receiver ->
-                selectedReceiverName = receiver.displayName
-                hostText = receiver.host
-                portText = receiver.quicPort.toString()
-                selectedReceiverId = receiver.receiverId
-                sessionModel.connect(receiver.host, receiver.quicPort, receiver.receiverId)
-            },
-            onManualConnect = { host, port ->
-                sessionModel.rememberManualEndpoint(host, port)
-                hostText = host
-                portText = port.toString()
-                selectedReceiverId = "manual-$host"
-                selectedReceiverName = host
-                sessionModel.connect(host, port, selectedReceiverId)
-            },
-            onManualEndpointChange = {
-                manualEndpointText = it
-                errorText = null
-            },
-            onCheckPermissions = {
-                onRequestNearbyWifi()
-                onRequestNotifications()
-            },
-            onRemovePaired = { device ->
-                selectedReceiverId = device.deviceId
-                val rc = runtime.removeTrustedDevice(device.deviceId)
-                if (rc == 1) {
-                    runtime.forgetAutoConnectAttempt(device.deviceId)
-                    if (sessionModel.reloadTrustedStore()) errorText = null
-                } else {
-                    errorText = "删除失败 ($rc)"
-                }
-            },
-            onOfflinePairedClick = { device ->
-                Toast.makeText(
-                    context,
-                    "${device.deviceName} 当前不在线，请确认电脑端 Picoo Camera 已启动",
-                    Toast.LENGTH_SHORT,
-                ).show()
-            },
-            onRequestNearbyWifi = onRequestNearbyWifi,
-            onOpenSettings = { senderTab = SenderTab.Settings },
-            onRestartDiscovery = {
-                discoveryEnabled = true
-                discoveryComplete = false
-                discoverySearchGeneration += 1
-            },
-            onStopDiscovery = {
-                discoveryEnabled = false
-                discoveryComplete = true
-            },
-        )
-        SenderTab.Settings -> SettingsScreen(
+    val connected = senderStatus in setOf(
+        PicooNative.STATUS_STREAMING,
+        PicooNative.STATUS_RECONNECTING,
+        PicooNative.STATUS_NETWORK_UNSTABLE,
+        PicooNative.STATUS_PERMISSION_REQUIRED,
+    )
+    val connectionTitle = when {
+        senderStatus == PicooNative.STATUS_PERMISSION_REQUIRED -> "需要相机权限"
+        senderStatus == PicooNative.STATUS_RECONNECTING -> "正在重连电脑"
+        connected -> "${pairingDisplayName.ifBlank { "Picoo Camera" }} 已连接"
+        senderStatus == PicooNative.STATUS_PAIRING -> "等待配对确认"
+        senderStatus == PicooNative.STATUS_CONNECTING ||
+            senderStatus == PicooNative.STATUS_NEGOTIATING -> "正在连接电脑"
+        discoveryComplete -> "点击连接电脑"
+        else -> "正在寻找电脑…"
+    }
+    val connectionDetail = when {
+        senderStatus == PicooNative.STATUS_PERMISSION_REQUIRED -> "允许相机权限后开始预览"
+        senderStatus == PicooNative.STATUS_RECONNECTING -> "连接恢复后会自动继续推流"
+        connected -> "已建立安全连接"
+        errorText != null -> errorText.orEmpty()
+        discoveryComplete -> "自动发现或输入局域网 IP"
+        else -> "保持手机与电脑连接同一 Wi‑Fi"
+    }
+
+    if (senderTab == SenderTab.Settings) {
+        SettingsScreen(
             pairedDeviceCount = pairedDevices.size,
             pairedDevices = pairedDevices,
             errorText = errorText,
@@ -152,14 +107,15 @@ internal fun SenderTabContent(
             nearbyWifiGranted = nearbyWifiGranted,
             notificationsGranted = notificationsGranted,
             autoConnectEnabled = autoConnectEnabled,
-            defaultResolutionLabel = preferredResolutionLabel,
-            onBack = { senderTab = SenderTab.Devices },
+            preferredSourceFormat = uiState.preferredSourceFormat,
+            sourceCandidates = uiState.availableSourceFormats,
+            sourcePreparationError = uiState.sourcePreparationError,
+            onBack = { senderTab = SenderTab.Streaming },
             onCheckPermissions = {
                 onRequestNearbyWifi()
                 onRequestNotifications()
                 onRequestCamera()
             },
-            onOpenPairedDevices = { senderTab = SenderTab.Devices },
             onRemovePaired = { device ->
                 val rc = runtime.removeTrustedDevice(device.deviceId)
                 if (rc == 1) {
@@ -172,68 +128,17 @@ internal fun SenderTabContent(
             onToggleAutoConnect = {
                 sessionModel.setAutoConnectEnabled(!autoConnectEnabled)
             },
-            onSelectDefaultResolution = { label ->
-                sessionModel.setPreferredResolution(StreamResolution.fromLabel(label))
-            },
+            onSelectDefaultSource = sessionModel::setPreferredSourceFormat,
         )
-        SenderTab.Pairing -> PairingScreen(
-            receiverName = pairingDisplayName,
-            pairingCode = pairingCode,
-            remainingSeconds = pairingRemainingSeconds,
-            expired = pairingExpired,
-            errorText = errorText,
-            onConfirm = {
-                if (pairingExpired) return@PairingScreen
-                val receiverId =
-                    connectedReceiverId.ifEmpty {
-                        selectedReceiverId.ifEmpty { "windows-receiver" }
-                    }
-                val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
-                if (rc == 0) {
-                    errorText = null
-                    phonePairingConfirmed = true
-                    waitOutcome = WaitOutcome.Pending
-                    senderTab = SenderTab.Wait
-                } else {
-                    errorText = "配对确认失败 ($rc)"
-                }
-            },
-            onRegenerate = { sessionModel.regeneratePairing() },
-            onCancel = {
-                PicooNative.disconnect(senderHandle)
-                pairingCode = ""
-                connectedReceiverId = ""
-                connectedReceiverName = ""
-                phonePairingConfirmed = false
-                pairingExpired = false
-                suppressAutoConnect = true
-                sessionModel.resetToDevices()
-            },
-        )
-        SenderTab.Wait -> WaitScreen(
-            receiverName = pairingDisplayName,
-            outcome = waitOutcome,
-            onCancel = {
-                PicooNative.disconnect(senderHandle)
-                phonePairingConfirmed = false
-                suppressAutoConnect = true
-                sessionModel.resetToDevices()
-            },
-            onBackToDevices = {
-                PicooNative.disconnect(senderHandle)
-                phonePairingConfirmed = false
-                suppressAutoConnect = true
-                sessionModel.resetToDevices()
-            },
-            onRegenerate = { sessionModel.regeneratePairing() },
-        )
-        SenderTab.Streaming -> StreamingScreen(
+    } else {
+        StreamingScreen(
             // Camera2 owns the selected buffer geometry; Compose only transforms it.
             cameraGranted = cameraGranted,
             cameraPermissionPermanentlyDenied = cameraPermissionPermanentlyDenied,
             receiverName = pairingDisplayName,
             linkQualityChip = linkQualityChip,
-            resolutionLabel = resolutionLabel,
+            sourceLabel = uiState.committedSourceFormat?.label ?: "等待源格式提交",
+            errorText = errorText,
             bitrateMbps = bitrateMbps,
             previewBufferWidth = previewTransformInfo.bufferSize.width,
             previewBufferHeight = previewTransformInfo.bufferSize.height,
@@ -242,8 +147,8 @@ internal fun SenderTabContent(
             previewFrontFacing =
                 previewTransformInfo.lensFacing == LensFacing.Front,
             localPreviewMirrored = localPreviewMirrored,
-            thermalForced720 = thermalForced720,
-            powerHint = if (thermalForced720) "" else powerHint,
+            thermalLimited = thermalLimited,
+            powerHint = if (thermalLimited) "" else powerHint,
             reconnecting = senderStatus == PicooNative.STATUS_RECONNECTING ||
                 senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
             networkUnstable = senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE,
@@ -259,45 +164,8 @@ internal fun SenderTabContent(
                 }
             },
             onRequestCamera = onRequestCamera,
-            onFlipCamera = {
-                if (sessionModel.beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
-                    encoder.switchCamera()
-                    previewTransformInfo = encoder.previewTransformInfo
-                    localPreviewMirrored =
-                        LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                    encoderState = encoder.state
-                    sessionModel.streamConfigDirty.set(true)
-                }
-            },
-            onToggleResolution = {
-                val current = StreamResolution.fromLabel(resolutionLabel)
-                val next = StreamResolution.next(current, thermalForced720)
-                val maxH = PicooNative.readSenderSnapshot(senderHandle).receiverMaxHeight
-                if (maxH in 1 until next.height) {
-                    errorText = "接收端最高 ${maxH}p — 无法切换至 ${next.label}"
-                    return@StreamingScreen
-                }
-                if (thermalForced720 && next == StreamResolution.P1080) {
-                    errorText = "设备过热，暂不可升 1080p"
-                    Toast.makeText(
-                        context,
-                        "设备偏热保护中，1080P 暂不可选",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                    return@StreamingScreen
-                }
-                val bitrate = PicooNative.bitrateInitialForHeight(next.height)
-                if (sessionModel.beginLocalEncoderReconfiguration(next.height)) {
-                    resolutionLabel = next.label
-                    PicooNative.setPreferredHeight(senderHandle, next.height)
-                    encoder.setTargetBitrateBps(bitrate)
-                    encoder.setResolution(next.width, next.height)
-                    previewTransformInfo = encoder.previewTransformInfo
-                    encoderState = encoder.state
-                    sessionModel.streamConfigDirty.set(true)
-                    errorText = null
-                }
-            },
+            onFlipCamera = { sessionModel.requestCameraSwitch() },
+            onChooseSourceFormat = { showSourceSheet = true },
             onToggleMirror = { localPreviewMirrored = !localPreviewMirrored },
             onCycleExposure = {
                 val range = encoder.exposureCompensationRange
@@ -314,6 +182,71 @@ internal fun SenderTabContent(
                 PicooNative.disconnect(senderHandle)
                 senderStatus = PicooNative.readSenderSnapshot(senderHandle).status
                 sessionModel.resetToDevices()
+            },
+            connected = connected,
+            connectionTitle = connectionTitle,
+            connectionDetail = connectionDetail,
+            onConnectionClick = { connectionSheetOpen = true },
+            onOpenSettings = {
+                connectionSheetOpen = false
+                senderTab = SenderTab.Settings
+            },
+            onConnect = { connectionSheetOpen = true },
+            connectionOverlay = when (senderTab) {
+                SenderTab.Pairing -> {
+                    {
+                        PairingCameraOverlay(
+                            receiverName = pairingDisplayName,
+                            pairingCode = pairingCode,
+                            remainingSeconds = pairingRemainingSeconds,
+                            expired = pairingExpired,
+                            errorText = errorText,
+                            onConfirm = {
+                                if (!pairingExpired) {
+                                    val receiverId = connectedReceiverId.ifEmpty {
+                                        selectedReceiverId.ifEmpty { "windows-receiver" }
+                                    }
+                                    val rc = PicooNative.sendPairingConfirm(senderHandle, receiverId)
+                                    if (rc == 0) {
+                                        errorText = null
+                                        phonePairingConfirmed = true
+                                        waitOutcome = WaitOutcome.Pending
+                                        senderTab = SenderTab.Wait
+                                    } else {
+                                        errorText = "配对确认失败 ($rc)"
+                                    }
+                                }
+                            },
+                            onRegenerate = { sessionModel.regeneratePairing() },
+                            onCancel = {
+                                PicooNative.disconnect(senderHandle)
+                                pairingCode = ""
+                                connectedReceiverId = ""
+                                connectedReceiverName = ""
+                                phonePairingConfirmed = false
+                                pairingExpired = false
+                                suppressAutoConnect = true
+                                sessionModel.resetToDevices()
+                            },
+                        )
+                    }
+                }
+                SenderTab.Wait -> {
+                    {
+                        PairingWaitCameraOverlay(
+                            receiverName = pairingDisplayName,
+                            outcome = waitOutcome,
+                            onCancel = {
+                                PicooNative.disconnect(senderHandle)
+                                phonePairingConfirmed = false
+                                suppressAutoConnect = true
+                                sessionModel.resetToDevices()
+                            },
+                            onRetry = { sessionModel.regeneratePairing() },
+                        )
+                    }
+                }
+                else -> null
             },
             onStopReconnect = {
                 suppressAutoConnect = true
@@ -337,4 +270,70 @@ internal fun SenderTabContent(
             },
         )
     }
+    if (connectionSheetOpen && senderTab != SenderTab.Settings) {
+        ConnectionSheet(
+            discoveredList = discoveredList,
+            pairedDevices = pairedDevices,
+            pairedReceiverIds = pairedReceiverIds,
+            nearbyWifiGranted = nearbyWifiGranted,
+            discoveryComplete = discoveryComplete,
+            errorText = errorText,
+            manualEndpointText = manualEndpointText,
+            manualConnecting = uiState.connectionStartedAtMs != 0L &&
+                selectedReceiverId.startsWith("manual-") &&
+                senderStatus in setOf(
+                    PicooNative.STATUS_CONNECTING,
+                    PicooNative.STATUS_NEGOTIATING,
+                    PicooNative.STATUS_RECONNECTING,
+                ),
+            onSelectReceiver = { receiver ->
+                selectedReceiverName = receiver.displayName
+                hostText = receiver.host
+                portText = receiver.quicPort.toString()
+                selectedReceiverId = receiver.receiverId
+                sessionModel.connect(receiver.host, receiver.quicPort, receiver.receiverId)
+                connectionSheetOpen = false
+            },
+            onManualConnect = { host, port ->
+                sessionModel.rememberManualEndpoint(host, port)
+                hostText = host
+                portText = port.toString()
+                selectedReceiverId = "manual-$host"
+                selectedReceiverName = host
+                sessionModel.connect(host, port, selectedReceiverId)
+                connectionSheetOpen = false
+            },
+            onManualEndpointChange = {
+                manualEndpointText = it
+                errorText = null
+            },
+            onCheckPermissions = {
+                onRequestNearbyWifi()
+                onRequestNotifications()
+            },
+            onRequestNearbyWifi = onRequestNearbyWifi,
+            onRestartDiscovery = {
+                discoveryEnabled = true
+                discoveryComplete = false
+                discoverySearchGeneration += 1
+            },
+            onStopDiscovery = {
+                discoveryEnabled = false
+                discoveryComplete = true
+            },
+            onDismiss = { connectionSheetOpen = false },
+        )
+    }
+    if (showSourceSheet && connected) {
+        SourceFormatSheet(
+            selected = uiState.committedSourceFormat,
+            candidates = uiState.availableSourceFormats,
+            preparationError = uiState.sourcePreparationError,
+            onDismiss = { showSourceSheet = false },
+            onSelect = { source ->
+                if (sessionModel.requestSourceFormat(source)) showSourceSheet = false
+            },
+        )
+    }
+
 }

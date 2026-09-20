@@ -2,11 +2,14 @@
 //!
 //! Desktop navigation and receiver states driven by [`ReceiverRuntime`] snapshots.
 
+mod blocking;
 mod bootstrap;
 mod connect;
 #[cfg(test)]
 mod connect_tests;
 mod device;
+#[cfg(test)]
+mod device_tests;
 mod diagnostics;
 mod icons;
 mod identity_recovery;
@@ -14,6 +17,7 @@ mod lifecycle;
 mod nav;
 mod pages;
 mod pairing;
+mod recording;
 mod vcam;
 mod widgets;
 
@@ -104,6 +108,7 @@ struct PicooDesktopApp {
     preview_pipeline: PreviewPipeline,
     preview_viewport: PreviewViewportTracker,
     video_surface: VideoSurface,
+    preview_source: (Option<u64>, Option<u32>),
     display_name_input: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
     vcam_status: VirtualCameraStatus,
@@ -120,6 +125,7 @@ struct PicooDesktopApp {
     pairing_locally_confirmed: bool,
     /// Serializes side-effecting Receiver commands and disables duplicate UI submission.
     receiver_command_pending: bool,
+    recording_ui: recording::RecordingUiState,
     /// Current post-pairing same-name replacement prompt. Domain identity,
     /// never a list index (REQ-PICOO-PAIRING-006).
     identity_replacement_dialog_revision: Option<u64>,

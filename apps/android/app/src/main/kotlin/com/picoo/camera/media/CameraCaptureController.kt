@@ -15,7 +15,11 @@ data class CaptureProfile(
     val resolution: Size = Size(1280, 720),
     val targetFps: Int = 30,
     val lensFacing: LensFacing = LensFacing.Back,
-)
+    val codec: NativeVideoCodec = NativeVideoCodec.Avc,
+    val displayRotationDegrees: Int = 0,
+) {
+    init { require(displayRotationDegrees in listOf(0, 90, 180, 270)) }
+}
 
 /** Camera buffer geometry needed by the UI-only TextureView transform. */
 data class PreviewTransformInfo(
@@ -51,7 +55,7 @@ interface CameraCaptureController {
     fun switchCamera()
     /** Switch to a specific lens (desktop CameraCommand SWITCH_FRONT/BACK). */
     fun setLensFacing(facing: LensFacing)
-    fun setResolution(width: Int, height: Int)
+    fun setSourceFormat(source: VideoSourceFormat)
     fun setTargetBitrateBps(bitrateBps: Int)
     fun requestKeyFrame()
     /** Clamp and apply AE exposure compensation (PUC-005). */

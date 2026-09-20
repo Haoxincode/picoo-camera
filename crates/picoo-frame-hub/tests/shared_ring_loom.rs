@@ -12,6 +12,8 @@ const WRITER_LEASE: u32 = u32::MAX;
 
 struct SlotModel {
     sequence: AtomicU64,
+    active_generation: AtomicU64,
+    content_generation: AtomicU64,
     ready: AtomicU32,
     readers: AtomicU32,
     payload: UnsafeCell<u64>,
@@ -25,13 +27,15 @@ impl SlotModel {
     fn complete(sequence: u64) -> Self {
         Self {
             sequence: AtomicU64::new(sequence),
+            active_generation: AtomicU64::new(1),
+            content_generation: AtomicU64::new(1),
             ready: AtomicU32::new(READY_DONE),
             readers: AtomicU32::new(0),
             payload: UnsafeCell::new(sequence),
         }
     }
 
-    fn try_publish(&self, sequence: u64) -> bool {
+    fn try_publish(&self, sequence: u64, generation: u64) -> bool {
         if self
             .readers
             .compare_exchange(0, WRITER_LEASE, Ordering::SeqCst, Ordering::SeqCst)
@@ -44,6 +48,7 @@ impl SlotModel {
             // SAFETY: WRITER_LEASE excludes every reader before mutable access.
             unsafe { payload.write(sequence) };
         });
+        self.content_generation.store(generation, Ordering::SeqCst);
         self.sequence.store(sequence, Ordering::Release);
         self.ready.store(READY_DONE, Ordering::Release);
         self.readers.store(0, Ordering::SeqCst);
@@ -76,6 +81,11 @@ impl SlotModel {
             self.readers.fetch_sub(1, Ordering::SeqCst);
             return None;
         }
+        let active = self.active_generation.load(Ordering::SeqCst);
+        if active == 0 || self.content_generation.load(Ordering::SeqCst) != active {
+            self.readers.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
         let payload = self.payload.with(|payload| {
             // SAFETY: This reader owns one lease until the access completes.
             unsafe { payload.read() }
@@ -94,7 +104,7 @@ fn shared_ring_ready_and_reader_lease_protocol() {
     model.check(|| {
         let slot = Arc::new(SlotModel::complete(1));
         let writer_slot = Arc::clone(&slot);
-        let writer = thread::spawn(move || writer_slot.try_publish(2));
+        let writer = thread::spawn(move || writer_slot.try_publish(2, 1));
         let reader_slot = Arc::clone(&slot);
         let reader = thread::spawn(move || reader_slot.read_consistent());
 
@@ -107,5 +117,26 @@ fn shared_ring_ready_and_reader_lease_protocol() {
         } else {
             assert_eq!(slot.read_consistent(), Some((1, 1)));
         }
+    });
+}
+
+#[test]
+#[ignore = "exhaustive concurrency model; run with cargo xtask test loom"]
+fn invalidated_content_cannot_be_republished_by_a_late_worker() {
+    // REQ-PICOO-FRAME-013: omit the worker's early generation checks to model
+    // invalidation at any point, including immediately before final commit.
+    let mut model = loom::model::Builder::new();
+    model.max_branches = 10_000;
+    model.preemption_bound = Some(3);
+    model.check(|| {
+        let slot = Arc::new(SlotModel::complete(1));
+        let writer_slot = Arc::clone(&slot);
+        let writer = thread::spawn(move || writer_slot.try_publish(2, 1));
+        slot.active_generation.store(2, Ordering::SeqCst);
+        assert_eq!(slot.read_consistent(), None);
+        writer.join().unwrap();
+        assert_eq!(slot.read_consistent(), None);
+        assert!(slot.try_publish(3, 2));
+        assert_eq!(slot.read_consistent(), Some((3, 3)));
     });
 }

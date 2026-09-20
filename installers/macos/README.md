@@ -12,14 +12,15 @@ Picoo Camera.app/
         └── com.haoxincode.picoo-camera.camera-extension.systemextension/
 ```
 
-Host 与 Camera Extension 共享 `group.com.haoxincode.picoo-camera` App Group。
+Host 与 Camera Extension 的签名输入都声明 `group.com.haoxincode.picoo-camera` App Group；
+当前像素数据通过 CMIO sink/source 传输，App Group 不再承载 Shared Frame Ring。
 Host 签名输入还声明 App Sandbox、QUIC/mDNS 所需的 network client/server 与安装系统
 扩展能力；Camera Extension 继续使用独立的 sandbox entitlement。
 
 普通 `cargo xtask package macos` 的产物始终未签名，因此无论是否提供 Team ID，Host
-Info.plist 都写入 `PicooUnsignedDevelopmentBuild=true`。Shared Ring 只根据该独立标记
-选择 Application Support fallback，避免把正式 App Group 或 Team ID 误当作真实签名状态；同时
-输出 `target/apple/PicooCamera-macOS.entitlements` 作为已展开的签名输入 scaffold。
+Info.plist 都写入 `PicooUnsignedDevelopmentBuild=true`，并输出
+`target/apple/PicooCamera-macOS.entitlements` 作为已展开的签名输入 scaffold。该 marker 只描述
+构建签名状态，不选择媒体数据面。
 发布打包必须传入 10 位 Apple Team ID，并用同一身份构建、签名
 Host 与 Extension：
 
@@ -41,4 +42,4 @@ SystemExtensions 框架实现状态查询、激活、版本替换、用户批准
 用户批准、实际设备枚举与会议软件兼容性仍必须用签名真机验收，不能由未签名 CI 替代。
 
 追溯：`REQ-PICOO-STACK-004`、`REQ-PICOO-STACK-007`、`REQ-PICOO-VCAM-006`、
-`REQ-PICOO-VCAM-007`。
+`REQ-PICOO-VCAM-007`、`REQ-PICOO-VCAM-017`。

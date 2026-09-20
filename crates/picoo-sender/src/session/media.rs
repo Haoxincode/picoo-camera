@@ -1,6 +1,5 @@
 //! Native encoder event boundary — REQ-PICOO-MEDIA-003/016/020..022.
 
-use picoo_packet::extract_sps_pps;
 use picoo_protocol::control::{camera_command, encoder_command, CameraCommand, EncoderCommand};
 #[cfg(any(test, feature = "test-support"))]
 use picoo_session::{ConnectionState, OutputState, SenderStatus, SessionRuntimeState};
@@ -135,6 +134,15 @@ impl<T: PicooTransport> SenderSession<T> {
                     .pending_stream_config
                     .clone()
                     .ok_or(SenderError::StreamConfigPending { stream_epoch })?;
+                if !self
+                    .encoder_apply_state
+                    .directive()
+                    .is_some_and(|directive| directive.target_format.matches(&committed_config))
+                {
+                    return Err(SenderError::Protocol(
+                        "native configuration differs from requested source format".into(),
+                    ));
+                }
                 committed_config.stream_epoch = stream_epoch;
                 self.send_stream_config_for_epoch(&committed_config, stream_epoch)?;
             }
@@ -196,6 +204,14 @@ impl<T: PicooTransport> SenderSession<T> {
                 stream_epoch: self.current_stream_epoch,
             });
         }
+        if self.pending_stream_config.as_ref().is_some_and(|config| {
+            self.committed_source_format
+                .is_some_and(|format| !format.matches(config))
+        }) {
+            return Err(SenderError::Protocol(
+                "source format change requires an explicit encoder transaction".into(),
+            ));
+        }
         let fec = self.fec_protection_for(is_keyframe);
         self.observe_media_clock(stream_epoch, encoded_at_us);
         let packets = self.pipeline.ingest_timed_access_unit(
@@ -206,6 +222,9 @@ impl<T: PicooTransport> SenderSession<T> {
             stream_epoch,
             fec,
         )?;
+        if let Some(config) = &self.pending_stream_config {
+            self.committed_source_format = Some(config.source_format());
+        }
         if is_keyframe {
             self.keyframe_requested = false;
         }
@@ -231,7 +250,7 @@ impl<T: PicooTransport> SenderSession<T> {
             stream_epoch,
             width,
             height,
-            mut stream_config,
+            stream_config,
         } = event;
         if encoder_generation == 0 || width == 0 || height == 0 {
             return Err(SenderError::Protocol(
@@ -258,16 +277,66 @@ impl<T: PicooTransport> SenderSession<T> {
                 "initial or transactional stream configuration requires a keyframe".into(),
             ));
         }
-        let stream_configured = stream_config.is_some();
-        if let Some(config) = stream_config.as_mut() {
-            if config.pps.is_empty() {
-                if let Some((sps, pps)) = extract_sps_pps(&config.sps) {
-                    config.sps = sps;
-                    config.pps = pps;
-                }
+        // REQ-PICOO-MEDIA-055: capabilities permit preparation, not a silent
+        // source change inside an already bound encoder generation.
+        if !self.encoder_apply_state.is_applying() && self.committed_encoder_generation != 0 {
+            let bound_format = self.committed_source_format.or_else(|| {
+                self.pending_stream_config
+                    .as_ref()
+                    .map(|config| config.source_format())
+            });
+            if stream_config
+                .as_ref()
+                .is_some_and(|config| bound_format.is_some_and(|format| !format.matches(config)))
+            {
+                return Err(SenderError::Protocol(
+                    "source format change requires an explicit encoder transaction".into(),
+                ));
             }
         }
+        let stream_configured = stream_config.is_some();
+        // REQ-PICOO-MEDIA-051: a visible request does not admit actual
+        // storage/crop/tier/level/color or each AU's memory budget.
+        if let Some(config) = stream_config
+            .as_ref()
+            .or(self.pending_stream_config.as_ref())
+        {
+            config.to_proto().map_err(SenderError::CodecConfiguration)?;
+            if let Some(caps) = &self.receiver_capabilities {
+                let format = picoo_protocol::control::VideoFormat::from_codec_configuration(
+                    &config.configuration,
+                    config.fps,
+                )
+                .map_err(|error| SenderError::Protocol(error.to_string()))?;
+                let bytes = u32::try_from(data.len()).map_err(|_| {
+                    SenderError::Protocol("native access unit exceeds offer budget".into())
+                })?;
+                if !caps.supports(&format, u32::from(config.configuration.level_idc()), bytes) {
+                    return Err(SenderError::Protocol(
+                        "actual native event has no matching decoder offer".into(),
+                    ));
+                }
+            }
+        } else if self.receiver_capabilities.is_some() {
+            return Err(SenderError::Protocol(
+                "native event has no source configuration".into(),
+            ));
+        }
+        if stream_config.as_ref().is_some_and(|config| {
+            self.encoder_apply_state
+                .directive()
+                .is_some_and(|directive| !directive.target_format.matches(config))
+        }) {
+            return Err(SenderError::Protocol(
+                "native configuration differs from requested source format".into(),
+            ));
+        }
 
+        // REQ-PICOO-MEDIA-053: no native generation or AU is admitted before
+        // fresh decoder evidence arrives for this connection.
+        if self.receiver_capabilities.is_none() {
+            return Ok(EncoderEventOutcome::default());
+        }
         let mut config_staged = false;
         // A complete first callback can atomically establish its own shape;
         // all rejection checks still happen before pending config is mutated.
@@ -291,6 +360,17 @@ impl<T: PicooTransport> SenderSession<T> {
             self.set_stream_config(config);
             config_staged = true;
         }
+        let aligned = self
+            .pending_stream_config
+            .as_ref()
+            .map(|config| {
+                config
+                    .configuration
+                    .align_access_unit(data)
+                    .map_err(SenderError::CodecConfiguration)
+            })
+            .transpose()?;
+        let data = aligned.as_deref().unwrap_or(data);
         // Applying transactions publish the candidate epoch from the IDR
         // admission below. A committed generation can publish now, before any
         // corresponding datagram is flushed.

@@ -3,6 +3,10 @@
 Status: planned
 Source: product PRD V1.0 / PUC-001 / PUC-004
 
+Next v2 覆盖说明：格式、后端和跨进程媒体交接以
+[ARCH-PICOO-MEDIA-002](0012-native-media-multi-output-boundary.md) 为当前契约；本文保留
+Windows MF/CMIO 系统边界与安装身份约束，不再定义旧的 480p 或单一 CPU 输出表。
+
 ## 背景
 
 会议软件通过操作系统标准摄像头 API 枚举设备。Picoo Camera 必须在 Windows 与 macOS 上注册统一名称 **`Picoo Camera`**，并向 Zoom、Teams、腾讯会议、OBS 和浏览器会议提供稳定 NV12 帧流。
@@ -40,7 +44,7 @@ Frame Server 会在 Local Service / Session 0 边界加载 Source，因此 Sourc
 
 Windows 输出媒体类型由 Frame Server 客户端在 `Start` 的 presentation descriptor 中选择，
 并在该次运行周期内保持稳定。Shared Frame Ring 的 producer 分辨率不是重新协商信号；MF Source
-必须在自身边界把输入 NV12 等比缩放并以黑边补齐到已协商的 480p/720p/1080p。不得在
+必须在自身边界把输入 NV12 等比缩放并以黑边补齐到已协商的 720p/1080p。不得在
 `RequestSample` 中因占位帧、直播帧或方向变化而反向修改 current media type 或重建 allocator。
 转换后的直播帧和占位帧必须按源帧 revision 与输出尺寸复用，像素转换不得持有 stream 的 COM
 状态锁。默认 allocator 只允许在 stream stopped 状态替换；stream start/stop 的 allocator、事件与
@@ -60,14 +64,17 @@ Windows major upgrade 是独立事务边界。仍受支持的旧 MSI 可能在 `
 
 ```text
 Picoo Camera Desktop.app
-  → App Group Container
-  → mmap Shared Frame Ring
+  → CMIO Hardware output client
+  → Picoo Camera .sink
   → Picoo Camera Extension.systemextension
+  → Picoo Camera .source
 ```
 
 Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用户批准。扩展是独立进程边界；主应用不得把网络会话逻辑放入扩展。
 
-当前原生基线使用 Swift 6、Core Media I/O 和 C17 原子共享环读取边界，提供 480p/720p/1080p、30 fps、NV12 输出。`xtask package macos` 在 ARM64 macOS runner 上生成 `Picoo Camera.app`，并将 Camera Extension 嵌入 `Contents/Library/SystemExtensions/`；打包门禁校验 Host/Extension Bundle ID、显式注册的 `group.com.haoxincode.picoo-camera` App Group、Host sandbox/network/System Extension 签名输入、同步版本号与 ARM64 slice。Host 通过纯 Rust `objc2-system-extensions` 适配官方 SystemExtensions 框架，后台执行 properties、activation 与 deactivation request，保留弱 delegate 的完整生命周期，仅允许更高 `CFBundleVersion` 替换，并把重启后完成的激活/停用意图连同 `kern.boottime` 启动会话持久化；若系统已重启但 properties 仍未收敛，必须清除 pending 锁、展示失败并允许重试。只有系统 properties/完成回调可以把设备标为 Active，检测中和视频会话本身均不得提升虚拟摄像头状态。无签名构建使用明确的 `UNSIGNED.` Team 前缀，并在 Host Info.plist 写入独立的 unsigned development marker；Host 只根据该 marker 将共享环降级到用户 Application Support 目录，不从正式 App Group 字符串推断签名状态，从而避免 LaunchServices 在无有效 entitlement 时阻塞启动。该降级不作为扩展互通验收。发布构建由 `xtask release macos` 校验 Developer ID profile 的有效期、分发类型、授权证书与 capability，并直接使用已验证的证书 SHA-1 指纹从内到外签名，再复核实际 Team、Authority 与 effective entitlements，最后 notarize 与 staple。用户批准、重启后的系统枚举、实际签名凭据绿测和会议软件枚举仍属于真机验收，因此本 Architecture 保持 `planned`。
+当前原生基线使用 Swift 6 与 Core Media I/O，在同一设备上注册一个公开 `.source` 和一个只授权 Picoo Host signing ID 的 `.sink`，按 Next v2 契约提供 720p/1080p × 30/60 NV12。Rust Host 通过 CMIO Hardware output scope 找到精确 legacy UID 的唯一 sink，使用系统 `CMSimpleQueue` 提交 `CMIOSampleBuffer`；扩展只在 source 客户端取流时消费 sink，缓存最后一张兼容图像，并以自身 SampleClock 生成对外时间戳。`GpuNative` 直接交付 Host renderer 的 IOSurface-backed 目标，显式 `CpuBridge` 只物化同一渲染结果，两者不改变 CMIO 交接协议。旧 App Group mmap Reader、C17 原子桥和 Swift `flock` 路径已删除；`group.com.haoxincode.picoo-camera` 只保留为现有发布签名与 System Extension capability，不承载像素。
+
+`xtask package macos` 在 ARM64 macOS runner 上生成 `Picoo Camera.app`，并将 Camera Extension 嵌入 `Contents/Library/SystemExtensions/`；打包门禁校验 Host/Extension Bundle ID、显式注册的 App Group、Host sandbox/network/System Extension 签名输入、同步版本号与 ARM64 slice。Host 通过纯 Rust `objc2-system-extensions` 适配官方 SystemExtensions 框架，后台执行 properties、activation 与 deactivation request，保留弱 delegate 的完整生命周期，仅允许更高 `CFBundleVersion` 替换，并把重启后完成的激活/停用意图连同 `kern.boottime` 启动会话持久化；若系统已重启但 properties 仍未收敛，必须清除 pending 锁、展示失败并允许重试。只有系统 properties/完成回调可以把设备标为 Active，检测中和视频会话本身均不得提升虚拟摄像头状态。发布构建由 `xtask release macos` 校验 Developer ID profile 的有效期、分发类型、授权证书与 capability，并直接使用已验证的证书 SHA-1 指纹从内到外签名，再复核实际 Team、Authority 与 effective entitlements，最后 notarize 与 staple。用户批准、重启后的系统枚举、实际签名凭据绿测、sink 实际消费和会议软件枚举仍属于真机验收，因此本 Architecture 保持 `planned`。
 
 ### 数据流
 
@@ -75,8 +82,8 @@ Camera Extension 作为桌面应用随附的系统扩展，首次使用时由用
 Rust Receiver Core
   → Decode once
   → LatestFrameStore
-  → Shared Frame Ring
-  → Virtual Camera Extension / MF Media Source
+  → Platform VCam Output
+  → Windows MF Media Source / macOS CMIO sink+source
   → Zoom / Teams / 腾讯会议 / OBS / Browser
 ```
 
@@ -94,7 +101,7 @@ Rust Receiver Core
 
 ### 在虚拟摄像头进程内运行 QUIC 或解码
 
-不采用。扩展/Media Source 只读 Shared Frame Ring。
+不采用。扩展/Media Source 只消费对应平台输出边界，不持有网络与解码状态。
 
 ### 为 Windows Media Source 维护 C++/WRL 工程
 

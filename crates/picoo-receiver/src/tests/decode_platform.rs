@@ -16,15 +16,16 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
     // REQ-PICOO-MEDIA-005/006: real Annex-B H.264 through QUIC → decode → LatestFrameStore.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
+    #[cfg(not(any(target_os = "macos", windows)))]
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 160usize;
-    let height = 120usize;
+    let width = 1280usize;
+    let height = 720usize;
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
         for x in 0..width {
@@ -32,11 +33,18 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         }
     }
     let yuv = YUVBuffer::from_vec(planes, width, height);
-    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
+    )
+    .expect("openh264 encoder");
     let bitstream = encoder.encode(&yuv).expect("encode");
     let annex = bitstream.to_vec();
     assert!(annex.len() > 64, "AU too small for OpenH264 path");
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS from Annex-B");
+    let annex = super::wire_avc(&annex);
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
@@ -97,8 +105,9 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().expect("rx");
@@ -116,7 +125,7 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
         receiver.pump().expect("rx");
         sender.pump().ok();
         if let Some(frame) = receiver.latest_frame() {
-            if frame.width == width as u32 && frame.height == height as u32 {
+            if super::source_dimensions(frame) == (width as u32, height as u32) {
                 assert_eq!(
                     frame.pixel_data.len(),
                     nv12_byte_size(frame.width, frame.height)
@@ -144,20 +153,21 @@ fn paired_openh264_access_unit_reaches_latest_frame_store() {
 fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
     // REQ-PICOO-PROTOCOL-005 / MEDIA-005: MediaCodec-shaped AVCC AU reaches the
     // platform decoder. The encoded fixture avoids a test-only native codec.
-    use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::{
+    use picoo_bitstream::avc::{
         annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
     };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    use picoo_frame_hub::nv12_byte_size;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
-    use picoo_testkit::H264_64X64_RED_IDR;
+    use picoo_testkit::AVC_1280X720_BT709_IDR as H264_SOURCE_IDR;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 64usize;
-    let height = 64usize;
-    let (sps, pps) = extract_sps_pps(H264_64X64_RED_IDR).expect("sps/pps");
-    let avcc = annex_b_to_length_prefixed(H264_64X64_RED_IDR).expect("avcc wrap");
+    let width = 1280usize;
+    let height = 720usize;
+    let (sps, pps) = extract_sps_pps(H264_SOURCE_IDR).expect("sps/pps");
+    let avcc = annex_b_to_length_prefixed(H264_SOURCE_IDR).expect("avcc wrap");
     assert!(is_length_prefixed_access_unit(&avcc));
 
     let mut receiver = ReceiverSession::new();
@@ -210,8 +220,9 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 0,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().ok();
@@ -233,12 +244,17 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
             receiver.pump().ok();
             sender.pump().ok();
             if let Some(frame) = receiver.latest_frame() {
-                if frame.width == width as u32 && frame.height == height as u32 {
-                    assert_eq!(
-                        frame.pixel_data.len(),
-                        nv12_byte_size(frame.width, frame.height)
-                    );
-                    assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
+                if super::source_dimensions(frame) == (width as u32, height as u32) {
+                    #[cfg(not(any(target_os = "macos", windows)))]
+                    {
+                        assert_eq!(
+                            frame.pixel_data.len(),
+                            nv12_byte_size(frame.width, frame.height)
+                        );
+                        assert!(frame.pixel_data.iter().any(|b| *b != 16 && *b != 128));
+                    }
+                    #[cfg(any(target_os = "macos", windows))]
+                    assert_eq!(frame.description().visible_rect.width, width as u32);
                     return;
                 }
             }
@@ -254,20 +270,24 @@ fn paired_avcc_length_prefixed_au_reaches_latest_frame_store() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn macos_videotoolbox_abr_epoch_resolution_recovery() {
-    // REQ-PICOO-MEDIA-003/010/012: ABR epoch changes flow through QUIC and
+fn macos_videotoolbox_explicit_source_configuration() {
+    // REQ-PICOO-MEDIA-027/028: explicit epoch changes flow through QUIC and
     // rebuild VideoToolbox with the dimensions advertised by StreamConfig.
+    use picoo_bitstream::avc::extract_sps_pps;
+    #[cfg(not(any(target_os = "macos", windows)))]
     use picoo_frame_hub::nv12_byte_size;
-    use picoo_packet::extract_sps_pps;
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_sender::StreamConfigParams;
-    use picoo_testkit::{H264_1280X720_RED_IDR, H264_854X480_RED_IDR};
+    use picoo_testkit::{
+        AVC_1280X720_BT709_IDR as H264_1280X720_RED_IDR,
+        AVC_1920X1080_BT709_IDR as H264_1920X1080_RED_IDR,
+    };
 
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
     receiver.trusted_devices_mut().upsert(TrustedDevice {
-        device_id: "macos-abr-phone".into(),
-        device_name: "macOS ABR".into(),
+        device_id: "macos-source-phone".into(),
+        device_name: "macOS Source".into(),
         public_key: vec![4, 8, 0],
         certificate_fingerprint: "fp".into(),
         paired_at_ms: 0,
@@ -309,50 +329,51 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     assert_eq!(receiver.status(), ReceiverStatus::Streaming);
     assert_eq!(sender.status(), picoo_session::SenderStatus::Streaming);
 
-    let inject_congestion = |sender: &mut SenderSession<QuicSenderTransport>| {
-        for _ in 0..40 {
-            let stats = ReceiverStatsMsg {
+    let check_congestion = |sender: &mut SenderSession<QuicSenderTransport>| {
+        let epoch = sender.current_stream_epoch();
+        let height = sender.bitrate_active_height();
+        for _ in 0..1000 {
+            sender.apply_receiver_stats_for_test(ReceiverStatsMsg {
                 packet_loss: 0.05,
                 frame_age_ms: 250.0,
                 ..Default::default()
-            };
-            sender.apply_receiver_stats_for_test(stats);
-            if let Some(directive) = sender.pending_encoder_directive() {
-                return directive;
-            }
+            });
+            assert!(sender.pending_encoder_directive().is_none());
+            assert_eq!(sender.current_stream_epoch(), epoch);
+            assert_eq!(sender.bitrate_active_height(), height);
         }
-        panic!("ABR did not request a resolution downshift");
     };
 
-    let directive_720 = inject_congestion(&mut sender);
+    check_congestion(&mut sender);
+    let epoch_720 = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
+    assert_eq!(epoch_720, 2);
+    let transaction_720 = sender.encoder_transaction_id_for_epoch(epoch_720);
     let (sps_720, pps_720) = extract_sps_pps(H264_1280X720_RED_IDR).expect("720p parameter sets");
     sender.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
         fps: 30,
         bitrate_bps: 3_000_000,
-        stream_epoch: directive_720.stream_epoch,
-        sps: sps_720,
-        pps: pps_720,
-        ..Default::default()
+        stream_epoch: epoch_720,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_720, &pps_720,
+        )
+        .unwrap()
+        .into(),
+        mirrored: false,
+        rotation: 0,
     });
-    assert!(sender.report_encoder_started(
-        directive_720.id,
-        2,
-        directive_720.stream_epoch,
-        directive_720.target_height,
-    ));
+    assert!(sender.report_encoder_started(transaction_720, 2, epoch_720, 720,));
     sender
         .ingest_encoder_access_unit(super::native_au(
-            H264_1280X720_RED_IDR,
+            &super::wire_avc(H264_1280X720_RED_IDR),
             true,
             2,
-            (
-                directive_720.id,
-                2,
-                directive_720.stream_epoch,
-                directive_720.target_height,
-            ),
+            (transaction_720, 2, epoch_720, 720),
         ))
         .unwrap_or_else(|error| {
             panic!(
@@ -381,7 +402,7 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
         sender.pump().ok();
         if receiver
             .latest_frame()
-            .is_some_and(|frame| (frame.width, frame.height) == (1280, 720))
+            .is_some_and(|frame| super::source_dimensions(frame) == (1280, 720))
         {
             break;
         }
@@ -401,43 +422,50 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
             receiver.last_media_error(),
         )
     });
-    assert_eq!((frame_720.width, frame_720.height), (1280, 720));
-    assert_eq!(frame_720.pixel_data.len(), nv12_byte_size(1280, 720));
-    let sequence_720 = frame_720.sequence;
+    assert_eq!(super::source_dimensions(frame_720), (1280, 720));
+    assert_eq!(frame_720.identity().stream_epoch, 2);
+    let revision_720 = frame_720.description().config_revision;
 
-    let directive_480 = inject_congestion(&mut sender);
-    let (sps_480, pps_480) = extract_sps_pps(H264_854X480_RED_IDR).expect("480p parameter sets");
-    sender.set_stream_config(StreamConfigParams {
-        width: 854,
-        height: 480,
+    check_congestion(&mut sender);
+    let epoch_1080 = sender.begin_stream_reconfiguration(picoo_sender::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 1080,
         fps: 30,
-        bitrate_bps: 1_800_000,
-        stream_epoch: directive_480.stream_epoch,
-        sps: sps_480,
-        pps: pps_480,
-        ..Default::default()
     });
-    assert!(sender.report_encoder_started(
-        directive_480.id,
-        3,
-        directive_480.stream_epoch,
-        directive_480.target_height,
-    ));
+    assert_eq!(epoch_1080, 3);
+    let transaction_1080 = sender.encoder_transaction_id_for_epoch(epoch_1080);
+    let (sps_1080, pps_1080) =
+        extract_sps_pps(H264_1920X1080_RED_IDR).expect("1080p parameter sets");
+    sender.set_stream_config(StreamConfigParams {
+        width: 1920,
+        height: 1080,
+        fps: 30,
+        bitrate_bps: 6_000_000,
+        stream_epoch: epoch_1080,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(
+            &sps_1080, &pps_1080,
+        )
+        .unwrap()
+        .into(),
+        mirrored: false,
+        rotation: 0,
+    });
+    assert!(sender.report_encoder_started(transaction_1080, 3, epoch_1080, 1080,));
     sender
-        .ingest_encoder_access_unit(super::native_au(H264_854X480_RED_IDR, true, 3, (directive_480.id, 3, directive_480.stream_epoch, directive_480.target_height)))
+        .ingest_encoder_access_unit(super::native_au(&super::wire_avc(H264_1920X1080_RED_IDR), true, 3, (transaction_1080, 3, epoch_1080, 1080)))
         .unwrap_or_else(|error| {
             panic!(
-                "commit and queue 480p IDR: {error:?} (sender {:?}, receiver {:?}, session_error {:?})",
+                "commit and queue 1080p IDR: {error:?} (sender {:?}, receiver {:?}, session_error {:?})",
                 sender.status(),
                 receiver.status(),
                 sender.last_session_error(),
             )
         });
-    sender.flush_pending().expect("send 480p IDR");
-    assert_eq!(sender.bitrate_active_height(), 480);
+    sender.flush_pending().expect("send 1080p IDR");
+    assert_eq!(sender.bitrate_active_height(), 1080);
     for _ in 0..80 {
-        receiver.pump().expect("receiver 480p config");
-        sender.pump().expect("sender 480p config");
+        receiver.pump().expect("receiver 1080p config");
+        sender.pump().expect("sender 1080p config");
         if receiver
             .stream_config()
             .is_some_and(|config| config.stream_epoch == 3)
@@ -448,70 +476,52 @@ fn macos_videotoolbox_abr_epoch_resolution_recovery() {
     }
     let decode_deadline = Instant::now() + Duration::from_secs(15);
     while Instant::now() < decode_deadline {
-        receiver.pump().expect("receiver 480p frame");
+        receiver.pump().expect("receiver 1080p frame");
         sender.pump().ok();
         if receiver.latest_frame().is_some_and(|frame| {
-            frame.sequence > sequence_720 && (frame.width, frame.height) == (854, 480)
+            frame.description().config_revision > revision_720
+                && super::source_dimensions(frame) == (1920, 1080)
         }) {
             break;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    let frame_480 = receiver.latest_frame().expect("480p frame");
-    assert!(frame_480.sequence > sequence_720);
-    assert_eq!((frame_480.width, frame_480.height), (854, 480));
-    assert_eq!(frame_480.pixel_data.len(), nv12_byte_size(854, 480));
+    let frame_1080 = receiver.latest_frame().expect("1080p frame");
+    assert!(frame_1080.description().config_revision > revision_720);
+    assert_eq!(super::source_dimensions(frame_1080), (1920, 1080));
+    assert_eq!(frame_1080.identity().stream_epoch, 3);
+    assert_eq!(frame_1080.description().coded_size.height, 1088);
+    assert_eq!(frame_1080.description().visible_rect.height, 1080);
 }
 
 #[cfg(not(windows))]
 #[test]
-fn thermal_hold_blocks_abr_upshift_on_sender() {
-    // REQ-PICOO-MEDIA-010: host thermal force keeps ABR from requesting 1080p.
+fn thermal_hold_changes_bitrate_growth_without_source_reconfiguration() {
     use picoo_protocol::control::ReceiverStats as ReceiverStatsMsg;
     use picoo_transport::QuicSenderTransport;
-
     let mut sender = SenderSession::new(QuicSenderTransport::new());
-    sender.set_preferred_height(1080);
     sender.set_stream_config(picoo_sender::StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::configured_source()
     });
     assert!(sender.report_encoder_started(0, 1, sender.current_stream_epoch(), 720));
     sender.set_thermal_hold(true);
-    assert_eq!(sender.bitrate_active_height(), 720);
-    assert!(sender.thermal_hold());
-
+    let epoch = sender.current_stream_epoch();
+    let initial = sender.current_bitrate_bps();
     for _ in 0..80 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.0,
-            frame_age_ms: 40.0,
-            jitter_buffer_occupancy_ms: 40.0,
-            ..Default::default()
-        };
-        sender.apply_receiver_stats_for_test(stats);
-        assert!(
-            sender.pending_encoder_directive().is_none(),
-            "thermal hold must suppress upshift hint"
-        );
+        sender.apply_receiver_stats_for_test(ReceiverStatsMsg::default());
+        assert!(sender.pending_encoder_directive().is_none());
+        assert_eq!(sender.current_bitrate_bps(), initial);
     }
     sender.set_thermal_hold(false);
-    let mut up = false;
     for _ in 0..120 {
-        let stats = ReceiverStatsMsg {
-            packet_loss: 0.0,
-            frame_age_ms: 40.0,
-            jitter_buffer_occupancy_ms: 40.0,
-            ..Default::default()
-        };
-        sender.apply_receiver_stats_for_test(stats);
-        if let Some(directive) = sender.pending_encoder_directive() {
-            assert_eq!(directive.target_height, 1080);
-            up = true;
-            break;
-        }
+        sender.apply_receiver_stats_for_test(ReceiverStatsMsg::default());
+        assert!(sender.pending_encoder_directive().is_none());
+        assert_eq!(sender.current_stream_epoch(), epoch);
+        assert_eq!(sender.bitrate_active_height(), 720);
     }
-    assert!(up, "after thermal clear, ABR should request upshift");
+    assert!(sender.current_bitrate_bps() > initial);
 }
 
 #[cfg(all(not(windows), not(target_vendor = "apple")))]
@@ -520,17 +530,17 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     // REQ-PICOO-FRAME-003 / VCAM-003: decode once → Shared Frame Ring for VCam consumer.
     use openh264::encoder::Encoder;
     use openh264::formats::YUVBuffer;
+    use picoo_bitstream::avc::extract_sps_pps;
     use picoo_frame_hub::{
         nv12_byte_size, SharedFrameRingConsumer, SharedFrameRingProducer, DEFAULT_MAX_FRAME_BYTES,
     };
-    use picoo_packet::extract_sps_pps;
     use picoo_pairing::TrustedDevice;
     use picoo_sender::StreamConfigParams;
     use picoo_session::ReceiverStatus;
     use picoo_transport::{Endpoint, QuicSenderTransport};
 
-    let width = 160usize;
-    let height = 120usize;
+    let width = 1280usize;
+    let height = 720usize;
     let mut planes = vec![128u8; width * height * 3 / 2];
     for y in 0..height {
         for x in 0..width {
@@ -538,9 +548,16 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         }
     }
     let yuv = YUVBuffer::from_vec(planes, width, height);
-    let mut encoder = Encoder::new().expect("openh264 encoder");
+    let mut encoder = Encoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::encoder::EncoderConfig::new()
+            .profile(openh264::encoder::Profile::High)
+            .vui(openh264::encoder::VuiConfig::bt709()),
+    )
+    .expect("openh264 encoder");
     let annex = encoder.encode(&yuv).expect("encode").to_vec();
     let (sps, pps) = extract_sps_pps(&annex).expect("SPS/PPS");
+    let annex = super::wire_avc(&annex);
 
     let ring_name = format!(
         "picoo-h264-ring-{}",
@@ -555,7 +572,7 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
     let mut receiver = ReceiverSession::new();
     receiver.set_jitter_target_ms(0);
     receiver
-        .attach_shared_ring(&ring_name)
+        .attach_virtual_camera_output(&ring_name)
         .expect("attach shared ring");
     receiver.trusted_devices_mut().upsert(TrustedDevice {
         device_id: "ring-phone".into(),
@@ -625,8 +642,9 @@ fn paired_openh264_publishes_to_shared_frame_ring() {
         stream_epoch: 1,
         mirrored: false,
         rotation: 90,
-        sps,
-        pps,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
     });
     for _ in 0..50 {
         receiver.pump().expect("rx");

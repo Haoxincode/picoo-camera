@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -27,6 +28,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.material3.Text
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
+import com.picoo.camera.ui.components.PicooIconButton
+import com.picoo.camera.ui.components.PicooVisualContext
 import com.picoo.camera.ui.theme.PicooCameraColors
 import com.picoo.camera.ui.theme.PicooCameraDimensions
 import com.picoo.camera.ui.theme.PicooCameraTypography
@@ -35,19 +38,22 @@ import com.picoo.camera.ui.theme.PicooTheme
 
 @Composable
 internal fun ConnectionHud(
-    receiverName: String,
     linkQualityChip: String,
     bitrateMbps: String,
-    resolutionLabel: String,
+    sourceLabel: String,
     packetLossLabel: String,
-    thermalForced720: Boolean,
+    thermalLimited: Boolean,
     enabled: Boolean,
-    onToggleResolution: () -> Unit,
+    connected: Boolean,
+    title: String,
+    detail: String,
+    onChooseSourceFormat: () -> Unit,
+    onConnectionClick: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val dimensions = PicooTheme.dimensions
     val latency = linkQualityChip.substringAfter(" · ", missingDelimiterValue = "--ms")
-    val displayName = receiverName.ifBlank { "Picoo Camera" }
     Column(
         modifier = modifier
             .statusBarsPadding()
@@ -57,42 +63,77 @@ internal fun ConnectionHud(
                 start = dimensions.space24,
                 end = dimensions.space24,
                 top = dimensions.space16,
-            ),
+        ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Row(
-            modifier = Modifier.semantics(mergeDescendants = true) {
-                contentDescription = "$displayName 已连接"
-                stateDescription = "$latency，$bitrateMbps，$packetLossLabel"
-            },
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
+    Box(modifier = Modifier.fillMaxWidth()) {
+            Row(
                 modifier = Modifier
-                    .size(PicooCameraDimensions.ConnectionDot)
-                    .background(PicooCameraColors.Selected, CircleShape),
-            )
-            Text(
-                text = "$displayName 已连接",
-                color = PicooCameraColors.Content,
-                style = PicooCameraTypography.HudTitle,
-            )
+                    .align(Alignment.Center)
+                    .heightIn(min = dimensions.touchTarget)
+                    .semantics(mergeDescendants = true) {
+                        contentDescription = title
+                        stateDescription = if (connected) {
+                            "$latency，$bitrateMbps，$packetLossLabel"
+                        } else {
+                            detail
+                        }
+                        role = Role.Button
+                    }
+                    .clickable(enabled = enabled, role = Role.Button, onClick = onConnectionClick),
+                horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(PicooCameraDimensions.ConnectionDot)
+                        .background(
+                            if (connected) PicooCameraColors.Selected else PicooCameraColors.ContentMuted,
+                            CircleShape,
+                        ),
+                )
+                Text(
+                    text = title,
+                    color = PicooCameraColors.Content,
+                    style = PicooCameraTypography.HudTitle,
+                )
+            }
+            PicooIconButton(
+                onClick = onOpenSettings,
+                contentDescription = "打开手机端设置",
+                context = PicooVisualContext.Camera,
+                modifier = Modifier.align(Alignment.CenterEnd),
+            ) {
+                ReiconIcon(
+                    icon = Reicon.Settings,
+                    contentDescription = null,
+                    modifier = Modifier.size(dimensions.iconStandard),
+                )
+            }
         }
-        Spacer(modifier = Modifier.height(dimensions.space4))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
-        ) {
-            TelemetryText(text = latency)
-            TelemetrySeparator()
-            TelemetryText(text = bitrateMbps)
-            TelemetrySeparator()
-            ResolutionMetric(
-                resolutionLabel = resolutionLabel,
-                thermalForced720 = thermalForced720,
-                enabled = enabled,
-                onClick = onToggleResolution,
+        if (connected) {
+            Spacer(modifier = Modifier.height(dimensions.space4))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+            ) {
+                TelemetryText(text = latency)
+                TelemetrySeparator()
+                TelemetryText(text = bitrateMbps)
+                TelemetrySeparator()
+                ResolutionMetric(
+                    sourceLabel = sourceLabel,
+                    thermalLimited = thermalLimited,
+                    enabled = enabled,
+                    onClick = onChooseSourceFormat,
+                )
+            }
+        } else {
+            Text(
+                text = detail,
+                color = PicooCameraColors.ContentMuted,
+                style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
+                modifier = Modifier.padding(top = dimensions.space4),
             )
         }
     }
@@ -118,8 +159,8 @@ internal fun TelemetrySeparator() {
 
 @Composable
 internal fun ResolutionMetric(
-    resolutionLabel: String,
-    thermalForced720: Boolean,
+    sourceLabel: String,
+    thermalLimited: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
@@ -129,8 +170,8 @@ internal fun ResolutionMetric(
             .height(dimensions.touchTarget)
             .alpha(if (enabled) 1f else PicooCameraDimensions.DisabledAlpha)
             .semantics {
-                contentDescription = "切换画质，当前 $resolutionLabel 30fps"
-                stateDescription = if (thermalForced720) "设备偏热，已限制为 720p" else "可切换"
+                contentDescription = "切换画质，当前 $sourceLabel"
+                stateDescription = if (thermalLimited) "设备偏热，可手动切换" else "可切换"
                 role = Role.Button
                 if (!enabled) disabled()
             }
@@ -138,7 +179,7 @@ internal fun ResolutionMetric(
         horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (thermalForced720) {
+        if (thermalLimited) {
             ReiconIcon(
                 icon = Reicon.Overheat,
                 contentDescription = null,
@@ -147,18 +188,8 @@ internal fun ResolutionMetric(
             )
         }
         Text(
-            text = resolutionLabel.lowercase(),
-            color = if (thermalForced720) PicooCameraColors.Warning else PicooCameraColors.ContentMuted,
-            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
-        )
-        Text(
-            text = "/",
-            color = PicooCameraColors.Selected,
-            style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
-        )
-        Text(
-            text = "30fps",
-            color = PicooCameraColors.ContentMuted,
+            text = sourceLabel,
+            color = if (thermalLimited) PicooCameraColors.Warning else PicooCameraColors.ContentMuted,
             style = PicooCameraTypography.Telemetry.copy(fontFamily = PicooFont.Mono),
         )
     }

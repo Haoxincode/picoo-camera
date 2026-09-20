@@ -119,6 +119,14 @@ impl MdnsBrowser {
         let ad = ReceiverAdvertisement::from_txt_properties(props)
             .map_err(|e| BrowseError::InvalidAd(e.to_string()))?;
         let fullname = fullname.into();
+        // DNS-SD fullnames identify a service instance, not the physical
+        // receiver. A receiver can be re-announced with a different
+        // instance name after a restart, rename, or interface change. Remove
+        // any older instance for the same stable receiver_id before inserting
+        // the fresh observation so one device can never occupy two rows.
+        self.receivers.retain(|key, entry| {
+            key == &fullname || entry.advertisement.receiver_id != ad.receiver_id
+        });
         self.receivers.insert(
             fullname.clone(),
             DiscoveredReceiver {
@@ -239,6 +247,38 @@ mod tests {
         );
 
         advertiser.unregister().expect("unregister");
+    }
+
+    #[test]
+    fn resolved_txt_with_new_service_instance_replaces_same_receiver() {
+        let mut browser = MdnsBrowser::new().expect("browser");
+        let ad = ReceiverAdvertisement::new(
+            "recv-test",
+            "Office PC",
+            ReceiverPlatform::Windows,
+            4433,
+            "abcd1234",
+        );
+        let props = ad
+            .to_txt_properties()
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value))
+            .collect::<Vec<_>>();
+
+        browser
+            .apply_resolved_txt("Office PC._picoocam._udp.local.", "192.168.1.20", &props)
+            .expect("initial TXT");
+        browser
+            .apply_resolved_txt(
+                "Office PC (2)._picoocam._udp.local.",
+                "192.168.1.20",
+                &props,
+            )
+            .expect("renewed TXT");
+
+        assert_eq!(browser.list().count(), 1);
+        let discovered = browser.find("recv-test").expect("receiver mapping");
+        assert_eq!(discovered.fullname, "Office PC (2)._picoocam._udp.local.");
     }
 
     #[test]

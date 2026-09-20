@@ -12,9 +12,11 @@ default = []
 windows-mf = ["picoo-media-decode/windows-mf"]
 # Loopback helpers use StubDecoder and may enable the explicit unpaired-peer
 # security harness. They are excluded from normal Receiver/Desktop builds.
-loopback-diagnostics = ["dep:picoo-sender", "picoo-sender/test-support"]
+loopback-diagnostics = ["dep:picoo-testkit", "dep:picoo-sender", "picoo-sender/test-support", "picoo-media-decode/test-codecs"]
 
 [dependencies]
+picoo-testkit = { workspace = true, optional = true }
+picoo-bitstream.workspace = true
 bytes.workspace = true
 picoo-frame-hub.workspace = true
 picoo-jitter.workspace = true
@@ -32,8 +34,23 @@ tracing.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFString"] }
+objc2-core-media = { version = "0.3.2", default-features = false, features = ["std", "CMBase", "CMFormatDescription", "CMSampleBuffer", "CMSimpleQueue", "CMTime", "objc2-core-video"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer"] }
+
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+picoo-recording.workspace = true
+picoo-gpu.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
+picoo-media-decode = { workspace = true, features = ["test-codecs"] }
 picoo-discovery.workspace = true
 picoo-protocol.workspace = true
 picoo-sender = { workspace = true, features = ["test-support"] }

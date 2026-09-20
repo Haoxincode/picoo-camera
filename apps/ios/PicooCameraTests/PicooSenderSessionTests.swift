@@ -1,9 +1,114 @@
 import Foundation
+import CoreMedia
+import PicooCore
 import Testing
 @testable import PicooCamera
 
 @Suite("Picoo iOS native boundaries")
 struct PicooSenderSessionTests {
+    @Test("Direction failure is attempted once until the intent changes or a new session begins")
+    func captureRotationIntent() {
+        var intent = CaptureRotationIntent()
+        #expect(intent.take(applied: 0) == nil)
+        intent.observe(90)
+        #expect(intent.take(applied: 0) == 90)
+        intent.observe(90)
+        #expect(intent.take(applied: 0) == nil)
+        intent.observe(180)
+        #expect(intent.take(applied: 0) == 180)
+        #expect(intent.take(applied: 180) == nil)
+        intent.observe(90)
+        #expect(intent.take(applied: 0) == 90)
+        intent.reset()
+        #expect(intent.take(applied: 0) == 90)
+        #expect(intent.take(applied: 90) == nil)
+    }
+
+    @MainActor
+    @Test("A direction transaction rejects an otherwise matching AU with the old rotation")
+    func captureRotationTransaction() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Rotation Transaction")
+        let coordinator = SenderEncoderApplyCoordinator()
+        let source = VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 30)
+        let epoch = coordinator.beginLocal(session: session, sourceFormat: source)
+        coordinator.waitForApply(directive: nil, streamEpoch: epoch, encoderGeneration: 1,
+            sourceFormat: source, captureRotation: 90, bitrateBps: 3_000_000, session: session)
+        #expect(!coordinator.accepts(accessUnit(keyframe: true, pts: 1, epoch: epoch, rotation: 0)))
+        #expect(coordinator.accepts(accessUnit(keyframe: true, pts: 1, epoch: epoch, rotation: 90)))
+        #expect(!coordinator.accepts(accessUnit(keyframe: false, pts: 2, epoch: epoch, rotation: 90)))
+    }
+
+    @Test("Initial media adapts an unavailable default after connection and preserves explicit available intent")
+    func initialSourceAfterConnection() {
+        let front = VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30)
+        #expect(VideoSourceFormat.initial([front], preferred: .defaultFormat) == front)
+        #expect(VideoSourceFormat.initial([front, .defaultFormat], preferred: front) == front)
+        #expect(VideoSourceFormat.initial([], preferred: .defaultFormat) == nil)
+    }
+
+    @Test("Camera switch selects a complete ceiling and can restore a higher ceiling")
+    func cameraCeilingSelection() {
+        let front = VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30)
+        let fast = VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 60)
+        let hevc = VideoSourceFormat(codec: .hevc, resolution: .p1080, framesPerSecond: 60)
+        #expect(VideoSourceFormat.cameraCeiling([front, fast, hevc], preferredCodec: .avc) == front)
+        #expect(VideoSourceFormat.cameraCeiling([front, fast, hevc], preferredCodec: .hevc) == hevc)
+        #expect(VideoSourceFormat.cameraCeiling([front, .defaultFormat], preferredCodec: .avc) == .defaultFormat)
+        #expect(VideoSourceFormat.cameraCeiling([fast], preferredCodec: .hevc) == fast)
+        #expect(VideoSourceFormat.cameraCeiling([], preferredCodec: .avc) == nil)
+    }
+
+    @Test("Source matching rejects a different codec, dimensions, or frame rate")
+    func completeSourceMatching() {
+        let frame = accessUnit(keyframe: true, pts: 1)
+        let expected = VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 30)
+        #expect(expected.matches(frame))
+        #expect(!VideoSourceFormat(codec: .hevc, resolution: .p720, framesPerSecond: 30).matches(frame))
+        #expect(!VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 30).matches(frame))
+        #expect(!VideoSourceFormat(codec: .avc, resolution: .p720, framesPerSecond: 60).matches(frame))
+        #expect(Set(VideoSourceFormat.productFormats).count == 8)
+        #expect(VideoSourceFormat.defaultFormat == VideoSourceFormat(codec: .avc, resolution: .p1080, framesPerSecond: 60))
+    }
+
+    @MainActor
+    @Test("iOS transaction request retains HEVC and 60 fps in the Core directive")
+    func completeSourceTransaction() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Source Transaction")
+        let coordinator = SenderEncoderApplyCoordinator()
+        let requested = VideoSourceFormat(codec: .hevc, resolution: .p720, framesPerSecond: 60)
+        let epoch = coordinator.beginLocal(session: session, sourceFormat: requested)
+        #expect(epoch > PicooSenderSession.initialStreamEpoch)
+        coordinator.waitForApply(directive: nil, streamEpoch: epoch, encoderGeneration: 1,
+            sourceFormat: requested, captureRotation: 0, bitrateBps: 3_000_000, session: session)
+        // An AVC 720p30 AU cannot satisfy the HEVC 720p60 transaction.
+        #expect(!coordinator.accepts(accessUnit(keyframe: true, pts: 1)))
+        #expect(session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0) == .rolledBack)
+    }
+
+    @Test("Committed native source remains independent from preparation candidates")
+    func committedSourceSnapshot() {
+        var value = PicooSenderSnapshot()
+        #expect(PicooSenderSession.committedSourceFormat(from: value) == nil)
+        value.last_committed_source_format = PicooSourceFormat(codec: 2, height: 720, fps: 60)
+        #expect(PicooSenderSession.committedSourceFormat(from: value) == VideoSourceFormat(codec: 2, height: 720, framesPerSecond: 60))
+        #expect(PicooSenderSession.sourceFormats(from: value) == nil)
+    }
+
+    @Test("C fixed-array candidates preserve codec and frame rate")
+    func decoderCandidatesCrossSnapshotBoundary() throws {
+        var value = PicooSenderSnapshot()
+        #expect(PicooSenderSession.sourceFormats(from: value) == nil)
+        value.receiver_capabilities_known = true
+        #expect(PicooSenderSession.sourceFormats(from: value) == [])
+        value.receiver_source_format_count = 2
+        value.receiver_source_formats.0 = PicooSourceFormat(codec: 1, height: 720, fps: 30)
+        value.receiver_source_formats.1 = PicooSourceFormat(codec: 2, height: 1080, fps: 60)
+        let formats = try #require(PicooSenderSession.sourceFormats(from: value))
+        #expect(formats.count == 2)
+        #expect(formats[0].codec == .avc && formats[0].resolution == .p720 && formats[0].framesPerSecond == 30)
+        #expect(formats[1].codec == .hevc && formats[1].resolution == .p1080 && formats[1].framesPerSecond == 60)
+    }
+
     @Test("Rust protocol name crosses the C ABI")
     func protocolNameCrossesSwiftCAbiBoundary() {
         #expect(PicooSenderSession.protocolName == "PCP")
@@ -17,6 +122,7 @@ struct PicooSenderSessionTests {
             let session = try PicooSenderSession(defaultDeviceName: "Swift Testing")
             releasedSession = session
             #expect(session.snapshot.status == .disconnected)
+            #expect(session.snapshot.receiverSourceFormats == nil)
             try session.disconnect()
             #expect(session.snapshot.status == .disconnected)
         }
@@ -115,15 +221,15 @@ struct PicooSenderSessionTests {
 
     @Test("iOS encoder policy keeps negotiated resolution and bitrate in supported bounds")
     func encoderPolicyBounds() {
-        #expect(VideoResolution.supported(forRequestedHeight: 480) == .p480)
+        for height: UInt32 in [0, 480, 719, 721, 1079, 1081, 2160, UInt32.max] {
+            #expect(VideoResolution.supported(forRequestedHeight: height) == nil)
+            #expect(PicooSenderSession.initialBitrate(forHeight: height) == 0)
+        }
         #expect(VideoResolution.supported(forRequestedHeight: 720) == .p720)
         #expect(VideoResolution.supported(forRequestedHeight: 1080) == .p1080)
-        #expect(VideoResolution.p1080.clamped(toMaximumHeight: 720) == .p720)
-        #expect(VideoResolution.p1080.clamped(toMaximumHeight: 480) == .p480)
-        #expect(VideoResolution.p720.clamped(toMaximumHeight: 0) == .p720)
         #expect(PicooSenderSession.clampBitrate(800_000, forHeight: 720) == 1_500_000)
-        #expect(PicooSenderSession.clampBitrate(400_000, forHeight: 480) == 900_000)
-        #expect(PicooSenderSession.clampBitrate(3_000_000, forHeight: 480) == 2_500_000)
+        #expect(PicooSenderSession.clampBitrate(400_000, forHeight: 480) == 0)
+        #expect(PicooSenderSession.clampBitrate(3_000_000, forHeight: 480) == 0)
         #expect(PicooSenderSession.clampBitrate(8_000_000, forHeight: 720) == 5_000_000)
         #expect(PicooSenderSession.clampBitrate(2_000_000, forHeight: 1080) == 3_000_000)
         #expect(PicooSenderSession.clampBitrate(12_000_000, forHeight: 1080) == 10_000_000)
@@ -133,19 +239,33 @@ struct PicooSenderSessionTests {
     func streamEpochPolicy() throws {
         let session = try PicooSenderSession(defaultDeviceName: "Epoch Testing")
         #expect(session.snapshot.streamEpoch == PicooSenderSession.initialStreamEpoch)
-        let pending = session.beginStreamReconfiguration(targetHeight: 720)
+        let pending = session.beginStreamReconfiguration(targetHeight: 720, codec: 1, framesPerSecond: 30)
         #expect(pending == PicooSenderSession.initialStreamEpoch + 1)
-        #expect(session.beginStreamReconfiguration(targetHeight: 720) == 0)
+        #expect(session.beginStreamReconfiguration(targetHeight: 720, codec: 1, framesPerSecond: 30) == 0)
         #expect(session.reportEncoderFailed(
             streamEpoch: pending,
             encoderGeneration: 0
         ) == .rolledBack)
-        let next = session.beginStreamReconfiguration(targetHeight: 720)
+        let next = session.beginStreamReconfiguration(targetHeight: 720, codec: 1, framesPerSecond: 30)
         #expect(next == pending + 1)
         #expect(session.reportEncoderFailed(
             streamEpoch: next,
             encoderGeneration: 0
         ) == .rolledBack)
+    }
+
+    @Test("explicit codec and frame rate are admitted at the C request boundary")
+    func sourceFormatRequestRoundTrip() throws {
+        let session = try PicooSenderSession(defaultDeviceName: "Format Testing")
+        #expect(session.beginStreamReconfiguration(targetHeight: 1080, codec: 0, framesPerSecond: 60) == 0)
+        #expect(session.beginStreamReconfiguration(targetHeight: 1080, codec: 2, framesPerSecond: 120) == 0)
+        let epoch = session.beginStreamReconfiguration(targetHeight: 1080, codec: 2, framesPerSecond: 60)
+        #expect(epoch > PicooSenderSession.initialStreamEpoch)
+        // Local requests are already being applied by this owner. The effect
+        // getter exposes recovery commands, not a duplicate local apply.
+        #expect(try session.encoderDirective() == nil)
+        #expect(session.encoderTransactionID(for: epoch) > 0)
+        #expect(session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0) == .rolledBack)
     }
 
     @Test("encoder configuration normalizes rotation and clamps bitrate")
@@ -155,7 +275,9 @@ struct PicooSenderSessionTests {
             forHeight: 1080
         )
         let configuration = VideoEncoderConfiguration(
+            codec: .avc,
             resolution: .p1080,
+            framesPerSecond: 60,
             bitrateBps: canonicalBitrate,
             streamEpoch: 7,
             encoderGeneration: 11,
@@ -212,7 +334,71 @@ struct PicooSenderSessionTests {
         }
     }
 
-    private func accessUnit(keyframe: Bool, pts: UInt64) -> EncodedAccessUnit {
+    @Test("Native format codec and record remain paired in the callback snapshot")
+    func nativeConfigurationSnapshot() throws {
+        for (codec, wire, atom) in [(kCMVideoCodecType_H264, UInt32(1), "avcC"),
+                                    (kCMVideoCodecType_HEVC, UInt32(2), "hvcC")] {
+            let record = Data([1, 2, 3, 4])
+            var format: CMFormatDescription?
+            let extensions = [kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms: [atom: record]] as CFDictionary
+            let status = CMVideoFormatDescriptionCreate(allocator: nil, codecType: codec,
+                width: 64, height: 64, extensions: extensions, formatDescriptionOut: &format)
+            #expect(status == noErr)
+            let snapshot = try CompressionCallbackContext.codecConfiguration(from: format)
+            #expect(snapshot.codec == wire)
+            #expect(snapshot.record == record)
+        }
+    }
+
+    @Test("Missing native format never produces an empty source configuration")
+    func missingNativeConfigurationIsRejected() {
+        #expect(throws: (any Error).self) {
+            try CompressionCallbackContext.codecConfiguration(from: nil)
+        }
+    }
+
+    @Test("encoder completions retain input facts across updates and out-of-order callbacks")
+    func encoderCompletionUsesOriginalSubmission() throws {
+        let pending = SubmittedFrameConfigurations()
+        let first = EncodedFrameConfiguration(
+            codec: .avc,
+            width: 1280, height: 720, framesPerSecond: 30, bitrateBps: 3_000_000,
+            streamEpoch: 2, encoderGeneration: 3, rotation: 0
+        )
+        let next = EncodedFrameConfiguration(
+            codec: .avc,
+            width: 1280, height: 720, framesPerSecond: 30, bitrateBps: 4_000_000,
+            streamEpoch: 2, encoderGeneration: 3, rotation: 90
+        )
+        let firstID = try #require(pending.reserve(first))
+        let nextID = try #require(pending.reserve(next))
+        #expect(pending.take(nextID) == next)
+        #expect(pending.take(nextID) == nil)
+        #expect(pending.take(0) == nil)
+        #expect(pending.take(firstID) == first)
+    }
+
+    @Test("pending native frames are bounded and cancelled IDs are never reused")
+    func encoderCompletionCapacityAndCancellation() throws {
+        let pending = SubmittedFrameConfigurations()
+        let frame = EncodedFrameConfiguration(
+            codec: .avc,
+            width: 1920, height: 1080, framesPerSecond: 60, bitrateBps: 5_000_000,
+            streamEpoch: 7, encoderGeneration: 9, rotation: 180
+        )
+        var identifiers: [UInt] = []
+        for _ in 0..<16 { identifiers.append(try #require(pending.reserve(frame))) }
+        #expect(pending.reserve(frame) == nil)
+        #expect(pending.take(identifiers[0]) == frame)
+        #expect(pending.take(identifiers[0]) == nil)
+        let replacement = try #require(pending.reserve(frame))
+        #expect(!identifiers.contains(replacement))
+        #expect(pending.take(identifiers[0]) == nil)
+        #expect(pending.take(replacement) == frame)
+        for identifier in identifiers.dropFirst() { #expect(pending.take(identifier) == frame) }
+    }
+
+    private func accessUnit(keyframe: Bool, pts: UInt64, epoch: UInt32 = 1, rotation: UInt32 = 0) -> EncodedAccessUnit {
         EncodedAccessUnit(
             data: Data([0, 0, 0, 1, keyframe ? 0x65 : 0x41]),
             isKeyframe: keyframe,
@@ -222,10 +408,10 @@ struct PicooSenderSessionTests {
             height: 720,
             framesPerSecond: 30,
             bitrateBps: 3_000_000,
-            streamEpoch: 1,
+            streamEpoch: epoch,
             encoderGeneration: 1,
-            rotation: 0,
-            parameterSets: nil
+            rotation: rotation,
+            codecConfiguration: EncodedCodecConfiguration(codec: 1, record: Data([1]))
         )
     }
 }

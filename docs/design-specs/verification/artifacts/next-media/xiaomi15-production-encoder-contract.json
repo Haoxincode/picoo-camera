@@ -1,0 +1,102 @@
+{
+  "requirement": "REQ-PICOO-MEDIA-026",
+  "device": "Xiaomi 15 / 24129PN74C / Android API 36",
+  "date": "2026-09-06",
+  "implementation": "apps/android/app/src/main/kotlin/com/picoo/camera/media/NativeVideoEncoder.kt",
+  "test": "NativeCodecContractTest.avcAndHevcHardwareSurfaceConfigurationsProduceAccessUnits",
+  "result": "OK (1 test), eight combinations",
+  "verified": [
+    "production factory chooses explicit hardware codec name",
+    "actual profile, dimensions, frame-rate and BT.709 limited SDR metadata accepted by production output validator",
+    "driver reports latency=0",
+    "three distinct monotonically increasing AU PTS per combination"
+  ],
+  "not_verified": [
+    "sustained 60fps or thermal stability",
+    "no-B-frame bitstream proof",
+    "HEVC end-to-end wire/decoder/outputs",
+    "real Camera2 sensor input in this synthetic Surface test"
+  ],
+  "results": [
+    {
+      "encoder": "c2.qti.avc.encoder",
+      "mime": "video/avc",
+      "width": 1280,
+      "height": 720,
+      "requested_fps": 30,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=24000000, crop-right=1279, level=4096, latency=0, mime=video/avc, profile=8, bitrate=24000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, csd-1=java.nio.HeapByteBuffer[pos=0 lim=9 cap=9], color-transfer=3, crop-bottom=719, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1280, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=30, height=720, csd-0=java.nio.HeapByteBuffer[pos=0 lim=22 cap=22]}"
+    },
+    {
+      "encoder": "c2.qti.avc.encoder",
+      "mime": "video/avc",
+      "width": 1280,
+      "height": 720,
+      "requested_fps": 60,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=24000000, crop-right=1279, level=4096, latency=0, mime=video/avc, profile=8, bitrate=24000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, csd-1=java.nio.HeapByteBuffer[pos=0 lim=9 cap=9], color-transfer=3, crop-bottom=719, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1280, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=60, height=720, csd-0=java.nio.HeapByteBuffer[pos=0 lim=22 cap=22]}"
+    },
+    {
+      "encoder": "c2.qti.avc.encoder",
+      "mime": "video/avc",
+      "width": 1920,
+      "height": 1080,
+      "requested_fps": 30,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=24000000, crop-right=1919, level=4096, latency=0, mime=video/avc, profile=8, bitrate=24000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, csd-1=java.nio.HeapByteBuffer[pos=0 lim=9 cap=9], color-transfer=3, crop-bottom=1079, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1920, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=30, height=1080, csd-0=java.nio.HeapByteBuffer[pos=0 lim=23 cap=23]}"
+    },
+    {
+      "encoder": "c2.qti.avc.encoder",
+      "mime": "video/avc",
+      "width": 1920,
+      "height": 1080,
+      "requested_fps": 60,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=24000000, crop-right=1919, level=8192, latency=0, mime=video/avc, profile=8, bitrate=24000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, csd-1=java.nio.HeapByteBuffer[pos=0 lim=9 cap=9], color-transfer=3, crop-bottom=1079, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1920, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=60, height=1080, csd-0=java.nio.HeapByteBuffer[pos=0 lim=23 cap=23]}"
+    },
+    {
+      "encoder": "c2.qti.hevc.encoder",
+      "mime": "video/hevc",
+      "width": 1280,
+      "height": 720,
+      "requested_fps": 30,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=16000000, crop-right=1279, level=2048, latency=0, mime=video/hevc, profile=1, bitrate=16000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=719, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1280, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=30, height=720, csd-0=java.nio.HeapByteBuffer[pos=0 lim=82 cap=82]}"
+    },
+    {
+      "encoder": "c2.qti.hevc.encoder",
+      "mime": "video/hevc",
+      "width": 1280,
+      "height": 720,
+      "requested_fps": 60,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=16000000, crop-right=1279, level=2048, latency=0, mime=video/hevc, profile=1, bitrate=16000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=719, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1280, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=60, height=720, csd-0=java.nio.HeapByteBuffer[pos=0 lim=82 cap=82]}"
+    },
+    {
+      "encoder": "c2.qti.hevc.encoder",
+      "mime": "video/hevc",
+      "width": 1920,
+      "height": 1080,
+      "requested_fps": 30,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=16000000, crop-right=1919, level=2048, latency=0, mime=video/hevc, profile=1, bitrate=16000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=1079, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1920, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=30, height=1080, csd-0=java.nio.HeapByteBuffer[pos=0 lim=84 cap=84]}"
+    },
+    {
+      "encoder": "c2.qti.hevc.encoder",
+      "mime": "video/hevc",
+      "width": 1920,
+      "height": 1080,
+      "requested_fps": 60,
+      "unique_access_units": 3,
+      "hardware": true,
+      "actual_format": "{max-bitrate=16000000, crop-right=1919, level=4096, latency=0, mime=video/hevc, profile=1, bitrate=16000000, priority=0, intra-refresh-period=0, color-standard=1, feature-secure-playback=0, color-transfer=3, crop-bottom=1079, prepend-sps-pps-to-idr-frames=0, crop-left=0, width=1920, bitrate-mode=2, color-range=2, crop-top=0, frame-rate=60, height=1080, csd-0=java.nio.HeapByteBuffer[pos=0 lim=84 cap=84]}"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ mod ios_sign;
 pub(crate) mod macos;
 pub(crate) mod macos_sign;
 pub(crate) mod macos_validate;
+pub(crate) mod native_tests;
 
 pub(crate) const MACOS_APP_BUNDLE_ID: &str = "com.haoxincode.picoo-camera";
 pub(crate) const MACOS_EXTENSION_BUNDLE_ID: &str = "com.haoxincode.picoo-camera.camera-extension";

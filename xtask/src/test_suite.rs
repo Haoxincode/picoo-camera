@@ -10,13 +10,25 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
     match suite {
         TestSuite::Ios => crate::apple::ios::test_ios(&sh)?,
         TestSuite::Macos => crate::apple::macos::test_macos(&sh)?,
+        TestSuite::AppleNativeMedia => {
+            if !cfg!(target_os = "macos") {
+                bail!("Apple native media probe requires a macOS host");
+            }
+            let output = crate::apple::cargo_target_dir(&sh)?.join("apple/native-media-probe");
+            std::fs::create_dir_all(&output)?;
+            let binary = output.join("apple-native-media");
+            cmd!(sh, "xcrun swiftc -swift-version 6 -warnings-as-errors scripts/probes/apple_native_media.swift -o {binary}").run()?;
+            let report = cmd!(sh, "{binary}").read()?;
+            std::fs::write(output.join("report.json"), &report)?;
+            println!("{report}");
+        }
         TestSuite::Windows => {
             if !cfg!(target_os = "windows") {
                 bail!("Windows tests must run on a Windows host");
             }
             cmd!(
                 sh,
-                "cargo clippy -p picoo-frame-hub -p picoo-windows-vcam-source --all-targets -- -D warnings"
+                "cargo clippy -p picoo-frame-hub -p picoo-gpu -p picoo-windows-vcam-source -p picoo-recording --all-targets -- -D warnings"
             )
             .run()?;
             cmd!(
@@ -26,7 +38,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             .run()?;
             cmd!(
                 sh,
-                "cargo test -p picoo-frame-hub -p picoo-windows-vcam-source"
+                "cargo test -p picoo-frame-hub -p picoo-gpu -p picoo-windows-vcam-source -p picoo-recording"
             )
             .run()?;
             cmd!(
@@ -39,7 +51,14 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
                 "cargo test -p picoo-desktop --features gpui-ui,windows-vcam"
             )
             .run()?;
+            cmd!(
+                sh,
+                "cargo test -p gpui-pre-windows -p picoo-desktop --features picoo-desktop/gpui-ui,picoo-desktop/windows-vcam,gpui-kit/test-support --lib native_surface_shader_draws_bgra_and_respects_clip"
+            )
+            .run()?;
             cmd!(sh, "cargo test -p picoo-media-decode --features windows-mf").run()?;
+            cmd!(sh, "cargo run -p picoo-recording --example windows_mux_probe -- target/verification/windows-mux-probe").run()?;
+            recording_fixtures(&sh, "windows")?;
             cmd!(
                 sh,
                 "cargo test -p picoo-receiver --features windows-mf --lib paired_avcc_length_prefixed_au_reaches_latest_frame_store"
@@ -60,6 +79,7 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
                 "control-envelope",
                 "pairing-transcript",
                 "reassembly-fec",
+                "codec-bitstream",
             ] {
                 cmd!(
                     sh,
@@ -197,6 +217,27 @@ pub(crate) fn run(suite: TestSuite) -> Result<()> {
             )
             .run()?;
         }
+    }
+    Ok(())
+}
+
+/// Run both native encoder fixture sets through the production recording owner.
+/// Keep unique outputs for independent artifact inspection, including failures.
+pub(crate) fn recording_fixtures(sh: &Shell, platform: &str) -> Result<()> {
+    let output =
+        crate::apple::cargo_target_dir(sh)?.join(format!("verification/{platform}-recording"));
+    std::fs::create_dir_all(&output)?;
+    for encoder in ["apple", "xiaomi"] {
+        let run = tempfile::Builder::new()
+            .prefix(&format!("{encoder}-"))
+            .tempdir_in(&output)?
+            .keep();
+        let fixtures = format!("crates/picoo-media-decode/probes/{encoder}-native-formats");
+        cmd!(
+            sh,
+            "cargo run -p picoo-recording --example check_native_recording -- {fixtures} {run}"
+        )
+        .run()?;
     }
     Ok(())
 }

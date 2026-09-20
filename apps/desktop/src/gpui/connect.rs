@@ -13,7 +13,7 @@ use serde::Deserialize;
 use crate::model::VirtualCameraStatus;
 use crate::receiver_runtime::{await_receiver_reply, ReceiverSnapshot};
 
-use super::icons::{reicon_button_content, reicon_named};
+use super::icons::{reicon_button_content, reicon_named, DesktopIcon};
 use super::pairing::{connection_code_hero, format_pairing_code};
 use super::widgets::{
     connection_security_status, hardware_topology, live_metric_text, live_network_quality,
@@ -28,7 +28,6 @@ const CONNECT_AUXILIARY_WIDTH: Rems = rems(24.);
 #[derive(Clone, Action, PartialEq, Eq, Deserialize)]
 #[action(namespace = picoo_live_toolbar, no_json)]
 enum LiveToolbarAction {
-    Resolution480,
     Resolution720,
     Resolution1080,
 }
@@ -128,7 +127,7 @@ impl PicooDesktopApp {
                             .border_1()
                             .border_color(cx.theme().border)
                             .bg(cx.theme().secondary)
-                            .child(reicon_named("monitor", cx.theme().primary)),
+                            .child(reicon_named(DesktopIcon::Display, cx.theme().primary)),
                     )
                     .child(
                         div()
@@ -157,7 +156,10 @@ impl PicooDesktopApp {
                             .text_xs()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(cx.theme().muted_foreground)
-                            .child(reicon_named("key", cx.theme().primary).size(rems(0.875)))
+                            .child(
+                                reicon_named(DesktopIcon::PairingCode, cx.theme().primary)
+                                    .size(rems(0.875)),
+                            )
                             .child("配对短码"),
                     )
                     .child(connection_code_hero(&pairing_code, cx))
@@ -232,18 +234,31 @@ impl PicooDesktopApp {
                                     .gap_2()
                                     .text_sm()
                                     .font_weight(FontWeight::SEMIBOLD)
-                                    .child(reicon_named("rocket", cx.theme().primary).size_4())
+                                    .child(
+                                        reicon_named(DesktopIcon::Onboarding, cx.theme().primary)
+                                            .size_4(),
+                                    )
                                     .child("开始使用"),
                             )
                             .child(
                                 div()
                                     .v_flex()
                                     .gap_2()
-                                    .child(onboarding_step("1", "mobile", "打开 Picoo Camera", cx))
-                                    .child(onboarding_step("2", "monitor", "选择此电脑", cx))
+                                    .child(onboarding_step(
+                                        "1",
+                                        DesktopIcon::MobileSender,
+                                        "打开 Picoo Camera",
+                                        cx,
+                                    ))
+                                    .child(onboarding_step(
+                                        "2",
+                                        DesktopIcon::Display,
+                                        "选择此电脑",
+                                        cx,
+                                    ))
                                     .child(onboarding_step(
                                         "3",
-                                        "play-filled",
+                                        DesktopIcon::Start,
                                         "核对短码并确认",
                                         cx,
                                     )),
@@ -277,7 +292,7 @@ impl PicooDesktopApp {
         Button::new("copy-listen-endpoint")
             .outline()
             .label(endpoint.clone())
-            .child(reicon_named("copy", cx.theme().primary))
+            .child(reicon_named(DesktopIcon::CopyEndpoint, cx.theme().primary))
             .on_click(cx.listener(move |this, _, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(endpoint.clone()));
                 this.diagnostics_error = None;
@@ -312,7 +327,7 @@ impl PicooDesktopApp {
             .border_t_1()
             .border_color(cx.theme().border)
             .child(network_status_item(
-                "wifi",
+                DesktopIcon::Network,
                 if network_ready {
                     "网络可用"
                 } else {
@@ -327,14 +342,18 @@ impl PicooDesktopApp {
                 cx,
             ))
             .child(network_status_item(
-                "server",
+                DesktopIcon::Server,
                 if snapshot.discovery_available {
                     "发现在线"
+                } else if snapshot.discovery_starting {
+                    "发现启动中"
                 } else {
                     "发现异常"
                 },
                 if snapshot.discovery_available {
                     NetworkStatusState::Healthy
+                } else if snapshot.discovery_starting {
+                    NetworkStatusState::Pending
                 } else {
                     NetworkStatusState::Warning
                 },
@@ -342,14 +361,14 @@ impl PicooDesktopApp {
                 cx,
             ))
             .child(network_status_item(
-                "activity",
+                DesktopIcon::NetworkActivity,
                 format!("延迟{latency}"),
                 latency_state,
                 true,
                 cx,
             ))
             .child(network_status_item(
-                "shield",
+                DesktopIcon::Security,
                 security_status,
                 if security_ready {
                     NetworkStatusState::Healthy
@@ -511,7 +530,7 @@ impl PicooDesktopApp {
                     .accessibility_label("连接详情")
                     .child(reicon_button_content(
                         "连接详情",
-                        "tuning",
+                        DesktopIcon::Diagnostics,
                         cx.theme().primary,
                     )),
             )
@@ -559,16 +578,11 @@ impl PicooDesktopApp {
                 div()
                     .h_flex()
                     .gap_2()
-                    .child(reicon_named("monitor", cx.theme().primary))
+                    .child(reicon_named(DesktopIcon::Display, cx.theme().primary))
                     .child(resolution_label),
             )
             .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
                 menu.menu_with_check(
-                    "480p",
-                    current_resolution_height == Some(480),
-                    Box::new(LiveToolbarAction::Resolution480),
-                )
-                .menu_with_check(
                     "720p",
                     current_resolution_height == Some(720),
                     Box::new(LiveToolbarAction::Resolution720),
@@ -591,7 +605,6 @@ impl PicooDesktopApp {
             .overflow_hidden()
             .on_action(cx.listener(|this, action: &LiveToolbarAction, _, cx| {
                 let (width, height) = match action {
-                    LiveToolbarAction::Resolution480 => (854, 480),
                     LiveToolbarAction::Resolution720 => (1280, 720),
                     LiveToolbarAction::Resolution1080 => (1920, 1080),
                 };
@@ -661,7 +674,7 @@ impl PicooDesktopApp {
                                     .accessibility_label("镜像翻转")
                                     .child(reicon_button_content(
                                         "镜像",
-                                        "flip-horizontal",
+                                        DesktopIcon::Mirror,
                                         mirror_icon_color,
                                     ))
                                     .on_click(cx.listener(move |this, _, _, cx| {
@@ -684,7 +697,7 @@ impl PicooDesktopApp {
                                     .accessibility_label("镜头切换")
                                     .child(reicon_button_content(
                                         "切换",
-                                        "camera-rotate",
+                                        DesktopIcon::SwitchCamera,
                                         cx.theme().primary,
                                     ))
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -708,7 +721,7 @@ impl PicooDesktopApp {
                                     .accessibility_label("画面修复")
                                     .child(reicon_button_content(
                                         "修复",
-                                        "refresh",
+                                        DesktopIcon::Refresh,
                                         cx.theme().primary,
                                     ))
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -728,7 +741,7 @@ impl PicooDesktopApp {
                                     .accessibility_label("断开")
                                     .child(reicon_button_content(
                                         "断开",
-                                        "xmark",
+                                        DesktopIcon::Disconnect,
                                         cx.theme().danger,
                                     ))
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -761,8 +774,10 @@ impl PicooDesktopApp {
                             .flex_none()
                             .relative()
                             .on_prepaint(move |bounds, window, _| {
+                                // REQ-PICOO-MEDIA-063: display demand must survive source gaps.
+                                window.request_animation_frame();
                                 let scale = window.scale_factor();
-                                preview_viewport.record_painted(
+                                preview_viewport.request_frame(
                                     bounds.size.width.as_f32() * scale,
                                     bounds.size.height.as_f32() * scale,
                                 );

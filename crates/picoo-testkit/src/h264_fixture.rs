@@ -44,3 +44,12 @@ pub const H264_854X480_RED_IDR: &[u8] = &[
     0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03, 0x00, 0x00, 0x03,
     0x00, 0x00, 0x03, 0x00, 0x00, 0x0a, 0xc9,
 ];
+
+/// Hardware AVC High fixture; generation details in fixtures/README.md.
+pub const H264_1920X1080_RED_IDR: &[u8] = include_bytes!("../fixtures/avc-1080p-red-idr.h264");
+
+// M4 hardware AVC High; scripts/probes/apple_codec_fixture.swift regenerates these.
+pub const AVC_64X64_BT709_IDR: &[u8] = include_bytes!("../fixtures/avc-64x64-bt709-idr.h264");
+pub const AVC_1280X720_BT709_IDR: &[u8] = include_bytes!("../fixtures/avc-1280x720-bt709-idr.h264");
+pub const AVC_1920X1080_BT709_IDR: &[u8] =
+    include_bytes!("../fixtures/avc-1920x1080-bt709-idr.h264");

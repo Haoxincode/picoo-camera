@@ -7,6 +7,7 @@ import SwiftUI
 @Observable
 final class SenderAppModel {
     private(set) var screen: SenderScreen = .devices
+    private(set) var receiverSourceFormats: [VideoSourceFormat]?
     private(set) var receivers: [ReceiverSummary] = []
     private(set) var isDiscovering = true
     private(set) var senderStatus: PicooSenderStatus = .disconnected
@@ -26,6 +27,7 @@ final class SenderAppModel {
     private(set) var reconnectDelayMs: UInt64 = 0
 
     var manualEndpointText = ""
+    var isConnectionPresented = false
     var isManualConnectPresented = false
     var isSettingsPresented = false
     var autoConnectEnabled: Bool {
@@ -34,12 +36,14 @@ final class SenderAppModel {
             discovery.resetAutoConnect()
         }
     }
-    var preferredResolution: VideoResolution {
+    var preferredSourceFormat: VideoSourceFormat {
         didSet {
-            defaults.set(preferredResolution.rawValue, forKey: Self.resolutionPreferenceKey)
+            defaults.set(Int(preferredSourceFormat.codec.rawValue), forKey: "sender.sourceCodec")
+            defaults.set(preferredSourceFormat.resolution.rawValue, forKey: "sender.sourceHeight")
+            defaults.set(Int(preferredSourceFormat.framesPerSecond), forKey: "sender.sourceFps")
             if senderStatus == .disconnected {
                 activeBitrateBps = PicooSenderSession.initialBitrate(
-                    forHeight: UInt32(preferredResolution.rawValue)
+                    forHeight: UInt32(preferredSourceFormat.resolution.rawValue)
                 )
             }
         }
@@ -60,17 +64,17 @@ final class SenderAppModel {
     @ObservationIgnored private var selectedReceiverID = ""
     @ObservationIgnored private var lastDiscoveryPollAt = ContinuousClock.now
     @ObservationIgnored private var stopResetTask: Task<Void, Never>?
-    @ObservationIgnored private var selectedInitialResolution = false
+    @ObservationIgnored private var waitingForSourceCapabilities = false
+    @ObservationIgnored private var selectedInitialSourceFormat = false
     @ObservationIgnored private var isMediaSendEnabled = false
     @ObservationIgnored private var isSceneActive = true
     @ObservationIgnored private var lastHandledSessionError = ""
-    @ObservationIgnored private let encoderApply = SenderEncoderApplyCoordinator()
+    @ObservationIgnored let encoderApply = SenderEncoderApplyCoordinator()
     @ObservationIgnored private let discovery = SenderDiscoveryCoordinator()
     @ObservationIgnored private let wifiNetwork = PicooWifiNetworkMonitor()
     @ObservationIgnored private var discoveryInterfaceName: String?
 
     private static let autoConnectPreferenceKey = "sender.autoConnectEnabled"
-    private static let resolutionPreferenceKey = "sender.preferredResolution"
 
     init(session: PicooSenderSession?) {
         let defaults = UserDefaults.standard
@@ -78,15 +82,17 @@ final class SenderAppModel {
         autoConnectEnabled = defaults.object(forKey: Self.autoConnectPreferenceKey) == nil
             ? true
             : defaults.bool(forKey: Self.autoConnectPreferenceKey)
-        let storedPreferredResolution = VideoResolution(
-            rawValue: defaults.integer(forKey: Self.resolutionPreferenceKey)
-        ) ?? .p1080
-        preferredResolution = storedPreferredResolution
+        let storedPreferredSourceFormat = VideoSourceFormat(
+            codec: UInt32(clamping: defaults.integer(forKey: "sender.sourceCodec")),
+            height: UInt32(clamping: defaults.integer(forKey: "sender.sourceHeight")),
+            framesPerSecond: UInt32(clamping: defaults.integer(forKey: "sender.sourceFps"))
+        ) ?? .defaultFormat
+        preferredSourceFormat = storedPreferredSourceFormat
         let snapshotBitrate = session?.snapshot.currentBitrateBps ?? 0
         let initialBitrate = snapshotBitrate > 0
             ? snapshotBitrate
             : PicooSenderSession.initialBitrate(
-                forHeight: UInt32(storedPreferredResolution.rawValue)
+                forHeight: UInt32(storedPreferredSourceFormat.resolution.rawValue)
             )
         let initialEpoch = session?.snapshot.streamEpoch
             ?? PicooSenderSession.initialStreamEpoch
@@ -115,6 +121,7 @@ final class SenderAppModel {
         trustedReceivers = session?.trustedReceivers() ?? []
 
         refreshDiscoveryBrowserForWifi()
+        Task { [weak self] in await self?.camera.refreshSourceFormats() }
 
         runtimeTask = Task { [weak self] in
             var eventRevision: UInt64 = 0
@@ -209,6 +216,7 @@ final class SenderAppModel {
     }
 
     func selectReceiver(_ receiver: ReceiverSummary) {
+        isConnectionPresented = false
         selectedReceiverID = receiver.id
         receiverName = receiver.displayName
         receiverEndpoint = receiver.endpoint
@@ -224,6 +232,7 @@ final class SenderAppModel {
         receiverName = endpoint.displayText
         receiverEndpoint = endpoint
         if connect(to: endpoint) {
+            isConnectionPresented = false
             isManualConnectPresented = false
         }
     }
@@ -282,7 +291,7 @@ final class SenderAppModel {
             return false
         }
         suspendMediaSending()
-        selectedInitialResolution = false
+        selectedInitialSourceFormat = false
         phoneConfirmedPairing = false
         pairingWaitOutcome = .pending
         pairingCode = ""
@@ -294,10 +303,9 @@ final class SenderAppModel {
 
         do {
             activeBitrateBps = PicooSenderSession.initialBitrate(
-                forHeight: UInt32(preferredResolution.rawValue)
+                forHeight: UInt32(preferredSourceFormat.resolution.rawValue)
             )
-            try session.setPreferredHeight(UInt32(preferredResolution.rawValue))
-            try session.setStreamConfiguration(initialStreamConfiguration)
+            try session.setPreferredHeight(UInt32(preferredSourceFormat.resolution.rawValue))
             try session.connect(to: endpoint, wifiInterfaceIndex: wifiInterface.index)
             return true
         } catch PicooSenderSessionError.networkBindingFailed {
@@ -366,6 +374,11 @@ final class SenderAppModel {
         }
         let snapshot = session.snapshot
         senderStatus = snapshot.status
+        receiverSourceFormats = snapshot.receiverSourceFormats
+        if waitingForSourceCapabilities, snapshot.receiverSourceFormats != nil, matchesActiveMediaState {
+            waitingForSourceCapabilities = false
+            scheduleCameraActivation()
+        }
         isConnecting = senderStatus == .connecting
         if senderStatus == .reconnecting {
             reconnectAttempt = snapshot.reconnectAttempt
@@ -469,50 +482,32 @@ final class SenderAppModel {
             return
         }
         suspendMediaSending()
-        let initialResolution: VideoResolution
-        let requestedResolution: VideoResolution?
-        if selectedInitialResolution {
-            initialResolution = camera.resolution
-            requestedResolution = nil
-        } else {
-            let receiverMaxHeight = session.snapshot.receiverMaxHeight
-            let preferredHeight = UInt32(preferredResolution.rawValue)
-            let requestedHeight = receiverMaxHeight > 0
-                ? min(preferredHeight, receiverMaxHeight)
-                : preferredHeight
-            initialResolution = VideoResolution.supported(forRequestedHeight: requestedHeight)
-            requestedResolution = initialResolution
+        let preferred = selectedInitialSourceFormat ? camera.sourceFormat : preferredSourceFormat
+        guard session.snapshot.receiverSourceFormats != nil else {
+            waitingForSourceCapabilities = true
+            return
         }
-        if let requestedResolution {
-            activeBitrateBps = PicooSenderSession.initialBitrate(
-                forHeight: UInt32(requestedResolution.rawValue)
-            )
+        await camera.refreshSourceFormats()
+        guard !Task.isCancelled, let initialSourceFormat = VideoSourceFormat.initial(
+            availableSourceFormats ?? [], preferred: preferred
+        ) else {
+            errorMessage = "已连接，但当前镜头与接收端没有共同可用的视频格式。"
+            return
         }
+        activeBitrateBps = PicooSenderSession.initialBitrate(forHeight: UInt32(initialSourceFormat.resolution.rawValue))
         let streamEpoch = encoderApply.beginLocal(
             session: session,
-            targetHeight: UInt32(initialResolution.rawValue)
+            sourceFormat: initialSourceFormat
         )
         guard streamEpoch > 0 else { return }
-        if !selectedInitialResolution {
-            do {
-                try await mediaPipeline.prime(
-                    resolution: initialResolution,
-                    bitrateBps: activeBitrateBps,
-                    streamEpoch: streamEpoch,
-                    mirrored: remoteMirrored
-                )
-            } catch {
-                errorMessage = "无法准备视频传输参数。"
-                return
-            }
-        }
+        await mediaPipeline.setMirrored(remoteMirrored)
 
         guard !Task.isCancelled else {
             _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
             return
         }
         let granted = await camera.start(
-            resolution: requestedResolution,
+            sourceFormat: initialSourceFormat,
             bitrateBps: activeBitrateBps,
             streamEpoch: streamEpoch
         )
@@ -522,12 +517,13 @@ final class SenderAppModel {
             return
         }
         if granted {
-            selectedInitialResolution = true
+            selectedInitialSourceFormat = true
             encoderApply.waitForApply(
                 directive: nil,
                 streamEpoch: streamEpoch,
                 encoderGeneration: camera.encoderGeneration,
-                height: UInt32(initialResolution.rawValue),
+                sourceFormat: initialSourceFormat,
+                captureRotation: camera.captureRotation,
                 bitrateBps: activeBitrateBps,
                 session: session
             )
@@ -555,6 +551,7 @@ final class SenderAppModel {
         pairingSecondsRemaining = 60
         lastHandledSessionError = ""
         isConnecting = false
+        isConnectionPresented = false
         errorMessage = nil
         mediaControlTask?.cancel()
         mediaControlTask = nil
@@ -563,7 +560,8 @@ final class SenderAppModel {
         encoderApply.clearPending()
         try? session?.disconnect()
         screen = .devices
-        selectedInitialResolution = false
+        selectedInitialSourceFormat = false
+        waitingForSourceCapabilities = false
         scheduleCameraStop()
     }
 
@@ -571,7 +569,8 @@ final class SenderAppModel {
         guard isSceneActive, matchesActiveMediaState, let session else { return }
 
         let requestedBitrate = session.snapshot.currentBitrateBps
-        if requestedBitrate > 0, requestedBitrate != activeBitrateBps {
+        if mediaControlTask == nil, cameraLifecycleTask == nil, !encoderApply.isPending,
+           requestedBitrate > 0, requestedBitrate != activeBitrateBps {
             activeBitrateBps = requestedBitrate
             Task { [weak self] in
                 await self?.camera.updateBitrate(requestedBitrate)
@@ -583,30 +582,19 @@ final class SenderAppModel {
         }
 
         guard mediaControlTask == nil, !encoderApply.isPending else { return }
-        let receiverMaxHeight = session.snapshot.receiverMaxHeight
-        if camera.state == .running,
-           receiverMaxHeight > 0,
-           UInt32(camera.resolution.rawValue) > receiverMaxHeight
-        {
-            mediaControlTask = Task { [weak self] in
-                guard let self else { return }
-                await self.applyResolution(
-                    VideoResolution.supported(forRequestedHeight: receiverMaxHeight)
-                )
-                self.mediaControlTask = nil
-            }
-            return
-        }
         let cameraCommand = try? session.takeCameraCommand()
         let encoderDirective = cameraCommand == nil ? try? session.encoderDirective() : nil
         if let encoderDirective,
-           receiverMaxHeight > 0,
-           encoderDirective.targetHeight > receiverMaxHeight
+           !(session.snapshot.receiverSourceFormats ?? []).contains(where: {
+               $0 == VideoSourceFormat(codec: encoderDirective.targetCodec, height: encoderDirective.targetHeight, framesPerSecond: encoderDirective.targetFps)
+           })
         {
             encoderApply.rejectBeforeStart(encoderDirective, host: self)
             return
         }
-        guard cameraCommand != nil || encoderDirective != nil else { return }
+        let rotation = cameraCommand == nil && encoderDirective == nil
+            ? camera.takeRotationRequest() : nil
+        guard cameraCommand != nil || encoderDirective != nil || rotation != nil else { return }
 
         mediaControlGeneration &+= 1
         let operation = mediaControlGeneration
@@ -620,12 +608,14 @@ final class SenderAppModel {
             if let cameraCommand {
                 await self.apply(cameraCommand)
             } else if let encoderDirective {
-                await self.applyResolution(
-                    VideoResolution.supported(
-                        forRequestedHeight: encoderDirective.targetHeight
-                    ),
-                    directive: encoderDirective
-                )
+                if let source = VideoSourceFormat(codec: encoderDirective.targetCodec, height: encoderDirective.targetHeight, framesPerSecond: encoderDirective.targetFps) {
+                    await self.applySourceFormat(source, directive: encoderDirective)
+                } else {
+                    self.encoderApply.rejectBeforeStart(encoderDirective, host: self)
+                }
+            }
+            if let rotation {
+                await self.applySourceFormat(self.camera.sourceFormat, captureRotation: rotation)
             }
             guard operation == self.mediaControlGeneration else { return }
             self.mediaControlTask = nil
@@ -640,15 +630,17 @@ final class SenderAppModel {
             await applyCameraSwitch(unlessAlreadyAt: .back, failure: "电脑请求的后置摄像头不可用。")
         case .switchCamera:
             await applyCameraSwitch(unlessAlreadyAt: nil, failure: "电脑请求切换的摄像头不可用。")
-        case let .setResolution(_, height):
-            await applyResolution(VideoResolution.supported(forRequestedHeight: height))
+        case let .setResolution(width, height):
+            guard let resolution = VideoResolution.supported(forRequestedHeight: height),
+                  UInt32(resolution.width) == width else {
+                errorMessage = "电脑请求的视频尺寸不受支持。"
+                return
+            }
+            await applySourceFormat(VideoSourceFormat(codec: camera.sourceFormat.codec, resolution: resolution, framesPerSecond: camera.sourceFormat.framesPerSecond))
         case let .setMirror(mirrored):
             remoteMirrored = mirrored
-            do {
-                try await mediaPipeline?.setMirrored(mirrored)
-            } catch {
-                errorMessage = "无法更新远端镜像设置。"
-            }
+            await mediaPipeline?.setMirrored(mirrored)
+            await camera.requestKeyframe()
         }
     }
 
@@ -658,13 +650,17 @@ final class SenderAppModel {
     ) async {
         if let position, camera.position == position { return }
         guard let session else { return }
+        guard let targetSource = await preparedCameraSwitchSource() else {
+            errorMessage = "目标镜头与接收端没有共同可用的视频格式。"
+            return
+        }
         suspendMediaSending()
         let epoch = encoderApply.beginLocal(
             session: session,
-            targetHeight: UInt32(camera.resolution.rawValue)
+            sourceFormat: targetSource
         )
         guard epoch > 0 else { return }
-        let switched = await camera.switchCamera(streamEpoch: epoch)
+        let switched = await camera.switchCamera(sourceFormat: targetSource, streamEpoch: epoch)
         guard !Task.isCancelled else {
             _ = session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0)
             return
@@ -674,68 +670,14 @@ final class SenderAppModel {
                 directive: nil,
                 streamEpoch: epoch,
                 encoderGeneration: camera.encoderGeneration,
-                height: UInt32(camera.resolution.rawValue),
-                bitrateBps: activeBitrateBps,
+                sourceFormat: targetSource,
+                captureRotation: camera.captureRotation,
+                bitrateBps: PicooSenderSession.initialBitrate(forHeight: UInt32(targetSource.resolution.rawValue)),
                 session: session
             )
         } else {
             encoderApply.failBeforeStart(streamEpoch: epoch, message: failure, host: self)
         }
-    }
-
-    func applyResolution(
-        _ resolution: VideoResolution,
-        directive: SenderEncoderDirective? = nil
-    ) async {
-        guard let session else { return }
-        let supportedResolution = resolution.clamped(
-            toMaximumHeight: session.snapshot.receiverMaxHeight
-        )
-        if let directive,
-           UInt32(supportedResolution.rawValue) != directive.targetHeight
-        {
-            encoderApply.rejectBeforeStart(directive, host: self)
-            return
-        }
-        suspendMediaSending()
-        let targetBitrate = directive?.targetBitrateBps
-            ?? PicooSenderSession.initialBitrate(
-                forHeight: UInt32(supportedResolution.rawValue)
-            )
-        let streamEpoch = directive?.streamEpoch
-            ?? encoderApply.beginLocal(
-                session: session,
-                targetHeight: UInt32(supportedResolution.rawValue)
-            )
-        guard streamEpoch > 0 else {
-            errorMessage = "接收端要求先完成当前编码器调整。"
-            return
-        }
-        let applied = await camera.setResolution(
-            supportedResolution,
-            bitrateBps: targetBitrate,
-            streamEpoch: streamEpoch
-        )
-        guard !Task.isCancelled else {
-            _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
-            return
-        }
-        guard applied else {
-            encoderApply.failBeforeStart(
-                streamEpoch: streamEpoch,
-                message: "当前摄像头不支持 \(supportedResolution.rawValue)P。",
-                host: self
-            )
-            return
-        }
-        encoderApply.waitForApply(
-            directive: directive,
-            streamEpoch: streamEpoch,
-            encoderGeneration: camera.encoderGeneration,
-            height: UInt32(supportedResolution.rawValue),
-            bitrateBps: targetBitrate,
-            session: session
-        )
     }
 
     func suspendMediaSending() {
@@ -764,7 +706,7 @@ final class SenderAppModel {
         suspendMediaSending()
         let streamEpoch = encoderApply.beginLocal(
             session: session,
-            targetHeight: UInt32(camera.resolution.rawValue)
+            sourceFormat: camera.sourceFormat
         )
         guard streamEpoch > 0 else { return }
         cameraLifecycleTask?.cancel()
@@ -789,7 +731,8 @@ final class SenderAppModel {
                     directive: nil,
                     streamEpoch: streamEpoch,
                     encoderGeneration: self.camera.encoderGeneration,
-                    height: UInt32(self.camera.resolution.rawValue),
+                    sourceFormat: self.camera.sourceFormat,
+                    captureRotation: self.camera.captureRotation,
                     bitrateBps: self.activeBitrateBps,
                     session: session
                 )

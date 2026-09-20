@@ -1,8 +1,10 @@
 [workspace]
 resolver = "2"
+exclude = ["vendor/gpui-apple", "vendor/gpui", "vendor/gpui-windows", "vendor/scuffle-expgolomb", "vendor/scuffle-h265"]
 members = [
   "crates/picoo-protocol",
   "crates/picoo-packet",
+  "crates/picoo-bitstream",
   "crates/picoo-pairing",
   "crates/picoo-discovery",
   "crates/picoo-session",
@@ -11,8 +13,10 @@ members = [
   "crates/picoo-rate-control",
   "crates/picoo-metrics",
   "crates/picoo-media-decode",
+  "crates/picoo-recording",
   "crates/picoo-diagnostics",
   "crates/picoo-frame-hub",
+  "crates/picoo-gpu",
   "crates/picoo-sender",
   "crates/picoo-receiver",
   "crates/picoo-ffi",
@@ -31,6 +35,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/Haoxincode/picoo-camera"
 
 [workspace.dependencies]
+proptest = "=1.11.0"
 anyhow = "1.0"
 bitflags = "2.6"
 bytes = "1.12.1"
@@ -46,18 +51,17 @@ tracing = "0.1"
 yuv = "0.8.17"
 reed-solomon-erasure = "6.0"
 zeroize = "1.8"
+directories = "6.0"
+auto-launch = "0.6"
+netdev = { version = "0.46.3", default-features = false }
 
-# GPUI Kit facade — one compatible stack, including upstream #2940 so the
-# desktop build does not pull the unused reqwest/AWS-LC/CMake chain.
-gpui-kit = {
-  git = "https://github.com/longbridge/gpui-kit",
-  rev = "39c9b7b0fb0bdf3c4d07e26d7fdf74381474646e",
-  default-features = false,
-  features = ["component", "assets"],
-}
+# GPUI Kit facade — one compatible crates.io stack. 0.6.1 includes #2940, so
+# the desktop build does not pull the unused reqwest/AWS-LC/CMake chain.
+gpui-kit = { version = "0.6.1", default-features = false, features = ["component", "assets"] }
 
 picoo-protocol = { path = "crates/picoo-protocol" }
 picoo-packet = { path = "crates/picoo-packet" }
+picoo-bitstream = { path = "crates/picoo-bitstream" }
 picoo-pairing = { path = "crates/picoo-pairing" }
 picoo-discovery = { path = "crates/picoo-discovery" }
 picoo-session = { path = "crates/picoo-session" }
@@ -66,8 +70,10 @@ picoo-jitter = { path = "crates/picoo-jitter" }
 picoo-rate-control = { path = "crates/picoo-rate-control" }
 picoo-metrics = { path = "crates/picoo-metrics" }
 picoo-media-decode = { path = "crates/picoo-media-decode" }
+picoo-recording = { path = "crates/picoo-recording" }
 picoo-diagnostics = { path = "crates/picoo-diagnostics" }
 picoo-frame-hub = { path = "crates/picoo-frame-hub" }
+picoo-gpu = { path = "crates/picoo-gpu" }
 picoo-sender = { path = "crates/picoo-sender" }
 picoo-receiver = { path = "crates/picoo-receiver" }
 picoo-ffi = { path = "crates/picoo-ffi" }
@@ -77,3 +83,11 @@ picoo-sim = { path = "crates/picoo-sim" }
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[patch.crates-io]
+gpui-pre = { path = "vendor/gpui" }
+gpui-pre-windows = { path = "vendor/gpui-windows" }
+gpui-pre-apple = { path = "vendor/gpui-apple" }
+
+scuffle-expgolomb = { path = "vendor/scuffle-expgolomb" }
+scuffle-h265 = { path = "vendor/scuffle-h265" }

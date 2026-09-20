@@ -15,19 +15,19 @@ mod receiver_runtime;
 mod startup;
 mod tray;
 
-#[cfg(feature = "gpui-ui")]
+#[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
 mod gpui;
 #[cfg(all(feature = "gpui-ui", target_os = "macos"))]
 mod macos_system_extension;
-#[cfg(feature = "gpui-ui")]
+#[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
 mod picoo_theme;
-#[cfg(feature = "gpui-ui")]
+#[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
 mod preview_pipeline;
 #[cfg(all(windows, feature = "windows-vcam"))]
 mod vcam_register;
-#[cfg(feature = "gpui-ui")]
+#[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
 mod vcam_status;
-#[cfg(feature = "gpui-ui")]
+#[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
 mod video_surface;
 
 use std::io::{self, BufRead};
@@ -90,7 +90,7 @@ fn main() {
     }
 
     if args.iter().any(|arg| arg == "--gpui") {
-        #[cfg(feature = "gpui-ui")]
+        #[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
         {
             if let Err(err) = gpui::run_gpui_app() {
                 eprintln!("GPUI app failed: {err}");
@@ -98,7 +98,7 @@ fn main() {
             }
             return;
         }
-        #[cfg(not(feature = "gpui-ui"))]
+        #[cfg(not(all(feature = "gpui-ui", any(windows, target_os = "macos"))))]
         {
             eprintln!("Rebuild with --features gpui-ui to launch the desktop UI.");
             std::process::exit(1);
@@ -331,11 +331,8 @@ fn run_export_diagnostics(out_path: Option<&str>) {
 #[cfg(feature = "loopback-diagnostics")]
 fn run_loopback_demo() {
     match picoo_receiver::run_paired_loopback_access_unit(b"desktop-loopback-au") {
-        Ok(frame) => {
-            println!(
-                "Paired loopback OK — LatestFrameStore received {} bytes (pairing path, no unpaired bypass)",
-                frame.len()
-            );
+        Ok(_frame) => {
+            println!("Paired loopback OK — source frame published after pairing");
         }
         Err(err) => {
             eprintln!("Paired loopback demo failed: {err}");

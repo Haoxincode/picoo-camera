@@ -7,3 +7,5 @@
 ## 文档索引
 
 - [无线手机摄像头系统：产品需求与技术设计文档 V1.0（2026-08-27）](picoo-camera-prd-v1.0-2026-08-27.md)
+
+当前重构产品基线：[Next v2：GPU 主链路与 CPU 输出](picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)。2026-09-06 用户已授权实施；历史 PRD 的冲突范围由新方案替代，实测状态见 Design Specs。

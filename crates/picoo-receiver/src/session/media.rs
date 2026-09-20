@@ -2,9 +2,13 @@
 //!
 //! REQ-PICOO-FRAME-*, REQ-PICOO-MEDIA-004/006/009/017/023.
 
+#[cfg(not(any(target_os = "macos", windows)))]
 use bytes::Bytes;
-use picoo_frame_hub::{PlaceholderMode, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
+use picoo_frame_hub::PlaceholderMode;
+#[cfg(not(any(target_os = "macos", windows)))]
+use picoo_frame_hub::{PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH};
 use picoo_jitter::{Frame as JitterFrame, PushOutcome};
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_media_decode::DecodedFrame;
 use picoo_packet::AssembledAccessUnit;
 #[cfg(test)]
@@ -18,10 +22,13 @@ use std::time::Instant;
 #[cfg(test)]
 use super::decoder_worker::{AccessUnitTimeline, DecoderWorker, FrameKind};
 use super::decoder_worker::{DecodeSubmitOutcome, EncodedAccessUnit};
+#[cfg(not(any(target_os = "macos", windows)))]
 use super::media_publish::FrameTimeline;
 use super::recovery::RecoveryReason;
 use super::ReceiverSession;
-use crate::{ReceiverError, DEFAULT_SHARED_RING_NAME};
+use crate::ReceiverError;
+#[cfg(not(target_os = "macos"))]
+use crate::DEFAULT_SHARED_RING_NAME;
 
 impl ReceiverSession {
     pub(super) fn release_pending_stream_config_idr(
@@ -47,6 +54,19 @@ impl ReceiverSession {
         &mut self,
         access_unit: AssembledAccessUnit,
     ) -> Result<(), ReceiverError> {
+        if access_unit.keyframe
+            && self
+                .reassembly
+                .oldest_unresolved_frame_id()
+                .is_some_and(|missing| missing < access_unit.frame_id)
+        {
+            // A complete random-access candidate can replace the old prediction
+            // chain. Cut unresolved old media before queuing it, so the recovery
+            // cleanup cannot discard the very candidate that enables recovery.
+            // The wire hint grants no publication: Decoder completion must still
+            // confirm refresh acceptance against the submitted configuration.
+            self.enter_decoder_recovery(RecoveryReason::RandomAccessResync, true)?;
+        }
         let pts_us = access_unit.pts_us;
         let completed_at = Instant::now();
         if access_unit.keyframe {
@@ -105,56 +125,101 @@ impl ReceiverSession {
         Ok(())
     }
 
-    /// Attach a cross-process Shared Frame Ring for VCam consumption (REQ-PICOO-FRAME-003).
-    pub fn attach_shared_ring(&mut self, name: &str) -> Result<(), ReceiverError> {
-        let name = name.to_owned();
-        let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
-        let ring = picoo_frame_hub::SharedFrameRingWriter::start(move || {
-            #[cfg(target_os = "windows")]
-            if use_platform_ring {
-                return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
-                    picoo_frame_hub::windows_shared_ring_path(&name),
+    /// Attach the platform VCam transport.
+    pub fn attach_virtual_camera_output(&mut self, name: &str) -> Result<(), ReceiverError> {
+        #[cfg(target_os = "macos")]
+        {
+            let _ = name;
+            self.native_output =
+                Some(crate::output::NativeOutput::start().map_err(|error| {
+                    ReceiverError::Protocol(format!("macOS CMIO output: {error}"))
+                })?);
+            self.last_vcam_output_error = None;
+            self.publish_waiting_placeholder()?;
+            Ok(())
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let name = name.to_owned();
+            let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
+            let factory = move || {
+                #[cfg(target_os = "windows")]
+                if use_platform_ring {
+                    return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
+                        picoo_frame_hub::windows_shared_ring_path(&name),
+                        picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
+                    );
+                }
+                #[cfg(not(target_os = "windows"))]
+                let _ = use_platform_ring;
+                picoo_frame_hub::SharedFrameRingProducer::open_or_create(
+                    &name,
                     picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-                );
+                )
+            };
+            #[cfg(windows)]
+            let ring = crate::output::CpuOutput::start(factory)?;
+            #[cfg(not(any(target_os = "macos", windows)))]
+            let ring = picoo_frame_hub::SharedFrameRingWriter::start(factory)?;
+            self.shared_ring = Some(ring);
+            #[cfg(windows)]
+            {
+                self.native_output = match crate::output::NativeOutput::start() {
+                    Ok(output) => Some(output),
+                    Err(error) => {
+                        tracing::warn!(%error, "GpuNative VCam unavailable; keeping CpuBridge output");
+                        None
+                    }
+                };
             }
-            #[cfg(target_os = "macos")]
-            if use_platform_ring {
-                let path = picoo_frame_hub::macos_app_group_ring_path(&name)?;
-                return picoo_frame_hub::SharedFrameRingProducer::open_or_create_file(
-                    path,
-                    picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-                );
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            let _ = use_platform_ring;
-            picoo_frame_hub::SharedFrameRingProducer::open_or_create(
-                &name,
-                picoo_frame_hub::DEFAULT_MAX_FRAME_BYTES,
-            )
-        })?;
-        self.shared_ring = Some(ring);
-        self.last_shared_ring_error = None;
-        self.publish_waiting_placeholder()?;
-        Ok(())
+            self.last_vcam_output_error = None;
+            self.publish_waiting_placeholder()?;
+            Ok(())
+        }
     }
 
-    pub(super) fn drain_shared_ring_events(&mut self) {
+    pub(super) fn drain_virtual_camera_output_events(&mut self) {
+        #[cfg(target_os = "macos")]
+        {
+            let Some(output) = self.native_output.as_ref() else {
+                return;
+            };
+            while let Some(event) = output.poll_event() {
+                match event {
+                    crate::output::OutputEvent::Published => self.last_vcam_output_error = None,
+                    crate::output::OutputEvent::Failed(error) => {
+                        self.last_vcam_output_error = Some(error)
+                    }
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
         let Some(ring) = self.shared_ring.as_ref() else {
             return;
         };
+        #[cfg(not(target_os = "macos"))]
         while let Some(event) = ring.poll_event() {
+            #[cfg(windows)]
+            match event {
+                crate::output::OutputEvent::Published => self.last_vcam_output_error = None,
+                crate::output::OutputEvent::Failed(error) => {
+                    self.last_vcam_output_error = Some(error)
+                }
+            }
+            #[cfg(not(any(target_os = "macos", windows)))]
             match event {
                 picoo_frame_hub::SharedRingWriterEvent::Published { .. } => {
-                    self.last_shared_ring_error = None;
+                    self.last_vcam_output_error = None;
                 }
                 picoo_frame_hub::SharedRingWriterEvent::Failed { error, .. } => {
                     tracing::warn!(%error, "Shared Frame Ring output failed");
-                    self.last_shared_ring_error = Some(error.to_string());
+                    self.last_vcam_output_error = Some(error.to_string());
                 }
             }
         }
     }
 
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn publish_waiting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.waiting_frame();
         self.publish_decoded_frame(
@@ -167,10 +232,12 @@ impl ReceiverSession {
                 0,
                 Bytes::from(nv12),
             ),
+            false,
         )
     }
 
     /// Publish reconnect-branded placeholder (REQ-PICOO-FRAME-005).
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub fn publish_reconnecting_placeholder(&mut self) -> Result<(), ReceiverError> {
         let nv12 = self.placeholder_mode.reconnecting_frame();
         self.publish_decoded_frame(
@@ -183,6 +250,7 @@ impl ReceiverSession {
                 0,
                 Bytes::from(nv12),
             ),
+            false,
         )
     }
 
@@ -194,12 +262,20 @@ impl ReceiverSession {
         self.placeholder_mode
     }
 
-    /// Decode one typed H.264 access unit into one shared VideoFrame.
+    /// Submit one typed AU; the Decoder may return zero or several original-token outputs.
     pub(super) fn publish_timeline_access_unit(
         &mut self,
         access_unit: EncodedAccessUnit,
     ) -> Result<(), ReceiverError> {
         self.ingress.access_units += 1;
+        if self
+            .admitted_access_unit_budget
+            .is_some_and(|budget| access_unit.data.len() > budget as usize)
+        {
+            return Err(ReceiverError::Protocol(
+                "access unit exceeds admitted decoder budget".into(),
+            ));
+        }
         if self
             .current_stream_config
             .as_ref()
@@ -210,10 +286,11 @@ impl ReceiverSession {
             return Ok(());
         }
         let timeline = access_unit.timeline();
-        match self
-            .decoder_worker
-            .submit(access_unit, self.current_stream_config.clone())
-        {
+        match self.decoder_worker.submit(
+            access_unit,
+            self.current_stream_config.clone(),
+            self.config_revision,
+        ) {
             DecodeSubmitOutcome::Queued => {
                 self.decoder_recovery.note_refresh_submitted(timeline);
             }

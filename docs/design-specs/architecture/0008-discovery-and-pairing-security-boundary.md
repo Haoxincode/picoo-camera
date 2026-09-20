@@ -59,6 +59,8 @@ socket 调用 NDK `android_setsocknetwork`；iOS 用 Network.framework 的 `NWPa
 Android 的该条局域网分流；该判断不能只依赖“私有地址”或 VPN 名称。任何条件无法证明时均失败
 关闭，避免把局域网会话发往隧道。
 
+Windows/macOS Receiver 的网卡快照使用 `netdev` 提供的平台接口元数据；Picoo 仍按物理局域网、
+VPN/隧道排除和 RFC1918 优先级选择可达地址，不能把 `netdev` 的默认路由结果直接当作广告策略。
 Windows/macOS Receiver 是在固定 UDP 端口被动监听的一方，可以监听 wildcard 地址以承受局域网
 地址变化；其 mDNS A 记录和组播出口必须只选择物理 Wi-Fi/以太网地址，并明确排除 VPN、utun、
 WireGuard、Docker、Hyper-V、WSL 等隧道或虚拟接口。若 always-on/lockdown VPN 或企业策略禁止
@@ -109,7 +111,7 @@ SAS 必须由两端独立计算，禁止 Receiver 计算后把短码当作普通
 - Receiver 启动时必须区分身份/可信存储损坏与普通传输、解码或监听失败。前两者进入独立恢复界面，
   且在用户明确提交前不得创建 QUIC/媒体 Runtime；身份修复覆盖 OS 安全存储中的损坏凭据并原子清空
   可信存储，可信存储修复只原子写入空的有效存储而保留 Receiver 身份。正常运行时“重置全部配对”是
-  带对象与后果说明的破坏性确认操作，成功后立即断开当前 Sender。任何恢复结果都不得从旧密钥或
+  用户可直接提交的破坏性操作，提交期间禁止重复命令并在成功后立即断开当前 Sender、反馈结果。任何恢复结果都不得从旧密钥或
   损坏记录推导信任，双方必须重新核对短码。
 - 旧伪公钥和旧 trust store 不具备可验证私钥证明，不做静默迁移。切换到本安全契约时全部失效，
   用户重新配对。

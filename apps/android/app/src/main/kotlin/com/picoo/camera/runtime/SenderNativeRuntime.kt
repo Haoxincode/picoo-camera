@@ -176,6 +176,8 @@ class SenderNativeRuntime(context: Context) : Closeable {
         return PicooNative.removeTrustedDevice(senderHandle, deviceId)
     }
 
+    fun currentWifiNetwork(): Network? = wifiNetwork.get()
+
     fun autoConnectAttempts(): Set<String> = autoConnectAttemptedIds.toSet()
 
     fun markAutoConnectAttempt(deviceId: String) {

@@ -65,6 +65,7 @@ impl PicooDesktopApp {
             preview_pipeline,
             preview_viewport,
             video_surface: VideoSurface::default(),
+            preview_source: (None, None),
             display_name_input,
             _subscriptions,
             vcam_status,
@@ -78,6 +79,7 @@ impl PicooDesktopApp {
             pairing_dialog: Default::default(),
             pairing_locally_confirmed: false,
             receiver_command_pending: false,
+            recording_ui: Default::default(),
             identity_replacement_dialog_revision: None,
         }
     }
@@ -169,13 +171,36 @@ impl PicooDesktopApp {
                 .await;
             if this
                 .update(cx, |this, cx| {
+                    let snapshot = this.runtime.snapshot();
                     let preview_visible = this.page == DesktopPage::Live
                         && this.section == DesktopSection::Connect;
+                    let latest_frame = this.runtime.latest_frame();
+                    let preview_source = (
+                        snapshot.control_generation,
+                        snapshot.stream_config.as_ref().map(|config| config.stream_epoch),
+                    );
+                    let source_changed = this.preview_source != preview_source;
+                    if source_changed {
+                        this.preview_source = preview_source;
+                        this.preview_pipeline.invalidate_source();
+                        this.video_surface.clear();
+                    } else if latest_frame.is_none() && this.preview_pipeline.clear() {
+                        this.video_surface.clear();
+                    }
+                    let live_frame = latest_frame.as_ref().filter(|frame| {
+                        snapshot.control_generation.is_some_and(|generation| {
+                            frame.identity().connection_generation == generation
+                        })
+                    });
                     if preview_visible {
-                        if let Some(width) = this.preview_viewport.target_physical_width() {
+                        if let Some(width) = this.preview_viewport.take_target_physical_width() {
                             this.preview_pipeline.set_viewport_physical_width(width);
-                            if let Some(slot) = this.runtime.latest_frame() {
-                                this.preview_pipeline.submit_latest(&slot);
+                            if let Some(slot) = live_frame {
+                                this.preview_pipeline.submit_latest(slot);
+                            }
+                        } else if source_changed {
+                            if let Some(slot) = live_frame {
+                                this.preview_pipeline.submit_latest(slot);
                             }
                         }
                     }
@@ -183,7 +208,6 @@ impl PicooDesktopApp {
                         .preview_pipeline
                         .take_prepared()
                         .is_some_and(|preview| this.video_surface.present(preview, cx));
-                    let snapshot = this.runtime.snapshot();
                     let previous_page = this.page;
                     // REQ-PICOO-UI-008: Windows tray message/tip pump.
                     #[cfg(all(windows, feature = "windows-vcam"))]
@@ -366,7 +390,11 @@ impl PicooDesktopApp {
                     if snapshot_changed {
                         this.last_presented_snapshot = snapshot;
                     }
-                    if snapshot_changed || video_changed || this.page != previous_page {
+                    if snapshot_changed
+                        || video_changed
+                        || source_changed
+                        || this.page != previous_page
+                    {
                         cx.notify();
                     }
                 })
@@ -414,6 +442,7 @@ impl Render for PicooDesktopApp {
                         .min_w_0()
                         .min_h_0()
                         .child(self.render_workspace_toolbar(cx))
+                        .child(self.render_recording_bar(&snapshot, cx))
                         .child(self.render_section(&snapshot, cx)),
                 );
             div()

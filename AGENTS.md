@@ -74,27 +74,29 @@ Agent 在开始设计或实现前，应先读取这份 context，并按其中的
 
 项目设计规范和内部推理文档默认使用中文。只有当来源材料是英文 API、标准或外部规范，并且保留原始术语更重要时，才使用英文。
 
-## Cloud Agent 与跨平台构建
+## 本地开发与跨平台构建
 
-Cloud Agent 运行在 Linux 环境，**不能**在本机构建 Windows 桌面程序、MF 虚拟摄像头 DLL、macOS Camera Extension 或 iOS App。各平台最终二进制由 **GitHub Actions** 在对应 runner 上编译。
+日常开发环境是 Apple Silicon macOS，可在本机构建和调试 Rust Core、Android Sender、macOS Receiver / Camera Extension 与 iOS Sender。Windows 桌面程序、MF 虚拟摄像头 DLL 和安装包仍须在 Windows 原生环境构建。
+
+**GitHub Actions 是全平台可重复构建、测试、签名、打包和发布的统一验证入口。** 本机构建用于快速迭代和真机调试，不替代对应 runner 的 CI 结果。
 
 完整分工、runner 矩阵、workflow 约定与 Agent 工作流见 [docs/development/ci-and-build.md](docs/development/ci-and-build.md)。实现与修改 CI 时请遵循该文档，并与 [ARCH-PICOO-STACK-001](docs/design-specs/architecture/0001-rust-core-monorepo-boundary.md) 中的 xtask 边界一致。
 
-### Agent 在 Cloud 中的职责
+### Agent 的构建职责
 
-- Rust Core 开发、`cargo test`、协议测试与 `picoo-testkit` 模拟。
-- Android Sender 构建（NDK + Gradle，可在 Linux 完成）。
+- 在当前环境具备对应官方 SDK 和工具链时，执行 Rust Core、协议、Android 或 Apple 平台的本地构建与测试。
+- 不在 macOS 或 Linux 上交叉编译完整 Windows Receiver 链路。
 - 维护 `.github/workflows/`，通过 `cargo xtask` 调用各平台构建，不在 workflow 中重复平台细节。
-- 变更 push 后使用 **cursor-subscriptions** 的 `subscribe_github_ci` 等待 CI 结果，根据 Actions 日志迭代修复。
+- 变更 push 后等待对应 GitHub Actions 结果；失败时读取 Actions 日志并迭代修复。
 
-### 必须通过 GitHub Actions 构建的产物
+### GitHub Actions 平台验证矩阵
 
 | 平台 | Runner | 说明 |
 | --- | --- | --- |
-| Windows Receiver（GPUI + MF + VCam + 安装包） | `windows-latest` | 禁止在 Linux 上交叉编译整条 Receiver 链路 |
-| macOS Receiver / Camera Extension | `macos-26` ARM64 + Xcode 26.6 | GPUI 编译基线已启用；Camera Extension 接入后扩展构建与签名 |
-| iOS Sender | `macos-26` ARM64 + Xcode 26.6 | Rust XCFramework 基线已启用；SwiftUI App 接入后扩展构建与签名 |
-| Android Sender | `ubuntu-latest` | Cloud 与 CI 均可构建 |
+| Windows Receiver（GPUI + MF + VCam + 安装包） | `windows-latest` | 必须在 Windows 原生环境构建；本地 macOS 不交叉编译整条 Receiver 链路 |
+| macOS Receiver / Camera Extension | `macos-26` ARM64 + Xcode 26.6 | 本地可构建和真机调试；CI 验证可重复构建，release workflow 负责签名与公证 |
+| iOS Sender | `macos-26` ARM64 + Xcode 26.6 | 本地可构建和真机调试；CI 验证 XCFramework、App 与签名导出 |
+| Android Sender | `ubuntu-latest` | 本地 macOS 与 CI 均可构建 |
 
 Android + Windows 已进入功能实现与产物验证；iOS + macOS 已进入平台构建基线与原生边界实现。Apple job 必须明确区分“Core/桌面可编译”和“App、Camera Extension、签名、真机链路已验证”，不得用前者替代后者的验收证据。
 

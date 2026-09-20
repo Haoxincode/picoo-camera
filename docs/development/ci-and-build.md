@@ -1,30 +1,32 @@
 # CI 与跨平台构建
 
-本文档说明 Picoo Camera 如何在 **Cloud Agent 开发环境** 与 **GitHub Actions** 之间分工，以产出各平台可用二进制。它与 [ARCH-PICOO-STACK-001](../design-specs/architecture/0001-rust-core-monorepo-boundary.md) 中的 monorepo / xtask 边界一致，并补充 PRD §19 的构建与发布约定。
+本文档说明 Picoo Camera 如何在 **本地开发环境** 与 **GitHub Actions** 之间分工，以产出各平台可用二进制。它与 [ARCH-PICOO-STACK-001](../design-specs/architecture/0001-rust-core-monorepo-boundary.md) 中的 monorepo / xtask 边界一致，并补充 PRD §19 的构建与发布约定。
 
 ## 背景
 
 Picoo Camera 目标四端（Android、iOS、Windows、macOS），但各平台依赖不同的原生 SDK 与工具链：
 
-| 平台 | 关键原生依赖 | 能否在 Linux Cloud Agent 上完成最终产物 |
+| 平台 | 关键原生依赖 | Apple Silicon macOS 本地能力 |
 | --- | --- | --- |
 | Rust Core（共享） | Cargo、Quinn/Rustls；vendored `protoc` | ✅ 开发与测试 |
-| Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 完整 APK/AAB |
-| Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境 |
-| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ❌ 需 macOS 原生环境；当前 CI 已覆盖 GPUI 编译与 VideoToolbox→NV12 解码基线 |
-| iOS Sender | Xcode、VideoToolbox、codesign | ❌ 需 macOS + Xcode；远端已验证 Rust XCFramework、SwiftUI 壳与 Simulator C ABI 测试基线 |
+| Android Sender | NDK、Gradle、Camera2/MediaCodec | ✅ 配置 NDK、JDK 与 Android SDK 后可构建 APK/AAB |
+| Windows Receiver | GPUI、Media Foundation、D3D11、COM 虚拟摄像头 | ❌ 需 Windows 原生环境或对应 GitHub Actions runner |
+| macOS Receiver | GPUI、VideoToolbox、Camera Extension、codesign | ✅ 可构建并进行真机调试；正式签名与公证由 release workflow 验证 |
+| iOS Sender | Xcode、VideoToolbox、codesign | ✅ 可构建 Simulator / device 产物并进行真机调试；正式签名导出由 release workflow 验证 |
 
-**结论：** Cloud Agent（Linux）负责 Rust Core 实现、协议测试、Android 构建与 CI 维护；**各平台最终安装包与原生组件由 GitHub Actions 在对应 runner 上编译**。不要试图在 Linux 上交叉编译 GPUI 桌面程序、MF 虚拟摄像头 DLL 或 macOS/iOS 签名产物。
+**结论：** 本地 macOS 负责日常实现、快速验证及 Android / Apple 平台真机调试；Windows 原生产物交给 Windows 环境构建。**GitHub Actions 是全平台可重复构建、测试、签名、打包和发布的统一验证入口**。所有 workflow 均通过 `cargo xtask` 调用平台构建逻辑。
 
 ## 构建分工
 
 ```text
-Cloud Agent（Linux）
+本地 Apple Silicon macOS
 ├── Rust Core crate 开发与 cargo test
 ├── picoo-testkit QUIC 边界测试 + picoo-sim 虚拟时钟全链路模拟
 ├── Android APK/AAB（NDK + Gradle）
+├── macOS Receiver / Camera Extension 构建与真机调试
+├── iOS Sender 构建与真机调试
 ├── .github/workflows/ 维护与 CI 修复
-└── push 后订阅 CI 结果并迭代
+└── push 后等待 CI 结果并迭代
 
 GitHub Actions
 ├── ubuntu-latest   → Rust 测试、Android 构建、文档校验
@@ -41,9 +43,9 @@ GitHub Actions
 | `rust-and-docs` | `ubuntu-latest` | 默认产品与显式诊断 feature 图编译并核对 `test-support` 隔离、workspace 测试、clippy、文档及静态契约检查；同一批 Cargo 测试只执行一次 | `cargo tree -e features` + `cargo check -p picoo-sender -p picoo-receiver -p picoo-desktop`、`cargo check -p picoo-desktop --features loopback-diagnostics`、`cargo test --workspace`、`scripts/check-docs.sh` |
 | `nightly-validation` | `ubuntu-latest` | PCP parser/state fuzz、30 分钟 paired loopback soak、Shared Ring/FFI Miri 与原子协议 Loom model | `cargo xtask test fuzz/soak/miri/loom` |
 | `android` | `ubuntu-latest` | 独立 application ID 的 Android Sender Debug APK；编译 Android Keystore 平台身份 instrumentation contract | `cargo xtask build android`；`assembleDebugAndroidTest` |
-| `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包；Windows Credential Manager 身份持久化/fail-closed 合约 | `cargo xtask test windows`、`cargo xtask build windows`、`cargo xtask package windows` |
+| `windows` | `windows-latest` | 桌面 exe、VCam DLL、安装包；Windows Credential Manager 身份持久化/fail-closed 合约；合成AVC/HEVC原码流mux探针与独立文件产物 | `cargo xtask test windows`、`cargo xtask build windows`、`cargo xtask package windows` |
 | `Windows VCam host contract` | `self-hosted, Windows, X64, picoo-vcam`（专用管理员 Win11 client） | MSI 安装/repair/卸载、exact-link 枚举、MF Source 激活与 Start/Stop/Shutdown | `cargo xtask package windows`、`scripts/test_windows_vcam_host.ps1` |
-| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、隔离 Keychain 身份持久化/fail-closed 合约、VideoToolbox→NV12 原生解码、Rust Writer↔Swift/C Reader 跨进程恢复、Swift 6 CMIO Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
+| `macos` | `macos-26` ARM64 + Xcode 26.6 | 共享 GPUI Receiver、隔离 Keychain 身份持久化/fail-closed 合约、VideoToolbox→NV12 原生解码、Swift 6 CMIO source/sink synthetic harness 与 Host queue contract、Camera Extension 与 Host `.app` 无签名打包 | `cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings`；`cargo xtask test macos`；`cargo xtask package macos` |
 | `ios` | `macos-26` ARM64 + Xcode 26.6 | Rust Core device/simulator XCFramework、SwiftUI App ARM64 编译链接、Simulator C ABI 与 Keychain 跨 Session 身份稳定性测试 | `cargo xtask build ios`；`cargo xtask test ios` |
 | `Apple Release / macos` | `macos-26` ARM64 + Xcode 26.6 + `apple-release` protected Environment | workspace SemVer 与递增 Host/Extension build；Developer ID profile/授权证书/effective entitlements 校验；Hardened Runtime 签名、Notary Service 公证与 staple；SBOM/provenance | `cargo xtask release macos`；首次真实凭据绿测与真机激活仍是独立验收 |
 | `Apple Release / ios` | `macos-26` ARM64 + Xcode 26.6 + `apple-release` protected Environment | workspace SemVer 与递增 build；Apple Distribution/App Store profile 绑定；Archive→IPA；签名、Team/Bundle/version/arm64/entitlements/profile 复核；SBOM/provenance | `cargo xtask release ios`；首次真实凭据绿测、App Store Connect 与真机覆盖安装仍是独立验收 |
@@ -66,6 +68,20 @@ Foundation Frame Server 的专用 Windows 11 client runner。脚本要求 runner
 - 四个平台的用户版本来自 workspace SemVer；普通 CI 将同一个 `github.run_number` 注入 `PICOO_BUILD_NUMBER`：Android Debug 用作 `versionCode`，iOS/macOS 用作 `CFBundleVersion`，Windows 与 SemVer Major/Minor 组合为三字段 MSI `ProductVersion`，并同步写入 desktop、MF Source 与 ring reader 的四字段 PE `FileVersion`。Android 正式 APK/AAB 只由 `release-android.yml` 在受保护 Environment 中注入稳定 keystore 后调用 `xtask package android`；Gradle 遇到任意 Release task 且签名输入不完整时立即失败。`xtask` 负责版本边界和范围校验，WiX 不硬编码版本；Windows CI 还查询 MSI `File`、`InstallExecuteSequence` 与 `CustomAction` 表，强制 late MajorUpgrade 的受限窗口只包含 `RemoveExistingProducts`，并运行 ICE27/ICE63/ICE77。最终虚拟摄像头注册在 `InstallExecute` 前写入 commit script，于旧产品移除并成功提交后执行。因此较新的 CI 安装包会执行平台原生升级，不会保留旧二进制。Apple Release 始终复核 tag 与 workspace SemVer 一致，并以显式正整数 `PICOO_RELEASE_BUILD_NUMBER` 覆盖普通 CI 构建号。
 - **下载最新绿 run 产物**（artifact 名、zip 内路径、`gh run download`）：见 [CI 产物下载](../design-specs/verification/ci-artifacts.md)。
 - Workflow 使用 `concurrency`（按 PR 号或 `github.ref` 分组、`cancel-in-progress: true`），同分支/同 PR 的新 push 会取消仍在跑的旧 CI，避免 tip 被积压 run 饿死。
+
+### Windows 依赖缓存
+
+Windows job 在工具链安装后使用固定 SHA 的 Swatinem/rust-cache 2.9.2，仅缓存 Cargo
+依赖构建；不缓存 workspace crate，cache 命中也完整执行 xtask test/build/package 与 MSI
+smoke。缓存键包含 job、rustc release/host/hash、Cargo 配置/锁文件及编译环境，分支隔离
+遵循 GitHub Actions cache 服务。仅 push 保存，PR 只读取；失败时也允许保存已经构建的
+依赖。缓存是可丢弃的加速层，冷缓存仍按相同命令生成完整产物。
+
+候选采用成熟 Rust 缓存 Action，而非手工维护 target 内部文件清理和 Cargo fingerprint。
+已核对 [v2.9.2](https://github.com/Swatinem/rust-cache/tree/6323deb102c322ba6fcbdcafc7e3dddab59af2b6)（2026-08-06 发布）的 action.yml/README，仓库未归档，2026-08-31 仍有更新；
+LGPL-3.0 代码只在 CI 的 Node 24 环境执行，不链接或分发进产品。当前 windows-latest 支持
+Node 24。缓存可能占用仓库 Actions 存储配额并被自动淘汰，实际缓存体积和暖缓存耗时由 CI
+日志记录，不以假定加速比例作为验收结果。
 
 ### 示例 Workflow 结构
 
@@ -115,13 +131,13 @@ jobs:
           path: target/release/bundle/
 ```
 
-已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及 720p→480p ABR/epoch/LatestFrameStore 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。该命令还会直接编译 Camera Extension 使用的生产 Swift 6 Reader 与 C17 原子边界，在独立进程中验证 Rust Writer 并发覆盖、NV12 完整性、Reader/Producer 异常退出后的租约恢复和单 Producer 生命周期锁。`xtask package macos` 编译 ARM64 CMIO Camera Extension，将其按 Bundle ID 命名并嵌入 Host `.app` 的 `Contents/Library/SystemExtensions/`，同时检查 Host/Extension 身份、App Group、安装扩展签名输入、架构 slice 以及扩展不链接 QUIC/Decoder。静态样本与跨进程 harness 让该验收不依赖 CMake 或外部编码器。这些证据都不替代签名 App Group 读写、系统扩展激活、公证、会议软件枚举或 iPhone→macOS 真机媒体链路验收。
+已记录的远端绿测证明共享 GPUI Receiver、Rust XCFramework、SwiftUI App、Simulator C ABI 生命周期测试和 iOS 原生媒体源码的 Apple 原生编译、链接边界。macOS VideoToolbox 解码由 `xtask test macos` 使用仓库内静态真实 H.264 IDR 验证 `CMSampleBuffer → 420v NV12`、AVCC Receiver 链路以及配置/epoch/FrameBus 恢复，并检查产品依赖树不含 OpenH264/CMake；macOS 测试依赖也不编译 OpenH264。该命令还会以 strict concurrency 和 warnings-as-errors 直接编译 Camera Extension 的生产 Swift 6 CMIO source/sink，验证共享四格式选择、非法格式拒绝、独立 SampleClock 与三槽 CoreVideo pool；Rust 测试验证 Host Apple renderer、CpuBridge 与 CMIO output 边界。`xtask package macos` 编译 ARM64 CMIO Camera Extension，将其按 Bundle ID 命名并嵌入 Host `.app` 的 `Contents/Library/SystemExtensions/`，同时检查 Host/Extension 身份、App Group 签名输入、架构 slice 以及扩展不链接 QUIC/Decoder。静态样本与合成 harness 让该验证不依赖外部编码器。这些证据都不替代已签名系统扩展激活、公证、真实 sink 消费、会议软件枚举或 iPhone→macOS 真机媒体链路验收。
 
 ### Apple 无签名构建基线
 
 Apple 基线保持三个独立 artifact：
 
-- `macos-app-unsigned`：`PicooCamera-macOS-unsigned.zip` 包含 ARM64 `Picoo Camera.app`，Camera Extension 已嵌入标准目录，品牌 `PicooCamera.icns` 位于 Host `Contents/Resources/` 并由 `CFBundleIconFile` 引用；同一 artifact 还包含已展开的 Host 与 Extension entitlements 签名输入 scaffold。无签名构建使用 `UNSIGNED.` Team 前缀和独立 Host Info.plist marker，Shared Ring 降级到 Application Support，不能完成系统激活。
+- `macos-app-unsigned`：`PicooCamera-macOS-unsigned.zip` 包含 ARM64 `Picoo Camera.app`，Camera Extension 已嵌入标准目录，品牌 `PicooCamera.icns` 位于 Host `Contents/Resources/` 并由 `CFBundleIconFile` 引用；同一 artifact 还包含已展开的 Host 与 Extension entitlements 签名输入 scaffold。无签名构建使用 `UNSIGNED.` Team 前缀和独立 Host Info.plist marker，不能完成系统激活或真实 CMIO sink/source 互通。
 - `ios-rust-core-xcframework`：`PicooCore.xcframework.zip`，包含 iOS device arm64 与 simulator arm64 slice，并携带 `picoo_camera.h` 和 `module.modulemap`。
 - `ios-app-unsigned`：`PicooCamera.app.zip`，是 SwiftUI + Swift 6 编译的 ARM64 Simulator App，用于验证 Swift module 与 Rust C ABI 的最终链接，不是可安装到真机的签名包。
 
@@ -143,18 +159,16 @@ Apple 基线保持三个独立 artifact：
 
 Rust Core 静态库理论上可从 Linux 交叉编译为 Windows `.lib`，但 GPUI、MF、VCam 的最终链接与注册仍必须在 `windows-latest` 上完成。因此 CI 策略是 **Windows 原生构建**，而非 Linux 交叉编译整条 Receiver 链路。
 
-## Cloud Agent 工作流
+## Agent 工作流
 
-在 Cursor Cloud Agent 中开发时，Agent 应：
+Agent 应：
 
-1. 在 Linux 环境完成 Rust Core 变更与 `cargo test`。
+1. 按当前开发环境具备的官方 SDK 和工具链执行相关本地构建与测试；macOS 上可覆盖 Rust Core、Android、macOS 与 iOS 开发链路。
 2. 更新或新增 `.github/workflows/` 中与变更相关的 job。
-3. `git commit` 并 `git push` 到功能分支。
-4. 使用 **cursor-subscriptions** 的 `subscribe_github_ci` 订阅该分支 CI，等待结果而非轮询。
-5. CI 失败时读取 GitHub Actions 日志，修复后再次 push。
-6. 不在 Cloud 环境内尝试运行 Windows/macOS 安装包或虚拟摄像头注册。
-
-Cloud 环境 `.cursor/install.sh` 只需保证 Rust 工具链与文档校验工具；Android NDK 等可在 install 脚本或 workflow 步骤中按需补齐，**macOS SDK 与 Windows SDK 不放入 Linux install**。
+3. 经用户授权后将变更提交并推送到功能分支。
+4. 等待对应 GitHub Actions 完成；若当前环境提供 CI 订阅能力，可优先订阅而非主动轮询。
+5. CI 失败时读取 GitHub Actions 日志，修复后再次验证。
+6. 不在 macOS 或 Linux 上尝试构建、安装或注册 Windows MF 虚拟摄像头；该链路由 Windows runner 和专用 Windows 11 主机验证。
 
 ## Secrets 与签名
 
@@ -225,7 +239,7 @@ Apple Release 把 Developer ID 或 Apple Distribution P12 只导入临时 Keycha
 
 | 验证类型 | 执行位置 |
 | --- | --- |
-| Rust 单元/集成/协议测试 | `ubuntu-latest`（Cloud Agent 本地亦可） |
+| Rust 单元/集成/协议测试 | 本地开发环境与 `ubuntu-latest` |
 | Android Keystore 身份合约 | `androidTest` APK 在普通 CI 编译；本地 AVD/设备以 `connectedDebugAndroidTest` 执行重载、非明文和损坏 fail-closed 合约 |
 | Android 安装与采集发送 | CI artifact + 真机（人工或后续设备 farm） |
 | Windows 安装与虚拟摄像头枚举 | `windows-latest` 构建/静态契约 + 专用 self-hosted Win11 Host Contract；系统相机 UI 与会议软件仍人工验证 |
@@ -237,4 +251,4 @@ Apple Release 把 Developer ID 或 Apple Distribution P12 只导入临时 Keycha
 
 - [ARCH-PICOO-STACK-001](../design-specs/architecture/0001-rust-core-monorepo-boundary.md) — monorepo 与 xtask 边界
 - [产品 PRD §19 构建与发布](../product/picoo-camera-prd-v1.0-2026-08-27.md)
-- [AGENTS.md](../../AGENTS.md) — Cloud Agent 跨平台构建指令
+- [AGENTS.md](../../AGENTS.md) — 本地开发与跨平台构建指令

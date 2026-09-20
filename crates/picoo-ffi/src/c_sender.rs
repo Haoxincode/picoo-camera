@@ -1,8 +1,6 @@
 use crate::handles::{RecoverMutex, SenderInner};
 use picoo_pairing::DeviceIdentity;
-use picoo_sender::{
-    EncoderDirective, NativeEncoderAccessUnit, SenderError, SenderSession, SessionStats,
-};
+use picoo_sender::{EncoderDirective, SenderError, SenderSession, SessionStats};
 use picoo_session::SenderStatus;
 use picoo_transport::{ClientNetworkBinding, Endpoint, QuicSenderTransport, TransportError};
 use std::ffi::CStr;
@@ -135,72 +133,6 @@ pub extern "C" fn picoo_sender_wait_for_event(
         .wait_after(after_revision, Duration::from_millis(u64::from(timeout_ms)))
 }
 
-/// Ingest one H.264 access unit. Returns 0 on success, negative on error.
-#[no_mangle]
-pub extern "C" fn picoo_sender_ingest_access_unit(
-    handle: *mut std::ffi::c_void,
-    data: *const u8,
-    len: usize,
-    is_keyframe: u8,
-    pts_us: u64,
-    encoded_at_us: u64,
-    stream_epoch: u32,
-    transaction_id: u64,
-    encoder_generation: u64,
-    encoder_height: u32,
-    out_packets: *mut u32,
-) -> i32 {
-    if handle.is_null() || data.is_null() || len == 0 {
-        return -1;
-    }
-
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    let slice = unsafe { std::slice::from_raw_parts(data, len) };
-    let mut session = inner.session.lock_or_recover();
-
-    match session.ingest_encoder_access_unit(NativeEncoderAccessUnit {
-        data: slice,
-        is_keyframe: is_keyframe != 0,
-        pts_us,
-        encoded_at_us,
-        transaction_id,
-        encoder_generation,
-        stream_epoch,
-        height: encoder_height,
-    }) {
-        Ok(count) => {
-            if !out_packets.is_null() {
-                unsafe {
-                    *out_packets = count as u32;
-                }
-            }
-            0
-        }
-        Err(_) => -2,
-    }
-}
-
-/// Flush pending VideoPackets over QUIC datagrams.
-#[no_mangle]
-pub extern "C" fn picoo_sender_flush(handle: *mut std::ffi::c_void, out_sent: *mut u32) -> i32 {
-    if handle.is_null() {
-        return -1;
-    }
-    let inner = unsafe { &*(handle as *mut SenderInner) };
-    let mut session = inner.session.lock_or_recover();
-    match session.flush_pending() {
-        Ok(sent) => {
-            if !out_sent.is_null() {
-                unsafe {
-                    *out_sent = sent as u32;
-                }
-            }
-            0
-        }
-        Err(_) => -2,
-    }
-}
-
 #[repr(C)]
 pub struct PicooSenderStats {
     pub access_units: u64,
@@ -215,8 +147,32 @@ pub struct PicooEncoderDirective {
     pub id: u64,
     pub kind: u32,
     pub target_height: u32,
+    pub target_codec: u32,
+    pub target_fps: u32,
     pub target_bitrate_bps: u32,
     pub stream_epoch: u32,
+}
+
+/// One formal preparation candidate. Actual native output has a stricter offer gate.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PicooSourceFormat {
+    pub codec: u32,
+    pub height: u32,
+    pub fps: u32,
+}
+
+impl From<picoo_sender::SourceFormat> for PicooSourceFormat {
+    fn from(value: picoo_sender::SourceFormat) -> Self {
+        Self {
+            codec: match value.codec {
+                picoo_bitstream::Codec::Avc => 1,
+                picoo_bitstream::Codec::Hevc => 2,
+            },
+            height: value.height,
+            fps: value.fps,
+        }
+    }
 }
 
 /// Coherent sender control-plane state captured under one Rust session lock.
@@ -228,19 +184,34 @@ pub struct PicooEncoderDirective {
 pub struct PicooSenderSnapshot {
     pub status: i32,
     pub current_bitrate_bps: u32,
-    pub active_height: u32,
-    pub receiver_max_height: u32,
     pub stream_epoch: u32,
     pub reconnect_attempt: u32,
     pub reconnect_delay_ms: u64,
+    /// Zero codec means no native source has been committed. Retained when disconnected.
+    pub last_committed_source_format: PicooSourceFormat,
+    pub receiver_capabilities_known: bool,
+    pub receiver_source_format_count: u32,
+    pub receiver_source_formats: [PicooSourceFormat; 8],
 }
 
 pub(crate) fn sender_snapshot(session: &SenderSession<QuicSenderTransport>) -> PicooSenderSnapshot {
+    let candidates = session.receiver_source_candidates();
+    let mut receiver_source_formats = [PicooSourceFormat::default(); 8];
+    if let Some(candidates) = &candidates {
+        for (out, candidate) in receiver_source_formats.iter_mut().zip(candidates) {
+            *out = (*candidate).into();
+        }
+    }
     PicooSenderSnapshot {
+        last_committed_source_format: session
+            .committed_source_format()
+            .map(Into::into)
+            .unwrap_or_default(),
+        receiver_capabilities_known: candidates.is_some(),
+        receiver_source_format_count: candidates.as_ref().map_or(0, |values| values.len() as u32),
+        receiver_source_formats,
         status: sender_status_code(session.status()),
         current_bitrate_bps: session.current_bitrate_bps(),
-        active_height: session.bitrate_active_height(),
-        receiver_max_height: session.receiver_max_height(),
         stream_epoch: session.current_stream_epoch(),
         reconnect_attempt: session.reconnect_attempt(),
         reconnect_delay_ms: session.last_scheduled_reconnect_delay_ms().unwrap_or(0),
@@ -252,7 +223,12 @@ impl From<EncoderDirective> for PicooEncoderDirective {
         Self {
             id: value.id,
             kind: value.kind as u32,
-            target_height: value.target_height,
+            target_height: value.target_format.height,
+            target_codec: match value.target_format.codec {
+                picoo_bitstream::Codec::Avc => 1,
+                picoo_bitstream::Codec::Hevc => 2,
+            },
+            target_fps: value.target_format.fps,
             target_bitrate_bps: value.target_bitrate_bps,
             stream_epoch: value.stream_epoch,
         }
@@ -378,7 +354,7 @@ pub extern "C" fn picoo_sender_last_session_error(
     let bytes = code.as_bytes();
     let copy = bytes.len().min(out_len.saturating_sub(1));
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), copy);
         *out.add(copy) = 0;
     }
     copy as i32

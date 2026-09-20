@@ -13,7 +13,7 @@ impl ReceiverSession {
         const MAX_TRANSPORT_EVENTS_PER_PUMP: usize = 64;
         const TRANSPORT_BUDGET: Duration = Duration::from_millis(2);
 
-        self.drain_shared_ring_events();
+        self.drain_virtual_camera_output_events();
         self.drain_decoder_events()?;
         self.expire_pending_pairing_if_needed();
         self.expire_reassembly_deadline()?;
@@ -39,7 +39,7 @@ impl ReceiverSession {
                     if self.transport.active_session().is_none() =>
                 {
                     let retain_frame = self.lifecycle.runtime.stream().is_streaming()
-                        && self.latest_frame_store.latest().is_some()
+                        && self.frames.latest().is_some()
                         && !self.last_frame_hold.is_zero();
                     self.apply_receiver_event(ReceiverEvent::TransportDisconnected {
                         generation: session.0,
@@ -99,11 +99,13 @@ impl ReceiverSession {
 
         self.drain_jitter()?;
         self.drain_decoder_events()?;
-        self.drain_shared_ring_events();
+        self.drain_virtual_camera_output_events();
         self.maybe_request_recovery_keyframe()?;
         self.maybe_finalize_disconnect_hold()?;
         self.maybe_send_receiver_stats()?;
         self.maybe_send_clock_sync()?;
+        #[cfg(any(target_os = "macos", windows))]
+        self.pump_recording_control();
 
         Ok(())
     }

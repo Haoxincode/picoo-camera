@@ -50,8 +50,9 @@ impl FileMapping {
     #[cfg(target_os = "windows")]
     pub(super) fn has_live_producer(&self) -> bool {
         match try_windows_file_lock(&producer_lock_path(&self.path), false) {
-            // The Producer owns an exclusive byte-range lock for its complete
-            // lifetime. A shared probe can only succeed after it exits.
+            // The Producer owns an exclusive sidecar file lock for its
+            // complete lifetime. A shared probe can only succeed after it
+            // exits.
             Ok(Some(_unused_probe)) => false,
             Ok(None) => true,
             // A transient sidecar access error must not turn a live meeting
@@ -70,7 +71,7 @@ impl SharedFrameRingProducer {
         let producer_lock = acquire_file_producer_lock(path)?;
         let mapping = create_file_mapping(path, max_frame_bytes)?;
         let mut producer = Self {
-            mapping: ProducerMapping::File(mapping),
+            mapping: ProducerMapping::File(mapping).retained(),
             max_frame_bytes,
             _producer_lock: Some(producer_lock),
         };
@@ -90,7 +91,7 @@ impl SharedFrameRingProducer {
         match create_file_mapping(path, max_frame_bytes) {
             Ok(mapping) => {
                 let mut producer = Self {
-                    mapping: ProducerMapping::File(mapping),
+                    mapping: ProducerMapping::File(mapping).retained(),
                     max_frame_bytes,
                     _producer_lock: Some(producer_lock),
                 };
@@ -101,7 +102,7 @@ impl SharedFrameRingProducer {
                 match open_file_mapping(path, max_frame_bytes) {
                     Ok(mapping) => {
                         let producer = Self {
-                            mapping: ProducerMapping::File(mapping),
+                            mapping: ProducerMapping::File(mapping).retained(),
                             max_frame_bytes,
                             _producer_lock: Some(producer_lock),
                         };
@@ -126,7 +127,7 @@ impl SharedFrameRingProducer {
         let producer_lock = acquire_file_producer_lock(path)?;
         let mapping = open_file_mapping(path, max_frame_bytes)?;
         let producer = Self {
-            mapping: ProducerMapping::File(mapping),
+            mapping: ProducerMapping::File(mapping).retained(),
             max_frame_bytes,
             _producer_lock: Some(producer_lock),
         };
@@ -151,7 +152,7 @@ fn replace_invalid_file_mapping(
     let mapping = replace_windows_file_mapping(path, max_frame_bytes)?;
 
     let mut producer = SharedFrameRingProducer {
-        mapping: ProducerMapping::File(mapping),
+        mapping: ProducerMapping::File(mapping).retained(),
         max_frame_bytes,
         _producer_lock: Some(producer_lock),
     };

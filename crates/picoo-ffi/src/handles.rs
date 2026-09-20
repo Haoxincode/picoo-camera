@@ -36,7 +36,7 @@ pub(crate) fn copy_str_to_buf(value: &str, out: *mut std::ffi::c_char, out_len: 
     let bytes = value.as_bytes();
     let copy_len = bytes.len().min(out_len.saturating_sub(1));
     unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out as *mut u8, copy_len);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), out.cast::<u8>(), copy_len);
         *out.add(copy_len) = 0;
     }
     copy_len as i32

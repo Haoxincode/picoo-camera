@@ -20,7 +20,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
     private var configuration: VideoEncoderConfiguration
     private var compressionSession: VTCompressionSession?
     private var compressionContext: CompressionCallbackContext?
-    private var pixelTransferSession: VTPixelTransferSession?
     private var isAcceptingFrames = false
     private var forceNextKeyframe = true
 
@@ -35,6 +34,8 @@ nonisolated final class VideoEncoderPipeline: NSObject,
 
     func start(configuration: VideoEncoderConfiguration) async {
         await perform {
+            self.isAcceptingFrames = false
+            self.invalidateCompressionSession()
             self.configuration = configuration
             self.forceNextKeyframe = true
             self.isAcceptingFrames = true
@@ -51,6 +52,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
     func updateBitrate(_ bitrateBps: UInt32) async {
         await perform {
             self.configuration = VideoEncoderConfiguration(
+                codec: self.configuration.codec,
                 resolution: self.configuration.resolution,
                 framesPerSecond: self.configuration.framesPerSecond,
                 bitrateBps: bitrateBps,
@@ -61,7 +63,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             guard let session = self.compressionSession else { return }
             do {
                 try Self.setBitrate(bitrateBps, on: session)
-                self.compressionContext?.updateBitrate(bitrateBps)
             } catch {
                 self.eventHandler(.failure(
                     streamEpoch: self.configuration.streamEpoch,
@@ -69,20 +70,6 @@ nonisolated final class VideoEncoderPipeline: NSObject,
                     message: error.localizedDescription
                 ))
             }
-        }
-    }
-
-    func updateRotation(_ rotation: UInt32) async {
-        await perform {
-            self.configuration = VideoEncoderConfiguration(
-                resolution: self.configuration.resolution,
-                framesPerSecond: self.configuration.framesPerSecond,
-                bitrateBps: self.configuration.bitrateBps,
-                streamEpoch: self.configuration.streamEpoch,
-                encoderGeneration: self.configuration.encoderGeneration,
-                rotation: rotation
-            )
-            self.compressionContext?.updateRotation(rotation)
         }
     }
 
@@ -115,22 +102,17 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         VTCompressionSessionInvalidate(compressionSession)
         self.compressionSession = nil
         compressionContext = nil
-        if let pixelTransferSession {
-            VTPixelTransferSessionInvalidate(pixelTransferSession)
-            self.pixelTransferSession = nil
-        }
     }
 
-    private func compressionSession(for imageBuffer: CVImageBuffer) throws -> VTCompressionSession {
+    private func prepareCompressionSession() throws -> VTCompressionSession {
         if let compressionSession {
             return compressionSession
         }
 
-        let (outputWidth, outputHeight) = outputDimensions(for: imageBuffer)
-
         let actualConfiguration = EncodedFrameConfiguration(
-            width: UInt32(outputWidth),
-            height: UInt32(outputHeight),
+            codec: configuration.codec,
+            width: UInt32(configuration.resolution.width),
+            height: UInt32(configuration.resolution.height),
             framesPerSecond: configuration.framesPerSecond,
             bitrateBps: configuration.bitrateBps,
             streamEpoch: configuration.streamEpoch,
@@ -141,27 +123,56 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             configuration: actualConfiguration,
             eventHandler: eventHandler
         )
+        let session = try Self.createPreparedSession(
+            configuration: actualConfiguration,
+            callback: Self.outputCallback,
+            refcon: Unmanaged.passUnretained(context).toOpaque()
+        )
+
+        compressionContext = context
+        compressionSession = session
+        return session
+    }
+
+    /// Preparation uses the same required hardware session and properties as live encoding.
+    static func canPrepare(_ source: VideoSourceFormat, bitrateBps: UInt32) -> Bool {
+        let configuration = EncodedFrameConfiguration(
+            codec: source.codec, width: UInt32(source.resolution.width),
+            height: UInt32(source.resolution.height), framesPerSecond: source.framesPerSecond,
+            bitrateBps: bitrateBps, streamEpoch: 1, encoderGeneration: 1, rotation: 0
+        )
+        guard let session = try? createPreparedSession(configuration: configuration,
+            callback: nil, refcon: nil) else { return false }
+        VTCompressionSessionInvalidate(session)
+        return true
+    }
+
+    private static func createPreparedSession(
+        configuration: EncodedFrameConfiguration,
+        callback: VTCompressionOutputCallback?,
+        refcon: UnsafeMutableRawPointer?
+    ) throws -> VTCompressionSession {
         var session: VTCompressionSession?
         let encoderSpecification: CFDictionary = [
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
         ] as CFDictionary
         let imageBufferAttributes: CFDictionary = [
             kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            kCVPixelBufferWidthKey: outputWidth,
-            kCVPixelBufferHeightKey: outputHeight,
+            kCVPixelBufferWidthKey: configuration.width,
+            kCVPixelBufferHeightKey: configuration.height,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
         ] as CFDictionary
 
         let status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
-            width: outputWidth,
-            height: outputHeight,
-            codecType: kCMVideoCodecType_H264,
+            width: Int32(configuration.width),
+            height: Int32(configuration.height),
+            codecType: configuration.codec.mediaType,
             encoderSpecification: encoderSpecification,
             imageBufferAttributes: imageBufferAttributes,
             compressedDataAllocator: nil,
-            outputCallback: Self.outputCallback,
-            refcon: Unmanaged.passUnretained(context).toOpaque(),
+            outputCallback: callback,
+            refcon: refcon,
             compressionSessionOut: &session
         )
         guard status == noErr, let session else {
@@ -169,83 +180,13 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         }
 
         do {
-            try Self.configure(session, configuration: actualConfiguration)
+            try Self.configure(session, configuration: configuration)
         } catch {
             VTCompressionSessionInvalidate(session)
             throw error
         }
 
-        compressionContext = context
-        compressionSession = session
         return session
-    }
-
-    private func outputDimensions(for imageBuffer: CVImageBuffer) -> (Int32, Int32) {
-        let width = CVPixelBufferGetWidth(imageBuffer)
-        let height = CVPixelBufferGetHeight(imageBuffer)
-        if width >= height {
-            return (configuration.resolution.width, configuration.resolution.height)
-        }
-        return (configuration.resolution.height, configuration.resolution.width)
-    }
-
-    private func imageBufferForEncoding(
-        _ source: CVImageBuffer,
-        session: VTCompressionSession
-    ) throws -> CVImageBuffer {
-        let (targetWidth, targetHeight) = outputDimensions(for: source)
-        guard CVPixelBufferGetWidth(source) != Int(targetWidth)
-                || CVPixelBufferGetHeight(source) != Int(targetHeight)
-        else {
-            return source
-        }
-        guard let pool = VTCompressionSessionGetPixelBufferPool(session) else {
-            throw VideoEncoderError.pixelBufferPoolUnavailable
-        }
-        var destination: CVPixelBuffer?
-        let bufferStatus = CVPixelBufferPoolCreatePixelBuffer(
-            kCFAllocatorDefault,
-            pool,
-            &destination
-        )
-        guard bufferStatus == kCVReturnSuccess, let destination else {
-            throw VideoEncoderError.pixelBufferCreation(bufferStatus)
-        }
-
-        let transferSession: VTPixelTransferSession
-        if let pixelTransferSession {
-            transferSession = pixelTransferSession
-        } else {
-            var created: VTPixelTransferSession?
-            let createStatus = VTPixelTransferSessionCreate(
-                allocator: kCFAllocatorDefault,
-                pixelTransferSessionOut: &created
-            )
-            guard createStatus == noErr, let created else {
-                throw VideoEncoderError.pixelTransferCreation(createStatus)
-            }
-            try Self.set(
-                kVTPixelTransferPropertyKey_ScalingMode,
-                value: kVTScalingMode_Trim,
-                on: created
-            )
-            try Self.set(
-                kVTPixelTransferPropertyKey_RealTime,
-                value: kCFBooleanTrue,
-                on: created
-            )
-            pixelTransferSession = created
-            transferSession = created
-        }
-        let transferStatus = VTPixelTransferSessionTransferImage(
-            transferSession,
-            from: source,
-            to: destination
-        )
-        guard transferStatus == noErr else {
-            throw VideoEncoderError.pixelTransfer(transferStatus)
-        }
-        return destination
     }
 
     private static func configure(
@@ -274,23 +215,55 @@ nonisolated final class VideoEncoderPipeline: NSObject,
             on: session
         )
 
-        let mainProfileStatus = VTSessionSetProperty(
-            session,
-            key: kVTCompressionPropertyKey_ProfileLevel,
-            value: kVTProfileLevel_H264_Main_4_0
+        // Input attachments are verified before session creation and submission.
+        // Explicit properties are still required: VT does not necessarily put
+        // input color attachments into the encoded SPS by itself.
+        try set(kVTCompressionPropertyKey_ColorPrimaries, value: kCVImageBufferColorPrimaries_ITU_R_709_2, on: session)
+        try set(kVTCompressionPropertyKey_TransferFunction, value: kCVImageBufferTransferFunction_ITU_R_709_2, on: session)
+        try set(kVTCompressionPropertyKey_YCbCrMatrix, value: kCVImageBufferYCbCrMatrix_ITU_R_709_2, on: session)
+
+        // REQ-PICOO-MEDIA-026: requested profile is part of the native contract.
+        try set(
+            kVTCompressionPropertyKey_ProfileLevel,
+            value: configuration.codec.profileLevel,
+            on: session
         )
-        if mainProfileStatus != noErr {
-            try set(
-                kVTCompressionPropertyKey_ProfileLevel,
-                value: kVTProfileLevel_H264_Baseline_4_0,
-                on: session
-            )
+        if configuration.codec == .hevc {
+            try set(kVTCompressionPropertyKey_AllowOpenGOP, value: kCFBooleanFalse, on: session)
         }
         try setBitrate(configuration.bitrateBps, on: session)
 
         let prepareStatus = VTCompressionSessionPrepareToEncodeFrames(session)
         guard prepareStatus == noErr else {
             throw VideoEncoderError.prepare(prepareStatus)
+        }
+        var hardwareValue: Unmanaged<CFTypeRef>?
+        let hardwareStatus = VTSessionCopyProperty(
+            session,
+            key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
+            allocator: nil,
+            valueOut: &hardwareValue
+        )
+        guard hardwareStatus == noErr else {
+            throw VideoEncoderError.property("UsingHardwareAcceleratedVideoEncoder", hardwareStatus)
+        }
+        guard (hardwareValue?.takeRetainedValue() as? NSNumber)?.boolValue == true else {
+            throw VideoEncoderError.hardwareEncoderUnavailable
+        }
+    }
+
+    private static func validateColor(_ image: CVImageBuffer) throws {
+        guard CVPixelBufferGetPixelFormatType(image) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange else {
+            throw VideoEncoderError.sourceColorUnavailable
+        }
+        for (key, expected) in [
+            (kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2),
+            (kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2),
+            (kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2),
+        ] {
+            guard CVBufferCopyAttachment(image, key, nil) as? String == expected as String else {
+                throw VideoEncoderError.sourceColorUnavailable
+            }
         }
     }
 
@@ -335,7 +308,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
 
     private static let outputCallback: VTCompressionOutputCallback = {
         outputCallbackRefCon,
-        _,
+        sourceFrameRefCon,
         status,
         infoFlags,
         sampleBuffer in
@@ -343,7 +316,7 @@ nonisolated final class VideoEncoderPipeline: NSObject,
         let context = Unmanaged<CompressionCallbackContext>
             .fromOpaque(outputCallbackRefCon)
             .takeUnretainedValue()
-        context.receive(status: status, infoFlags: infoFlags, sampleBuffer: sampleBuffer)
+        context.receive(sourceFrameRefCon: sourceFrameRefCon, status: status, infoFlags: infoFlags, sampleBuffer: sampleBuffer)
     }
 }
 
@@ -353,6 +326,12 @@ extension VideoEncoderPipeline {
         didOutput sampleBuffer: CMSampleBuffer,
         from connection: AVCaptureConnection
     ) {
+        submit(sampleBuffer)
+    }
+
+    /// Native capture input. Calls are confined to callbackQueue.
+    nonisolated func submit(_ sampleBuffer: CMSampleBuffer) {
+        dispatchPrecondition(condition: .onQueue(callbackQueue))
         guard isAcceptingFrames,
               let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
         else {
@@ -360,11 +339,12 @@ extension VideoEncoderPipeline {
         }
 
         do {
-            let session = try compressionSession(for: imageBuffer)
-            let encodingBuffer = try imageBufferForEncoding(
-                imageBuffer,
-                session: session
-            )
+            // REQ-PICOO-MEDIA-065: reject incorrect capture facts before VT.
+            guard CVPixelBufferGetWidth(imageBuffer) == Int(configuration.resolution.width),
+                  CVPixelBufferGetHeight(imageBuffer) == Int(configuration.resolution.height)
+            else { throw VideoEncoderError.sourceDimensionsMismatch }
+            try Self.validateColor(imageBuffer)
+            let session = try prepareCompressionSession()
             var infoFlags: VTEncodeInfoFlags = []
             let frameProperties: CFDictionary? = forceNextKeyframe
                 ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary
@@ -372,20 +352,28 @@ extension VideoEncoderPipeline {
             let duration = sampleBuffer.duration.isValid
                 ? sampleBuffer.duration
                 : CMTime(value: 1, timescale: CMTimeScale(configuration.framesPerSecond))
+            guard let context = compressionContext,
+                  let identifier = context.reserveFrame(
+                    bitrateBps: configuration.bitrateBps
+                  )
+            else { throw VideoEncoderError.pendingFramesExhausted }
             let status = VTCompressionSessionEncodeFrame(
                 session,
-                imageBuffer: encodingBuffer,
+                imageBuffer: imageBuffer,
                 presentationTimeStamp: sampleBuffer.presentationTimeStamp,
                 duration: duration,
                 frameProperties: frameProperties,
-                sourceFrameRefcon: nil,
+                sourceFrameRefcon: UnsafeMutableRawPointer(bitPattern: identifier),
                 infoFlagsOut: &infoFlags
             )
             guard status == noErr else {
+                // Native callbacks may run inline. Cancellation is idempotent
+                // if the callback already consumed its own submission.
+                context.cancelFrame(identifier)
                 eventHandler(.failure(
                     streamEpoch: configuration.streamEpoch,
                     encoderGeneration: configuration.encoderGeneration,
-                    message: "H.264 帧编码失败（\(status)）"
+                    message: "视频帧编码失败（\(status)）"
                 ))
                 return
             }

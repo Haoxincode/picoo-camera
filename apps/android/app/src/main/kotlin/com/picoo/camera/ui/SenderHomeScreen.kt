@@ -86,7 +86,10 @@ internal fun SenderHomeScreen(
 
     val nsdBrowser =
         remember {
-            NsdReceiverBrowser(context) { list ->
+            NsdReceiverBrowser(
+                context,
+                wifiNetwork = { sessionModel.runtime.currentWifiNetwork() },
+            ) { list ->
                 discoveredListState.value = list
                 if (list.isNotEmpty()) discoveryComplete = false
             }

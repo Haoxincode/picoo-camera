@@ -1,6 +1,11 @@
 //! Receiver media admission and stream-gate regressions.
 
 use super::*;
+#[cfg(not(any(target_os = "macos", windows)))]
+use crate::session::media_publish::FrameTimeline;
+use bytes::Bytes;
+#[cfg(not(any(target_os = "macos", windows)))]
+use picoo_media_decode::DecodedFrame;
 use picoo_media_decode::StubDecoder;
 use picoo_protocol::control::StreamConfig;
 use picoo_protocol::VideoPacketFlags;
@@ -10,7 +15,7 @@ fn receiver_for_generation(generation: u32) -> ReceiverSession {
     receiver.decoder_worker = DecoderWorker::with_decoder(Box::new(StubDecoder::new()));
     receiver.control_generation = Some(1);
     receiver.current_stream_config = Some(Arc::new(StreamConfig {
-        codec: "h264".into(),
+        codec: picoo_protocol::control::VideoCodec::Avc as i32,
         width: 1280,
         height: 720,
         fps: 30,
@@ -18,6 +23,61 @@ fn receiver_for_generation(generation: u32) -> ReceiverSession {
         ..Default::default()
     }));
     receiver
+}
+
+#[test]
+fn complete_refresh_supersedes_an_older_unresolved_gap() {
+    for already_awaiting in [false, true] {
+        let mut receiver = receiver_for_generation(1);
+        if already_awaiting {
+            receiver
+                .enter_decoder_recovery(RecoveryReason::InitialConfig, true)
+                .unwrap();
+        }
+        receiver.set_permit_unpaired_video(true);
+        receiver
+            .ingest_video_packet(packet(1, 1, true, 0, 1), Instant::now())
+            .unwrap();
+        receiver.jitter.discard_queued();
+        // Frame 2 never arrives. Frame 3 is already a complete random-access candidate.
+        receiver
+            .ingest_video_packet(packet(1, 3, true, 0, 1), Instant::now())
+            .unwrap();
+        assert_eq!(receiver.reassembly.oldest_unresolved_frame_id(), None);
+        assert_eq!(receiver.jitter.front_frame_id(), Some(3));
+        assert!(receiver.awaiting_decoder_refresh_for_test());
+        // The cut is terminal for late old fragments, but does not mean the Decoder
+        // has accepted this candidate. Completion still owns recovery confirmation.
+        receiver
+            .ingest_video_packet(packet(1, 2, false, 0, 1), Instant::now())
+            .unwrap();
+        assert_eq!(receiver.jitter.front_frame_id(), Some(3));
+        assert_eq!(receiver.ingress.decoded_frames, 0);
+    }
+}
+
+#[test]
+fn delta_and_incomplete_refresh_cannot_cut_an_older_gap() {
+    let mut receiver = receiver_for_generation(1);
+    receiver.set_permit_unpaired_video(true);
+    receiver
+        .ingest_video_packet(packet(1, 1, true, 0, 1), Instant::now())
+        .unwrap();
+    receiver.jitter.discard_queued();
+    receiver
+        .ingest_video_packet(packet(1, 3, false, 0, 1), Instant::now())
+        .unwrap();
+    receiver
+        .ingest_video_packet(packet(1, 4, true, 0, 2), Instant::now())
+        .unwrap();
+    assert_eq!(receiver.reassembly.oldest_unresolved_frame_id(), Some(2));
+    assert!(!receiver.awaiting_decoder_refresh_for_test());
+    receiver
+        .ingest_video_packet(packet(1, 4, true, 1, 2), Instant::now())
+        .unwrap();
+    assert_eq!(receiver.reassembly.oldest_unresolved_frame_id(), None);
+    assert_eq!(receiver.jitter.front_frame_id(), Some(4));
+    assert!(receiver.awaiting_decoder_refresh_for_test());
 }
 
 fn access_unit(generation: u64, frame_id: u64) -> EncodedAccessUnit {
@@ -45,11 +105,13 @@ struct RecoveryBlockingDecoder {
 }
 
 impl picoo_media_decode::AccessUnitDecoder for RecoveryBlockingDecoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+        submission: picoo_media_decode::DecodeSubmission<'_>,
     ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+        let access_unit = submission.access_unit;
+        let _stream_config = submission.token.stream_config.as_deref();
+
         let marker = access_unit.first().copied().unwrap_or(0);
         self.submitted
             .lock()
@@ -129,7 +191,7 @@ fn stale_generation_never_reaches_decoder_or_latest_store() {
 
     assert_eq!(receiver.ingress.decode_invocations, 0);
     assert_eq!(receiver.ingress.recovery_dropped_access_units, 1);
-    assert!(receiver.latest_frame_store.latest().is_none());
+    assert!(receiver.frames.latest().is_none());
 }
 
 #[test]
@@ -141,11 +203,21 @@ fn matching_generation_preserves_access_unit_timeline() {
         .expect("matching generation");
     receiver.drain_decoder_until_idle_for_test();
 
-    let frame = receiver.latest_frame_store.latest().expect("video frame");
-    assert_eq!(frame.stream_generation, 2);
-    assert_eq!(frame.frame_id, 9);
-    assert_eq!(frame.source_pts_us, 42_000);
-    assert_eq!(frame.received_at_us, 50_000);
+    let frame = receiver.frames.latest().expect("video frame");
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        assert_eq!(frame.stream_generation, 2);
+        assert_eq!(frame.frame_id, 9);
+        assert_eq!(frame.source_pts_us, 42_000);
+        assert_eq!(frame.received_at_us, 50_000);
+    }
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        assert_eq!(frame.identity().stream_epoch, 2);
+        assert_eq!(frame.identity().frame_id, 9);
+        assert_eq!(frame.source_pts_us(), 42_000);
+        assert_eq!(frame.timeline().received_at_us, 50_000);
+    }
 }
 
 #[test]
@@ -158,11 +230,13 @@ fn ready_reference_waits_in_jitter_until_decoder_capacity_is_available() {
     }
 
     impl picoo_media_decode::AccessUnitDecoder for BlockingDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.started.store(true, Ordering::Release);
             while !self.release.load(Ordering::Acquire) {
                 std::thread::sleep(std::time::Duration::from_millis(1));
@@ -357,6 +431,35 @@ fn stale_connection_generation_cannot_publish_into_current_stream() {
 }
 
 #[test]
+fn live_decode_timeline_follows_sender_control_generation() {
+    let mut receiver = receiver_for_generation(2);
+    receiver.control_generation = Some(8);
+    let current = AccessUnitTimeline {
+        connection_generation: 8,
+        stream_generation: 2,
+        frame_id: 9,
+        source_pts_us: 42_000,
+        encoded_at_us: 45_000,
+        received_at_us: 50_000,
+        decode_submitted_at_us: 55_000,
+        kind: FrameKind::Key,
+    };
+    assert!(receiver.decoder_timeline_is_current(current));
+    assert_eq!(receiver.media_connection_generation(), 8);
+    let transport_session = AccessUnitTimeline {
+        connection_generation: 1,
+        stream_generation: 2,
+        frame_id: 9,
+        source_pts_us: 42_000,
+        encoded_at_us: 45_000,
+        received_at_us: 50_000,
+        decode_submitted_at_us: 55_000,
+        kind: FrameKind::Key,
+    };
+    assert!(!receiver.decoder_timeline_is_current(transport_session));
+}
+
+#[test]
 fn zero_generation_fixture_cannot_bypass_current_timeline() {
     let receiver = receiver_for_generation(2);
     let timeline = AccessUnitTimeline {
@@ -373,6 +476,7 @@ fn zero_generation_fixture_cannot_bypass_current_timeline() {
     assert!(!receiver.decoder_timeline_is_current(timeline));
 }
 
+#[cfg(not(any(target_os = "macos", windows)))]
 #[test]
 fn receiver_reuses_transformed_pixels_after_latest_frame_releases_them() {
     let mut receiver = receiver_for_generation(2);
@@ -396,6 +500,7 @@ fn receiver_reuses_transformed_pixels_after_latest_frame_releases_them() {
                     frame_id * 1_200,
                     Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]),
                 ),
+                false,
             )
             .expect("publish transformed frame");
     }
@@ -527,4 +632,85 @@ fn teardown_discards_stream_config_gate() {
     assert!(receiver.waiting_for_stream_config_epoch.is_none());
     assert!(receiver.pending_stream_config_idr.is_none());
     assert!(receiver.jitter.is_empty());
+}
+
+#[test]
+fn delayed_frame_keeps_submitted_rotation_and_mirror_snapshot() {
+    // REQ-PICOO-MEDIA-025: completion may already be queued, but the owner has
+    // not consumed it when current state changes. No timing-dependent sleep.
+    for (rotation, mirrored, expected_size, expected_pixels) in [
+        (
+            0,
+            false,
+            (4, 2),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21],
+        ),
+        (
+            90,
+            true,
+            (2, 4),
+            vec![1, 5, 2, 6, 3, 7, 4, 8, 10, 11, 20, 21],
+        ),
+    ] {
+        let mut receiver = receiver_for_generation(2);
+        let submitted = Arc::make_mut(receiver.current_stream_config.as_mut().unwrap());
+        submitted.width = 4;
+        submitted.height = 2;
+        submitted.rotation = rotation;
+        submitted.mirrored = mirrored;
+        let mut unit = access_unit(2, 9);
+        unit.data = Bytes::from_static(&[1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]);
+        receiver.publish_timeline_access_unit(unit).unwrap();
+
+        let current = Arc::make_mut(receiver.current_stream_config.as_mut().unwrap());
+        current.rotation = if rotation == 0 { 90 } else { 0 };
+        current.mirrored = !mirrored;
+        receiver.drain_decoder_until_idle_for_test();
+
+        let frame = receiver.latest_frame().expect("submitted frame");
+        #[cfg(not(any(target_os = "macos", windows)))]
+        {
+            assert_eq!((frame.width, frame.height), expected_size);
+            assert_eq!(frame.pixel_data.as_ref(), expected_pixels);
+            assert_eq!(frame.frame_id, 9);
+            assert_eq!(frame.source_pts_us, 42_000);
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            let _ = (expected_size, expected_pixels);
+            assert_eq!((frame.image().width(), frame.image().height()), (4, 2));
+            assert_eq!(
+                frame.description().transform.rotation,
+                if rotation == 0 {
+                    picoo_frame_hub::Rotation::None
+                } else {
+                    picoo_frame_hub::Rotation::Clockwise90
+                }
+            );
+            assert_eq!(frame.description().transform.mirror, mirrored);
+            assert_eq!(frame.identity().frame_id, 9);
+            assert_eq!(frame.source_pts_us(), 42_000);
+            assert_eq!(receiver.ingress.orientation_transform_frames, 0);
+        }
+    }
+}
+
+#[test]
+fn placeholder_does_not_inherit_source_mirror() {
+    let mut receiver = receiver_for_generation(2);
+    Arc::make_mut(receiver.current_stream_config.as_mut().unwrap()).mirrored = true;
+    receiver.publish_waiting_placeholder().unwrap();
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let expected = receiver.placeholder_mode.waiting_frame();
+        assert_eq!(
+            receiver.latest_frame().unwrap().pixel_data.as_ref(),
+            expected
+        );
+    }
+    #[cfg(any(target_os = "macos", windows))]
+    assert!(
+        receiver.latest_frame().is_none(),
+        "placeholder is an output, never a source frame"
+    );
 }

@@ -113,7 +113,11 @@ impl ReceiverAdvertisement {
     pub fn from_txt_properties(
         properties: &[(String, String)],
     ) -> Result<Self, AdvertisementError> {
+        let mut seen = std::collections::HashSet::new();
         for (key, _) in properties {
+            if !seen.insert(key.as_str()) {
+                return Err(AdvertisementError::DuplicateField(key.clone()));
+            }
             if !ALLOWED_TXT_KEYS.contains(&key.as_str()) {
                 return Err(AdvertisementError::UnknownField(key.clone()));
             }
@@ -162,6 +166,8 @@ impl ReceiverAdvertisement {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum AdvertisementError {
+    #[error("duplicate field: {0}")]
+    DuplicateField(String),
     #[error("missing field: {0}")]
     MissingField(String),
     #[error("unknown field: {0}")]
@@ -194,6 +200,24 @@ mod tests {
             .collect();
         let parsed = ReceiverAdvertisement::from_txt_properties(&props).expect("parse");
         assert_eq!(parsed, ad);
+    }
+
+    #[test]
+    fn rejects_duplicate_fields_without_version_negotiation() {
+        let ad = ReceiverAdvertisement::new("r", "PC", ReceiverPlatform::Macos, 4433, "abc");
+        let mut properties: Vec<(String, String)> = ad
+            .to_txt_properties()
+            .into_iter()
+            .map(|(k, v)| (k.into(), v))
+            .collect();
+        properties.push(("quic_port".into(), "1234".into()));
+        assert_eq!(
+            ReceiverAdvertisement::from_txt_properties(&properties),
+            Err(AdvertisementError::DuplicateField("quic_port".into()))
+        );
+        assert!(ALLOWED_TXT_KEYS
+            .iter()
+            .all(|key| !key.contains("version") && !key.contains("protocol_major")));
     }
 
     #[test]

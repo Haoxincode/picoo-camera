@@ -50,15 +50,17 @@ fn trust_receiver<T: PicooTransport>(
 }
 
 mod abr_epoch;
-mod abr_ladder;
 mod connect;
 mod control_gate;
 mod decode_platform;
 mod decoder;
+#[cfg(target_os = "macos")]
+mod native_negotiation;
 mod pairing;
 mod pairing_trust;
 mod qos;
 mod session_surface;
+mod source_configuration;
 mod stream;
 
 fn use_stub_decoder(receiver: &mut ReceiverSession) {
@@ -88,4 +90,54 @@ fn pump_pair_for(
         sender.pump().expect("tx pump");
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+/// Source allocation geometry, before output presentation transforms on Mac.
+fn source_dimensions(frame: &crate::ReceiverFrame) -> (u32, u32) {
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        (frame.image().width(), frame.image().height())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        (frame.width, frame.height)
+    }
+}
+
+fn source_frame_id(frame: &crate::ReceiverFrame) -> u64 {
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        frame.identity().frame_id
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        frame.frame_id
+    }
+}
+
+fn configured_source() -> picoo_sender::StreamConfigParams {
+    let (sps, pps) =
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
+    picoo_sender::StreamConfigParams {
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+    }
+}
+
+pub(crate) fn wire_avc(annex: &[u8]) -> Vec<u8> {
+    picoo_bitstream::canonical_access_unit(
+        picoo_bitstream::Codec::Avc,
+        picoo_bitstream::NalFormat::AnnexB,
+        annex,
+    )
+    .unwrap()
+    .into_owned()
 }

@@ -15,11 +15,13 @@ fn decoder_is_reset_at_every_session_teardown_boundary() {
     struct ResetCounter(Arc<AtomicUsize>);
 
     impl picoo_media_decode::AccessUnitDecoder for ResetCounter {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
                 false,
             ))
@@ -82,11 +84,13 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     struct DropsRefresh;
 
     impl picoo_media_decode::AccessUnitDecoder for AlwaysFails {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             Err(picoo_media_decode::DecodeError::Platform(
                 "fixture failure".into(),
             ))
@@ -98,11 +102,13 @@ fn decoder_failure_is_reported_without_stopping_ingress_and_clears_after_recover
     }
 
     impl picoo_media_decode::AccessUnitDecoder for DropsRefresh {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
                 false,
             ))
@@ -161,11 +167,13 @@ fn slow_decoder_never_blocks_session_close() {
     struct SlowDecoder(Arc<AtomicBool>);
 
     impl picoo_media_decode::AccessUnitDecoder for SlowDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.0.store(true, Ordering::Release);
             std::thread::sleep(Duration::from_millis(250));
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
@@ -209,11 +217,13 @@ fn slow_decoder_never_blocks_session_drop() {
     struct SlowDecoder(Arc<AtomicBool>);
 
     impl picoo_media_decode::AccessUnitDecoder for SlowDecoder {
-        fn decode_access_unit(
+        fn submit(
             &mut self,
-            _access_unit: &[u8],
-            _stream_config: Option<&picoo_protocol::control::StreamConfig>,
+            submission: picoo_media_decode::DecodeSubmission<'_>,
         ) -> Result<picoo_media_decode::DecodeOutcome, picoo_media_decode::DecodeError> {
+            let _access_unit = submission.access_unit;
+            let _stream_config = submission.token.stream_config.as_deref();
+
             self.0.store(true, Ordering::Release);
             std::thread::sleep(Duration::from_millis(250));
             Ok(picoo_media_decode::DecodeOutcome::accepted_without_frame(
@@ -253,7 +263,10 @@ fn slow_decoder_never_blocks_session_drop() {
 fn loopback_sender_to_receiver_latest_frame_store() {
     let payload = b"test-access-unit";
     let frame = run_loopback_access_unit(payload).expect("loopback");
-    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    assert_eq!(&frame.pixel_data[..payload.len()], payload);
+    #[cfg(any(target_os = "macos", windows))]
+    assert_eq!(frame.identity().frame_id, 1);
 }
 
 #[test]
@@ -304,15 +317,28 @@ fn single_decode_per_access_unit_into_latest_frame_store() {
     assert_eq!(stats.access_units, 1);
     assert_eq!(stats.decode_invocations, 1);
     let frame = receiver.latest_frame().expect("typed video frame");
-    assert_eq!(frame.stream_generation, 1);
-    assert_eq!(frame.frame_id, 1);
-    assert_eq!(frame.source_pts_us, 1);
-    assert!(frame.received_at_us > 0);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        assert_eq!(frame.stream_generation, 1);
+        assert_eq!(frame.frame_id, 1);
+        assert_eq!(frame.source_pts_us, 1);
+        assert!(frame.received_at_us > 0);
+    }
+    #[cfg(any(target_os = "macos", windows))]
+    {
+        assert_eq!(frame.identity().stream_epoch, 1);
+        assert_eq!(frame.identity().frame_id, 1);
+        assert_eq!(frame.source_pts_us(), 1);
+        assert!(frame.timeline().received_at_us > 0);
+    }
 }
 
 #[test]
 fn paired_loopback_reaches_latest_frame_store_without_unpaired_bypass() {
     let payload = b"paired-product-path-au";
     let frame = run_paired_loopback_access_unit(payload).expect("paired loopback");
-    assert_eq!(&frame.as_ref()[..payload.len()], payload);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    assert_eq!(&frame.pixel_data[..payload.len()], payload);
+    #[cfg(any(target_os = "macos", windows))]
+    assert_eq!(frame.identity().frame_id, 1);
 }

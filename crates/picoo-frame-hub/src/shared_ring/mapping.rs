@@ -70,6 +70,13 @@ pub(super) enum SlotLockAttempt {
 }
 
 impl ProducerMapping {
+    // Only RingContentFence crosses threads; it exposes an atomic scalar and
+    // retains this allocation. The complete mutable mapping must stay !Sync.
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub(super) fn retained(self) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(self)
+    }
+
     pub(super) fn as_ptr(&self) -> *mut u8 {
         match self {
             Self::Shared(mapping) => mapping.mapping.as_ptr(),

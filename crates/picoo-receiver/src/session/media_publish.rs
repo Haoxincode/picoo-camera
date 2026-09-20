@@ -5,7 +5,9 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_frame_hub::VideoFrame;
+#[cfg(not(any(target_os = "macos", windows)))]
 use picoo_media_decode::DecodedFrame;
 
 use super::decoder_worker::{AccessUnitTimeline, DecoderEvent};
@@ -15,6 +17,12 @@ use crate::ReceiverError;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct FrameTimeline {
+    #[cfg(any(target_os = "macos", windows))]
+    pub(super) connection_generation: u64,
+    #[cfg(any(target_os = "macos", windows))]
+    pub(super) decoder_generation: u64,
+    #[cfg(any(target_os = "macos", windows))]
+    pub(super) config_revision: u64,
     pub(super) stream_generation: u64,
     pub(super) frame_id: u64,
     pub(super) source_pts_us: u64,
@@ -28,6 +36,15 @@ impl ReceiverSession {
     pub(super) fn drain_decoder_events(&mut self) -> Result<(), ReceiverError> {
         while let Some(event) = self.decoder_worker.poll_event() {
             match event {
+                DecoderEvent::Capabilities(result) => {
+                    self.receiver_capabilities_sent = None;
+                    self.decoder_readiness = match result {
+                        Ok(caps) => super::decoder_capabilities::DecoderReadiness::Ready(caps),
+                        Err(error) => {
+                            super::decoder_capabilities::DecoderReadiness::Unavailable(error)
+                        }
+                    };
+                }
                 DecoderEvent::Started => {
                     self.ingress.decode_invocations =
                         self.ingress.decode_invocations.saturating_add(1);
@@ -46,39 +63,80 @@ impl ReceiverSession {
                         .is_current_generation(decoder_generation);
                     let timeline_current = self.decoder_timeline_is_current(timeline);
                     if !decoder_generation_current || !timeline_current {
+                        self.note_decode_skip(
+                            timeline,
+                            decoder_generation,
+                            if !decoder_generation_current {
+                                "stale decoder generation"
+                            } else {
+                                "stale connection or stream timeline"
+                            },
+                        );
                         continue;
                     }
                     if !self.decoder_recovery.accepts_completion(timeline) {
+                        self.note_decode_skip(
+                            timeline,
+                            decoder_generation,
+                            "decoder still awaiting a matching refresh",
+                        );
                         continue;
                     }
                     self.handle_decoder_result(timeline, decoded_at, result)?;
                 }
-                DecoderEvent::ResetFailed(error) => {
-                    tracing::warn!(%error, "decoder reset failed; worker rebuilt platform decoder");
-                    self.last_media_error = Some(format!("decoder reset failed: {error}"));
+                DecoderEvent::Unavailable(error) => {
+                    tracing::warn!(%error, "decoder failed; worker stopped and capability evidence invalidated");
+                    self.last_media_error = Some(format!("native decoder failed: {error}"));
+                    self.decoder_readiness =
+                        super::decoder_capabilities::DecoderReadiness::Unavailable(error);
+                    self.receiver_capabilities_sent = None;
                 }
             }
         }
-        Ok(())
+        self.finish_decoder_negotiation()
     }
 
     pub(super) fn decoder_timeline_is_current(&self, timeline: AccessUnitTimeline) -> bool {
         let connection_matches = timeline.connection_generation == 0
-            || self.control_generation.map_or_else(
-                || {
+            || match self.control_generation {
+                Some(generation) => generation == timeline.connection_generation,
+                None => {
                     self.permit_unpaired_video
-                        && self
-                            .transport
-                            .active_session()
-                            .is_some_and(|session| session.0 == timeline.connection_generation)
-                },
-                |generation| generation == timeline.connection_generation,
-            );
+                        && self.media_connection_generation() == timeline.connection_generation
+                }
+            };
         let stream_matches = self.current_stream_config.as_ref().map_or_else(
             || self.permit_unpaired_video && self.transport.active_session().is_some(),
             |config| u64::from(config.stream_epoch) == timeline.stream_generation,
         );
         connection_matches && stream_matches
+    }
+
+    fn note_decode_skip(
+        &mut self,
+        timeline: AccessUnitTimeline,
+        decoder_generation: u64,
+        reason: &str,
+    ) {
+        self.decoder_completions_skipped = self.decoder_completions_skipped.saturating_add(1);
+        self.last_decode_skip = Some(format!(
+            "{reason}: au_conn={} control={:?} session={:?} au_epoch={} stream={:?} decoder_gen={}",
+            timeline.connection_generation,
+            self.control_generation,
+            self.transport.active_session().map(|session| session.0),
+            timeline.stream_generation,
+            self.current_stream_config
+                .as_ref()
+                .map(|config| config.stream_epoch),
+            decoder_generation
+        ));
+        tracing::warn!(
+            reason,
+            au_conn = timeline.connection_generation,
+            control = ?self.control_generation,
+            skip = self.decoder_completions_skipped,
+            "native decode completion was not published"
+        );
     }
 
     fn handle_decoder_result(
@@ -105,32 +163,51 @@ impl ReceiverSession {
                 return Ok(());
             }
         }
-        match outcome.frame {
-            Some(mut frame) => {
-                // Prefer StreamConfig.rotation from Sender when present (PUC-005 / MEDIA-009).
-                let rotation = self
-                    .current_stream_config
-                    .as_ref()
-                    .map(|config| config.rotation)
-                    .unwrap_or(frame.description().rotation);
-                frame.set_rotation(rotation);
-                self.publish_decoded_frame(
-                    FrameTimeline {
-                        stream_generation: timeline.stream_generation,
-                        frame_id: timeline.frame_id,
-                        source_pts_us: timeline.source_pts_us,
-                        encoded_at_us: timeline.encoded_at_us,
-                        received_at_us: timeline.received_at_us,
-                        decode_submitted_at_us: timeline.decode_submitted_at_us,
-                        decoded_at: Some(decoded_at),
-                    },
-                    frame,
-                )?;
-                self.ingress.decoded_frames += 1;
-                self.stats_reporter.record_decoded_frame();
-                self.last_media_error = None;
+        for output in outcome.frames {
+            let token = output.token;
+            let timeline = token.timeline;
+            if !self
+                .decoder_worker
+                .is_current_generation(token.decoder_generation)
+                || !self.decoder_timeline_is_current(timeline)
+                || !self.decoder_recovery.accepts_completion(timeline)
+            {
+                self.note_decode_skip(
+                    timeline,
+                    token.decoder_generation,
+                    "completed picture failed current-timeline publication gate",
+                );
+                continue;
             }
-            None => self.stats_reporter.record_decoder_drop(),
+            let stream_config = token.stream_config.as_deref();
+            let mut frame = output.frame;
+            // REQ-PICOO-MEDIA-025: presentation belongs to the submitted AU.
+            let rotation = stream_config
+                .map(|config| config.rotation)
+                .unwrap_or(frame.description().rotation);
+            frame.set_rotation(rotation);
+            self.publish_decoded_frame(
+                FrameTimeline {
+                    #[cfg(any(target_os = "macos", windows))]
+                    connection_generation: timeline.connection_generation,
+                    #[cfg(any(target_os = "macos", windows))]
+                    decoder_generation: token.decoder_generation,
+                    #[cfg(any(target_os = "macos", windows))]
+                    config_revision: token.config_revision,
+                    stream_generation: timeline.stream_generation,
+                    frame_id: timeline.frame_id,
+                    source_pts_us: timeline.source_pts_us,
+                    encoded_at_us: timeline.encoded_at_us,
+                    received_at_us: timeline.received_at_us,
+                    decode_submitted_at_us: timeline.decode_submitted_at_us,
+                    decoded_at: Some(decoded_at),
+                },
+                frame,
+                stream_config.is_some_and(|config| config.mirrored),
+            )?;
+            self.ingress.decoded_frames += 1;
+            self.stats_reporter.record_decoded_frame();
+            self.last_media_error = None;
         }
         Ok(())
     }
@@ -138,7 +215,11 @@ impl ReceiverSession {
     #[cfg(test)]
     pub(crate) fn drain_decoder_until_idle_for_test(&mut self) {
         let expected_completion = self.decoder_completions.saturating_add(1);
-        let deadline = Instant::now() + std::time::Duration::from_secs(1);
+        // The first CoreVideo/IOSurface fixture on macOS may initialize a
+        // process-global dispatch_once path. Keep the production worker
+        // contract unchanged while giving this test cold-start room.
+        let timeout = if cfg!(target_os = "macos") { 15 } else { 1 };
+        let deadline = Instant::now() + std::time::Duration::from_secs(timeout);
         while Instant::now() < deadline {
             self.drain_decoder_events().expect("decoder events");
             if self.decoder_completions >= expected_completion {
@@ -149,10 +230,12 @@ impl ReceiverSession {
         panic!("decoder worker did not complete within test deadline");
     }
 
+    #[cfg(not(any(target_os = "macos", windows)))]
     pub(super) fn publish_decoded_frame(
         &mut self,
         timeline: FrameTimeline,
         frame: DecodedFrame,
+        mirrored: bool,
     ) -> Result<(), ReceiverError> {
         let description = frame.description();
         let timestamp_us = frame.timestamp_us();
@@ -163,10 +246,6 @@ impl ReceiverSession {
             description.stride,
             description.rotation,
         );
-        let mirrored = self
-            .current_stream_config
-            .as_ref()
-            .is_some_and(|config| config.mirrored);
         let transform_required =
             picoo_frame_hub::normalize_rotation_degrees(rotation) != 0 || mirrored;
         let transform_started = Instant::now();
@@ -194,7 +273,7 @@ impl ReceiverSession {
                 self.ingress.orientation_transform_max_us.max(elapsed_us);
         }
 
-        let published = self.latest_frame_store.publish(VideoFrame::new(
+        let published = self.frames.publish(VideoFrame::new(
             timeline.stream_generation,
             timeline.frame_id,
             timeline.source_pts_us,
@@ -211,13 +290,16 @@ impl ReceiverSession {
         ));
         if let Some(ring) = self.shared_ring.as_ref() {
             if ring.submit(published) == picoo_frame_hub::SharedRingSubmitOutcome::Stopped {
-                self.last_shared_ring_error = Some("Shared Frame Ring writer stopped".into());
+                self.last_vcam_output_error = Some("Shared Frame Ring writer stopped".into());
             }
         }
         Ok(())
     }
 
-    pub fn latest_frame(&self) -> Option<&Arc<VideoFrame>> {
-        self.latest_frame_store.latest()
+    pub fn latest_frame(&self) -> Option<&Arc<crate::ReceiverFrame>> {
+        self.frames.latest()
     }
 }
+
+#[cfg(test)]
+mod tests;

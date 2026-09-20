@@ -1,84 +1,79 @@
 use picoo_metrics::ReceiverStats as MetricsReceiverStats;
 use picoo_protocol::control::{Capabilities, ReceiverStats as ReceiverStatsMsg};
-use picoo_rate_control::{BitrateAction, BitrateLadder};
 use picoo_session::{HealthState, StreamState};
 use picoo_transport::PicooTransport;
 
-use super::{EncoderDirective, EncoderDirectiveKind, SenderSession};
+use super::SenderSession;
 
 impl<T: PicooTransport> SenderSession<T> {
+    /// REQ-PICOO-MEDIA-054: preparation candidates, not proof of native source output.
+    /// None means this connection has not received valid decoder evidence yet.
+    pub fn receiver_source_candidates(&self) -> Option<Vec<crate::SourceFormat>> {
+        let caps = self.receiver_capabilities.as_ref()?;
+        Some(
+            crate::SourceFormat::PRODUCT_FORMATS
+                .into_iter()
+                .filter(|format| format.is_offered_by(caps))
+                .collect(),
+        )
+    }
+
     /// Max height from receiver Capabilities (0 if unknown). REQ-PICOO-MEDIA-002.
     pub fn receiver_max_height(&self) -> u32 {
         self.receiver_capabilities
             .as_ref()
-            .map(|caps| caps.resolutions.iter().map(|r| r.height).max().unwrap_or(0))
+            .map_or(0, |caps| self.matching_decoder_height(caps))
+    }
+
+    fn requested_source_format(&self) -> Option<crate::SourceFormat> {
+        self.encoder_apply_state
+            .directive()
+            .map(|directive| directive.target_format)
+            .or_else(|| {
+                self.pending_stream_config
+                    .as_ref()
+                    .map(|config| crate::SourceFormat {
+                        codec: config.configuration.codec(),
+                        height: config.height,
+                        fps: config.fps,
+                    })
+            })
+    }
+
+    fn matching_decoder_height(&self, caps: &Capabilities) -> u32 {
+        let Some(requested) = self.requested_source_format() else {
+            return 0;
+        };
+        [720, 1080]
+            .into_iter()
+            .filter(|height| {
+                crate::SourceFormat {
+                    height: *height,
+                    ..requested
+                }
+                .is_offered_by(caps)
+            })
+            .max()
             .unwrap_or(0)
     }
 
     /// User / capability preferred capture height (does not change active encode height).
-    pub fn set_preferred_height(&mut self, height: u32) {
-        self.requested_preferred_height = picoo_rate_control::normalize_height(height);
-        let preferred = self.cap_to_receiver_height(self.requested_preferred_height);
-        self.bitrate.set_preferred_height(preferred);
+    pub fn set_preferred_height(&mut self, height: u32) -> bool {
+        if !self.bitrate.set_preferred_height(height) {
+            self.last_session_error = Some("UNSUPPORTED_SOURCE_HEIGHT".into());
+            return false;
+        }
+        self.requested_preferred_height = height;
+        true
     }
 
-    /// Host thermal policy — block ABR upshift while overheating (MEDIA-010).
+    /// Host thermal policy holds bitrate growth without changing source format.
     pub fn set_thermal_hold(&mut self, hold: bool) {
         self.bitrate.set_thermal_hold(hold);
     }
 
     pub fn thermal_hold(&self) -> bool {
         self.bitrate.thermal_hold()
-    }
-
-    pub(super) fn queue_encoder_directive(
-        &mut self,
-        kind: EncoderDirectiveKind,
-        target_height: u32,
-    ) {
-        if self.encoder_apply_state.is_applying() {
-            return;
-        }
-        let target_height = self.cap_to_receiver_height(target_height);
-        if target_height == self.bitrate.active_height() {
-            let action = match kind {
-                EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery => return,
-                EncoderDirectiveKind::AbrDownshift => BitrateAction::DownshiftResolution,
-                EncoderDirectiveKind::AbrUpshift => BitrateAction::UpshiftResolution,
-            };
-            self.bitrate.reject_resolution_change(action);
-            return;
-        }
-        let id = self.next_encoder_directive_id;
-        let Some(next_id) = id.checked_add(1) else {
-            self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
-            return;
-        };
-        let stream_epoch = self.allocate_stream_epoch();
-        if stream_epoch == 0 {
-            return;
-        }
-        let directive = EncoderDirective {
-            id,
-            kind,
-            target_height,
-            target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
-            stream_epoch,
-        };
-        if !self.begin_encoder_transaction(directive) {
-            return;
-        }
-        self.next_encoder_directive_id = next_id;
-    }
-
-    pub(super) fn cap_to_receiver_height(&self, height: u32) -> u32 {
-        let requested = picoo_rate_control::normalize_height(height);
-        let maximum = self.receiver_max_height();
-        if maximum == 0 {
-            requested
-        } else {
-            requested.min(picoo_rate_control::normalize_height(maximum))
-        }
     }
 
     pub(super) fn clear_receiver_capabilities(&mut self) {
@@ -123,21 +118,6 @@ impl<T: PicooTransport> SenderSession<T> {
         };
         self.last_receiver_stats = Some(metrics.clone());
         self.last_bitrate_action = self.bitrate.update(&metrics);
-        if !self.encoder_apply_state.is_applying()
-            && matches!(
-                self.last_bitrate_action,
-                BitrateAction::DownshiftResolution | BitrateAction::UpshiftResolution
-            )
-        {
-            if let Some(target_height) = self.bitrate.target_height_for(self.last_bitrate_action) {
-                let kind = match self.last_bitrate_action {
-                    BitrateAction::DownshiftResolution => EncoderDirectiveKind::AbrDownshift,
-                    BitrateAction::UpshiftResolution => EncoderDirectiveKind::AbrUpshift,
-                    _ => unreachable!(),
-                };
-                self.queue_encoder_directive(kind, target_height);
-            }
-        }
         // REQ-PICOO-SESSION-001: Network Unstable mirrors ARCH loss thresholds.
         if self.lifecycle.runtime.stream().is_streaming() {
             if metrics.packet_loss > 0.03 {
@@ -156,18 +136,27 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn handle_capabilities(&mut self, capabilities: Capabilities) -> bool {
-        // Empty Capabilities is a prost false-positive for almost any blob.
-        if !capabilities.codecs.is_empty() {
-            self.receiver_capabilities = Some(capabilities);
-            self.bitrate
-                .set_preferred_height(self.cap_to_receiver_height(self.requested_preferred_height));
-            if self.lifecycle.runtime.stream() == StreamState::Negotiating {
-                self.enter_streaming();
-            }
-            true
-        } else {
-            false
+        if capabilities.validate().is_err() {
+            self.last_session_error = Some("INVALID_DECODER_CAPABILITIES".into());
+            return false;
         }
+        if self
+            .requested_source_format()
+            .is_some_and(|request| !request.is_offered_by(&capabilities))
+        {
+            self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
+        } else if self.last_session_error.as_deref() == Some("NO_MATCHING_DECODER_OFFER") {
+            self.last_session_error = None;
+        }
+        // Retain valid alternatives even when the currently requested format is
+        // unavailable. The UI must be able to offer an explicit new selection.
+        self.receiver_capabilities = Some(capabilities);
+        self.bitrate
+            .set_preferred_height(self.requested_preferred_height);
+        if self.lifecycle.runtime.stream() == StreamState::Negotiating {
+            self.enter_streaming();
+        }
+        true
     }
 
     #[doc(hidden)]

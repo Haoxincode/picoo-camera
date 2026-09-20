@@ -3,380 +3,16 @@ import Observation
 import SwiftUI
 import UIKit
 
-// REQ-PICOO-MEDIA-011: AVFoundation capture/preview -> native VideoToolbox.
-
-nonisolated enum CameraPosition: Equatable, Sendable {
-    case back
-    case front
-
-    var capturePosition: AVCaptureDevice.Position {
-        switch self {
-        case .back: .back
-        case .front: .front
-        }
-    }
-
-    var opposite: Self {
-        switch self {
-        case .back: .front
-        case .front: .back
-        }
-    }
-}
-
-nonisolated enum CameraCaptureState: Equatable, Sendable {
-    case idle
-    case requestingPermission
-    case starting
-    case stopping
-    case running
-    case denied
-    case unavailable
-    case failed(String)
-}
-
-nonisolated enum CameraCaptureError: LocalizedError {
-    case deviceUnavailable(CameraPosition)
-    case inputUnavailable
-    case inputRejected
-    case outputRejected
-    case frameRateUnavailable
-    case deviceConfiguration
-
-    var errorDescription: String? {
-        switch self {
-        case let .deviceUnavailable(position):
-            return position == .front ? "前置摄像头不可用" : "后置摄像头不可用"
-        case .inputUnavailable:
-            return "无法创建摄像头输入"
-        case .inputRejected:
-            return "系统拒绝加入摄像头输入"
-        case .outputRejected:
-            return "系统拒绝加入视频输出"
-        case .frameRateUnavailable:
-            return "当前摄像头不支持 30 FPS"
-        case .deviceConfiguration:
-            return "无法配置摄像头帧率"
-        }
-    }
-}
-
-/// Serial Swift actor boundary for every AVCaptureSession mutation.
-///
-/// `startRunning()` is intentionally kept off MainActor while configuration,
-/// camera switching and shutdown remain serialized by actor isolation.
-/// SAFETY: only `CameraCaptureService` mutates this session. MainActor merely
-/// binds the same AVFoundation session to its preview layer.
-nonisolated private final class CaptureSessionReference: @unchecked Sendable {
-    let session = AVCaptureSession()
-}
-
-actor CameraCaptureService {
-    private let sessionReference: CaptureSessionReference
-    private let encoder: VideoEncoderPipeline
-    private var activeInput: AVCaptureDeviceInput?
-    private var videoOutput: AVCaptureVideoDataOutput?
-    private var position: CameraPosition = .back
-    private var resolution: VideoResolution = .p1080
-    private var encoderConfiguration: VideoEncoderConfiguration
-    private var captureRotation: UInt32 = 0
-    private var operationGeneration: UInt64 = 0
-
-    fileprivate init(
-        sessionReference: CaptureSessionReference,
-        encoder: VideoEncoderPipeline,
-        initialConfiguration: VideoEncoderConfiguration
-    ) {
-        self.sessionReference = sessionReference
-        self.encoder = encoder
-        encoderConfiguration = initialConfiguration
-    }
-
-    func start(
-        at requestedPosition: CameraPosition,
-        configuration: VideoEncoderConfiguration
-    ) async throws {
-        let operation = beginOperation()
-        let session = sessionReference.session
-        do {
-            try configure(
-                at: requestedPosition,
-                resolution: configuration.resolution
-            )
-            let appliedConfiguration = configuration.withRotation(captureRotation)
-            encoderConfiguration = appliedConfiguration
-            await encoder.start(configuration: appliedConfiguration)
-            try ensureCurrent(operation)
-            if !session.isRunning {
-                session.startRunning()
-            }
-        } catch {
-            if operation == operationGeneration {
-                await encoder.stop()
-                if operation == operationGeneration, session.isRunning {
-                    session.stopRunning()
-                }
-            }
-            throw error
-        }
-    }
-
-    func switchCamera(
-        configuration: VideoEncoderConfiguration
-    ) async throws -> CameraPosition {
-        let operation = beginOperation()
-        let target = position.opposite
-        return try await reconfigureCapture(
-            at: target,
-            configuration: configuration,
-            operation: operation
-        )
-    }
-
-    func setResolution(
-        _ resolution: VideoResolution,
-        configuration: VideoEncoderConfiguration
-    ) async throws {
-        let operation = beginOperation()
-        _ = try await reconfigureCapture(
-            at: position,
-            configuration: configuration,
-            operation: operation
-        )
-    }
-
-    func updateBitrate(_ bitrateBps: UInt32) async {
-        encoderConfiguration = VideoEncoderConfiguration(
-            resolution: encoderConfiguration.resolution,
-            framesPerSecond: encoderConfiguration.framesPerSecond,
-            bitrateBps: bitrateBps,
-            streamEpoch: encoderConfiguration.streamEpoch,
-            encoderGeneration: encoderConfiguration.encoderGeneration,
-            rotation: encoderConfiguration.rotation
-        )
-        await encoder.updateBitrate(bitrateBps)
-    }
-
-    func updateRotation(_ rotation: UInt32) async {
-        captureRotation = rotation % 360
-        encoderConfiguration = encoderConfiguration.withRotation(captureRotation)
-        await encoder.updateRotation(captureRotation)
-    }
-
-    func requestKeyframe() async {
-        await encoder.requestKeyframe()
-    }
-
-    func stop() async {
-        let operation = beginOperation()
-        await encoder.stop()
-        guard operation == operationGeneration else { return }
-        let session = sessionReference.session
-        if session.isRunning {
-            session.stopRunning()
-        }
-    }
-
-    private func reconfigureCapture(
-        at requestedPosition: CameraPosition,
-        configuration: VideoEncoderConfiguration,
-        operation: UInt64
-    ) async throws -> CameraPosition {
-        await encoder.pause()
-        try ensureCurrent(operation)
-        do {
-            try configure(
-                at: requestedPosition,
-                resolution: configuration.resolution
-            )
-            let appliedConfiguration = configuration.withRotation(captureRotation)
-            encoderConfiguration = appliedConfiguration
-            await encoder.start(configuration: appliedConfiguration)
-            try ensureCurrent(operation)
-            return requestedPosition
-        } catch {
-            if error is CancellationError { throw error }
-            try ensureCurrent(operation)
-            let rollbackConfiguration = encoderConfiguration
-            await encoder.start(configuration: rollbackConfiguration)
-            try ensureCurrent(operation)
-            throw error
-        }
-    }
-
-    private func configure(
-        at requestedPosition: CameraPosition,
-        resolution requestedResolution: VideoResolution
-    ) throws {
-        let session = sessionReference.session
-        if activeInput != nil,
-           position == requestedPosition,
-           resolution == requestedResolution,
-           videoOutput != nil {
-            return
-        }
-
-        let replacingInput = activeInput == nil || position != requestedPosition
-        let input = try replacingInput
-            ? makeInput(at: requestedPosition)
-            : activeInput
-        let previousInput = activeInput
-        let previousOutput = videoOutput
-        let previousPreset = session.sessionPreset
-
-        session.beginConfiguration()
-        do {
-            let preset: AVCaptureSession.Preset = requestedResolution == .p1080
-                ? .hd1920x1080
-                : .hd1280x720
-            guard session.canSetSessionPreset(preset) else {
-                throw CameraCaptureError.deviceUnavailable(requestedPosition)
-            }
-            session.sessionPreset = preset
-
-            if replacingInput, let input {
-                if let activeInput {
-                    session.removeInput(activeInput)
-                }
-                guard session.canAddInput(input) else {
-                    throw CameraCaptureError.inputRejected
-                }
-                session.addInput(input)
-                activeInput = input
-            }
-
-            if videoOutput == nil {
-                let output = AVCaptureVideoDataOutput()
-                output.alwaysDiscardsLateVideoFrames = true
-                output.videoSettings = [
-                    kCVPixelBufferPixelFormatTypeKey as String:
-                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-                ]
-                output.setSampleBufferDelegate(encoder, queue: encoder.callbackQueue)
-                guard session.canAddOutput(output) else {
-                    throw CameraCaptureError.outputRejected
-                }
-                session.addOutput(output)
-                videoOutput = output
-            }
-
-            if let connection = videoOutput?.connection(with: .video),
-               connection.isVideoRotationAngleSupported(0) {
-                // Camera buffer defaults differ across iPad generations. Keep the
-                // encoded buffer in native sensor orientation and carry rotation
-                // explicitly in StreamConfig.
-                connection.videoRotationAngle = 0
-            }
-
-            if let device = activeInput?.device {
-                try configureThirtyFramesPerSecond(on: device)
-            }
-
-            position = requestedPosition
-            resolution = requestedResolution
-            if let device = activeInput?.device {
-                let coordinator = AVCaptureDevice.RotationCoordinator(
-                    device: device,
-                    previewLayer: nil
-                )
-                captureRotation = UInt32(
-                    coordinator.videoRotationAngleForHorizonLevelCapture.rounded()
-                ) % 360
-            }
-            session.commitConfiguration()
-        } catch {
-            let inputWasReplaced = activeInput !== previousInput
-            if inputWasReplaced, let currentInput = activeInput {
-                session.removeInput(currentInput)
-            }
-            if let currentOutput = videoOutput,
-               currentOutput !== previousOutput {
-                session.removeOutput(currentOutput)
-            }
-            if session.canSetSessionPreset(previousPreset) {
-                session.sessionPreset = previousPreset
-            }
-            if let previousInput,
-               !session.inputs.contains(where: { $0 === previousInput }) {
-                if session.canAddInput(previousInput) {
-                    session.addInput(previousInput)
-                    activeInput = previousInput
-                } else {
-                    activeInput = nil
-                }
-            } else {
-                activeInput = previousInput
-            }
-            videoOutput = previousOutput
-            session.commitConfiguration()
-            throw error
-        }
-    }
-
-    private func makeInput(
-        at requestedPosition: CameraPosition
-    ) throws -> AVCaptureDeviceInput {
-        guard let device = AVCaptureDevice.default(
-            .builtInWideAngleCamera,
-            for: .video,
-            position: requestedPosition.capturePosition
-        ) else {
-            throw CameraCaptureError.deviceUnavailable(requestedPosition)
-        }
-        do {
-            return try AVCaptureDeviceInput(device: device)
-        } catch {
-            throw CameraCaptureError.inputUnavailable
-        }
-    }
-
-    private func configureThirtyFramesPerSecond(on device: AVCaptureDevice) throws {
-        let framesPerSecond = 30.0
-        guard device.activeFormat.videoSupportedFrameRateRanges.contains(where: {
-            $0.minFrameRate <= framesPerSecond && $0.maxFrameRate >= framesPerSecond
-        }) else {
-            throw CameraCaptureError.frameRateUnavailable
-        }
-        do {
-            try device.lockForConfiguration()
-            defer { device.unlockForConfiguration() }
-            let frameDuration = CMTime(value: 1, timescale: 30)
-            device.activeVideoMinFrameDuration = frameDuration
-            device.activeVideoMaxFrameDuration = frameDuration
-        } catch {
-            throw CameraCaptureError.deviceConfiguration
-        }
-    }
-
-    private func beginOperation() -> UInt64 {
-        operationGeneration &+= 1
-        return operationGeneration
-    }
-
-    private func ensureCurrent(_ operation: UInt64) throws {
-        guard operation == operationGeneration else { throw CancellationError() }
-    }
-}
-
-nonisolated private extension VideoEncoderConfiguration {
-    func withRotation(_ rotation: UInt32) -> Self {
-        Self(
-            resolution: resolution,
-            framesPerSecond: framesPerSecond,
-            bitrateBps: bitrateBps,
-            streamEpoch: streamEpoch,
-            encoderGeneration: encoderGeneration,
-            rotation: rotation
-        )
-    }
-}
-
 @MainActor
 @Observable
 final class CameraCaptureModel {
     private(set) var state: CameraCaptureState = .idle
     private(set) var position: CameraPosition = .back
-    private(set) var resolution: VideoResolution = .p1080
+    private(set) var localSourceFormats: [VideoSourceFormat]?
+    private(set) var sourceFormat: VideoSourceFormat = .defaultFormat
+    var resolution: VideoResolution { sourceFormat.resolution }
+    private(set) var captureRotation: UInt32 = 0
+    @ObservationIgnored private var rotationIntent = CaptureRotationIntent()
     private(set) var streamEpoch: UInt32
     private(set) var encoderGeneration: UInt64
     private(set) var previewLayer: AVCaptureVideoPreviewLayer?
@@ -398,7 +34,9 @@ final class CameraCaptureModel {
         let sessionReference = CaptureSessionReference()
         let eventBuffer = VideoEncoderEventBuffer()
         let initialConfiguration = VideoEncoderConfiguration(
-            resolution: .p1080,
+            codec: VideoSourceFormat.defaultFormat.codec,
+            resolution: VideoSourceFormat.defaultFormat.resolution,
+            framesPerSecond: VideoSourceFormat.defaultFormat.framesPerSecond,
             bitrateBps: initialBitrateBps,
             streamEpoch: initialStreamEpoch,
             encoderGeneration: 1
@@ -420,8 +58,19 @@ final class CameraCaptureModel {
         )
     }
 
+    func refreshSourceFormats() async {
+        let requestedPosition = position
+        let formats = await service.preparedSourceFormats(at: requestedPosition)
+        guard !Task.isCancelled, position == requestedPosition else { return }
+        localSourceFormats = formats
+    }
+
+    func preparedSourceFormats(at position: CameraPosition? = nil) async -> [VideoSourceFormat] {
+        await service.preparedSourceFormats(at: position ?? self.position)
+    }
+
     func start(
-        resolution requestedResolution: VideoResolution? = nil,
+        sourceFormat requestedSourceFormat: VideoSourceFormat? = nil,
         bitrateBps: UInt32,
         streamEpoch: UInt32
     ) async -> Bool {
@@ -450,11 +99,13 @@ final class CameraCaptureModel {
         }
 
         state = .starting
+        rotationIntent.reset()
+        captureRotation = Self.captureAngle(at: position)
         let previousEncoderGeneration = encoderGeneration
         encoderGeneration &+= 1
         do {
-            if let requestedResolution {
-                resolution = requestedResolution
+            if let requestedSourceFormat {
+                sourceFormat = requestedSourceFormat
             }
             targetBitrateBps = bitrateBps
             try await service.start(
@@ -501,14 +152,14 @@ final class CameraCaptureModel {
 
     func rebuildAfterReconnect(streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
+        rotationIntent.reset()
         let operation = beginOperation()
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
         self.streamEpoch = streamEpoch
         encoderGeneration &+= 1
         do {
-            try await service.setResolution(
-                resolution,
+            try await service.setSourceConfiguration(
                 configuration: encoderConfiguration
             )
             guard operation == operationGeneration else { return false }
@@ -523,9 +174,18 @@ final class CameraCaptureModel {
         }
     }
 
-    func switchCamera(streamEpoch: UInt32) async -> Bool {
+    func switchCamera(sourceFormat requestedSourceFormat: VideoSourceFormat, streamEpoch: UInt32) async -> Bool {
         guard state == .running else { return false }
+        let targetPosition = position.opposite
+        let prepared = await preparedSourceFormats(at: targetPosition)
+        guard !Task.isCancelled, state == .running, prepared.contains(requestedSourceFormat) else { return false }
         let operation = beginOperation()
+        let previousSourceFormat = sourceFormat
+        let previousRotation = captureRotation
+        let previousBitrate = targetBitrateBps
+        sourceFormat = requestedSourceFormat
+        captureRotation = Self.captureAngle(at: targetPosition)
+        targetBitrateBps = PicooSenderSession.initialBitrate(forHeight: UInt32(requestedSourceFormat.resolution.rawValue))
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
         self.streamEpoch = streamEpoch
@@ -538,6 +198,8 @@ final class CameraCaptureModel {
             await service.updateBitrate(targetBitrateBps)
             guard operation == operationGeneration else { return false }
             position = switchedPosition
+            localSourceFormats = nil
+            await refreshSourceFormats()
             if let previewLayer {
                 updatePreviewMirroring(previewLayer)
                 startRotationUpdates(previewLayer: previewLayer)
@@ -545,30 +207,35 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
+            sourceFormat = previousSourceFormat
+            captureRotation = previousRotation
+            targetBitrateBps = previousBitrate
             self.streamEpoch = previousEpoch
             encoderGeneration = previousEncoderGeneration
             return false
         }
     }
 
-    func setResolution(
-        _ requestedResolution: VideoResolution,
+    func setSourceFormat(
+        _ requestedSourceFormat: VideoSourceFormat,
+        captureRotation requestedRotation: UInt32,
         bitrateBps: UInt32,
         streamEpoch: UInt32
     ) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
-        let previousResolution = resolution
+        let previousSourceFormat = sourceFormat
+        let previousRotation = captureRotation
         let previousBitrate = targetBitrateBps
         let previousEpoch = self.streamEpoch
         let previousEncoderGeneration = encoderGeneration
-        resolution = requestedResolution
+        sourceFormat = requestedSourceFormat
+        captureRotation = requestedRotation
         targetBitrateBps = bitrateBps
         self.streamEpoch = streamEpoch
         encoderGeneration &+= 1
         do {
-            try await service.setResolution(
-                requestedResolution,
+            try await service.setSourceConfiguration(
                 configuration: encoderConfiguration
             )
             guard operation == operationGeneration else { return false }
@@ -577,7 +244,8 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
-            resolution = previousResolution
+            sourceFormat = previousSourceFormat
+            captureRotation = previousRotation
             targetBitrateBps = previousBitrate
             self.streamEpoch = previousEpoch
             encoderGeneration = previousEncoderGeneration
@@ -589,20 +257,23 @@ final class CameraCaptureModel {
     /// Recovery is complete only after the caller observes the first matching
     /// IDR from this generation.
     func restoreCommittedConfiguration(
-        resolution committedResolution: VideoResolution,
+        sourceFormat committedSourceFormat: VideoSourceFormat,
         position committedPosition: CameraPosition,
+        captureRotation committedRotation: UInt32,
         bitrateBps committedBitrateBps: UInt32,
         streamEpoch committedStreamEpoch: UInt32
     ) async -> Bool {
         guard state == .running else { return false }
         let operation = beginOperation()
-        let previousResolution = resolution
+        let previousSourceFormat = sourceFormat
+        let previousRotation = captureRotation
         let previousPosition = position
         let previousBitrate = targetBitrateBps
         let previousEpoch = streamEpoch
         let previousEncoderGeneration = encoderGeneration
 
-        resolution = committedResolution
+        sourceFormat = committedSourceFormat
+        captureRotation = committedRotation
         targetBitrateBps = committedBitrateBps
         streamEpoch = committedStreamEpoch
         encoderGeneration &+= 1
@@ -618,8 +289,7 @@ final class CameraCaptureModel {
                 }
                 position = restoredPosition
             } else {
-                try await service.setResolution(
-                    committedResolution,
+                try await service.setSourceConfiguration(
                     configuration: encoderConfiguration
                 )
                 guard operation == operationGeneration else {
@@ -637,7 +307,8 @@ final class CameraCaptureModel {
             return true
         } catch {
             guard operation == operationGeneration else { return false }
-            resolution = previousResolution
+            sourceFormat = previousSourceFormat
+            captureRotation = previousRotation
             position = previousPosition
             targetBitrateBps = previousBitrate
             streamEpoch = previousEpoch
@@ -680,10 +351,13 @@ final class CameraCaptureModel {
 
     private var encoderConfiguration: VideoEncoderConfiguration {
         VideoEncoderConfiguration(
-            resolution: resolution,
+            codec: sourceFormat.codec,
+            resolution: sourceFormat.resolution,
+            framesPerSecond: sourceFormat.framesPerSecond,
             bitrateBps: targetBitrateBps,
             streamEpoch: streamEpoch,
-            encoderGeneration: encoderGeneration
+            encoderGeneration: encoderGeneration,
+            rotation: captureRotation
         )
     }
 
@@ -748,7 +422,21 @@ final class CameraCaptureModel {
         let captureAngle = UInt32(
             coordinator.videoRotationAngleForHorizonLevelCapture.rounded()
         ) % 360
-        Task { await service.updateRotation(captureAngle) }
+        rotationIntent.observe(captureAngle)
+    }
+
+    var requestedCaptureRotation: UInt32 { rotationIntent.requested }
+
+    func takeRotationRequest() -> UInt32? {
+        guard state == .running else { return nil }
+        return rotationIntent.take(applied: captureRotation)
+    }
+
+    private static func captureAngle(at position: CameraPosition) -> UInt32 {
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera,
+            for: .video, position: position.capturePosition) else { return 0 }
+        let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        return UInt32(coordinator.videoRotationAngleForHorizonLevelCapture.rounded()) % 360
     }
 
     private func beginOperation() -> UInt64 {

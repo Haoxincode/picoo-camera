@@ -11,18 +11,7 @@ struct ContentView: View {
 
     var body: some View {
         ZStack {
-            PicooColor.surfacePage.ignoresSafeArea()
-
-            switch model.screen {
-            case .devices:
-                DevicesView(model: model)
-            case .pairing:
-                PairingView(model: model)
-            case .waiting:
-                PairingWaitingView(model: model)
-            case .live:
-                LiveCameraView(model: model)
-            }
+            LiveCameraView(model: model)
         }
         .foregroundStyle(PicooColor.contentPrimary)
         .task { model.start() }
@@ -41,6 +30,29 @@ struct ContentView: View {
                 .presentationDragIndicator(.visible)
                 .presentationBackground(PicooColor.surfaceGroup)
         }
+        .sheet(isPresented: $model.isConnectionPresented) {
+            DevicesView(model: model)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(PicooColor.surfaceGroup)
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { model.screen == .pairing || model.screen == .waiting },
+                set: { presented in
+                    guard !presented else { return }
+                    if model.screen == .pairing || model.screen == .waiting {
+                        model.cancelConnection()
+                    }
+                }
+            )
+        ) {
+            if model.screen == .pairing {
+                PairingView(model: model)
+            } else {
+                PairingWaitingView(model: model)
+            }
+        }
     }
 }
 
@@ -52,9 +64,9 @@ private struct DevicesView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: PicooSpace.xl) {
                     VStack(alignment: .leading, spacing: PicooSpace.xs) {
-                        Text("把手机变成无线摄像头")
+                        Text("连接电脑")
                             .font(.largeTitle.weight(.bold))
-                        Text("选择同一 Wi-Fi 下的电脑，已配对设备点按直连。")
+                        Text("搜索同一 Wi‑Fi 下的电脑，或输入局域网 IP 直连。")
                             .font(.subheadline)
                             .foregroundStyle(PicooColor.contentMuted)
                     }
@@ -79,11 +91,12 @@ private struct DevicesView: View {
                 .padding(.bottom, PicooSpace.xl)
             }
             .background(PicooColor.surfacePage)
-            .navigationTitle("Picoo Camera")
+            .navigationTitle("连接电脑")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        model.isConnectionPresented = false
                         model.isSettingsPresented = true
                     } label: {
                         ReiconIcon(icon: .settings)
@@ -367,15 +380,12 @@ private struct LiveCameraView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        GeometryReader { proxy in
-            ZStack {
-                PicooCameraColor.surface.ignoresSafeArea()
-                cameraSurface
-                safeFrame(width: proxy.size.width - PicooCameraLayout.safeHorizontalInset * 2)
-                hud
-                cameraStatus
-                controls
-            }
+        ZStack {
+            PicooCameraColor.surface.ignoresSafeArea()
+            cameraSurface
+            hud
+            cameraStatus
+            controls
         }
         .preferredColorScheme(.dark)
     }
@@ -388,63 +398,108 @@ private struct LiveCameraView: View {
         }
     }
 
-    private func safeFrame(width: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: PicooCameraLayout.safeFrameRadius)
-            .stroke(
-                PicooCameraColor.safeFrame,
-                style: StrokeStyle(
-                    lineWidth: PicooCameraLayout.safeFrameStroke,
-                    dash: PicooCameraLayout.safeFrameDash
-                )
-            )
-            .frame(width: width, height: width / PicooCameraLayout.videoAspectRatio)
-            .overlay(alignment: .topLeading) {
-                Text("16:9 PC 裁切框")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(PicooCameraColor.safeFrameLabel)
-                    .padding(PicooSpace.sm)
-            }
-    }
-
     private var hud: some View {
         VStack {
             HStack {
-                HStack(spacing: PicooCameraLayout.hudItemSpacing) {
-                    Circle()
-                        .fill(PicooCameraColor.success)
-                        .frame(
-                            width: PicooCameraLayout.statusDot,
-                            height: PicooCameraLayout.statusDot
-                        )
-                    Text(model.receiverName)
-                        .font(.caption.weight(.bold))
-                    Text(model.senderStatus == .streaming ? "已连接" : "准备视频")
-                        .font(.caption2.monospaced())
-                        .foregroundStyle(PicooCameraColor.success)
+                Button {
+                    model.isConnectionPresented = true
+                } label: {
+                    HStack(spacing: PicooCameraLayout.hudItemSpacing) {
+                        Circle()
+                            .fill(isConnected ? PicooCameraColor.success : PicooCameraColor.contentMuted)
+                            .frame(
+                                width: PicooCameraLayout.statusDot,
+                                height: PicooCameraLayout.statusDot
+                            )
+                        Text(connectionTitle)
+                            .font(.caption.weight(.bold))
+                        if !isConnected {
+                            Text(connectionDetail)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(PicooCameraColor.contentMuted)
+                        }
+                    }
+                    .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
+                    .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
+                    .background(PicooCameraColor.hudOverlay, in: Capsule())
                 }
-                .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
-                .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
-                .background(PicooCameraColor.hudOverlay, in: Capsule())
+                .buttonStyle(.plain)
+                .accessibilityLabel(connectionTitle)
+                .accessibilityHint("打开连接面板")
 
                 Spacer()
 
-                Button {
-                    Task { await model.toggleResolution() }
-                } label: {
-                    Text(model.resolutionLabel)
-                        .font(.caption.weight(.bold).monospaced())
-                        .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
-                        .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
-                        .background(PicooCameraColor.hudOverlay, in: Capsule())
+                HStack(spacing: PicooSpace.sm) {
+                    if isConnected {
+                        Menu {
+                            ForEach(model.availableSourceFormats ?? [], id: \.self) { source in
+                                Button(source.label) { Task { await model.applySourceFormat(source) } }
+                            }
+                        } label: {
+                            Text(model.sourceFormatLabel)
+                                .font(.caption.weight(.bold).monospaced())
+                                .padding(.horizontal, PicooCameraLayout.hudHorizontalPadding)
+                                .padding(.vertical, PicooCameraLayout.hudVerticalPadding)
+                                .background(PicooCameraColor.hudOverlay, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("选择视频格式")
+                    }
+
+                    Button {
+                        model.isSettingsPresented = true
+                    } label: {
+                        ReiconIcon(icon: .settings)
+                            .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
+                            .padding(PicooSpace.sm)
+                            .background(PicooCameraColor.hudOverlay, in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("设置")
                 }
-                .buttonStyle(.plain)
-                .disabled(model.camera.state != .running)
-                .accessibilityLabel("切换视频分辨率")
             }
             .foregroundStyle(PicooCameraColor.content)
             .padding(.horizontal, PicooCameraLayout.safeHorizontalInset)
             .padding(.top, PicooSpace.sm)
             Spacer()
+        }
+    }
+
+    private var isConnected: Bool {
+        model.senderStatus == .streaming ||
+            model.senderStatus == .reconnecting ||
+            model.senderStatus == .networkUnstable
+    }
+
+    private var connectionTitle: String {
+        switch model.senderStatus {
+        case .streaming, .networkUnstable:
+            return "\(model.receiverName) 已连接"
+        case .permissionRequired:
+            return "需要相机权限"
+        case .reconnecting:
+            return "正在重连电脑"
+        case .pairing:
+            return "等待配对确认"
+        case .connecting, .negotiating:
+            return "正在连接电脑"
+        case .discovering:
+            return "正在寻找电脑…"
+        case .disconnected:
+            return "点击连接电脑"
+        }
+    }
+
+    private var connectionDetail: String {
+        switch model.senderStatus {
+        case .streaming, .networkUnstable, .reconnecting:
+            return "已建立安全连接"
+        case .permissionRequired:
+            return "允许相机权限后开始预览"
+        case .discovering:
+            return "保持手机与电脑连接同一 Wi‑Fi"
+        default:
+            return model.errorMessage ?? "自动发现或输入局域网 IP"
         }
     }
 
@@ -466,6 +521,24 @@ private struct LiveCameraView: View {
                 title: "网络不稳定，正在优化…",
                 detail: "视频会优先保持低延迟，画质可能暂时降低。"
             )
+        } else if model.senderStatus == .connecting || model.senderStatus == .negotiating {
+            CameraOverlay(
+                title: "正在连接电脑…",
+                detail: "连接建立后会自动开始本机预览。"
+            )
+        } else if !isConnected && model.senderStatus != .permissionRequired {
+            VStack(spacing: PicooSpace.md) {
+                CameraOverlay(
+                    title: connectionTitle,
+                    detail: connectionDetail
+                )
+                Button("打开连接面板") {
+                    model.isConnectionPresented = true
+                }
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(PicooCameraColor.selected)
+                .frame(minHeight: PicooIconSize.touchTarget)
+            }
         } else {
             switch model.camera.state {
         case .requestingPermission:
@@ -504,37 +577,56 @@ private struct LiveCameraView: View {
             Spacer()
             HStack {
                 VStack(alignment: .leading, spacing: PicooSpace.xxs) {
-                    Text("预览就绪")
+                    Text(isConnected ? "预览就绪" : connectionTitle)
                         .font(.caption.weight(.bold))
-                    Text("H.264 · \(model.activeBitrateBps / 1_000_000) Mbps")
+                    Text(isConnected
+                         ? "H.264 · \(model.activeBitrateBps / 1_000_000) Mbps"
+                         : connectionDetail)
                         .font(.caption2)
                         .foregroundStyle(PicooCameraColor.contentSubtle)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                Button {
-                    model.handleStopTap()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .stroke(
-                                model.stopArmed ? PicooCameraColor.danger : PicooCameraColor.stopBorder,
-                                lineWidth: PicooCameraStopControl.stroke
-                            )
-                            .frame(
-                                width: PicooCameraStopControl.target,
-                                height: PicooCameraStopControl.target
-                            )
-                        ReiconIcon(icon: .stopStream)
-                            .frame(
-                                width: PicooCameraStopControl.icon,
-                                height: PicooCameraStopControl.icon
-                            )
-                            .foregroundStyle(PicooCameraColor.danger)
+                if isConnected {
+                    Button {
+                        model.handleStopTap()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .stroke(
+                                    model.stopArmed ? PicooCameraColor.danger : PicooCameraColor.stopBorder,
+                                    lineWidth: PicooCameraStopControl.stroke
+                                )
+                                .frame(
+                                    width: PicooCameraStopControl.target,
+                                    height: PicooCameraStopControl.target
+                                )
+                            ReiconIcon(icon: .stopStream)
+                                .frame(
+                                    width: PicooCameraStopControl.icon,
+                                    height: PicooCameraStopControl.icon
+                                )
+                                .foregroundStyle(PicooCameraColor.danger)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(model.stopArmed ? "再次点击确认断开" : "断开连接")
+                } else {
+                    Button {
+                        model.isConnectionPresented = true
+                    } label: {
+                        ReiconIcon(icon: .secureConnection)
+                            .frame(
+                                width: PicooCameraLayout.controlIcon,
+                                height: PicooCameraLayout.controlIcon
+                            )
+                            .padding(PicooCameraLayout.controlPadding)
+                            .background(PicooCameraColor.control, in: Circle())
+                            .overlay { Circle().stroke(PicooCameraColor.controlBorder) }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("连接电脑")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(model.stopArmed ? "再次点击确认断开" : "断开连接")
 
                 Button {
                     cameraRotation += 180
@@ -640,58 +732,106 @@ private struct SettingsSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("连接") {
-                    Toggle("打开 App 自动直连", isOn: $model.autoConnectEnabled)
-                    Picker("默认初始画质", selection: $model.preferredResolution) {
-                        ForEach(VideoResolution.allCases, id: \.self) { resolution in
-                            Text("\(resolution.rawValue)P · 30 FPS").tag(resolution)
+            ScrollView {
+                VStack(alignment: .leading, spacing: PicooSpace.xl) {
+                    IOSSettingsSection(title: "连接") {
+                        Toggle(isOn: $model.autoConnectEnabled) {
+                            IOSSettingsText(
+                                title: "打开 App 自动直连",
+                                detail: "上次连接的电脑在线时自动连接"
+                            )
                         }
-                    }
-                }
+                        .tint(PicooColor.actionHighlight)
+                        .frame(minHeight: PicooIconSize.touchTarget)
 
-                Section("已配对信任电脑") {
-                    if model.trustedReceivers.isEmpty {
-                        Text("还没有已配对电脑")
-                            .foregroundStyle(PicooColor.contentMuted)
-                    } else {
-                        ForEach(model.trustedReceivers) { receiver in
-                            HStack(spacing: PicooSpace.md) {
-                                ReiconIcon(icon: .receiverDevice)
-                                    .frame(width: PicooIconSize.standard, height: PicooIconSize.standard)
-                                    .foregroundStyle(PicooColor.actionHighlight)
-                                VStack(alignment: .leading, spacing: PicooSpace.xxs) {
-                                    Text(receiver.name)
-                                    Text(shortFingerprint(receiver.certificateFingerprint))
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(PicooColor.contentMuted)
+                        IOSSettingsDivider()
+
+                        Menu {
+                            ForEach(model.camera.localSourceFormats ?? [], id: \.self) { source in
+                                Button {
+                                    model.preferredSourceFormat = source
+                                } label: {
+                                    HStack {
+                                        Text(source.label)
+                                        if source == model.preferredSourceFormat {
+                                            Image(systemName: "checkmark")
+                                        }
+                                    }
                                 }
-                                Spacer()
-                                Button("撤销", role: .destructive) {
+                            }
+                        } label: {
+                            IOSSettingsRow(
+                                title: "默认初始画质",
+                                detail: "新连接的编码格式、分辨率与帧率",
+                                value: model.preferredSourceFormat.label,
+                                icon: .exposure
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    IOSSettingsSection(title: "设备与权限") {
+                        if model.trustedReceivers.isEmpty {
+                            IOSSettingsRow(
+                                title: "已配对信任电脑",
+                                detail: "首次配对成功后会显示在这里",
+                                value: "0 台",
+                                icon: .secureConnection,
+                                showsChevron: false
+                            )
+                        } else {
+                            ForEach(model.trustedReceivers) { receiver in
+                                Button {
                                     pendingRemoval = receiver
+                                } label: {
+                                    IOSSettingsRow(
+                                        title: receiver.name,
+                                        detail: "公钥指纹 \(shortFingerprint(receiver.certificateFingerprint))",
+                                        value: "撤销",
+                                        valueColor: PicooColor.statusDanger,
+                                        icon: .receiverDevice
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                if receiver.id != model.trustedReceivers.last?.id {
+                                    IOSSettingsDivider()
                                 }
                             }
                         }
+
+                        IOSSettingsDivider()
+
+                        Button {
+                            guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                            UIApplication.shared.open(url)
+                        } label: {
+                            IOSSettingsRow(
+                                title: "相机权限",
+                                detail: "进入直播取景时按需请求",
+                                value: cameraPermissionLabel,
+                                valueColor: cameraPermissionColor,
+                                icon: .secureConnection
+                            )
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    IOSSettingsSection(title: "关于") {
+                        IOSSettingsRow(
+                            title: "Picoo Camera",
+                            detail: "无线低延迟摄像头",
+                            value: "v\(picooAppVersion)",
+                            valueColor: PicooColor.contentMuted,
+                            icon: .receiverDevice,
+                            showsChevron: false
+                        )
                     }
                 }
-
-                Section {
-                    LabeledContent("相机权限", value: cameraPermissionLabel)
-                    Button("打开系统设置") {
-                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-                        UIApplication.shared.open(url)
-                    }
-                } header: {
-                    Text("权限")
-                } footer: {
-                    Text("相机权限只会在进入直播取景时请求。")
-                }
-
-                Section("关于") {
-                    LabeledContent("Picoo Camera", value: "v\(picooAppVersion)")
-                }
+                .padding(.horizontal, PicooSpace.xl)
+                .padding(.vertical, PicooSpace.lg)
             }
-            .navigationTitle("手机端设置")
+            .background(PicooColor.surfacePage)
+            .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
             .confirmationDialog(
                 "撤销信任？",
@@ -721,16 +861,138 @@ private struct SettingsSheet: View {
 
     private var cameraPermissionLabel: String {
         switch model.camera.state {
-        case .denied: "未授权"
-        case .running: "使用中"
+        case .idle: "按需请求"
+        case .requestingPermission: "正在请求"
+        case .starting: "正在启动"
         case .stopping: "正在停止"
-        default: "按需请求"
+        case .running: "使用中"
+        case .denied: "未授权"
+        case .unavailable: "不可用"
+        case .failed: "检查失败"
+        }
+    }
+
+    private var cameraPermissionColor: Color {
+        switch model.camera.state {
+        case .running:
+            PicooColor.statusSuccess
+        case .denied, .unavailable, .failed:
+            PicooColor.statusWarning
+        case .idle, .requestingPermission, .starting, .stopping:
+            PicooColor.contentMuted
         }
     }
 
     private func shortFingerprint(_ value: String) -> String {
         let compact = value.replacingOccurrences(of: ":", with: "")
         return String(compact.prefix(12))
+    }
+}
+
+private struct IOSSettingsSection<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicooSpace.sm) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(PicooColor.contentMuted)
+                .padding(.horizontal, PicooSpace.sm)
+            VStack(alignment: .leading, spacing: 0) {
+                content
+            }
+        }
+    }
+}
+
+private struct IOSSettingsRow: View {
+    let title: String
+    let detail: String
+    let value: String
+    let valueColor: Color
+    let icon: PicooIcon
+    let showsChevron: Bool
+
+    init(
+        title: String,
+        detail: String,
+        value: String,
+        valueColor: Color = PicooColor.contentMuted,
+        icon: PicooIcon,
+        showsChevron: Bool = true
+    ) {
+        self.title = title
+        self.detail = detail
+        self.value = value
+        self.valueColor = valueColor
+        self.icon = icon
+        self.showsChevron = showsChevron
+    }
+
+    var body: some View {
+        HStack(spacing: PicooSpace.sm) {
+            ReiconIcon(icon: icon)
+                .frame(width: PicooIconSize.emphasis, height: PicooIconSize.emphasis)
+                .foregroundStyle(PicooColor.actionHighlight)
+
+            VStack(alignment: .leading, spacing: PicooSpace.xxs) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(PicooColor.contentPrimary)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(PicooColor.contentMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .layoutPriority(1)
+
+            Spacer(minLength: PicooSpace.sm)
+
+            HStack(spacing: PicooSpace.xs) {
+                Text(value)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(valueColor)
+                    .multilineTextAlignment(.trailing)
+                if showsChevron {
+                    ReiconIcon(icon: .navigateBack)
+                        .frame(width: PicooIconSize.compact, height: PicooIconSize.compact)
+                        .rotationEffect(.degrees(180))
+                        .foregroundStyle(PicooColor.contentMuted)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: PicooIconSize.touchTarget, alignment: .center)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct IOSSettingsText: View {
+    let title: String
+    let detail: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PicooSpace.xxs) {
+            Text(title)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(PicooColor.contentPrimary)
+            Text(detail)
+                .font(.subheadline)
+                .foregroundStyle(PicooColor.contentMuted)
+        }
+    }
+}
+
+private struct IOSSettingsDivider: View {
+    var body: some View {
+        Divider()
+            .overlay(PicooColor.borderDefault)
+            .padding(.leading, PicooIconSize.emphasis + PicooSpace.sm)
     }
 }
 

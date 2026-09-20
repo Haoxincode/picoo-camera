@@ -1,6 +1,6 @@
 package com.picoo.camera.media
 
-/** Immutable H.264 AU detached from MediaCodec before its output buffer is released. */
+/** Compressed AU with its original configuration detached from MediaCodec before its output buffer is released. */
 internal data class EncodedAccessUnitHandoff(
     val data: ByteArray,
     val isKeyFrame: Boolean,
@@ -8,8 +8,7 @@ internal data class EncodedAccessUnitHandoff(
     val encodedAtUs: Long,
     val streamEpoch: Int,
     val encoderGeneration: Long,
-    val encoderWidth: Int,
-    val encoderHeight: Int,
+    val configuration: EncodedFrameConfiguration,
     val enqueuedAtNanos: Long,
 )
 
@@ -55,12 +54,13 @@ internal class EncodedAccessUnitBuffer(
             return schedule(accepted = false)
         }
 
-        if (events.size >= capacity || queuedBytes + event.data.size > maxBytes) {
+        val eventBytes = event.data.size.toLong() + event.configuration.record.size
+        if (events.size >= capacity || queuedBytes + eventBytes > maxBytes) {
             discardReferenceChain()
         }
-        val accepted = if (event.data.size <= maxBytes && (!waitingForKeyFrame || event.isKeyFrame)) {
+        val accepted = if (eventBytes <= maxBytes && (!waitingForKeyFrame || event.isKeyFrame)) {
             events.addLast(event)
-            queuedBytes += event.data.size
+            queuedBytes += eventBytes.toInt()
             if (event.isKeyFrame) {
                 waitingForKeyFrame = false
                 recoveryPending = false
@@ -81,7 +81,7 @@ internal class EncodedAccessUnitBuffer(
         val recovery = recoveryPending
         recoveryPending = false
         val event = events.removeFirstOrNull()
-        if (event != null) queuedBytes -= event.data.size
+        if (event != null) queuedBytes -= event.data.size + event.configuration.record.size
         if (event == null && !recovery) {
             workerScheduled = false
             return null

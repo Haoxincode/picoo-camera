@@ -1,17 +1,11 @@
 //! Video fragment reassembly — REQ-PICOO-PROTOCOL-004.
 
-mod h264;
 mod reassembly_fec;
 
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use bytes::{Bytes, BytesMut};
-pub use h264::{
-    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
-    annex_b_to_length_prefixed, extract_sps_pps, is_length_prefixed_access_unit,
-    length_prefixed_to_annex_b, split_annex_b_nals,
-};
 use picoo_protocol::{VideoPacket, VideoPacketFlags};
 use thiserror::Error;
 

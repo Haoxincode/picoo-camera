@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use picoo_protocol::control::control_envelope::Payload as ControlPayload;
-use picoo_rate_control::{BitrateAction, BitrateLadder};
+use picoo_rate_control::BitrateLadder;
 use picoo_transport::PicooTransport;
 
 use super::encoder_transaction::{
@@ -15,6 +15,12 @@ use crate::stream_config::StreamConfigParams;
 use crate::SenderError;
 
 impl<T: PicooTransport> SenderSession<T> {
+    /// Last admitted native format. Retained across disconnects for recovery;
+    /// this does not claim that a connection is currently streaming.
+    pub fn committed_source_format(&self) -> Option<crate::SourceFormat> {
+        self.committed_source_format
+    }
+
     pub fn encoder_transaction_id_for_epoch(&self, stream_epoch: u32) -> u64 {
         self.encoder_apply_state
             .transaction_id_for_epoch(stream_epoch)
@@ -29,7 +35,7 @@ impl<T: PicooTransport> SenderSession<T> {
     ) -> bool {
         if encoder_generation == 0
             || height == 0
-            || height != picoo_rate_control::normalize_height(height)
+            || !picoo_rate_control::is_supported_height(height)
         {
             return false;
         }
@@ -71,7 +77,7 @@ impl<T: PicooTransport> SenderSession<T> {
     ) -> bool {
         if encoder_generation == 0
             || height == 0
-            || height != picoo_rate_control::normalize_height(height)
+            || !picoo_rate_control::is_supported_height(height)
             || self.encoder_apply_state.is_applying()
             || self.committed_encoder_generation != 0
             || stream_epoch != self.current_stream_epoch
@@ -119,31 +125,22 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     /// Allocate a fresh stream generation before a native encoder discontinuity.
-    pub fn begin_stream_reconfiguration(&mut self, target_height: u32) -> u32 {
+    pub fn begin_stream_reconfiguration(&mut self, target_format: crate::SourceFormat) -> u32 {
         if self.encoder_apply_state.is_applying() {
-            match self.encoder_apply_state.kind() {
-                Some(EncoderDirectiveKind::AbrDownshift | EncoderDirectiveKind::AbrUpshift) => {
-                    // A user/camera transition supersedes ABR inside the Rust
-                    // authority. Late native facts retain the old transaction
-                    // id and therefore cannot commit the replacement.
-                    let transition = self
-                        .encoder_apply_state
-                        .reduce(EncoderTransactionEvent::Abort);
-                    let EncoderTransactionTransition::Rollback(transaction) = transition else {
-                        return 0;
-                    };
-                    self.reject_transaction_bitrate(transaction.directive.kind);
-                    self.rollback_encoder_transaction(transaction);
-                }
-                Some(EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery) | None => {
-                    return 0;
-                }
-            }
-        }
-        if target_height == 0 {
             return 0;
         }
-        let target_height = picoo_rate_control::normalize_height(target_height);
+        if !target_format.is_product_format() {
+            return 0;
+        }
+        if self
+            .receiver_capabilities
+            .as_ref()
+            .is_some_and(|caps| !target_format.is_offered_by(caps))
+        {
+            self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
+            return 0;
+        }
+
         let id = self.next_encoder_directive_id;
         let Some(next_id) = id.checked_add(1) else {
             self.last_session_error = Some("ENCODER_DIRECTIVE_ID_EXHAUSTED".into());
@@ -156,8 +153,10 @@ impl<T: PicooTransport> SenderSession<T> {
         let directive = EncoderDirective {
             id,
             kind: EncoderDirectiveKind::Local,
-            target_height,
-            target_bitrate_bps: BitrateLadder::for_height(target_height).initial_bps,
+            target_format,
+            target_bitrate_bps: BitrateLadder::for_height(target_format.height)
+                .expect("validated source height")
+                .initial_bps,
             stream_epoch: epoch,
         };
         if !self.begin_encoder_transaction(directive) {
@@ -165,6 +164,9 @@ impl<T: PicooTransport> SenderSession<T> {
         }
         self.next_encoder_directive_id = next_id;
         self.keyframe_requested = true;
+        if self.last_session_error.as_deref() == Some("NO_MATCHING_DECODER_OFFER") {
+            self.last_session_error = None;
+        }
         epoch
     }
 
@@ -198,6 +200,7 @@ impl<T: PicooTransport> SenderSession<T> {
         self.media_clock_anchor = None;
         self.committed_encoder_height = actual_height;
         self.committed_encoder_generation = encoder_generation;
+        self.committed_source_format = Some(committed_config.source_format());
         self.pending_stream_config = Some(committed_config);
         self.stream_config_sent = true;
         self.media_blocked_for_stream_config = false;
@@ -205,12 +208,30 @@ impl<T: PicooTransport> SenderSession<T> {
     }
 
     pub(super) fn send_pending_stream_config(&mut self) -> Result<(), SenderError> {
-        if self.stream_config_sent || self.encoder_apply_state.is_applying() {
+        if self.stream_config_sent
+            || self.encoder_apply_state.is_applying()
+            || self.receiver_capabilities.is_none()
+        {
             return Ok(());
         }
         let Some(config) = self.pending_stream_config.clone() else {
             return Ok(());
         };
+        let wire = config.to_proto().map_err(SenderError::CodecConfiguration)?;
+        let format = wire
+            .validated_video_format()
+            .map_err(|error| SenderError::Protocol(error.to_string()))?;
+        if !self
+            .receiver_capabilities
+            .as_ref()
+            .expect("checked capabilities")
+            .supports(&format, wire.level_idc, 1)
+        {
+            // Keep the explicit source request available for a platform selection;
+            // never transmit an unsupported configuration during negotiation.
+            self.last_session_error = Some("NO_MATCHING_DECODER_OFFER".into());
+            return Ok(());
+        }
         if self.media_blocked_for_stream_config && config.height != self.committed_encoder_height {
             self.last_session_error = Some("STREAM_CONFIG_HEIGHT_MISMATCH".into());
             return Err(SenderError::StreamConfigHeightMismatch {
@@ -242,7 +263,11 @@ impl<T: PicooTransport> SenderSession<T> {
         wire_config.stream_epoch = stream_epoch;
         self.send_control_payload(
             session,
-            ControlPayload::StreamConfig(wire_config.to_proto()),
+            ControlPayload::StreamConfig(
+                wire_config
+                    .to_proto()
+                    .map_err(SenderError::CodecConfiguration)?,
+            ),
         )
     }
 
@@ -253,7 +278,6 @@ impl<T: PicooTransport> SenderSession<T> {
         let EncoderTransactionTransition::Rollback(transaction) = transition else {
             return;
         };
-        self.reject_transaction_bitrate(transaction.directive.kind);
         self.committed_encoder_generation = transaction.rollback.encoder_generation;
         self.rollback_encoder_transaction(transaction);
     }
@@ -287,6 +311,7 @@ impl<T: PicooTransport> SenderSession<T> {
         debug_assert_eq!(committed_config.stream_epoch, self.current_stream_epoch);
         self.committed_encoder_height = actual_height;
         self.committed_encoder_generation = encoder_generation;
+        self.committed_source_format = Some(committed_config.source_format());
         self.pending_stream_config = Some(committed_config);
         self.stream_config_sent = true;
         self.media_blocked_for_stream_config = false;
@@ -300,13 +325,11 @@ impl<T: PicooTransport> SenderSession<T> {
         match transition {
             EncoderFailureTransition::Ignored => EncoderFailureOutcome::Ignored,
             EncoderFailureTransition::Rollback(transaction) => {
-                self.reject_transaction_bitrate(transaction.directive.kind);
                 self.committed_encoder_generation = transaction.rollback.encoder_generation;
                 self.rollback_encoder_transaction(transaction);
                 EncoderFailureOutcome::RolledBack
             }
             EncoderFailureTransition::Recover(transaction) => {
-                self.reject_transaction_bitrate(transaction.directive.kind);
                 self.committed_encoder_generation = transaction.rollback.encoder_generation;
                 self.rollback_encoder_transaction(transaction);
                 self.start_committed_encoder_recovery()
@@ -333,10 +356,19 @@ impl<T: PicooTransport> SenderSession<T> {
             self.disconnect();
             return EncoderFailureOutcome::Disconnected;
         };
+        let Some(config) = &self.pending_stream_config else {
+            self.last_session_error = Some("ENCODER_RECOVERY_CONFIGURATION_MISSING".into());
+            self.disconnect();
+            return EncoderFailureOutcome::Disconnected;
+        };
         let directive = EncoderDirective {
             id,
             kind: EncoderDirectiveKind::Recovery,
-            target_height: self.committed_encoder_height,
+            target_format: crate::SourceFormat {
+                codec: config.configuration.codec(),
+                height: config.height,
+                fps: config.fps,
+            },
             target_bitrate_bps: self.current_bitrate_bps(),
             stream_epoch: self.current_stream_epoch,
         };
@@ -348,17 +380,5 @@ impl<T: PicooTransport> SenderSession<T> {
         self.next_encoder_directive_id = next_id;
         self.keyframe_requested = true;
         EncoderFailureOutcome::RecoveryRequested
-    }
-
-    fn reject_transaction_bitrate(&mut self, kind: EncoderDirectiveKind) {
-        match kind {
-            EncoderDirectiveKind::AbrDownshift => self
-                .bitrate
-                .reject_resolution_change(BitrateAction::DownshiftResolution),
-            EncoderDirectiveKind::AbrUpshift => self
-                .bitrate
-                .reject_resolution_change(BitrateAction::UpshiftResolution),
-            EncoderDirectiveKind::Local | EncoderDirectiveKind::Recovery => {}
-        }
     }
 }

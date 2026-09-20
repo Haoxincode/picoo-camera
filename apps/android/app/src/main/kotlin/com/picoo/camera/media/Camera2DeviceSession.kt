@@ -58,7 +58,7 @@ internal class Camera2DeviceSession(
             }
         }
         if (!removed) return
-        // Keep H.264 encode alive when the Compose TextureView is torn down
+        // Keep native encode alive when the Compose TextureView is torn down
         // (tab switch / config change); rebuild a codec-only Camera2 session.
         scheduleCaptureSessionRebuild(expectedPreviewSurfaceTexture = null)
     }
@@ -71,7 +71,7 @@ internal class Camera2DeviceSession(
      * avoids a check-then-force-unwrap race and the identity check prevents a
      * stale bind/unbind callback from rebuilding the current session.
      */
-    private fun scheduleCaptureSessionRebuild(
+    internal fun scheduleCaptureSessionRebuild(
         expectedPreviewSurfaceTexture: SurfaceTexture?,
     ) {
         encoder.cameraHandler.post {
@@ -83,7 +83,10 @@ internal class Camera2DeviceSession(
                 return@post
             }
             val camera = encoder.cameraDevice ?: return@post
-            if (encoder.encodingCompositor == null) {
+            if (encoder.encodingEnabled && encoder.encodingCompositor == null) {
+                return@post
+            }
+            if (!encoder.encodingEnabled && encoder.previewSurface == null) {
                 return@post
             }
             val codecGenerationSnapshot = encoder.lifecycle.codecGeneration.get()
@@ -123,8 +126,8 @@ internal class Camera2DeviceSession(
         encoder.lifecycle.reopenAfterCameraGeneration.set(generation)
         encoder.lifecycle.setState(CaptureState.Opening)
         closeCaptureSession()
-        encoder.h264Encoder.release()
-        encoder.h264Encoder.resetCounters()
+        encoder.videoEncoder.release()
+        encoder.videoEncoder.resetCounters()
         camera.close()
     }
 
@@ -143,13 +146,14 @@ internal class Camera2DeviceSession(
                 encoder.fail("Camera permission is required")
                 return
             }
-            val cameraId = findCameraId(encoder.profile.lensFacing) ?: run {
+            val profile = encoder.profile
+            val cameraId = findCameraId(profile.lensFacing) ?: run {
                 encoder.fail("No camera for ${encoder.profile.lensFacing}")
                 return
             }
             encoder.selectedCameraId = cameraId
             encoder.activePhysicalCameraId = null
-            encoder.captureSize = chooseCaptureSize(cameraId, encoder.profile.resolution)
+            encoder.captureSize = chooseCaptureSize(cameraId, profile)
             refreshPreviewTransformInfo()
             synchronized(encoder.lifecycle.outputSurfaceLock) {
                 val surfaceTexture = encoder.previewSurfaceTexture
@@ -227,7 +231,11 @@ internal class Camera2DeviceSession(
                 }
                 encoder.cameraDevice = camera
             }
-            encoder.h264Encoder.setupEncoderAndSession(camera, generation)
+            if (encoder.encodingEnabled) {
+                encoder.videoEncoder.setupEncoderAndSession(camera, generation)
+            } else {
+                rebuildCaptureSession(camera, encoder.lifecycle.codecGeneration.get())
+            }
         }
 
         override fun onClosed(camera: CameraDevice) {
@@ -256,7 +264,7 @@ internal class Camera2DeviceSession(
         }
     }
 
-    /** Create / replace Camera2 session using preview + compositor OES input. */
+    /** Create / replace Camera2 session using preview and optional compositor OES input. */
     fun rebuildCaptureSession(
         camera: CameraDevice,
         codecGenerationSnapshot: Long = encoder.lifecycle.codecGeneration.get(),
@@ -273,11 +281,15 @@ internal class Camera2DeviceSession(
                 ) {
                     return@synchronized
                 }
-                val encodingTarget = encoder.encodingCompositor?.cameraInputSurface ?: run {
+                val encodingTarget = encoder.encodingCompositor?.cameraInputSurface
+                if (encoder.encodingEnabled && encodingTarget == null) {
                     encodingSurfaceMissing = true
                     return@synchronized
                 }
                 val previewTarget = encoder.previewSurface
+                if (previewTarget == null && encodingTarget == null) {
+                    return@synchronized
+                }
                 val targets = buildList {
                     previewTarget?.let { surface ->
                         add(
@@ -288,13 +300,15 @@ internal class Camera2DeviceSession(
                             },
                         )
                     }
-                    add(
-                        OutputConfiguration(encodingTarget).apply {
-                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                                setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
-                            }
-                        },
-                    )
+                    encodingTarget?.let { surface ->
+                        add(
+                            OutputConfiguration(surface).apply {
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    setMirrorMode(OutputConfiguration.MIRROR_MODE_NONE)
+                                }
+                            },
+                        )
+                    }
                 }
                 val callback = object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
@@ -345,7 +359,9 @@ internal class Camera2DeviceSession(
                                 camera === encoder.cameraDevice
                             ) {
                                 encoder.lifecycle.setState(CaptureState.Previewing)
-                                encoder.h264Encoder.requestSyncFrame()
+                                if (encodingTarget != null) {
+                                    encoder.videoEncoder.requestSyncFrame()
+                                }
                             } else {
                                 session.close()
                             }
@@ -400,11 +416,16 @@ internal class Camera2DeviceSession(
     private fun buildCaptureRequest(
         camera: CameraDevice,
         previewTarget: Surface?,
-        encodingTarget: Surface,
+        encodingTarget: Surface?,
     ): Result<CaptureRequest> = runCatching {
-            camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
+            val template = if (encodingTarget != null) {
+                CameraDevice.TEMPLATE_RECORD
+            } else {
+                CameraDevice.TEMPLATE_PREVIEW
+            }
+            camera.createCaptureRequest(template).apply {
                 previewTarget?.let { addTarget(it) }
-                addTarget(encodingTarget)
+                encodingTarget?.let { addTarget(it) }
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
                 set(
                     CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,
@@ -463,7 +484,8 @@ internal class Camera2DeviceSession(
         val camera = encoder.cameraDevice ?: return
         val session = encoder.captureSession ?: return
         val previewTarget = encoder.previewSurface
-        val encodingTarget = encoder.encodingCompositor?.cameraInputSurface ?: return
+        val encodingTarget = encoder.encodingCompositor?.cameraInputSurface
+        if (previewTarget == null && encodingTarget == null) return
         val request = buildCaptureRequest(camera, previewTarget, encodingTarget).getOrElse {
             encoder.lastError = "exposure request failed: ${it.message}"
             return
@@ -504,58 +526,17 @@ internal class Camera2DeviceSession(
             lensFacing = facing,
         ).also {
             encoder.previewTransformInfo = it
-            encoder.encodingCompositor?.updateRotation(encoder.currentEncodingRotationDegrees())
         }
     }
 
-    fun findCameraId(facing: LensFacing): String? {
-        val target = when (facing) {
-            LensFacing.Back -> CameraCharacteristics.LENS_FACING_BACK
-            LensFacing.Front -> CameraCharacteristics.LENS_FACING_FRONT
-        }
-        return encoder.cameraManager.cameraIdList.firstOrNull { id ->
-            encoder.cameraManager.getCameraCharacteristics(id)
-                .get(CameraCharacteristics.LENS_FACING) == target
-        }
-    }
+    fun findCameraId(facing: LensFacing): String? =
+        CameraCapturePreparation.findCameraId(encoder.cameraManager, facing)
 
-    fun chooseCaptureSize(cameraId: String, target: Size): Size {
-        val characteristics = encoder.cameraManager.getCameraCharacteristics(cameraId)
-        val map = characteristics
-            .get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-            ?: return target
-        val maxFrameDurationNanos = 1_000_000_000L / encoder.profile.targetFps.coerceAtLeast(1)
-        val outputSizes = map.getOutputSizes(SurfaceTexture::class.java).orEmpty()
-        val frameRateCapable = outputSizes.filter { size ->
-            val duration = map.getOutputMinFrameDuration(SurfaceTexture::class.java, size)
-            duration <= 0L || duration <= maxFrameDurationNanos
-        }.ifEmpty { outputSizes.toList() }
-        val sensorOrientation =
-            characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-        val portraitCrop = StreamOrientation.relativeRotationDegrees(
-            sensorOrientationDegrees = sensorOrientation,
-            displayRotationDegrees = encoder.displayRotationDegrees,
-            frontFacing = encoder.profile.lensFacing == LensFacing.Front,
-        ) % 180 != 0
-        val choices = frameRateCapable
-            .map { CaptureSizeSelector.Dim(it.width, it.height) }
-        val selected = CaptureSizeSelector.select(
-            choices,
-            CaptureSizeSelector.Dim(target.width, target.height),
-            portraitCrop = portraitCrop,
+    fun chooseCaptureSize(cameraId: String, profile: CaptureProfile): Size =
+        CameraCapturePreparation.chooseCaptureSize(
+            encoder.cameraManager.getCameraCharacteristics(cameraId),
+            profile.resolution, profile.targetFps, profile.lensFacing, profile.displayRotationDegrees,
         )
-        if (selected.fellBackFrom1080) {
-            val encode = CaptureSizeSelector.encodeSizeFor(
-                selected,
-                CaptureSizeSelector.Dim(target.width, target.height),
-            )
-            val encodeSize = Size(encode.width, encode.height)
-            if (encoder.profile.resolution != encodeSize) {
-                encoder.profile = encoder.profile.copy(resolution = encodeSize)
-            }
-        }
-        return Size(selected.size.width, selected.size.height)
-    }
 
     fun closeCaptureSession() {
         encoder.lifecycle.captureSessionGeneration.incrementAndGet()

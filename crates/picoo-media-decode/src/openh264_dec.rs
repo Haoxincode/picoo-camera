@@ -4,11 +4,9 @@ use bytes::Bytes;
 use openh264::decoder::Decoder;
 use openh264::formats::YUVSource;
 use openh264::nal_units;
+use picoo_bitstream::avc::is_length_prefixed_access_unit;
+use picoo_bitstream::{PictureKind, RandomAccessPoint};
 use picoo_frame_hub::nv12_byte_size;
-use picoo_packet::{
-    access_unit_contains_idr, access_unit_to_annex_b, annex_b_parameter_sets,
-    is_length_prefixed_access_unit,
-};
 use picoo_protocol::control::StreamConfig;
 
 use crate::stub::StubDecoder;
@@ -16,8 +14,7 @@ use crate::{now_timestamp_us, AccessUnitDecoder, DecodeError, DecodeOutcome, Dec
 
 pub struct OpenH264Decoder {
     decoder: Decoder,
-    last_sps: Vec<u8>,
-    last_pps: Vec<u8>,
+    last_configuration: Vec<u8>,
     param_sets_fed: bool,
     stub: StubDecoder,
 }
@@ -27,8 +24,7 @@ impl OpenH264Decoder {
         let decoder = Decoder::new().map_err(|e| DecodeError::Platform(e.to_string()))?;
         Ok(Self {
             decoder,
-            last_sps: Vec::new(),
-            last_pps: Vec::new(),
+            last_configuration: Vec::new(),
             param_sets_fed: false,
             stub: StubDecoder::new(),
         })
@@ -41,20 +37,16 @@ impl OpenH264Decoder {
         let Some(cfg) = stream_config else {
             return Ok(());
         };
-        if cfg.sps.is_empty() || cfg.pps.is_empty() {
+        if self.param_sets_fed && cfg.codec_configuration == self.last_configuration {
             return Ok(());
         }
-        if self.param_sets_fed && cfg.sps == self.last_sps && cfg.pps == self.last_pps {
-            return Ok(());
-        }
-        let annex = annex_b_parameter_sets(&cfg.sps, &cfg.pps);
+        let annex = crate::configured_picture::sequence_header(cfg)?;
         // Feed SPS/PPS; picture may not be ready yet.
         let _ = self
             .decoder
             .decode(&annex)
             .map_err(|e| DecodeError::Platform(e.to_string()))?;
-        self.last_sps = cfg.sps.clone();
-        self.last_pps = cfg.pps.clone();
+        self.last_configuration = cfg.codec_configuration.clone();
         self.param_sets_fed = true;
         Ok(())
     }
@@ -120,21 +112,31 @@ impl OpenH264Decoder {
 }
 
 impl AccessUnitDecoder for OpenH264Decoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
+        submission: crate::DecodeSubmission<'_>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        let access_unit = submission.access_unit;
+        let stream_config = submission.token.stream_config.as_deref();
+
         // Preserve stub semantics for unit/loopback fixtures that are not real H.264.
         if Self::looks_like_loopback_stub(access_unit, stream_config) {
-            return self.stub.decode_access_unit(access_unit, stream_config);
+            return self.stub.submit(submission);
         }
 
+        let picture = crate::configured_picture::validate(
+            picoo_bitstream::Codec::Avc,
+            access_unit,
+            stream_config,
+        )?;
         self.ensure_param_sets(stream_config)?;
 
-        let annex = access_unit_to_annex_b(access_unit);
-        let access_unit = annex.as_ref();
-        let contains_idr = access_unit_contains_idr(access_unit);
+        let annex = picture
+            .to_annex_b()
+            .map_err(|_| DecodeError::UnsupportedAccessUnit)?;
+        let access_unit = annex.as_slice();
+        let contains_idr =
+            picture.picture().kind == PictureKind::RandomAccess(RandomAccessPoint::AvcIdr);
 
         let mut last: Option<(u32, u32, u32, Vec<u8>)> = None;
         // Decode each NAL; keep the latest picture (IDR/P).
@@ -164,6 +166,7 @@ impl AccessUnitDecoder for OpenH264Decoder {
             return Ok(DecodeOutcome::accepted_without_frame(false));
         };
         Ok(DecodeOutcome::frame(
+            submission.token.clone(),
             DecodedFrame::cpu_nv12(
                 width,
                 height,
@@ -174,25 +177,6 @@ impl AccessUnitDecoder for OpenH264Decoder {
             ),
             contains_idr,
         ))
-    }
-
-    fn flush(&mut self) -> Result<Option<DecodedFrame>, DecodeError> {
-        let frames = self
-            .decoder
-            .flush_remaining()
-            .map_err(|e| DecodeError::Platform(e.to_string()))?;
-        let Some(yuv) = frames.last() else {
-            return Ok(None);
-        };
-        let (width, height, stride, nv12) = Self::i420_to_nv12(yuv)?;
-        Ok(Some(DecodedFrame::cpu_nv12(
-            width,
-            height,
-            stride,
-            0,
-            now_timestamp_us(),
-            Bytes::from(nv12),
-        )))
     }
 
     fn reset(&mut self) -> Result<(), DecodeError> {

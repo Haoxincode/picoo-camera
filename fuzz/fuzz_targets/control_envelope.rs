@@ -28,6 +28,15 @@ fuzz_target!(|input: &[u8]| {
         envelope.connection_generation
     );
 
+    if let Payload::Capabilities(caps) = &payload {
+        if caps.validate().is_ok() {
+            for offer in &caps.offers {
+                let format = offer.format.as_ref().expect("validated offer format");
+                assert!(caps.supports(format, offer.max_level_idc, offer.max_access_unit_bytes));
+            }
+        }
+    }
+
     // An untrusted endpoint must never reach media/configuration/statistics or
     // receiver-originated privileged commands, regardless of protobuf shape.
     if matches!(

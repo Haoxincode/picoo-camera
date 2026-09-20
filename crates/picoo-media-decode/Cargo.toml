@@ -1,24 +1,26 @@
 [package]
 name = "picoo-media-decode"
-description = "H.264 access-unit decoder abstraction — ARCH-PICOO-MEDIA-001"
+description = "Native AVC/HEVC access-unit decoder — ARCH-PICOO-MEDIA-002"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [features]
 default = []
-windows-mf = ["dep:windows"]
+# Explicit test/diagnostic dependency only; never a production codec fallback.
+test-codecs = ["dep:openh264", "picoo-gpu/test-support"]
+windows-mf = ["dep:picoo-gpu"]
 
 [dependencies]
 bytes.workspace = true
 picoo-frame-hub.workspace = true
-picoo-packet.workspace = true
+picoo-bitstream.workspace = true
 picoo-protocol.workspace = true
 thiserror.workspace = true
 tracing = "0.1"
 
 [target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dependencies]
-openh264 = { version = "0.9", default-features = true }
+openh264 = { version = "0.9", default-features = true, optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = [
@@ -53,7 +55,9 @@ objc2-video-toolbox = { version = "0.3.2", default-features = false, features = 
 ] }
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.62.2", optional = true, features = [
+picoo-gpu = { workspace = true, optional = true }
+windows = { version = "0.62.2", features = [
+    "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi",
     "Win32_Foundation",
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",
@@ -64,3 +68,6 @@ picoo-testkit.workspace = true
 
 [target.'cfg(all(not(windows), not(target_vendor = "apple")))'.dev-dependencies]
 openh264 = { version = "0.9", default-features = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+picoo-gpu = { workspace = true, features = ["test-support"] }

@@ -18,8 +18,9 @@ import com.picoo.camera.media.EncoderReconfigurationCoordinator
 import com.picoo.camera.media.LensFacing
 import com.picoo.camera.media.LinkQuality
 import com.picoo.camera.media.LocalPreviewMirror
-import com.picoo.camera.media.ParameterSetsListener
+import com.picoo.camera.media.EncodedFrameConfiguration
 import com.picoo.camera.media.StreamResolution
+import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.runtime.QuicWifiBindingResult
 import com.picoo.camera.runtime.SenderNativeRuntime
 import com.picoo.camera.ui.SenderHomeState
@@ -27,6 +28,7 @@ import com.picoo.camera.ui.SenderTab
 import com.picoo.camera.ui.screens.WaitOutcome
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
@@ -46,14 +48,10 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
 
     val uiState = SenderHomeState().apply {
         autoConnectEnabled = preferences.getBoolean(KEY_AUTO_CONNECT, true)
-        preferredResolutionLabel = preferences.getString(KEY_PREFERRED_RESOLUTION, null)
-            ?.let(StreamResolution::fromLabel)
-            ?.label
-            ?: StreamResolution.P1080.label
         manualEndpointText = preferences.getString(KEY_LAST_MANUAL_ENDPOINT, "").orEmpty()
     }
-    val parameterSetsRef = AtomicReference<Pair<ByteArray, ByteArray>?>(null)
     val streamConfigDirty = AtomicBoolean(false)
+    private val configurationKeyframeRequested = AtomicBoolean(false)
     private val remoteMirroredRef = AtomicBoolean(false)
     val runtime = SenderNativeRuntime(application)
     val encoderReconfiguration = EncoderReconfigurationCoordinator()
@@ -61,48 +59,39 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     private val senderMediaThread = HandlerThread("picoo-sender-media").apply { start() }
     private val senderMediaHandler = Handler(senderMediaThread.looper)
     private val encodedAccessUnits = EncodedAccessUnitBuffer()
+    // Owned only by the serial media worker; UI dirty flags cannot acknowledge
+    // a new encoder generation whose IDR has not reached Core yet.
+    private var configuredMediaGeneration = 0L
+    private var configuredMediaSource: EncodedFrameConfiguration? = null
     val encoder = Camera2MediaEncoder(
         context = application,
         initialBitrateBps = PicooNative.bitrateInitialForHeight(StreamResolution.P720.height),
         initialStreamEpoch = PicooNative.readSenderSnapshot(runtime.senderHandle).streamEpoch,
-        frameListener = EncodedFrameListener {
-                data,
-                isKeyFrame,
-                ptsUs,
-                encodedAtUs,
-                streamEpoch,
-                encoderGeneration,
-                encoderWidth,
-                encoderHeight,
-            ->
-            enqueueEncodedAccessUnit(
-                EncodedAccessUnitHandoff(
-                    data = data,
-                    isKeyFrame = isKeyFrame,
-                    presentationTimeUs = ptsUs,
-                    encodedAtUs = encodedAtUs,
-                    streamEpoch = streamEpoch,
-                    encoderGeneration = encoderGeneration,
-                    encoderWidth = encoderWidth,
-                    encoderHeight = encoderHeight,
-                    enqueuedAtNanos = System.nanoTime(),
-                ),
-            )
+        frameListener = EncodedFrameListener { frame ->
+            enqueueEncodedAccessUnit(EncodedAccessUnitHandoff(
+                data = frame.data, isKeyFrame = frame.isKeyFrame,
+                presentationTimeUs = frame.presentationTimeUs, encodedAtUs = frame.encodedAtUs,
+                streamEpoch = frame.streamEpoch, encoderGeneration = frame.encoderGeneration,
+                configuration = frame.configuration, enqueuedAtNanos = System.nanoTime(),
+            ))
         },
-        parameterSetsListener = ParameterSetsListener { sps, pps ->
-            parameterSetsRef.set(sps to pps)
-            streamConfigDirty.set(true)
-        },
+
     )
 
-    private var displayRotationDegrees: Int = 0
+    private val sourceSelection = SenderSourceSelection(encoder.cameraManager, viewModelScope, uiState, preferences)
+    private val pendingConnectionSource = AtomicReference<VideoSourceFormat?>(null)
+    private var requestedDisplayRotationDegrees: Int = 0
+    private var pendingDisplayRotation: Int? = null
+    private var cameraSwitchJob: Job? = null
     private var cameraGranted: Boolean = false
     private var previousStatus: Int = PicooNative.STATUS_DISCONNECTED
+    private var thermalWarningShown = false
     private var lastThermalAtMs: Long = 0L
     private var lastThermalStatus: Int? = null
 
     init {
         encoderRef.set(encoder)
+        sourceSelection.refresh(encoder.profile.lensFacing, requestedDisplayRotationDegrees)
         uiState.previewTransformInfo = encoder.previewTransformInfo
         val senderHandle = runtime.senderHandle
         if (senderHandle != 0L) {
@@ -145,9 +134,14 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun submitEncodedAccessUnit(accessUnit: EncodedAccessUnitHandoff) {
-        val configureStream = accessUnit.isKeyFrame && streamConfigDirty.getAndSet(false)
-        val parameterSets = if (configureStream) parameterSetsRef.get() else null
-        val result = PicooNative.submitEncoderAccessUnit(
+        if (pendingConnectionSource.get() != null) return
+        val configuration = accessUnit.configuration
+        val configureStream = accessUnit.isKeyFrame && (
+            streamConfigDirty.getAndSet(false) ||
+                configuredMediaGeneration != accessUnit.encoderGeneration ||
+                configuredMediaSource !== configuration
+            )
+        val outcome = PicooNative.submitEncoderAccessUnit(
             handle = runtime.senderHandle,
             data = accessUnit.data,
             keyframe = accessUnit.isKeyFrame,
@@ -155,33 +149,41 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             encodedAtUs = accessUnit.encodedAtUs,
             streamEpoch = accessUnit.streamEpoch,
             encoderGeneration = accessUnit.encoderGeneration,
-            encoderWidth = accessUnit.encoderWidth,
-            encoderHeight = accessUnit.encoderHeight,
+            encoderWidth = accessUnit.configuration.width,
+            encoderHeight = accessUnit.configuration.height,
             configureStream = configureStream,
             mirrored = remoteMirroredRef.get(),
-            sps = parameterSets?.first,
-            pps = parameterSets?.second,
+            codec = configuration.codec.wireValue,
+            fps = configuration.framesPerSecond,
+            codecConfiguration = if (configureStream) configuration.record else null,
         )
-        val outcome = EncoderSubmitOutcome.fromNative(result)
-        if (outcome is EncoderSubmitOutcome.Failure) {
-            // JNI failures have no success-side effects. In particular, a
-            // negative two's-complement value must never be read as flags.
-            if (configureStream) streamConfigDirty.set(true)
+        if (outcome is EncoderSubmitOutcome.Error) {
+            if (configureStream) {
+                streamConfigDirty.set(true)
+                configurationKeyframeRequested.set(false)
+            }
             return
         }
-        outcome as EncoderSubmitOutcome.Success
+        if (outcome is EncoderSubmitOutcome.Rejected) {
+            if (configureStream) streamConfigDirty.set(true)
+            if (outcome.keyframeRequested) encoderRef.get()?.requestKeyFrame()
+            return
+        }
+        outcome as EncoderSubmitOutcome.Accepted
         if (configureStream && !outcome.streamConfigured) {
-            // A stale generation must not consume the active generation's config.
             streamConfigDirty.set(true)
         }
-        if (outcome.encoderAccepted) {
-            encoder.recordAcceptedFrame(
-                accessUnit.data.size,
-                accessUnit.isKeyFrame,
-                accessUnit.streamEpoch,
-                accessUnit.encoderHeight,
-            )
+        if (outcome.streamConfigured) {
+            configuredMediaGeneration = accessUnit.encoderGeneration
+            configuredMediaSource = configuration
+            configurationKeyframeRequested.set(false)
         }
+        encoder.recordAcceptedFrame(
+            accessUnit.data.size,
+            accessUnit.isKeyFrame,
+            accessUnit.streamEpoch,
+            accessUnit.configuration.height,
+        )
         if (outcome.keyframeRequested) {
             encoderRef.get()?.requestKeyFrame()
         }
@@ -192,9 +194,37 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         preferences.edit().putBoolean(KEY_AUTO_CONNECT, enabled).apply()
     }
 
-    fun setPreferredResolution(resolution: StreamResolution) {
-        uiState.preferredResolutionLabel = resolution.label
-        preferences.edit().putString(KEY_PREFERRED_RESOLUTION, resolution.label).apply()
+    fun setPreferredSourceFormat(source: VideoSourceFormat) = sourceSelection.selectDefault(source)
+
+    fun requestSourceFormat(source: VideoSourceFormat): Boolean {
+        if (!cameraGranted) {
+            uiState.errorText = "请先允许摄像头权限"
+            return false
+        }
+        if (PicooNative.readSenderSnapshot(runtime.senderHandle).status !in setOf(
+                PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE,
+            )
+        ) {
+            uiState.errorText = "请先完成与接收端的连接"
+            return false
+        }
+        if (!sourceSelection.canPrepare(source)) return false
+        val epoch = encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, source)
+        if (epoch == 0) {
+            uiState.errorText = "正在完成上一项视频调整，请稍后重试"
+            return false
+        }
+        val bitrate = PicooNative.bitrateInitialForHeight(source.resolution.height)
+        PicooNative.setPreferredHeight(runtime.senderHandle, source.resolution.height)
+        encoder.setTargetBitrateBps(bitrate)
+        encoder.setDisplayRotationDegrees(requestedDisplayRotationDegrees)
+        pendingDisplayRotation = null
+        encoder.setSourceFormat(source)
+        applyStreamConfig()
+        if (cameraGranted) encoder.startPreview()
+        pendingConnectionSource.set(null)
+        uiState.errorText = null
+        return true
     }
 
     /** Persist only the endpoint locator; pairing trust remains Rust-owned. */
@@ -205,41 +235,68 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun setDisplayRotationDegrees(degrees: Int) {
-        displayRotationDegrees = degrees
-        encoder.setDisplayRotationDegrees(degrees)
+        val normalized = ((degrees % 360) + 360) % 360
+        require(normalized in listOf(0, 90, 180, 270))
+        requestedDisplayRotationDegrees = normalized
+        sourceSelection.refresh(encoder.profile.lensFacing, normalized)
+        if (!isLiveSession() || pendingConnectionSource.get() != null) {
+            encoder.setDisplayRotationDegrees(normalized)
+            pendingDisplayRotation = null
+        } else if (encoder.displayRotationDegrees != normalized) {
+            pendingDisplayRotation = normalized
+        } else {
+            pendingDisplayRotation = null
+        }
     }
 
     fun applyStreamConfig() {
-        encoder.setDisplayRotationDegrees(displayRotationDegrees)
-        val size = encoder.profile.resolution
-        stageStreamConfig(size.width, size.height)
+        // Configuration commits belong to native AU submission, never a UI-side
+        // setter that can overtake queued frames from the previous generation.
+        streamConfigDirty.set(true)
+        if (configurationKeyframeRequested.compareAndSet(false, true)) {
+            encoder.requestKeyFrame()
+        }
     }
 
-    private fun stageStreamConfig(width: Int, height: Int) {
-        val rustBitrate = PicooNative.readSenderSnapshot(runtime.senderHandle).currentBitrateBps
-        val bitrate = if (rustBitrate > 0) {
-            rustBitrate
-        } else {
-            PicooNative.bitrateInitialForHeight(height)
+    fun requestCameraSwitch(target: LensFacing? = null) {
+        if (cameraSwitchJob?.isActive == true || encoderReconfiguration.isPending) {
+            uiState.errorText = "正在完成上一项视频调整，请稍后重试"
+            return
         }
-        val sets = parameterSetsRef.get()
-        PicooNative.setStreamConfig(
-            runtime.senderHandle,
-            width = width,
-            height = height,
-            fps = 30,
-            bitrateBps = bitrate,
-            mirrored = remoteMirroredRef.get(),
-            // Android compositor already emits upright landscape pixels.
-            rotation = 0,
-            sps = sets?.first,
-            pps = sets?.second,
-        )
-        streamConfigDirty.set(false)
+        val before = encoder.profile
+        val facing = target ?: if (before.lensFacing == LensFacing.Back) LensFacing.Front else LensFacing.Back
+        if (facing == before.lensFacing) return
+        val snapshot = PicooNative.readSenderSnapshot(runtime.senderHandle)
+        val source = snapshot.lastCommittedSourceFormat ?: return
+        val rotation = requestedDisplayRotationDegrees
+        cameraSwitchJob = viewModelScope.launch {
+            val targetSource = sourceSelection.prepareCameraSource(source, facing, rotation) ?: return@launch
+            val current = PicooNative.readSenderSnapshot(runtime.senderHandle)
+            if (!cameraGranted || encoder.profile != before || requestedDisplayRotationDegrees != rotation ||
+                current.streamEpoch != snapshot.streamEpoch || current.lastCommittedSourceFormat != source ||
+                current.status !in setOf(PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE) ||
+                encoderReconfiguration.isPending
+            ) return@launch
+            if (encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, targetSource) == 0) return@launch
+            encoder.setTargetBitrateBps(PicooNative.bitrateInitialForHeight(targetSource.resolution.height))
+            pendingDisplayRotation = null
+            uiState.errorText = null
+            encoder.setCaptureProfile(before.copy(
+                lensFacing = facing, displayRotationDegrees = rotation,
+                resolution = android.util.Size(targetSource.resolution.width, targetSource.resolution.height),
+                codec = targetSource.codec, targetFps = targetSource.framesPerSecond,
+            ))
+            encoder.startPreview()
+            uiState.localPreviewMirrored = LocalPreviewMirror.defaultFor(facing)
+            sourceSelection.refresh(facing, rotation)
+            applyStreamConfig()
+        }
     }
 
     fun beginLocalEncoderReconfiguration(targetHeight: Int): Boolean {
-        val epoch = encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, targetHeight)
+        val resolution = StreamResolution.fromHeight(targetHeight) ?: return false
+        val source = VideoSourceFormat(encoder.profile.codec, resolution, encoder.profile.targetFps)
+        val epoch = encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, source)
         if (epoch == 0) {
             uiState.errorText = "正在完成上一项视频调整，请稍后重试"
             return false
@@ -262,13 +319,9 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 return false
             }
         }
-        val preferredResolution = StreamResolution.fromLabel(ui.preferredResolutionLabel)
-        ui.resolutionLabel = preferredResolution.label
-        val preferredBitrate = PicooNative.bitrateInitialForHeight(preferredResolution.height)
-        encoder.setTargetBitrateBps(preferredBitrate)
-        encoder.setResolution(preferredResolution.width, preferredResolution.height)
-        PicooNative.setPreferredHeight(runtime.senderHandle, preferredResolution.height)
-        applyStreamConfig()
+        val requested = ui.preferredSourceFormat
+        encoderReconfiguration.abandonDisconnectedSession()
+        pendingConnectionSource.set(requested)
         val rc = PicooNative.connect(runtime.senderHandle, host.trim(), port)
         if (rc == 0) {
             ui.lastShownSessionError = ""
@@ -300,6 +353,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             return true
         } else {
             ui.senderStatus = PicooNative.readSenderSnapshot(runtime.senderHandle).status
+            pendingConnectionSource.set(null)
             ui.errorText = if (rc == -3) {
                 "当前 VPN 不允许局域网连接，请允许局域网访问或关闭 VPN 后重试"
             } else {
@@ -324,6 +378,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     fun resetToDevices() {
+        pendingConnectionSource.set(null)
         uiState.senderTab = SenderTab.Devices
         uiState.phonePairingConfirmed = false
         uiState.pairingExpired = false
@@ -362,6 +417,27 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             PicooNative.pump(senderHandle)
             var senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
             ui.senderStatus = senderSnapshot.status
+            ui.committedSourceFormat = senderSnapshot.lastCommittedSourceFormat
+            ui.receiverSourceFormats = senderSnapshot.receiverSourceFormats
+            sourceSelection.refresh(encoder.profile.lensFacing, requestedDisplayRotationDegrees)
+            val requested = pendingConnectionSource.get()
+            if (requested != null && ui.sourcePreparationError != null) {
+                ui.errorText = ui.sourcePreparationError
+            }
+            if (requested != null && cameraGranted && senderSnapshot.receiverSourceFormats != null &&
+                ui.localSourceFormats != null && ui.senderStatus in setOf(
+                    PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE,
+                )
+            ) {
+                val initial = com.picoo.camera.media.CameraSourceSelection.initial(
+                    ui.availableSourceFormats.orEmpty(), requested,
+                )
+                if (initial == null) {
+                    ui.errorText = "已连接，但当前镜头与接收端没有共同可用的视频格式"
+                } else if (!encoderReconfiguration.isPending) {
+                    requestSourceFormat(initial)
+                }
+            }
             if (ui.senderStatus == PicooNative.STATUS_PAIRING ||
                 ui.senderStatus == PicooNative.STATUS_STREAMING ||
                 ui.senderStatus == PicooNative.STATUS_NETWORK_UNSTABLE
@@ -381,30 +457,39 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                 ui.previewTransformInfo = latestPreviewTransformInfo
             }
             if (ui.senderStatus == PicooNative.STATUS_DISCONNECTED) {
+                pendingConnectionSource.set(null)
                 encoderReconfiguration.abandonDisconnectedSession()
             }
             when (val result = encoderReconfiguration.poll(senderHandle, encoder)) {
                 is EncoderReconfigurationCoordinator.PollResult.Failed -> {
                     streamConfigDirty.set(false)
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
-                    ui.resolutionLabel =
-                        StreamResolution.fromHeight(senderSnapshot.activeHeight).label
+                    ui.committedSourceFormat = senderSnapshot.lastCommittedSourceFormat
                     ui.errorText = result.message
                 }
                 is EncoderReconfigurationCoordinator.PollResult.Applied -> {
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.adaptiveBitrateBps = result.bitrateBps
-                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight).label
+                    ui.committedSourceFormat = result.actualFormat
                     encoder.setTargetBitrateBps(ui.adaptiveBitrateBps)
                 }
                 is EncoderReconfigurationCoordinator.PollResult.Recovered -> {
                     senderSnapshot = PicooNative.readSenderSnapshot(senderHandle)
                     ui.adaptiveBitrateBps = result.bitrateBps
-                    ui.resolutionLabel = StreamResolution.fromHeight(result.actualHeight).label
+                    ui.committedSourceFormat = result.actualFormat
                     encoder.setTargetBitrateBps(ui.adaptiveBitrateBps)
                     ui.errorText = "${result.message}；已恢复上一视频配置"
                 }
                 null -> Unit
+            }
+            if (pendingDisplayRotation != null && !encoderReconfiguration.isPending &&
+                ui.availableSourceFormats != null && cameraGranted &&
+                ui.senderStatus in setOf(PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE)
+            ) {
+                // Consume this orientation intent once. A rejected pose needs
+                // another user action, not a retry/recovery loop on every tick.
+                pendingDisplayRotation = null
+                senderSnapshot.lastCommittedSourceFormat?.let(::requestSourceFormat)
             }
             ui.pairingCode = PicooNative.getPairingShortCode(senderHandle)
             ui.connectedReceiverId = PicooNative.getConnectedReceiverId(senderHandle)
@@ -416,7 +501,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             val bps = senderSnapshot.currentBitrateBps
             if (bps > 0) {
                 ui.adaptiveBitrateBps = bps
-                encoder.setTargetBitrateBps(bps)
+                if (!encoderReconfiguration.isPending) encoder.setTargetBitrateBps(bps)
             }
             val link = PicooNative.getLinkStats(senderHandle)
             ui.linkQualityChip = if (link != null && link.size >= 6) {
@@ -453,40 +538,16 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
             run {
                 val camOut = IntArray(3)
                 when (PicooNative.takeCameraCommand(senderHandle, camOut)) {
-                    1 -> {
-                        if (encoder.profile.lensFacing != LensFacing.Front &&
-                            beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
-                        ) {
-                            encoder.setLensFacing(LensFacing.Front)
-                            ui.localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
-                        }
-                    }
-                    2 -> {
-                        if (encoder.profile.lensFacing != LensFacing.Back &&
-                            beginLocalEncoderReconfiguration(encoder.profile.resolution.height)
-                        ) {
-                            encoder.setLensFacing(LensFacing.Back)
-                            ui.localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
-                        }
-                    }
+                    1 -> requestCameraSwitch(LensFacing.Front)
+                    2 -> requestCameraSwitch(LensFacing.Back)
                     3 -> {
                         val w = camOut[0]
                         val h = camOut[1]
-                        if (w > 0 && h > 0) {
-                            val res = StreamResolution.fromHeight(h)
-                            if (beginLocalEncoderReconfiguration(res.height)) {
-                                ui.resolutionLabel = res.label
-                                val bitrate = PicooNative.bitrateInitialForHeight(res.height)
-                                encoder.setTargetBitrateBps(bitrate)
-                                encoder.setResolution(res.width, res.height)
-                                PicooNative.setPreferredHeight(senderHandle, res.height)
-                                streamConfigDirty.set(true)
-                                encoder.requestKeyFrame()
-                            }
+                        val res = StreamResolution.fromHeight(h)
+                        if (res != null && w == res.width) {
+                            requestSourceFormat(VideoSourceFormat(encoder.profile.codec, res, encoder.profile.targetFps))
+                        } else {
+                            ui.errorText = "电脑请求的视频尺寸不受支持"
                         }
                     }
                     4 -> {
@@ -494,55 +555,13 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
                         remoteMirroredRef.set(ui.remoteMirrored)
                         streamConfigDirty.set(true)
                     }
-                    5 -> {
-                        if (beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) {
-                            encoder.switchCamera()
-                            ui.localPreviewMirrored =
-                                LocalPreviewMirror.defaultFor(encoder.profile.lensFacing)
-                            streamConfigDirty.set(true)
-                        }
-                    }
-                }
-            }
-            val receiverMaxHeight = senderSnapshot.receiverMaxHeight
-            if (!encoderReconfiguration.isPending &&
-                receiverMaxHeight in 1 until encoder.profile.resolution.height
-            ) {
-                val target = StreamResolution.fromHeight(receiverMaxHeight)
-                val targetBitrate = PicooNative.bitrateInitialForHeight(target.height)
-                if (beginLocalEncoderReconfiguration(target.height)) {
-                    ui.resolutionLabel = target.label
-                    encoder.setTargetBitrateBps(targetBitrate)
-                    encoder.setResolution(target.width, target.height)
-                    streamConfigDirty.set(true)
-                    encoder.requestKeyFrame()
+                    5 -> requestCameraSwitch()
                 }
             }
             if (!encoderReconfiguration.isPending) {
                 val directive = PicooNative.readEncoderDirective(senderHandle)
                 if (directive != null) {
-                    if (directive.kind == 4) {
-                        encoderReconfiguration.beginDirective(senderHandle, encoder, directive)
-                    } else {
-                        val maxH = senderSnapshot.receiverMaxHeight
-                        val thermalBlocks = ui.thermalForced720 && directive.targetHeight > 720
-                        val capabilityBlocks = maxH in 1 until directive.targetHeight
-                        if (thermalBlocks || capabilityBlocks) {
-                            encoderReconfiguration.rejectBeforeStart(senderHandle, directive)
-                        } else {
-                            val next = StreamResolution.fromHeight(directive.targetHeight)
-                            if (encoderReconfiguration.beginDirective(
-                                    senderHandle,
-                                    encoder,
-                                    directive,
-                                )
-                            ) {
-                                ui.resolutionLabel = next.label
-                                encoder.setTargetBitrateBps(directive.targetBitrateBps)
-                                encoder.setResolution(next.width, next.height)
-                            }
-                        }
-                    }
+                    encoderReconfiguration.beginDirective(senderHandle, encoder, directive)
                 }
             }
             if (previousStatus == PicooNative.STATUS_RECONNECTING &&
@@ -594,25 +613,47 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun reconcileCapture() {
+        if (pendingConnectionSource.get() != null) {
+            if (cameraGranted) PicooNative.clearPermissionRequired(runtime.senderHandle)
+            else PicooNative.markPermissionRequired(runtime.senderHandle)
+            return
+        }
         val liveSession = isLiveSession()
         val senderHandle = runtime.senderHandle
-        if (liveSession && !cameraGranted) {
-            if (senderHandle != 0L) PicooNative.markPermissionRequired(senderHandle)
-        } else if (liveSession) {
+        if (!cameraGranted) {
+            if (liveSession && senderHandle != 0L) {
+                PicooNative.markPermissionRequired(senderHandle)
+            }
+            if (encoder.state == CaptureState.Opening ||
+                encoder.state == CaptureState.Previewing
+            ) {
+                encoder.stopPreview()
+                uiState.encoderState = encoder.state
+            }
+            return
+        }
+        if (liveSession) {
             if (senderHandle != 0L) PicooNative.clearPermissionRequired(senderHandle)
-            if (encoder.state == CaptureState.Idle && !encoderReconfiguration.isPending) {
+            val needsLiveEpoch = !encoderReconfiguration.isPending &&
+                (encoder.state == CaptureState.Idle ||
+                    (encoder.state == CaptureState.Previewing && !encoder.encodingEnabled))
+            if (needsLiveEpoch) {
                 if (!beginLocalEncoderReconfiguration(encoder.profile.resolution.height)) return
                 streamConfigDirty.set(true)
             }
+            encoder.setEncodingEnabled(true)
+            if (encoder.state == CaptureState.Error) return
             encoder.startPreview()
             if (senderHandle != 0L && PicooNative.takeKeyframeRequest(senderHandle) == 1) {
                 encoder.requestKeyFrame()
             }
             uiState.encoderState = encoder.state
-        } else if (encoder.state == CaptureState.Opening ||
-            encoder.state == CaptureState.Previewing
-        ) {
-            encoder.stopPreview()
+        } else {
+            encoder.setEncodingEnabled(false)
+            if (encoder.state == CaptureState.Error) {
+                encoder.stopPreview()
+            }
+            encoder.startPreview()
             uiState.encoderState = encoder.state
         }
     }
@@ -623,8 +664,8 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val live = isLiveSession()
         if (!live) {
             ui.powerHint = ""
-            ui.thermalForced720 = false
-            ui.thermalToastShown = false
+            ui.thermalLimited = false
+            thermalWarningShown = false
             lastThermalAtMs = 0L
             lastThermalStatus = ui.senderStatus
             return
@@ -641,31 +682,21 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val context = getApplication<Application>()
         val thermal = PowerHints.readThermalStatus(context)
         ui.powerHint = PowerHints.readHint(context)
-        val force720 = PowerHints.shouldForce720p(thermal)
-        ui.thermalForced720 = force720
-        if (force720 && !ui.thermalToastShown) {
+        val holdBitrate = PowerHints.shouldHoldBitrateGrowth(thermal)
+        ui.thermalLimited = holdBitrate
+        if (holdBitrate && !thermalWarningShown) {
             // AC-M-LIVE-02: toast when thermal throttle engages (banner remains visible).
             Toast.makeText(
                 context,
-                "设备偏热保护中 · 已降至 720p，1080P 暂不可选",
+                "设备温度较高，请注意散热或停止推流",
                 Toast.LENGTH_SHORT,
             ).show()
-            ui.thermalToastShown = true
-        } else if (!force720) {
-            ui.thermalToastShown = false
+            thermalWarningShown = true
+        } else if (!holdBitrate) {
+            thermalWarningShown = false
         }
         if (senderHandle != 0L) {
-            PicooNative.setThermalHold(senderHandle, force720)
-        }
-        if (force720 && ui.resolutionLabel == "1080p") {
-            val targetBitrate = PicooNative.bitrateInitialForHeight(720)
-            if (beginLocalEncoderReconfiguration(720)) {
-                ui.resolutionLabel = "720p"
-                encoder.setTargetBitrateBps(targetBitrate)
-                encoder.setResolution(1280, 720)
-                streamConfigDirty.set(true)
-                encoder.requestKeyFrame()
-            }
+            PicooNative.setThermalHold(senderHandle, holdBitrate)
         }
     }
 
@@ -680,7 +711,6 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
     private companion object {
         const val PREFERENCES_NAME = "sender_settings"
         const val KEY_AUTO_CONNECT = "auto_connect_enabled"
-        const val KEY_PREFERRED_RESOLUTION = "preferred_resolution"
         const val KEY_LAST_MANUAL_ENDPOINT = "last_manual_endpoint"
         const val MAINTENANCE_TIMEOUT_MS = 500
         const val CONNECT_TIMEOUT_MS = 10_000L

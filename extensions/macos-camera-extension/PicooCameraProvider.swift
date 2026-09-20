@@ -5,21 +5,49 @@ import Foundation
 import IOKit.audio
 import os
 
-private let frameRate: Int32 = 30
-private let ringIdentityProbeIntervalNanoseconds: UInt64 = NSEC_PER_SEC
-
-private struct PreparedFrameKey: Equatable {
-    let ringGeneration: UInt64
-    let sequence: UInt64
-    let formatIndex: Int
-}
-
-private struct OutputFormat {
+struct OutputFormat {
     let width: Int
     let height: Int
+    let frameRate: UInt64
     let description: CMFormatDescription
     let streamFormat: CMIOExtensionStreamFormat
-    let pool: CVPixelBufferPool
+    let pool: OutputPixelBufferPool
+}
+
+private struct SinkDelivery: @unchecked Sendable {
+    let sampleBuffer: CMSampleBuffer
+    let stream: CMIOExtensionStream
+}
+
+final class OutputFormatSelection: @unchecked Sendable {
+    private let lock = NSLock()
+    private var selectedFormatIndex = 3
+
+    var activeFormatIndex: Int { lock.withLock { selectedFormatIndex } }
+
+    func update(
+        _ properties: CMIOExtensionStreamProperties,
+        formats: [CMIOExtensionStreamFormat]
+    ) throws -> (index: Int, changed: Bool) {
+        try lock.withLock {
+            var index = properties.activeFormatIndex ?? selectedFormatIndex
+            guard formats.indices.contains(index) else { throw CocoaError(.coderInvalidValue) }
+            if let duration = properties.frameDuration {
+                let dimensions = CMVideoFormatDescriptionGetDimensions(
+                    formats[index].formatDescription
+                )
+                guard let matching = formats.firstIndex(where: { candidate in
+                    let size = CMVideoFormatDescriptionGetDimensions(candidate.formatDescription)
+                    return size.width == dimensions.width && size.height == dimensions.height
+                        && CMTimeCompare(candidate.minFrameDuration, duration) == 0
+                }) else { throw CocoaError(.coderInvalidValue) }
+                index = matching
+            }
+            let changed = index != selectedFormatIndex
+            selectedFormatIndex = index
+            return (index, changed)
+        }
+    }
 }
 
 final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unchecked Sendable {
@@ -30,26 +58,33 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
         qos: .userInteractive,
         autoreleaseFrequency: .workItem
     )
+    private let frameQueueKey = DispatchSpecificKey<Void>()
     private var timer: DispatchSourceTimer?
+    private var sampleClock = OutputSampleClock()
     private var streamingClients: UInt32 = 0
-    private var ringReader: SharedRingReader?
-    private var ringGeneration: UInt64 = 0
-    private var lastRingIdentityProbeAt: UInt64 = 0
-    private var lastSequence: UInt64 = 0
-    private var preparedFrameKey: PreparedFrameKey?
+    private var sampleWasDropped = false
     private var preparedPixelBuffer: CVPixelBuffer?
-    private let scaleWorkspace = VImageScaleWorkspace()
+    // Accessed only on frameQueue. Sink callbacks carry their generation into
+    // this queue and are admitted only while it still matches.
+    private var sinkGeneration: UInt64 = 0
     private let outputFormats: [OutputFormat]
+    private let formatSelection = OutputFormatSelection()
     private var streamSource: PicooCameraStreamSource!
+    private var sinkStreamSource: PicooCameraSinkStreamSource!
 
     init(localizedName: String) throws {
-        outputFormats = try [(854, 480), (1280, 720), (1920, 1080)].map {
-            try Self.makeOutputFormat(width: $0.0, height: $0.1)
+        outputFormats = try [(1280, 720), (1920, 1080)].flatMap { width, height in
+            let pool = try OutputPixelBufferPool(width: width, height: height)
+            return try [UInt64(30), UInt64(60)].map { frameRate in
+                try Self.makeOutputFormat(width: width, height: height, frameRate: frameRate, pool: pool)
+            }
         }
         super.init()
+        frameQueue.setSpecific(key: frameQueueKey, value: ())
 
         guard let deviceID = UUID(uuidString: "9D0187D2-9E73-4A49-8F0D-5049434F4F01"),
-              let streamID = UUID(uuidString: "9D0187D2-9E73-4A49-8F0D-5049434F4F02")
+              let streamID = UUID(uuidString: "9D0187D2-9E73-4A49-8F0D-5049434F4F02"),
+              let sinkStreamID = UUID(uuidString: "9D0187D2-9E73-4A49-8F0D-5049434F4F03")
         else {
             throw CocoaError(.coderInvalidValue)
         }
@@ -63,9 +98,18 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             localizedName: "Picoo Camera Video",
             streamID: streamID,
             formats: outputFormats.map(\.streamFormat),
+            selection: formatSelection,
+            device: device
+        )
+        sinkStreamSource = PicooCameraSinkStreamSource(
+            localizedName: "Picoo Camera Host Input",
+            streamID: sinkStreamID,
+            formats: outputFormats.map(\.streamFormat),
+            selection: formatSelection,
             device: device
         )
         try device.addStream(streamSource.stream)
+        try device.addStream(sinkStreamSource.stream)
     }
 
     var availableProperties: Set<CMIOExtensionProperty> {
@@ -93,16 +137,15 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             guard streamingClients == 1 else { return }
 
             let timer = DispatchSource.makeTimerSource(flags: .strict, queue: frameQueue)
-            timer.schedule(
-                deadline: .now(),
-                repeating: .nanoseconds(Int(NSEC_PER_SEC) / Int(frameRate)),
-                leeway: .milliseconds(1)
-            )
+            sampleClock = OutputSampleClock()
+            sampleWasDropped = false
+            timer.schedule(deadline: .now(), leeway: .milliseconds(1))
             timer.setEventHandler { [weak self] in
                 self?.emitFrame()
             }
             self.timer = timer
             timer.resume()
+            sinkStreamSource.setOutputDemand(true)
         }
     }
 
@@ -111,12 +154,10 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
             guard streamingClients > 0 else { return }
             streamingClients -= 1
             guard streamingClients == 0 else { return }
+            sinkStreamSource.setOutputDemand(false)
             timer?.cancel()
             timer = nil
-            ringReader = nil
-            preparedFrameKey = nil
             preparedPixelBuffer = nil
-            lastSequence = 0
         }
     }
 
@@ -126,66 +167,50 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
         let format = outputFormats[formatIndex]
 
         let now = DispatchTime.now().uptimeNanoseconds
-        if ringReader != nil,
-           now &- lastRingIdentityProbeAt >= ringIdentityProbeIntervalNanoseconds
-        {
-            lastRingIdentityProbeAt = now
-            if ringReader?.stillMapsCurrentFile() == false {
-                resetRingReader()
-            }
-        }
-        if ringReader == nil {
-            if let opened = try? SharedRingReader.openAppGroupRing() {
-                ringReader = opened
-                ringGeneration &+= 1
-                lastRingIdentityProbeAt = now
-            }
-        }
-        let frame = ringReader?.acquireLatestFrame()
-        if frame == nil, ringReader?.stillMapsCurrentFile() == false {
-            resetRingReader()
-        }
-
-        let key = frame.map {
-            PreparedFrameKey(
-                ringGeneration: ringGeneration,
-                sequence: $0.sequence,
-                formatIndex: formatIndex
-            )
-        }
-        let pixelBuffer: CVPixelBuffer
-        if key != nil, key == preparedFrameKey, let cached = preparedPixelBuffer {
-            pixelBuffer = cached
-        } else if frame == nil,
-                  preparedFrameKey?.ringGeneration == ringGeneration,
-                  preparedFrameKey?.formatIndex == formatIndex,
-                  let cached = preparedPixelBuffer
-        {
-            // Keep emitting fresh sample timestamps without recopying an
-            // unchanged source image while the ring briefly has no readable slot.
-            pixelBuffer = cached
-        } else {
-            var allocated: CVPixelBuffer?
-            guard CVPixelBufferPoolCreatePixelBuffer(
-                kCFAllocatorDefault,
-                format.pool,
-                &allocated
-            ) == kCVReturnSuccess, let allocated
-            else {
-                Logger.extension.error("Unable to allocate output pixel buffer")
+        let tick: OutputSampleClock.Tick
+        do {
+            guard let due = try sampleClock.tick(now: now, frameRate: format.frameRate) else {
+                scheduleNextSample()
                 return
             }
-            if frame?.copyNV12(to: allocated, workspace: scaleWorkspace) != true {
-                Self.fillBlack(allocated)
+            tick = due
+        } catch {
+            Logger.extension.error("Output sample clock failed: \(error)")
+            timer?.cancel()
+            timer = nil
+            return
+        }
+        var emitted = false
+        defer {
+            if !emitted { sampleWasDropped = true }
+            scheduleNextSample()
+        }
+        let pixelBuffer: CVPixelBuffer
+        if let cached = preparedPixelBuffer,
+           CVPixelBufferGetWidth(cached) == format.width,
+           CVPixelBufferGetHeight(cached) == format.height,
+           CVPixelBufferGetPixelFormatType(cached)
+               == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        {
+            pixelBuffer = cached
+        } else {
+            let allocated: CVPixelBuffer
+            do {
+                guard let available = try format.pool.acquire() else { return }
+                allocated = available
+            } catch {
+                Logger.extension.error("Unable to allocate output pixel buffer: \(error)")
+                return
             }
+            Self.fillBlack(allocated)
             pixelBuffer = allocated
-            preparedFrameKey = key
             preparedPixelBuffer = allocated
         }
 
-        let presentationTime = CMClockGetTime(CMClockGetHostTimeClock())
+        guard let timestamp = Int64(exactly: tick.presentationNanoseconds) else { return }
+        let presentationTime = CMTime(value: timestamp, timescale: Int32(NSEC_PER_SEC))
         var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: frameRate),
+            duration: CMTime(value: 1, timescale: Int32(tick.frameRate)),
             presentationTimeStamp: presentationTime,
             decodeTimeStamp: .invalid
         )
@@ -206,67 +231,119 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
         }
 
         var discontinuity: CMIOExtensionStream.DiscontinuityFlags = []
-        if let frame {
-            if lastSequence != 0, frame.sequence > lastSequence + 1 {
-                discontinuity.insert(.sampleDropped)
-            }
-            lastSequence = frame.sequence
-        }
+        if tick.skippedSlots > 0 || sampleWasDropped { discontinuity.insert(.sampleDropped) }
         streamSource.stream.send(
             sampleBuffer,
             discontinuity: discontinuity,
-            // CMIO expects nanoseconds, while
-            // CMClockConvertHostTimeToSystemUnits returns mach_absolute_time units.
-            hostTimeInNanoseconds: UInt64(
-                presentationTime.seconds * Double(NSEC_PER_SEC)
-            )
+            hostTimeInNanoseconds: tick.presentationNanoseconds
         )
+        sampleWasDropped = false
+        emitted = true
     }
 
-    private func resetRingReader() {
-        ringReader = nil
-        preparedFrameKey = nil
-        preparedPixelBuffer = nil
-        lastSequence = 0
-        lastRingIdentityProbeAt = 0
+    private func scheduleNextSample() {
+        guard let deadline = sampleClock.nextDeadline else { return }
+        timer?.schedule(deadline: DispatchTime(uptimeNanoseconds: deadline), leeway: .milliseconds(1))
     }
 
-    private static func makeOutputFormat(width: Int, height: Int) throws -> OutputFormat {
+    func activeFormatDidChange(to index: Int) {
+        frameQueue.async { [weak self] in
+            self?.preparedPixelBuffer = nil
+        }
+        sinkStreamSource.notifyActiveFormatChanged(to: index)
+    }
+
+    func invalidateSinkSamples(generation: UInt64) {
+        if DispatchQueue.getSpecific(key: frameQueueKey) != nil {
+            sinkGeneration = generation
+            preparedPixelBuffer = nil
+            sampleWasDropped = true
+        } else {
+            frameQueue.sync {
+                sinkGeneration = generation
+                preparedPixelBuffer = nil
+                sampleWasDropped = true
+            }
+        }
+    }
+
+    func acceptSinkSample(
+        _ sampleBuffer: CMSampleBuffer,
+        sequenceNumber: UInt64,
+        discontinuity: CMIOExtensionStream.DiscontinuityFlags,
+        generation: UInt64,
+        stream: CMIOExtensionStream
+    ) {
+        let delivery = SinkDelivery(sampleBuffer: sampleBuffer, stream: stream)
+        frameQueue.async { [weak self, delivery] in
+            guard let self else { return }
+            defer {
+                delivery.stream.notifyScheduledOutputChanged(
+                    CMIOExtensionScheduledOutput(
+                        sequenceNumber: sequenceNumber,
+                        hostTimeInNanoseconds: DispatchTime.now().uptimeNanoseconds
+                    )
+                )
+            }
+            guard generation == self.sinkGeneration else {
+                self.sampleWasDropped = true
+                return
+            }
+            guard let image = compatibleSinkImage(in: delivery.sampleBuffer) else {
+                sampleWasDropped = true
+                return
+            }
+            preparedPixelBuffer = image
+            if !discontinuity.isEmpty { sampleWasDropped = true }
+        }
+    }
+
+    func compatibleSinkImage(in sampleBuffer: CMSampleBuffer) -> CVPixelBuffer? {
+        let index = formatSelection.activeFormatIndex
+        guard outputFormats.indices.contains(index),
+              let image = CMSampleBufferGetImageBuffer(sampleBuffer)
+        else { return nil }
+        let format = outputFormats[index]
+        guard CVPixelBufferGetPixelFormatType(image)
+                == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+              CVPixelBufferGetWidth(image) == format.width,
+              CVPixelBufferGetHeight(image) == format.height,
+              CMVideoFormatDescriptionMatchesImageBuffer(
+                  format.description,
+                  imageBuffer: image
+              )
+        else { return nil }
+        return image
+    }
+
+    private static func makeOutputFormat(
+        width: Int, height: Int, frameRate: UInt64, pool: OutputPixelBufferPool
+    ) throws -> OutputFormat {
         var description: CMFormatDescription?
         guard CMVideoFormatDescriptionCreate(
             allocator: kCFAllocatorDefault,
             codecType: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
             width: Int32(width),
             height: Int32(height),
-            extensions: nil,
+            extensions: [
+                kCMFormatDescriptionExtension_ColorPrimaries:
+                    kCMFormatDescriptionColorPrimaries_ITU_R_709_2,
+                kCMFormatDescriptionExtension_TransferFunction:
+                    kCMFormatDescriptionTransferFunction_ITU_R_709_2,
+                kCMFormatDescriptionExtension_YCbCrMatrix:
+                    kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2,
+            ] as CFDictionary,
             formatDescriptionOut: &description
         ) == noErr, let description
         else {
             throw CocoaError(.coderInvalidValue)
         }
 
-        let attributes: NSDictionary = [
-            kCVPixelBufferWidthKey: width,
-            kCVPixelBufferHeightKey: height,
-            kCVPixelBufferPixelFormatTypeKey:
-                kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as NSDictionary,
-        ]
-        var pool: CVPixelBufferPool?
-        guard CVPixelBufferPoolCreate(
-            kCFAllocatorDefault,
-            nil,
-            attributes,
-            &pool
-        ) == kCVReturnSuccess, let pool
-        else {
-            throw CocoaError(.coderInvalidValue)
-        }
-
-        let duration = CMTime(value: 1, timescale: frameRate)
+        let duration = CMTime(value: 1, timescale: Int32(frameRate))
         return OutputFormat(
             width: width,
             height: height,
+            frameRate: frameRate,
             description: description,
             streamFormat: CMIOExtensionStreamFormat(
                 formatDescription: description,
@@ -292,6 +369,28 @@ final class PicooCameraDeviceSource: NSObject, CMIOExtensionDeviceSource, @unche
                     * CVPixelBufferGetHeightOfPlane(pixelBuffer, plane)
             )
         }
+        applyOutputColor(to: pixelBuffer)
+    }
+
+    static func applyOutputColor(to pixelBuffer: CVPixelBuffer) {
+        CVBufferSetAttachment(
+            pixelBuffer,
+            kCVImageBufferColorPrimariesKey,
+            kCVImageBufferColorPrimaries_ITU_R_709_2,
+            .shouldPropagate
+        )
+        CVBufferSetAttachment(
+            pixelBuffer,
+            kCVImageBufferTransferFunctionKey,
+            kCVImageBufferTransferFunction_ITU_R_709_2,
+            .shouldPropagate
+        )
+        CVBufferSetAttachment(
+            pixelBuffer,
+            kCVImageBufferYCbCrMatrixKey,
+            kCVImageBufferYCbCrMatrix_ITU_R_709_2,
+            .shouldPropagate
+        )
     }
 }
 
@@ -299,18 +398,18 @@ final class PicooCameraStreamSource: NSObject, CMIOExtensionStreamSource, @unche
     private(set) var stream: CMIOExtensionStream!
     let device: CMIOExtensionDevice
     let formats: [CMIOExtensionStreamFormat]
-
-    private let formatLock = NSLock()
-    private var selectedFormatIndex = 2
+    private let selection: OutputFormatSelection
 
     init(
         localizedName: String,
         streamID: UUID,
         formats: [CMIOExtensionStreamFormat],
+        selection: OutputFormatSelection,
         device: CMIOExtensionDevice
     ) {
         self.device = device
         self.formats = formats
+        self.selection = selection
         super.init()
         stream = CMIOExtensionStream(
             localizedName: localizedName,
@@ -321,15 +420,7 @@ final class PicooCameraStreamSource: NSObject, CMIOExtensionStreamSource, @unche
         )
     }
 
-    var activeFormatIndex: Int {
-        get { formatLock.withLock { selectedFormatIndex } }
-        set {
-            formatLock.withLock {
-                guard formats.indices.contains(newValue) else { return }
-                selectedFormatIndex = newValue
-            }
-        }
-    }
+    var activeFormatIndex: Int { selection.activeFormatIndex }
 
     var availableProperties: Set<CMIOExtensionProperty> {
         [.streamActiveFormatIndex, .streamFrameDuration]
@@ -339,21 +430,23 @@ final class PicooCameraStreamSource: NSObject, CMIOExtensionStreamSource, @unche
         forProperties properties: Set<CMIOExtensionProperty>
     ) throws -> CMIOExtensionStreamProperties {
         let result = CMIOExtensionStreamProperties(dictionary: [:])
+        let index = activeFormatIndex
         if properties.contains(.streamActiveFormatIndex) {
-            result.activeFormatIndex = activeFormatIndex
+            result.activeFormatIndex = index
         }
         if properties.contains(.streamFrameDuration) {
-            result.frameDuration = CMTime(value: 1, timescale: frameRate)
+            result.frameDuration = formats[index].minFrameDuration
         }
         return result
     }
 
     func setStreamProperties(_ streamProperties: CMIOExtensionStreamProperties) throws {
-        if let index = streamProperties.activeFormatIndex {
-            guard formats.indices.contains(index) else {
+        let update = try selection.update(streamProperties, formats: formats)
+        if update.changed {
+            guard let source = device.source as? PicooCameraDeviceSource else {
                 throw CocoaError(.coderInvalidValue)
             }
-            activeFormatIndex = index
+            source.activeFormatDidChange(to: update.index)
         }
     }
 

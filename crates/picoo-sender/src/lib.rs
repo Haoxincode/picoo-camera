@@ -44,6 +44,8 @@ pub enum SenderError {
     VideoBatch(#[from] VideoDatagramBatchError),
     #[error("protocol: {0}")]
     Protocol(String),
+    #[error("invalid codec configuration: {0}")]
+    CodecConfiguration(#[source] picoo_bitstream::BitstreamError),
     #[error("pairing: {0}")]
     Pairing(#[from] PairingError),
     #[error("pairing store: {0}")]
@@ -593,3 +595,6 @@ mod tests {
         assert_eq!(pending_datagrams(&borrowed), pending_datagrams(&owned));
     }
 }
+
+mod source_format;
+pub use source_format::SourceFormat;

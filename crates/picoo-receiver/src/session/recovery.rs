@@ -20,6 +20,7 @@ pub(crate) enum RecoveryReason {
     ReferenceAccessUnitLate,
     DecoderError,
     DecoderQueuePressure,
+    RandomAccessResync,
     ManualRepair,
 }
 
@@ -32,6 +33,7 @@ impl RecoveryReason {
             Self::ReferenceAccessUnitLate => "reference_access_unit_late",
             Self::DecoderError => "decoder_error",
             Self::DecoderQueuePressure => "decoder_queue_pressure",
+            Self::RandomAccessResync => "random_access_resync",
             Self::ManualRepair => "manual_repair",
         }
     }
@@ -240,7 +242,7 @@ impl ReceiverSession {
                     self.ingress.recovery_decoder_errors =
                         self.ingress.recovery_decoder_errors.saturating_add(1);
                 }
-                RecoveryReason::DecoderQueuePressure => {}
+                RecoveryReason::DecoderQueuePressure | RecoveryReason::RandomAccessResync => {}
                 RecoveryReason::InitialConfig
                 | RecoveryReason::EpochChanged
                 | RecoveryReason::ManualRepair => {}
@@ -248,7 +250,9 @@ impl ReceiverSession {
             tracing::warn!(reason = reason.label(), "decoder awaiting fresh IDR");
         }
 
-        if transition.requires_media_cleanup() {
+        let discard_chain =
+            transition.requires_media_cleanup() || reason == RecoveryReason::RandomAccessResync;
+        if discard_chain {
             self.reassembly.clear_pending();
             let _ = self.reassembly.take_reference_chain_loss();
             // Decoder recovery discards dependent media but preserves the
@@ -256,9 +260,7 @@ impl ReceiverSession {
             self.jitter.discard_queued();
         }
 
-        if reset_decoder
-            && (transition.requires_media_cleanup() || reason == RecoveryReason::DecoderError)
-        {
+        if reset_decoder && (discard_chain || reason == RecoveryReason::DecoderError) {
             self.ingress.decoder_resets = self.ingress.decoder_resets.saturating_add(1);
             self.decoder_worker.reset();
         }

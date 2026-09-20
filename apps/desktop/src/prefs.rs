@@ -5,7 +5,12 @@
 use std::fs;
 use std::path::PathBuf;
 
+use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
+
+const PROJECT_QUALIFIER: &str = "com";
+const PROJECT_ORGANIZATION: &str = "Haoxincode";
+const PROJECT_APPLICATION: &str = "Picoo Camera";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum LogLevel {
@@ -124,30 +129,29 @@ impl Default for DesktopPreferences {
     }
 }
 
-pub fn prefs_path() -> PathBuf {
-    std::env::var("PICOO_PREFS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            if cfg!(target_os = "windows") {
-                std::env::var("APPDATA")
-                    .map(|appdata| {
-                        PathBuf::from(appdata)
-                            .join("picoo-camera")
-                            .join("prefs.json")
-                    })
-                    .unwrap_or_else(|_| PathBuf::from("prefs.json"))
-            } else {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                PathBuf::from(home)
-                    .join(".config")
-                    .join("picoo-camera")
-                    .join("prefs.json")
-            }
-        })
+/// Resolve the single supported preferences location.
+///
+/// `PICOO_PREFS` is an explicit operator override. There is intentionally no
+/// legacy-path migration or relative-path fallback: an unavailable standard
+/// directory is surfaced to the caller instead of silently creating a second
+/// preferences store.
+pub fn prefs_path() -> Result<PathBuf, String> {
+    if let Ok(explicit) = std::env::var("PICOO_PREFS") {
+        return Ok(PathBuf::from(explicit));
+    }
+    ProjectDirs::from(PROJECT_QUALIFIER, PROJECT_ORGANIZATION, PROJECT_APPLICATION)
+        .map(|dirs| dirs.config_dir().join("prefs.json"))
+        .ok_or_else(|| "standard Picoo preferences directory is unavailable".to_string())
 }
 
 pub fn load_prefs() -> DesktopPreferences {
-    let path = prefs_path();
+    let path = match prefs_path() {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(%error, "preferences directory unavailable; using in-memory defaults");
+            return DesktopPreferences::default();
+        }
+    };
     match fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         Err(_) => DesktopPreferences::default(),
@@ -155,7 +159,7 @@ pub fn load_prefs() -> DesktopPreferences {
 }
 
 pub fn save_prefs(prefs: &DesktopPreferences) -> Result<(), String> {
-    let path = prefs_path();
+    let path = prefs_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create prefs dir: {err}"))?;
     }

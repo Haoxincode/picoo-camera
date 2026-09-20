@@ -108,7 +108,7 @@ fn unpaired_start_stream_is_rejected() {
     assert_ne!(receiver.status(), ReceiverStatus::Streaming);
 
     let unauthorized_config = picoo_protocol::control::StreamConfig {
-        codec: "h264".into(),
+        codec: picoo_protocol::control::VideoCodec::Avc as i32,
         width: 1920,
         height: 1080,
         fps: 30,
@@ -389,6 +389,7 @@ fn camera_command_rejected_while_unpaired() {
     assert!(receiver.ingress_stats().control_rejected_unpaired >= 1);
 }
 
+#[cfg(not(target_os = "macos"))]
 #[test]
 fn unpaired_video_keeps_shared_ring_on_placeholder() {
     // REQ-PICOO-PAIRING-003 / VCAM-003: unpaired datagrams must not drive VCam ring.
@@ -408,7 +409,7 @@ fn unpaired_video_keeps_shared_ring_on_placeholder() {
 
     let mut receiver = ReceiverSession::new();
     receiver
-        .attach_shared_ring(&ring_name)
+        .attach_virtual_camera_output(&ring_name)
         .expect("attach shared ring");
     let consumer =
         SharedFrameRingConsumer::open(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("consumer");

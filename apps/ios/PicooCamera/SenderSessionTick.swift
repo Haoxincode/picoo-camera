@@ -1,16 +1,26 @@
 import Foundation
 
 extension SenderAppModel {
-    var preferredResolutionLabel: String {
-        "\(preferredResolution.rawValue)P · 30 FPS"
+    func preparedCameraSwitchSource() async -> VideoSourceFormat? {
+        guard let session = senderSession, let remote = session.snapshot.receiverSourceFormats else { return nil }
+        let before = camera.sourceFormat
+        let position = camera.position
+        let epoch = session.snapshot.streamEpoch
+        let local = await camera.preparedSourceFormats(at: position.opposite)
+        guard !Task.isCancelled, camera.position == position, camera.sourceFormat == before,
+              session.snapshot.streamEpoch == epoch, matchesActiveMediaState else { return nil }
+        return VideoSourceFormat.cameraCeiling(local.filter { remote.contains($0) }, preferredCodec: before.codec)
     }
 
-    func setPreferredResolution(_ resolution: VideoResolution) {
-        preferredResolution = resolution
+    var availableSourceFormats: [VideoSourceFormat]? {
+        guard let local = camera.localSourceFormats else { return nil }
+        if senderStatus == .disconnected { return local }
+        guard let remote = receiverSourceFormats else { return nil }
+        return local.filter { remote.contains($0) }
     }
 
-    var resolutionLabel: String {
-        "\(camera.resolution.rawValue)P · 30"
+    var sourceFormatLabel: String {
+        senderSession?.snapshot.lastCommittedSourceFormat?.label ?? "等待视频提交"
     }
 
     var formattedPairingCode: String {
@@ -35,29 +45,6 @@ extension SenderAppModel {
 
     func cancelConnection() {
         disconnectImmediately()
-    }
-
-    var initialStreamConfiguration: SenderStreamConfiguration {
-        SenderStreamConfiguration(
-            width: UInt32(preferredResolution.width),
-            height: UInt32(preferredResolution.height),
-            framesPerSecond: 30,
-            bitrateBps: activeBitrateBps,
-            streamEpoch: camera.streamEpoch,
-            mirrored: remoteMirrored,
-            rotation: 0,
-            sequenceParameterSet: Data(),
-            pictureParameterSet: Data()
-        )
-    }
-
-    func toggleResolution() async {
-        let target: VideoResolution = switch camera.resolution {
-        case .p1080: .p720
-        case .p720: .p480
-        case .p480: .p1080
-        }
-        await applyResolution(target)
     }
 
     func applySessionTick() {

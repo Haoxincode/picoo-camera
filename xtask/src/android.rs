@@ -3,7 +3,12 @@ use std::path::Path;
 use xshell::{cmd, Shell};
 
 pub(crate) fn build(sh: &Shell) -> Result<()> {
-    cmd!(sh, "cargo test --workspace").run()?;
+    if cfg!(target_os = "macos") {
+        crate::apple::native_tests::run(sh, &["--workspace"], &[])?;
+        cmd!(sh, "cargo test --workspace --doc").run()?;
+    } else {
+        cmd!(sh, "cargo test --workspace").run()?;
+    }
     if Path::new("apps/android/gradlew").exists() {
         if let Ok(sdk) = std::env::var("ANDROID_HOME") {
             sh.write_file("apps/android/local.properties", format!("sdk.dir={sdk}\n"))?;

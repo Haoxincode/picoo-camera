@@ -283,6 +283,13 @@ object PicooCameraTypography {
         lineHeight = 24.sp,
         fontWeight = FontWeight.Bold,
     )
+    val PairingCode = TextStyle(
+        fontFamily = PicooFont.Mono,
+        fontSize = 28.sp,
+        lineHeight = 36.sp,
+        fontWeight = FontWeight.ExtraBold,
+        letterSpacing = 4.sp,
+    )
 }
 
 object PicooFont {

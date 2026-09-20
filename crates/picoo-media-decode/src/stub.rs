@@ -1,4 +1,4 @@
-//! Placeholder decoder for fixtures and MF/OpenH264 fallback — maps test AUs into NV12.
+//! Explicit diagnostic decoder; never used by a product factory.
 
 use bytes::Bytes;
 use picoo_frame_hub::waiting_placeholder_for_size;
@@ -31,11 +31,13 @@ impl Default for StubDecoder {
 }
 
 impl AccessUnitDecoder for StubDecoder {
-    fn decode_access_unit(
+    fn submit(
         &mut self,
-        access_unit: &[u8],
-        stream_config: Option<&StreamConfig>,
+        submission: crate::DecodeSubmission<'_>,
     ) -> Result<DecodeOutcome, DecodeError> {
+        let access_unit = submission.access_unit;
+        let stream_config = submission.token.stream_config.as_deref();
+
         let (width, height) = Self::dimensions(stream_config);
 
         let nv12 = if picoo_frame_hub::nv12_byte_size(width, height) == access_unit.len() {
@@ -52,14 +54,15 @@ impl AccessUnitDecoder for StubDecoder {
         };
 
         Ok(DecodeOutcome::frame(
-            DecodedFrame::cpu_nv12(
+            submission.token.clone(),
+            DecodedFrame::fixture_nv12(
                 width,
                 height,
                 width,
                 0,
                 now_timestamp_us(),
                 Bytes::from(nv12),
-            ),
+            )?,
             true,
         ))
     }

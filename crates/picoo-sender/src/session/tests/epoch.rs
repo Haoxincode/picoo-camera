@@ -11,6 +11,11 @@ fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
     let epoch = session.current_stream_epoch();
+    assert!(
+        session.apply_capabilities_for_test(super::exact_capabilities(
+            &super::source_configuration(1080)
+        ))
+    );
 
     let outcome = session
         .submit_encoder_event(crate::NativeEncoderEvent {
@@ -28,7 +33,7 @@ fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
                 fps: 30,
                 bitrate_bps: 8_000_000,
                 stream_epoch: epoch,
-                ..Default::default()
+                ..super::source_configuration(1080)
             }),
         })
         .expect("complete event");
@@ -57,7 +62,7 @@ fn complete_native_encoder_event_is_core_ordered_and_directly_testable() {
                 fps: 30,
                 bitrate_bps: 7_000_000,
                 stream_epoch: epoch,
-                ..Default::default()
+                ..super::source_configuration(1080)
             }),
         })
         .expect("committed generation config update");
@@ -70,6 +75,8 @@ fn rejected_complete_encoder_event_does_not_mutate_staged_configuration() {
     let mut session = SenderSession::new(MemoryTransport::new());
     let original = session.pending_stream_config().cloned();
     let stale_epoch = session.current_stream_epoch() + 1;
+    assert!(session
+        .apply_capabilities_for_test(super::exact_capabilities(&super::source_configuration(720))));
 
     let outcome = session
         .submit_encoder_event(crate::NativeEncoderEvent {
@@ -87,7 +94,7 @@ fn rejected_complete_encoder_event_does_not_mutate_staged_configuration() {
                 fps: 30,
                 bitrate_bps: 4_000_000,
                 stream_epoch: stale_epoch,
-                ..Default::default()
+                ..super::source_configuration(720)
             }),
         })
         .expect("rejected facts are a typed outcome");
@@ -110,11 +117,15 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     let committed_epoch = session.current_stream_epoch();
     assert!(session.report_encoder_started(0, 10, committed_epoch, 1080));
-    let pending_epoch = session.begin_stream_reconfiguration(720);
+    let pending_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending_epoch);
     assert_ne!(pending_epoch, committed_epoch);
     assert!(matches!(
@@ -139,7 +150,7 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     session
         .ingest_encoder_access_unit(super::native_au(
@@ -164,6 +175,20 @@ fn stale_access_unit_epoch_is_rejected_after_reconfiguration_begins() {
 #[test]
 fn stream_config_epoch_changes_only_when_native_apply_commits() {
     let mut session = SenderSession::new(MemoryTransport::new());
+    let (sps, pps) =
+        picoo_bitstream::avc::extract_sps_pps(picoo_testkit::AVC_1280X720_BT709_IDR).unwrap();
+    session.set_stream_config(StreamConfigParams {
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        width: 1280,
+        height: 720,
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+    });
     session
         .connect(Endpoint {
             host: "127.0.0.1".into(),
@@ -173,7 +198,11 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
     session.force_status_for_test(SenderStatus::Streaming);
     session.stream_config_sent = true;
     let committed = session.current_stream_epoch();
-    let pending = session.begin_stream_reconfiguration(720);
+    let pending = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     assert_ne!(pending, committed);
     assert!(session.stream_config_sent());
     assert_eq!(
@@ -186,7 +215,7 @@ fn stream_config_epoch_changes_only_when_native_apply_commits() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
@@ -224,7 +253,7 @@ fn committed_encoder_started_fact_is_idempotent() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 10, epoch, 1080));
     assert!(session.report_encoder_started(0, 10, epoch, 1080));
@@ -237,7 +266,14 @@ fn committed_encoder_started_fact_is_idempotent() {
 fn stream_epoch_exhausts_before_crossing_android_signed_range() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session.last_allocated_stream_epoch = MAX_STREAM_EPOCH;
-    assert_eq!(session.begin_stream_reconfiguration(720), 0);
+    assert_eq!(
+        session.begin_stream_reconfiguration(crate::SourceFormat {
+            codec: picoo_bitstream::Codec::Avc,
+            height: 720,
+            fps: 30
+        }),
+        0
+    );
     assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
     assert_eq!(session.last_session_error(), Some("STREAM_EPOCH_EXHAUSTED"));
 }
@@ -248,48 +284,20 @@ fn invalid_local_target_does_not_consume_transaction_or_epoch_identity() {
     let last_epoch = session.last_allocated_stream_epoch;
     let next_transaction = session.next_encoder_directive_id;
 
-    assert_eq!(session.begin_stream_reconfiguration(0), 0);
+    for height in [0, 1, 480, 719, 721, 1079, 1081, 2160, u32::MAX] {
+        assert_eq!(
+            session.begin_stream_reconfiguration(crate::SourceFormat {
+                codec: picoo_bitstream::Codec::Avc,
+                height,
+                fps: 30
+            }),
+            0
+        );
+        assert!(!session.set_preferred_height(height));
+    }
     assert_eq!(session.last_allocated_stream_epoch, last_epoch);
     assert_eq!(session.next_encoder_directive_id, next_transaction);
     assert!(session.pending_encoder_directive().is_none());
-}
-
-#[test]
-fn receiver_capability_caps_preferred_height_in_rust() {
-    let mut session = SenderSession::new(MemoryTransport::new());
-    let capabilities = Capabilities {
-        codecs: vec!["h264".into()],
-        resolutions: vec![
-            Resolution {
-                width: 854,
-                height: 480,
-            },
-            Resolution {
-                width: 1280,
-                height: 720,
-            },
-        ],
-        fps: vec![30],
-        front_camera: true,
-        back_camera: true,
-    };
-    assert!(session.apply_capabilities_for_test(capabilities));
-    session.set_preferred_height(1080);
-    assert_eq!(session.receiver_max_height(), 720);
-    assert_eq!(session.bitrate.preferred_height(), 720);
-
-    let expanded = Capabilities {
-        codecs: vec!["h264".into()],
-        resolutions: vec![Resolution {
-            width: 1920,
-            height: 1080,
-        }],
-        fps: vec![30],
-        front_camera: true,
-        back_camera: true,
-    };
-    assert!(session.apply_capabilities_for_test(expanded));
-    assert_eq!(session.bitrate.preferred_height(), 1080);
 }
 
 #[test]
@@ -302,12 +310,15 @@ fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
         })
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
-    let pending = session.begin_stream_reconfiguration(720);
+    let pending = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        sps: vec![1, 2, 3],
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
@@ -321,7 +332,10 @@ fn matching_config_staged_during_apply_is_kept_for_new_epoch() {
         .expect("matching IDR");
     let config = session.pending_stream_config().expect("staged config");
     assert_eq!(config.stream_epoch, pending);
-    assert_eq!(config.sps, vec![1, 2, 3]);
+    assert_eq!(
+        config.configuration,
+        super::source_configuration(720).configuration
+    );
     assert!(!session.media_blocked_for_stream_config);
 }
 
@@ -335,11 +349,15 @@ fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
         })
         .expect("connect");
     session.force_status_for_test(SenderStatus::Streaming);
-    let pending = session.begin_stream_reconfiguration(720);
+    let pending = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(session.report_encoder_started(transaction_id, 11, pending, 720));
@@ -362,11 +380,15 @@ fn wrong_height_config_cannot_open_committed_epoch_media_gate() {
 #[test]
 fn noncanonical_encoder_height_cannot_commit_ladder_epoch() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    let pending = session.begin_stream_reconfiguration(720);
+    let pending = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 800,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
     assert!(!session.report_encoder_started(transaction_id, 11, pending, 800));
@@ -378,11 +400,15 @@ fn failed_before_start_restores_committed_stream_config() {
     let mut session = SenderSession::new(MemoryTransport::new());
     session.stream_config_sent = true;
     let committed = session.pending_stream_config().cloned();
-    let pending = session.begin_stream_reconfiguration(720);
+    let pending = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     session.set_stream_config(StreamConfigParams {
         width: 854,
         height: 480,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert_eq!(session.pending_stream_config().map(|c| c.height), Some(480));
     let transaction_id = session.encoder_transaction_id_for_epoch(pending);
@@ -395,18 +421,20 @@ fn failed_before_start_restores_committed_stream_config() {
 }
 
 #[test]
-fn disconnect_aborts_pending_local_and_directive_generations() {
+fn disconnect_aborts_pending_local_generation() {
     let mut session = SenderSession::new(MemoryTransport::new());
-    assert_ne!(session.begin_stream_reconfiguration(720), 0);
+    assert_ne!(
+        session.begin_stream_reconfiguration(crate::SourceFormat {
+            codec: picoo_bitstream::Codec::Avc,
+            height: 720,
+            fps: 30
+        }),
+        0
+    );
     assert!(session.encoder_apply_state.is_applying());
     assert!(session.pending_encoder_directive().is_none());
     session.disconnect();
     assert!(!session.encoder_apply_state.is_applying());
-    assert!(session.pending_encoder_directive().is_none());
-
-    session.queue_encoder_directive(EncoderDirectiveKind::AbrDownshift, 720);
-    assert!(session.pending_encoder_directive().is_some());
-    session.disconnect();
     assert!(session.pending_encoder_directive().is_none());
 }
 
@@ -423,17 +451,21 @@ fn matching_first_idr_commits_generation_and_enters_packetization() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 10, INITIAL_STREAM_EPOCH, 1080));
 
-    let candidate_epoch = session.begin_stream_reconfiguration(720);
+    let candidate_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let transaction_id = session.encoder_transaction_id_for_epoch(candidate_epoch);
     assert_ne!(transaction_id, 0);
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert!(session.report_encoder_started(transaction_id, 11, candidate_epoch, 720));
     assert!(matches!(
@@ -481,16 +513,20 @@ fn rejected_commit_idr_does_not_commit_encoder_transaction() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 10, INITIAL_STREAM_EPOCH, 1080));
 
-    let candidate_epoch = session.begin_stream_reconfiguration(720);
+    let candidate_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let transaction_id = session.encoder_transaction_id_for_epoch(candidate_epoch);
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert!(session.report_encoder_started(transaction_id, 11, candidate_epoch, 720));
 
@@ -533,11 +569,15 @@ fn encoder_failure_policy_is_owned_by_rust() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 20, INITIAL_STREAM_EPOCH, 1080));
 
-    let untouched_epoch = session.begin_stream_reconfiguration(720);
+    let untouched_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let untouched_id = session.encoder_transaction_id_for_epoch(untouched_epoch);
     assert_eq!(
         session.report_encoder_failed(untouched_id, 0),
@@ -546,7 +586,11 @@ fn encoder_failure_policy_is_owned_by_rust() {
     assert!(session.pending_encoder_directive().is_none());
     assert_eq!(session.current_stream_epoch(), INITIAL_STREAM_EPOCH);
 
-    let failed_epoch = session.begin_stream_reconfiguration(720);
+    let failed_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let failed_id = session.encoder_transaction_id_for_epoch(failed_epoch);
     assert!(session.report_encoder_started(failed_id, 21, failed_epoch, 720));
     assert_eq!(
@@ -558,18 +602,18 @@ fn encoder_failure_policy_is_owned_by_rust() {
         .expect("recovery effect");
     assert_eq!(recovery.kind, EncoderDirectiveKind::Recovery);
     assert_eq!(recovery.stream_epoch, INITIAL_STREAM_EPOCH);
-    assert_eq!(recovery.target_height, 1080);
+    assert_eq!(recovery.target_format.height, 1080);
 
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(
         recovery.id,
         22,
         recovery.stream_epoch,
-        recovery.target_height,
+        recovery.target_format.height,
     ));
     session
         .connect(Endpoint {
@@ -587,7 +631,7 @@ fn encoder_failure_policy_is_owned_by_rust() {
                 recovery.id,
                 22,
                 recovery.stream_epoch,
-                recovery.target_height,
+                recovery.target_format.height,
             ),
         ))
         .expect("matching recovery IDR");
@@ -601,7 +645,7 @@ fn committed_encoder_runtime_failure_requests_rust_owned_recovery() {
     session.set_stream_config(StreamConfigParams {
         width: 1280,
         height: 720,
-        ..Default::default()
+        ..super::source_configuration(720)
     });
     assert!(session.report_encoder_started(0, 20, INITIAL_STREAM_EPOCH, 720));
 
@@ -614,7 +658,7 @@ fn committed_encoder_runtime_failure_requests_rust_owned_recovery() {
         .expect("committed failure creates recovery effect");
     assert_eq!(recovery.kind, EncoderDirectiveKind::Recovery);
     assert_eq!(recovery.stream_epoch, INITIAL_STREAM_EPOCH);
-    assert_eq!(recovery.target_height, 720);
+    assert_eq!(recovery.target_format.height, 720);
 
     assert_eq!(
         session.report_encoder_failed(0, 20),
@@ -635,10 +679,14 @@ fn recovery_failure_disconnects_instead_of_recursing() {
     session.set_stream_config(StreamConfigParams {
         width: 1920,
         height: 1080,
-        ..Default::default()
+        ..super::source_configuration(1080)
     });
     assert!(session.report_encoder_started(0, 30, INITIAL_STREAM_EPOCH, 1080));
-    let failed_epoch = session.begin_stream_reconfiguration(720);
+    let failed_epoch = session.begin_stream_reconfiguration(crate::SourceFormat {
+        codec: picoo_bitstream::Codec::Avc,
+        height: 720,
+        fps: 30,
+    });
     let failed_id = session.encoder_transaction_id_for_epoch(failed_epoch);
     assert!(session.report_encoder_started(failed_id, 31, failed_epoch, 720));
     assert_eq!(

@@ -1,7 +1,8 @@
 use super::preparation::fit_nv12;
 use super::*;
 use picoo_frame_hub::{
-    waiting_placeholder_for_size, SharedFrameRingProducer, PLACEHOLDER_HEIGHT, PLACEHOLDER_WIDTH,
+    waiting_placeholder_for_size, SharedFrameKind, SharedFrameRingProducer, PLACEHOLDER_HEIGHT,
+    PLACEHOLDER_WIDTH,
 };
 
 fn test_ring_name() -> String {
@@ -124,6 +125,54 @@ fn reconnects_to_new_mapping_generation_even_when_sequence_restarts() {
 }
 
 #[test]
+fn explicit_ring_placeholder_clears_cached_live_content() {
+    let ring_name = test_ring_name();
+    let frame_len = nv12_len(PLACEHOLDER_WIDTH, PLACEHOLDER_HEIGHT).expect("NV12 size");
+    let live_pixels = vec![1; frame_len];
+    let placeholder_pixels = vec![2; frame_len];
+    let mut producer =
+        SharedFrameRingProducer::create(&ring_name, DEFAULT_MAX_FRAME_BYTES).expect("producer");
+    producer
+        .publish_nv12(
+            PLACEHOLDER_WIDTH,
+            PLACEHOLDER_HEIGHT,
+            PLACEHOLDER_WIDTH,
+            0,
+            1,
+            &live_pixels,
+        )
+        .expect("live frame");
+    let mut reader = RingFrameReader::with_ring_name(ring_name.clone());
+    assert_eq!(reader.acquire().origin, FrameOrigin::Fresh);
+
+    let generation = producer
+        .content_fence()
+        .invalidate_as(SharedFrameKind::Placeholder);
+    producer
+        .publish_nv12_kind_in_generation(
+            generation,
+            SharedFrameKind::Placeholder,
+            PLACEHOLDER_WIDTH,
+            PLACEHOLDER_HEIGHT,
+            PLACEHOLDER_WIDTH,
+            0,
+            2,
+            &placeholder_pixels,
+        )
+        .expect("placeholder frame");
+    let acquired = reader.acquire();
+    assert_eq!(acquired.origin, FrameOrigin::Placeholder);
+    assert_eq!(
+        acquired.frame.pixels.as_ref(),
+        placeholder_pixels.as_slice()
+    );
+    assert!(reader.last_live.is_none());
+
+    drop((reader, producer));
+    let _ = std::fs::remove_file(SharedFrameRingProducer::flink_path(&ring_name));
+}
+
+#[test]
 fn background_workers_publish_latest_prepared_frames() {
     let ring_name = test_ring_name();
     let frame_len = nv12_len(1280, 720).expect("NV12 size");
@@ -162,7 +211,7 @@ fn background_workers_publish_latest_prepared_frames() {
         prepared.pixels.as_ptr(),
         "RequestSample cache hits must only clone the prepared Arc"
     );
-    assert_eq!(provider.preparation_counts(), (0, 1, 0));
+    assert_eq!(provider.preparation_counts(), (1, 0));
 
     provider.set_output_active(1920, 1080, true);
     let second_deadline = Instant::now() + Duration::from_secs(2);
@@ -182,9 +231,42 @@ fn background_workers_publish_latest_prepared_frames() {
     }
     assert_eq!(
         provider.preparation_counts(),
-        (0, 1, 1),
+        (1, 1),
         "adding a consumer must not reprepare an unchanged active format"
     );
+
+    let placeholder_pixels = vec![91; frame_len];
+    let generation = producer
+        .content_fence()
+        .invalidate_as(SharedFrameKind::Placeholder);
+    producer
+        .publish_nv12_kind_in_generation(
+            generation,
+            SharedFrameKind::Placeholder,
+            1280,
+            720,
+            1280,
+            0,
+            2,
+            &placeholder_pixels,
+        )
+        .expect("publish explicit placeholder");
+    let placeholder_deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let acquired = provider
+            .acquire_for_output(1280, 720)
+            .expect("supported output");
+        if acquired.origin == FrameOrigin::Placeholder
+            && acquired.frame.pixels.as_ref() == placeholder_pixels.as_slice()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < placeholder_deadline,
+            "workers did not replace cached live content with the explicit placeholder"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
 
     provider.set_output_active(1280, 720, false);
     provider.set_output_active(1920, 1080, false);
@@ -242,11 +324,11 @@ fn demand_revision_and_cache_publication_are_atomic() {
     let control = WorkerControl::new(&placeholders);
     let output = OutputSize::new(1280, 720).expect("supported size");
     let placeholder = placeholders.get(output);
-    assert!(control.set_output_active(output, true, Arc::clone(&placeholder)));
+    assert!(control.set_output_active(output, true, false, Arc::clone(&placeholder)));
     let stale_revision = control.demand_revision();
 
-    assert!(control.set_output_active(output, false, Arc::clone(&placeholder)));
-    assert!(control.set_output_active(output, true, Arc::clone(&placeholder)));
+    assert!(control.set_output_active(output, false, false, Arc::clone(&placeholder)));
+    assert!(control.set_output_active(output, true, false, Arc::clone(&placeholder)));
     let current_revision = control.demand_revision();
     assert_ne!(current_revision, stale_revision);
 
@@ -256,16 +338,16 @@ fn demand_revision_and_cache_publication_are_atomic() {
         stride: 1280,
         pixels: vec![32; nv12_len(1280, 720).expect("NV12 size")].into(),
     };
-    let stale = Arc::new(PreparedFrameSet::from_live(
+    let stale = Arc::new(PreparedFrameSet::from_source(
         SourceKey::Live(1),
         &source,
         output,
         &mut PreparationResources::default(),
     ));
     assert!(!control.publish_if_current(output, stale_revision, stale));
-    assert_eq!(control.prepared(output).key, SourceKey::Placeholder);
+    assert_eq!(control.prepared(output).key, SourceKey::Placeholder(0));
 
-    let current = Arc::new(PreparedFrameSet::from_live(
+    let current = Arc::new(PreparedFrameSet::from_source(
         SourceKey::Live(2),
         &source,
         output,
@@ -275,7 +357,7 @@ fn demand_revision_and_cache_publication_are_atomic() {
     assert_eq!(control.prepared(output).key, SourceKey::Live(2));
 
     assert!(
-        !control.set_output_active(output, true, placeholder),
+        !control.set_output_active(output, true, false, placeholder),
         "an idempotent activation must not invalidate a newly published frame"
     );
     assert_eq!(control.prepared(output).key, SourceKey::Live(2));

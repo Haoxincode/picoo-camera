@@ -1,6 +1,7 @@
 package com.picoo.camera.discovery
 
 import android.content.Context
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.net.nsd.NsdManager
@@ -21,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class NsdReceiverBrowser(
     context: Context,
+    private val wifiNetwork: () -> Network? = { null },
     private val onChanged: (List<PicooNative.DiscoveredReceiver>) -> Unit,
 ) {
     private val appContext = context.applicationContext
@@ -53,6 +55,7 @@ class NsdReceiverBrowser(
                 }
 
                 override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                    Log.i(TAG, "NSD found ${serviceInfo.serviceName} type=${serviceInfo.serviceType}")
                     if (!serviceInfo.serviceType.contains("picoocam", ignoreCase = true)) {
                         return
                     }
@@ -86,19 +89,28 @@ class NsdReceiverBrowser(
         discoveryListener = listener
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                // Bind discovery to the physical Wi-Fi network. The legacy overload lets
-                // the system pick a default network, which may be a VPN even though the
-                // Receiver is reachable on the local WLAN.
-                val wifiNetworks = NetworkRequest.Builder()
-                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                    .build()
-                nsdManager.discoverServices(
-                    DiscoveryTxt.SERVICE_TYPE,
-                    NsdManager.PROTOCOL_DNS_SD,
-                    wifiNetworks,
-                    appContext.mainExecutor,
-                    listener,
-                )
+                // Bind discovery to the physical Wi-Fi Network. A request that only
+                // names TRANSPORT_WIFI also matches a VPN-over-Wi-Fi agent
+                // (v2rayNG reports WIFI|VPN), so multicast never leaves tun0.
+                val wifi = wifiNetwork()
+                Log.i(TAG, "NSD bind wifi=${wifi ?: "request-not-vpn"}")
+                if (wifi != null) {
+                    nsdManager.discoverServices(
+                        DiscoveryTxt.SERVICE_TYPE,
+                        NsdManager.PROTOCOL_DNS_SD,
+                        wifi,
+                        appContext.mainExecutor,
+                        listener,
+                    )
+                } else {
+                    nsdManager.discoverServices(
+                        DiscoveryTxt.SERVICE_TYPE,
+                        NsdManager.PROTOCOL_DNS_SD,
+                        WIFI_NOT_VPN_REQUEST,
+                        appContext.mainExecutor,
+                        listener,
+                    )
+                }
             } else {
                 nsdManager.discoverServices(
                     DiscoveryTxt.SERVICE_TYPE,
@@ -146,11 +158,22 @@ class NsdReceiverBrowser(
                 override fun onServiceResolved(resolved: NsdServiceInfo) {
                     pendingLosses.remove(resolved.serviceName)?.let(mainHandler::removeCallbacks)
                     val attrs = resolved.attributes ?: emptyMap()
-                    val parsed = DiscoveryTxt.parseAttributes(attrs) ?: return
+                    val parsed = DiscoveryTxt.parseAttributes(attrs)
+                    if (parsed == null) {
+                        Log.w(
+                            TAG,
+                            "TXT rejected for ${resolved.serviceName} keys=${attrs.keys}",
+                        )
+                        return
+                    }
                     val host =
                         resolved.host?.hostAddress
                             ?: resolved.host?.hostName
-                            ?: return
+                    if (host == null) {
+                        Log.w(TAG, "resolved ${resolved.serviceName} without a host address")
+                        return
+                    }
+                    Log.i(TAG, "NSD resolved ${parsed.displayName} at $host:${parsed.quicPort}")
                     val entry =
                         PicooNative.DiscoveredReceiver(
                             receiverId = parsed.receiverId,
@@ -213,5 +236,10 @@ class NsdReceiverBrowser(
         private const val TAG = "NsdReceiverBrowser"
         private const val SERVICE_LOSS_GRACE_MS = 10_000L
         private const val RESTART_DELAY_MS = 1_500L
+        private val WIFI_NOT_VPN_REQUEST: NetworkRequest =
+            NetworkRequest.Builder()
+                .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
     }
 }

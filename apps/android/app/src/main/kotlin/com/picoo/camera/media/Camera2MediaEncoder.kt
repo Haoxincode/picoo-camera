@@ -13,14 +13,13 @@ import android.util.Size
 import android.view.Surface
 import java.io.Closeable
 
-/** Camera2 → OES/EGL compositor → MediaCodec InputSurface H.264 (MEDIA-001 / MEDIA-013). */
+/** Camera2 → OES/EGL compositor → MediaCodec InputSurface AVC/HEVC (MEDIA-001 / MEDIA-013). */
 class Camera2MediaEncoder(
     context: Context,
     initialProfile: CaptureProfile = CaptureProfile(),
     initialBitrateBps: Int,
     initialStreamEpoch: Int,
     internal val frameListener: EncodedFrameListener = EncodedFrameListener.NOOP,
-    internal val parameterSetsListener: ParameterSetsListener = ParameterSetsListener.NOOP,
 ) : CameraCaptureController, Closeable {
     internal val appContext = context.applicationContext
     internal val cameraManager = appContext.getSystemService(CameraManager::class.java)
@@ -64,7 +63,8 @@ class Camera2MediaEncoder(
     @Volatile internal var encodingCompositor: CameraEncodingCompositor? = null
     @Volatile internal var selectedCameraId: String? = null
     @Volatile internal var activePhysicalCameraId: String? = null
-    @Volatile internal var displayRotationDegrees: Int = 0
+    internal val displayRotationDegrees: Int
+        get() = profile.displayRotationDegrees
     internal var captureSize: Size = profile.resolution
 
     internal var frameCount = 0
@@ -73,9 +73,10 @@ class Camera2MediaEncoder(
     internal var lastEstimateAtMs = System.currentTimeMillis()
     @Volatile internal var targetBitrateBps: Int = initialBitrateBps
     @Volatile internal var lastAppliedBitrateBps: Int = targetBitrateBps
+    @Volatile internal var encodingEnabled: Boolean = true
 
     internal val deviceSession = Camera2DeviceSession(this)
-    internal val h264Encoder = MediaCodecH264Encoder(this)
+    internal val videoEncoder = MediaCodecVideoEncoder(this)
 
     val encoderGeneration: Long
         get() = lifecycle.codecGeneration.get()
@@ -95,25 +96,19 @@ class Camera2MediaEncoder(
     var lastError: String? = null
         internal set
 
-    var lastSps: ByteArray? = null
-        internal set
-    var lastPps: ByteArray? = null
-        internal set
-
     override fun setTargetBitrateBps(bitrateBps: Int) {
         if (bitrateBps <= 0) return
         targetBitrateBps = bitrateBps
-        h264Encoder.applyBitrateIfNeeded()
+        videoEncoder.applyBitrateIfNeeded()
     }
 
     override fun prepareStreamEpoch(epoch: Int) {
         require(epoch > 0) { "stream epoch must come from Rust" }
         streamEpoch = epoch
-        deviceSession.restartOpeningPreviewIfCameraOpened()
     }
 
     override fun requestKeyFrame() {
-        h264Encoder.requestSyncFrame()
+        videoEncoder.requestSyncFrame()
     }
 
     internal fun recordAcceptedFrame(
@@ -121,7 +116,7 @@ class Camera2MediaEncoder(
         keyFrame: Boolean,
         streamEpoch: Int,
         encoderHeight: Int,
-    ) = h264Encoder.recordAcceptedFrame(byteCount, keyFrame, streamEpoch, encoderHeight)
+    ) = videoEncoder.recordAcceptedFrame(byteCount, keyFrame, streamEpoch, encoderHeight)
 
     override fun setExposureCompensation(index: Int) {
         val clamped = ExposureCompensation.clamp(index, exposureCompensationRange)
@@ -134,8 +129,9 @@ class Camera2MediaEncoder(
     fun setDisplayRotationDegrees(rotationDegrees: Int) {
         val normalized = ((rotationDegrees % 360) + 360) % 360
         if (displayRotationDegrees == normalized) return
-        displayRotationDegrees = normalized
-        encodingCompositor?.updateRotation(currentEncodingRotationDegrees())
+        // The owner starts a source transaction before rebuilding live capture.
+        // Never rotate the old input while its pixel coverage is insufficient.
+        profile = profile.copy(displayRotationDegrees = normalized)
     }
 
     override fun bindPreviewSurface(surfaceTexture: SurfaceTexture) {
@@ -158,9 +154,34 @@ class Camera2MediaEncoder(
         lifecycle.setState(CaptureState.Idle)
         deviceSession.closeCaptureSession()
         deviceSession.closeCameraDevice()
-        h264Encoder.release()
-        h264Encoder.resetCounters()
+        videoEncoder.release()
+        videoEncoder.resetCounters()
         lifecycle.setState(CaptureState.Idle)
+    }
+
+    /**
+     * Start or drop the MediaCodec path without tearing down the local
+     * TextureView. Disconnect must not freeze the viewfinder on the last frame.
+     */
+    fun setEncodingEnabled(enabled: Boolean) {
+        if (encodingEnabled == enabled) return
+        encodingEnabled = enabled
+        if (enabled) {
+            val camera = cameraDevice ?: return
+            if (lifecycle.state == CaptureState.Opening ||
+                lifecycle.state == CaptureState.Previewing
+            ) {
+                videoEncoder.setupEncoderAndSession(camera, lifecycle.cameraGeneration.get())
+            }
+            return
+        }
+        // Camera2 still owns the compositor OES target until the capture
+        // session is closed. Releasing it first fails the session and the
+        // TextureView freezes on its last buffer.
+        deviceSession.closeCaptureSession()
+        videoEncoder.release()
+        videoEncoder.resetCounters()
+        deviceSession.scheduleCaptureSessionRebuild(previewSurfaceTexture)
     }
 
     override fun switchCamera() {
@@ -173,39 +194,37 @@ class Camera2MediaEncoder(
     }
 
     override fun setLensFacing(facing: LensFacing) {
-        if (profile.lensFacing == facing) {
-            return
-        }
-        profile = profile.copy(lensFacing = facing)
-        when (lifecycle.state) {
-            CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
-            CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()
-            else -> Unit
-        }
-        // New epoch requires IDR for remote decoder recovery (REQ-PICOO-MEDIA-003).
-        h264Encoder.requestSyncFrame()
+        if (profile.lensFacing == facing) return
+        setCaptureProfile(profile.copy(lensFacing = facing))
     }
 
-    override fun setResolution(width: Int, height: Int) {
-        val next = Size(width, height)
-        profile = profile.copy(resolution = next)
+    override fun setSourceFormat(source: VideoSourceFormat) {
+        setCaptureProfile(profile.copy(
+            resolution = Size(source.resolution.width, source.resolution.height),
+            codec = source.codec,
+            targetFps = source.framesPerSecond,
+        ))
+    }
+
+    internal fun setCaptureProfile(requested: CaptureProfile) {
+        profile = requested
         when (lifecycle.state) {
             CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
             CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()
+            CaptureState.Error -> stopPreview()
             else -> Unit
         }
-        h264Encoder.requestSyncFrame()
+        videoEncoder.requestSyncFrame()
     }
 
     /** Rebuild the native encoder at Rust's last committed generation. */
     fun restoreCommittedConfiguration(
-        width: Int,
-        height: Int,
+        profile: CaptureProfile,
         streamEpoch: Int,
         bitrateBps: Int,
     ) {
         require(streamEpoch > 0)
-        profile = profile.copy(resolution = Size(width, height))
+        this.profile = profile
         this.streamEpoch = streamEpoch
         targetBitrateBps = bitrateBps
         appliedStreamEpoch = 0
@@ -234,20 +253,13 @@ class Camera2MediaEncoder(
     fun refreshPreviewTransformInfo(): PreviewTransformInfo =
         deviceSession.refreshPreviewTransformInfo()
 
-    internal fun currentEncodingRotationDegrees(): Int =
-        StreamOrientation.relativeRotationDegrees(
-            sensorOrientationDegrees = previewTransformInfo.sensorOrientationDegrees,
-            displayRotationDegrees = displayRotationDegrees,
-            frontFacing = previewTransformInfo.lensFacing == LensFacing.Front,
-        )
-
     internal fun fail(message: String) {
         Log.e(TAG, message)
         lastError = message
         lifecycle.setState(CaptureState.Error)
         deviceSession.closeCaptureSession()
         deviceSession.closeCameraDevice()
-        h264Encoder.release()
+        videoEncoder.release()
     }
 
     private companion object {

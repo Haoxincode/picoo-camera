@@ -2,7 +2,8 @@ import CoreMedia
 import Foundation
 import VideoToolbox
 
-nonisolated struct EncodedFrameConfiguration: Sendable {
+nonisolated struct EncodedFrameConfiguration: Equatable, Sendable {
+    let codec: NativeVideoCodec
     let width: UInt32
     let height: UInt32
     let framesPerSecond: UInt32
@@ -13,8 +14,8 @@ nonisolated struct EncodedFrameConfiguration: Sendable {
 }
 
 nonisolated final class CompressionCallbackContext: @unchecked Sendable {
-    private let configurationLock = NSLock()
-    private var configuration: EncodedFrameConfiguration
+    private let configuration: EncodedFrameConfiguration
+    private let submittedFrames = SubmittedFrameConfigurations()
     private let eventHandler: @Sendable (VideoEncoderEvent) -> Void
 
     init(
@@ -25,41 +26,40 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
         self.eventHandler = eventHandler
     }
 
-    func updateBitrate(_ bitrateBps: UInt32) {
-        configurationLock.withLock {
-            configuration = EncodedFrameConfiguration(
-                width: configuration.width,
-                height: configuration.height,
-                framesPerSecond: configuration.framesPerSecond,
-                bitrateBps: bitrateBps,
-                streamEpoch: configuration.streamEpoch,
-                encoderGeneration: configuration.encoderGeneration,
-                rotation: configuration.rotation
-            )
-        }
+    func reserveFrame(bitrateBps: UInt32) -> UInt? {
+        submittedFrames.reserve(EncodedFrameConfiguration(
+            codec: configuration.codec,
+            width: configuration.width,
+            height: configuration.height,
+            framesPerSecond: configuration.framesPerSecond,
+            bitrateBps: bitrateBps,
+            streamEpoch: configuration.streamEpoch,
+            encoderGeneration: configuration.encoderGeneration,
+            rotation: configuration.rotation
+        ))
     }
 
-    func updateRotation(_ rotation: UInt32) {
-        configurationLock.withLock {
-            configuration = EncodedFrameConfiguration(
-                width: configuration.width,
-                height: configuration.height,
-                framesPerSecond: configuration.framesPerSecond,
-                bitrateBps: configuration.bitrateBps,
-                streamEpoch: configuration.streamEpoch,
-                encoderGeneration: configuration.encoderGeneration,
-                rotation: rotation % 360
-            )
-        }
+    func cancelFrame(_ identifier: UInt) {
+        _ = submittedFrames.take(identifier)
     }
 
     func receive(
+        sourceFrameRefCon: UnsafeMutableRawPointer?,
         status: OSStatus,
         infoFlags: VTEncodeInfoFlags,
         sampleBuffer: CMSampleBuffer?
     ) {
+        guard let sourceFrameRefCon,
+              let configuration = submittedFrames.take(UInt(bitPattern: sourceFrameRefCon))
+        else {
+            eventHandler(.failure(
+                streamEpoch: self.configuration.streamEpoch,
+                encoderGeneration: self.configuration.encoderGeneration,
+                message: "编码完成缺少有效的原始帧身份"
+            ))
+            return
+        }
         guard status == noErr else {
-            let configuration = configurationLock.withLock { self.configuration }
             eventHandler(.failure(
                 streamEpoch: configuration.streamEpoch,
                 encoderGeneration: configuration.encoderGeneration,
@@ -71,19 +71,20 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
               let sampleBuffer,
               CMSampleBufferDataIsReady(sampleBuffer)
         else {
+            eventHandler(.queueOverflow(
+                streamEpoch: configuration.streamEpoch,
+                encoderGeneration: configuration.encoderGeneration
+            ))
             return
         }
 
         do {
-            let configuration = configurationLock.withLock { self.configuration }
             let isKeyframe = Self.isKeyframe(sampleBuffer)
-            let parameterSets = isKeyframe
-                ? try Self.parameterSets(from: sampleBuffer.formatDescription)
-                : nil
-            let encodedData = try Self.encodedData(from: sampleBuffer)
-            let data = parameterSets.map {
-                Self.prependingParameterSets($0, to: encodedData)
-            } ?? encodedData
+            let codecConfiguration = try Self.codecConfiguration(from: sampleBuffer.formatDescription)
+            guard codecConfiguration.codec == configuration.codec.rawValue else {
+                throw VideoEncoderOutputError.configurationMismatch
+            }
+            let data = try Self.encodedData(from: sampleBuffer)
             let presentationTimeUs = Self.presentationTimeUs(
                 sampleBuffer.presentationTimeStamp
             )
@@ -101,10 +102,9 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
                 streamEpoch: configuration.streamEpoch,
                 encoderGeneration: configuration.encoderGeneration,
                 rotation: configuration.rotation,
-                parameterSets: parameterSets
+                codecConfiguration: codecConfiguration
             )))
         } catch {
-            let configuration = configurationLock.withLock { self.configuration }
             eventHandler(.failure(
                 streamEpoch: configuration.streamEpoch,
                 encoderGeneration: configuration.encoderGeneration,
@@ -125,50 +125,21 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
         return (first[kCMSampleAttachmentKey_NotSync] as? Bool) != true
     }
 
-    private static func parameterSets(
-        from formatDescription: CMFormatDescription?
-    ) throws -> H264ParameterSets? {
-        guard let formatDescription else { return nil }
-        var sequencePointer: UnsafePointer<UInt8>?
-        var sequenceSize = 0
-        var parameterSetCount = 0
-        var nalUnitHeaderLength: Int32 = 0
-        let sequenceStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-            formatDescription,
-            parameterSetIndex: 0,
-            parameterSetPointerOut: &sequencePointer,
-            parameterSetSizeOut: &sequenceSize,
-            parameterSetCountOut: &parameterSetCount,
-            nalUnitHeaderLengthOut: &nalUnitHeaderLength
-        )
-        guard sequenceStatus == noErr,
-              parameterSetCount >= 2,
-              let sequencePointer,
-              nalUnitHeaderLength == 4
-        else {
-            if sequenceStatus == noErr, nalUnitHeaderLength != 4 {
-                throw VideoEncoderOutputError.unsupportedNALHeaderLength(
-                    nalUnitHeaderLength
-                )
-            }
-            return nil
+    static func codecConfiguration(from format: CMFormatDescription?) throws -> EncodedCodecConfiguration {
+        guard let format else { throw VideoEncoderOutputError.missingConfiguration }
+        let codec: UInt32
+        let atom: String
+        switch CMFormatDescriptionGetMediaSubType(format) {
+        case kCMVideoCodecType_H264: codec = 1; atom = "avcC"
+        case kCMVideoCodecType_HEVC: codec = 2; atom = "hvcC"
+        default: throw VideoEncoderOutputError.missingConfiguration
         }
-
-        var picturePointer: UnsafePointer<UInt8>?
-        var pictureSize = 0
-        let pictureStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-            formatDescription,
-            parameterSetIndex: 1,
-            parameterSetPointerOut: &picturePointer,
-            parameterSetSizeOut: &pictureSize,
-            parameterSetCountOut: nil,
-            nalUnitHeaderLengthOut: nil
-        )
-        guard pictureStatus == noErr, let picturePointer else { return nil }
-        return H264ParameterSets(
-            sequence: Data(bytes: sequencePointer, count: sequenceSize),
-            picture: Data(bytes: picturePointer, count: pictureSize)
-        )
+        guard let extensions = CMFormatDescriptionGetExtensions(format) as NSDictionary?,
+              let atoms = extensions[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms] as? NSDictionary,
+              let record = atoms[atom] as? Data,
+              !record.isEmpty, record.count <= 64 * 1024
+        else { throw VideoEncoderOutputError.missingConfiguration }
+        return EncodedCodecConfiguration(codec: codec, record: record)
     }
 
     private static func encodedData(from sampleBuffer: CMSampleBuffer) throws -> Data {
@@ -176,6 +147,7 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
             throw VideoEncoderOutputError.missingBlockBuffer
         }
         let length = CMBlockBufferGetDataLength(blockBuffer)
+        guard length > 0, length <= 2 * 1024 * 1024 else { throw VideoEncoderOutputError.excessiveAccessUnit }
         var data = Data(count: length)
         let status = data.withUnsafeMutableBytes { bytes in
             guard let destination = bytes.baseAddress else { return kCMBlockBufferBadPointerParameterErr }
@@ -192,27 +164,6 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
         return data
     }
 
-    private static func prependingParameterSets(
-        _ parameterSets: H264ParameterSets,
-        to accessUnit: Data
-    ) -> Data {
-        var data = Data()
-        data.reserveCapacity(
-            8 + parameterSets.sequence.count + parameterSets.picture.count
-                + accessUnit.count
-        )
-        appendAVCCNAL(parameterSets.sequence, to: &data)
-        appendAVCCNAL(parameterSets.picture, to: &data)
-        data.append(accessUnit)
-        return data
-    }
-
-    private static func appendAVCCNAL(_ nal: Data, to data: inout Data) {
-        var length = UInt32(nal.count).bigEndian
-        withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
-        data.append(nal)
-    }
-
     private static func presentationTimeUs(_ time: CMTime) -> UInt64 {
         guard time.isValid, !time.isIndefinite else { return 0 }
         let converted = CMTimeConvertScale(time, timescale: 1_000_000, method: .default)
@@ -221,18 +172,46 @@ nonisolated final class CompressionCallbackContext: @unchecked Sendable {
 }
 
 nonisolated private enum VideoEncoderOutputError: LocalizedError {
+    case configurationMismatch
     case missingBlockBuffer
     case copyFailed(OSStatus)
-    case unsupportedNALHeaderLength(Int32)
+    case missingConfiguration
+    case excessiveAccessUnit
 
     var errorDescription: String? {
         switch self {
+        case .configurationMismatch:
+            "VideoToolbox 输出 codec 与请求不一致"
         case .missingBlockBuffer:
-            "VideoToolbox 没有返回 H.264 数据"
+            "VideoToolbox 没有返回压缩数据"
         case let .copyFailed(status):
-            "复制 H.264 Access Unit 失败（\(status)）"
-        case let .unsupportedNALHeaderLength(length):
-            "VideoToolbox 返回了不支持的 \(length) 字节 AVCC NAL 长度"
+            "复制压缩 Access Unit 失败（\(status)）"
+        case .missingConfiguration:
+            "VideoToolbox 没有返回有效配置记录"
+        case .excessiveAccessUnit:
+            "VideoToolbox 输出数据超出容量限制"
         }
+    }
+}
+
+/// Opaque native callback IDs own immutable input facts, never current owner state.
+/// A missing/duplicate completion cannot borrow another submission's identity.
+nonisolated final class SubmittedFrameConfigurations: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextIdentifier: UInt = 1
+    private var pending: [UInt: EncodedFrameConfiguration] = [:]
+
+    func reserve(_ configuration: EncodedFrameConfiguration) -> UInt? {
+        lock.withLock {
+            guard pending.count < 16, nextIdentifier < UInt.max else { return nil }
+            let identifier = nextIdentifier
+            nextIdentifier += 1
+            pending[identifier] = configuration
+            return identifier
+        }
+    }
+
+    func take(_ identifier: UInt) -> EncodedFrameConfiguration? {
+        lock.withLock { pending.removeValue(forKey: identifier) }
     }
 }

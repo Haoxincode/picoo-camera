@@ -17,14 +17,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -50,13 +48,11 @@ import androidx.compose.ui.text.font.FontWeight
 import com.picoo.camera.BuildConfig
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.R
-import com.picoo.camera.media.StreamResolution
 import com.picoo.camera.pairing.TrustedDeviceList
-import com.picoo.camera.ui.ResolutionSheetOptions
+import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooSheet
 import com.picoo.camera.ui.components.PicooSheetRow
-import com.picoo.camera.ui.components.PicooSurfacePanel
 import com.picoo.camera.ui.components.Reicon
 import com.picoo.camera.ui.components.ReiconIcon
 import com.picoo.camera.ui.theme.PicooTheme
@@ -70,15 +66,16 @@ fun SettingsScreen(
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
     autoConnectEnabled: Boolean,
-    defaultResolutionLabel: String,
+    preferredSourceFormat: VideoSourceFormat,
+    sourceCandidates: List<VideoSourceFormat>?,
     onBack: () -> Unit,
     onCheckPermissions: () -> Unit,
-    onOpenPairedDevices: () -> Unit,
     onToggleAutoConnect: () -> Unit,
-    onSelectDefaultResolution: (String) -> Unit,
+    onSelectDefaultSource: (VideoSourceFormat) -> Unit,
     modifier: Modifier = Modifier,
     pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
     errorText: String? = null,
+    sourcePreparationError: String? = null,
     onRemovePaired: (PicooNative.TrustedDevice) -> Unit = {},
 ) {
     var showPairedSheet by rememberSaveable { mutableStateOf(false) }
@@ -93,11 +90,11 @@ fun SettingsScreen(
         containerColor = colors.surfacePage,
         topBar = {
             TopAppBar(
-                title = { Text("手机端设置", style = MaterialTheme.typography.titleLarge) },
+                title = { Text("设置", style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     PicooIconButton(
                         onClick = onBack,
-                        contentDescription = "返回设备列表",
+                        contentDescription = "返回相机",
                     ) {
                         ReiconIcon(
                             icon = Reicon.NavigateBack,
@@ -131,24 +128,21 @@ fun SettingsScreen(
                             checked = autoConnectEnabled,
                             onClick = onToggleAutoConnect,
                             leadingContent = {
-                                SettingsIconContainer {
-                                    ReiconIcon(
-                                        icon = Reicon.Network,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(dimensions.iconEmphasis),
-                                    )
-                                }
+                                ReiconIcon(
+                                    icon = Reicon.Network,
+                                    contentDescription = null,
+                                    tint = colors.actionHighlight,
+                                    modifier = Modifier.size(dimensions.iconEmphasis),
+                                )
                             },
                         )
                         SettingsDivider()
                         SettingsValueRow(
                             title = "默认初始画质",
-                            description = "新连接建立时的起步分辨率",
-                            value = defaultResolutionLabel,
+                            description = "新连接的编码格式、分辨率与帧率",
+                            value = preferredSourceFormat.label,
                             onClick = { showResolutionSheet = true },
-                            leadingContent = {
-                                SettingsIconContainer { QualityGlyph() }
-                            },
+                            leadingContent = { QualityGlyph() },
                         )
                     }
                 }
@@ -160,13 +154,12 @@ fun SettingsScreen(
                             value = "$pairedDeviceCount 台",
                             onClick = { showPairedSheet = true },
                             leadingContent = {
-                                SettingsIconContainer {
-                                    ReiconIcon(
-                                        icon = Reicon.SecureConnection,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(dimensions.iconEmphasis),
-                                    )
-                                }
+                                ReiconIcon(
+                                    icon = Reicon.SecureConnection,
+                                    contentDescription = null,
+                                    tint = colors.actionHighlight,
+                                    modifier = Modifier.size(dimensions.iconEmphasis),
+                                )
                             },
                         )
                         SettingsDivider()
@@ -177,17 +170,20 @@ fun SettingsScreen(
                             valueColor = if (permissionsReady) colors.statusSuccess else colors.statusWarning,
                             onClick = onCheckPermissions,
                             leadingContent = {
-                                SettingsIconContainer {
-                                    ReiconIcon(
-                                        icon = if (permissionsReady) {
-                                            Reicon.SecureConnection
-                                        } else {
-                                            Reicon.Expired
-                                        },
-                                        contentDescription = null,
-                                        modifier = Modifier.size(dimensions.iconEmphasis),
-                                    )
-                                }
+                                ReiconIcon(
+                                    icon = if (permissionsReady) {
+                                        Reicon.SecureConnection
+                                    } else {
+                                        Reicon.Expired
+                                    },
+                                    contentDescription = null,
+                                    tint = if (permissionsReady) {
+                                        colors.statusSuccess
+                                    } else {
+                                        colors.statusWarning
+                                    },
+                                    modifier = Modifier.size(dimensions.iconEmphasis),
+                                )
                             },
                         )
                         if (!permissionsReady) {
@@ -221,18 +217,16 @@ fun SettingsScreen(
             errorText = errorText,
             onDismiss = { showPairedSheet = false },
             onRemove = { pendingRemoval = it },
-            onFallback = {
-                showPairedSheet = false
-                onOpenPairedDevices()
-            },
         )
     }
     if (showResolutionSheet) {
-        DefaultResolutionSheet(
-            selectedLabel = defaultResolutionLabel,
+        SourceFormatSheet(
+            selected = preferredSourceFormat,
+            candidates = sourceCandidates,
+            preparationError = sourcePreparationError,
             onDismiss = { showResolutionSheet = false },
             onSelect = { label ->
-                onSelectDefaultResolution(label)
+                onSelectDefaultSource(label)
                 showResolutionSheet = false
             },
         )
@@ -257,27 +251,14 @@ private fun SettingsSection(
 ) {
     val colors = PicooTheme.colors
     val dimensions = PicooTheme.dimensions
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(dimensions.space12)) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(width = dimensions.space4, height = dimensions.space24)
-                    .background(colors.actionHighlight, RoundedCornerShape(dimensions.space4)),
-            )
-            Text(
-                text = title,
-                color = colors.contentPrimary,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
-        PicooSurfacePanel(
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Column { content() }
-        }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(dimensions.space8)) {
+        Text(
+            text = title,
+            color = colors.contentMuted,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = dimensions.space8),
+        )
+        Column(modifier = Modifier.fillMaxWidth()) { content() }
     }
 }
 
@@ -300,8 +281,8 @@ private fun SettingsToggleRow(
             )
             .semantics(mergeDescendants = true) {}
             .defaultMinSize(minHeight = dimensions.touchTarget)
-            .padding(horizontal = dimensions.space16, vertical = dimensions.space16),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
+            .padding(horizontal = dimensions.space8, vertical = dimensions.space12),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingContent()
@@ -333,10 +314,10 @@ private fun SettingsValueRow(
         modifier = rowModifier
             .defaultMinSize(minHeight = dimensions.touchTarget)
             .padding(
-                horizontal = dimensions.space16,
-                vertical = dimensions.space16,
+                horizontal = dimensions.space8,
+                vertical = dimensions.space12,
             ),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingContent()
@@ -362,23 +343,6 @@ private fun SettingsValueRow(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun SettingsIconContainer(
-    modifier: Modifier = Modifier,
-    content: @Composable () -> Unit,
-) {
-    val colors = PicooTheme.colors
-    val dimensions = PicooTheme.dimensions
-    Surface(
-        modifier = modifier.size(dimensions.settingsIconContainer),
-        color = colors.surfaceAccent,
-        contentColor = colors.actionHighlight,
-        shape = RoundedCornerShape(dimensions.radiusIconContainer),
-    ) {
-        Box(contentAlignment = Alignment.Center) { content() }
     }
 }
 
@@ -460,9 +424,9 @@ private fun SettingsText(title: String, description: String, modifier: Modifier 
 private fun SettingsDivider() {
     HorizontalDivider(
         modifier = Modifier.padding(
-            start = PicooTheme.dimensions.space16 +
-                PicooTheme.dimensions.settingsIconContainer +
-                PicooTheme.dimensions.space12,
+            start = PicooTheme.dimensions.space8 +
+                PicooTheme.dimensions.iconEmphasis +
+                PicooTheme.dimensions.space8,
         ),
         color = PicooTheme.colors.borderDefault,
     )
@@ -501,7 +465,6 @@ private fun PairedDevicesSheet(
     errorText: String?,
     onDismiss: () -> Unit,
     onRemove: (PicooNative.TrustedDevice) -> Unit,
-    onFallback: () -> Unit,
 ) {
     val colors = PicooTheme.colors
     val dimensions = PicooTheme.dimensions
@@ -528,31 +491,6 @@ private fun PairedDevicesSheet(
                 subtitle = "公钥指纹 ${TrustedDeviceList.shortFingerprint(device.certificateFingerprint)} · 点按撤销",
                 danger = true,
                 onClick = { onRemove(device) },
-            )
-        }
-        PicooSheetRow(title = "在设备列表中管理", onClick = onFallback)
-        PicooSheetRow(title = "取消", onClick = onDismiss)
-    }
-}
-
-@Composable
-private fun DefaultResolutionSheet(
-    selectedLabel: String,
-    onDismiss: () -> Unit,
-    onSelect: (String) -> Unit,
-) {
-    val selected = StreamResolution.fromLabel(selectedLabel)
-    PicooSheet(
-        title = "发送画质规格",
-        description = "新连接建立时的起步分辨率。推流中仍可即时切换。",
-        onDismiss = onDismiss,
-    ) {
-        ResolutionSheetOptions.all.forEach { option ->
-            PicooSheetRow(
-                title = option.title,
-                subtitle = option.subtitle,
-                selected = option.resolution == selected,
-                onClick = { onSelect(option.resolution.label) },
             )
         }
         PicooSheetRow(title = "取消", onClick = onDismiss)

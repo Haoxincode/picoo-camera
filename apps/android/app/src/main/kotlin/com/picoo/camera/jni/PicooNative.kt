@@ -1,5 +1,8 @@
 package com.picoo.camera.jni
 
+import com.picoo.camera.media.VideoSourceFormat
+import com.picoo.camera.media.EncoderSubmitOutcome
+
 /**
  * JNI bridge to Rust Core C ABI (REQ-PICOO-STACK-003).
  *
@@ -61,24 +64,8 @@ object PicooNative {
     external fun destroySender(handle: Long)
 
     /**
-     * Packetize one H.264 access unit into PCP FEC-protected VideoPackets.
-     * @return fragment count on success, negative on error.
-     */
-    external fun ingestAccessUnit(
-        handle: Long,
-        data: ByteArray,
-        keyframe: Boolean,
-        ptsUs: Long,
-        encodedAtUs: Long,
-        streamEpoch: Int,
-        transactionId: Long,
-        encoderGeneration: Long,
-        encoderHeight: Int,
-    ): Int
-
-    /**
      * Atomically validates one native encoder generation, optionally stages its StreamConfig,
-     * packetizes/flushes the AU, pumps control, and returns result flags.
+     * packetizes/flushes the AU, pumps control, and returns explicit outcome facts.
      */
     external fun submitEncoderAccessUnit(
         handle: Long,
@@ -92,9 +79,10 @@ object PicooNative {
         encoderHeight: Int,
         configureStream: Boolean,
         mirrored: Boolean,
-        sps: ByteArray?,
-        pps: ByteArray?,
-    ): Int
+        codec: Int,
+        fps: Int,
+        codecConfiguration: ByteArray?,
+    ): EncoderSubmitOutcome
 
     /** [accessUnits, packets, bytes, sentDatagrams, pendingPackets] */
     external fun getSenderStats(handle: Long): LongArray
@@ -110,8 +98,6 @@ object PicooNative {
 
     /** User-initiated stop; does not auto-reconnect until the next connect (PUC-005). */
     external fun disconnect(handle: Long): Int
-
-    external fun flushPending(handle: Long): Int
 
     external fun pump(handle: Long): Int
 
@@ -136,18 +122,6 @@ object PicooNative {
 
     external fun getPairingShortCode(handle: Long): String
 
-    external fun setStreamConfig(
-        handle: Long,
-        width: Int,
-        height: Int,
-        fps: Int,
-        bitrateBps: Int,
-        mirrored: Boolean,
-        rotation: Int = 0,
-        sps: ByteArray? = null,
-        pps: ByteArray? = null,
-    ): Int
-
     /**
      * Latest ReceiverStats feedback for Streaming metrics (PUC-005).
      * @return [rttMs, packetLoss, jitterMs, frameAgeMs, receiveBitrate, jitterDepthMs] or null.
@@ -171,23 +145,14 @@ object PicooNative {
     /** Pending Rust-owned ABR directive: [id, kind, height, bitrate, epoch]. */
     external fun getEncoderDirective(handle: Long): LongArray?
 
-    /** User preferred height for ABR decisions (480, 720, or 1080). */
+    /** Exact preferred source height (720 or 1080); unsupported values return -1. */
     external fun setPreferredHeight(handle: Long, height: Int): Int
 
     /** Allocate a fresh Rust-owned epoch before camera/encoder discontinuity. */
-    external fun beginStreamReconfiguration(handle: Long, targetHeight: Int): Int
+    external fun beginStreamReconfiguration(handle: Long, targetHeight: Int, targetCodec: Int, targetFps: Int): Int
 
     /** Resolve the active Rust encoder transaction for [streamEpoch], or zero when committed. */
     external fun encoderTransactionId(handle: Long, streamEpoch: Int): Long
-
-    /** Report the native generation that began producing encoder output. */
-    external fun reportEncoderStarted(
-        handle: Long,
-        transactionId: Long,
-        encoderGeneration: Long,
-        streamEpoch: Int,
-        height: Int,
-    ): Int
 
     /** 0 ignored, 1 rolled back, 2 recovery requested, 3 disconnected. */
     external fun reportEncoderFailed(
@@ -200,14 +165,16 @@ object PicooNative {
 
     external fun bitrateClampForHeight(bitrateBps: Int, height: Int): Int
 
-    /** Thermal hold blocks ABR upshift while overheating (MEDIA-010). */
+    /** Thermal hold blocks bitrate growth without changing source configuration (MEDIA-027). */
     external fun setThermalHold(handle: Long, hold: Boolean): Int
 
     /**
-     * Extract SPS/PPS from Annex-B or AVCC codec-config bytes.
-     * @return `[sps, pps]` or null when extraction fails.
+     * Validate explicitly selected MediaCodec AVC/HEVC Annex B codec-config.
+     * AVC records missing BT.709 VUI are admitted only after MediaFormat already
+     * declared limited SDR; HEVC still requires explicit native colour.
+     * @return Standard avcC/hvcC record, or null when native CSD is rejected.
      */
-    external fun extractSpsPps(data: ByteArray): Array<ByteArray>?
+    external fun parseCodecConfiguration(codec: Int, data: ByteArray): ByteArray?
 
     /** Canonical Rust validation for Android NSD TXT bytes. */
     external fun parseDiscoveryTxt(keys: Array<String>, values: Array<ByteArray>): Array<String>?
@@ -307,6 +274,8 @@ object PicooNative {
         val id: Long,
         val kind: Int,
         val targetHeight: Int,
+        val targetCodec: Int,
+        val targetFps: Int,
         val targetBitrateBps: Int,
         val streamEpoch: Int,
     )
@@ -314,33 +283,50 @@ object PicooNative {
     data class SenderSnapshot(
         val status: Int,
         val currentBitrateBps: Int,
-        val activeHeight: Int,
-        val receiverMaxHeight: Int,
         val streamEpoch: Int,
         val reconnectAttempt: Int,
         val reconnectDelayMs: Long,
-    )
-
-    fun readSenderSnapshot(handle: Long): SenderSnapshot {
-        val values = getSenderSnapshot(handle)
-        return SenderSnapshot(
-            status = values.getOrElse(0) { STATUS_DISCONNECTED.toLong() }.toInt(),
-            currentBitrateBps = values.getOrElse(1) { 0 }.toInt(),
-            activeHeight = values.getOrElse(2) { 0 }.toInt(),
-            receiverMaxHeight = values.getOrElse(3) { 0 }.toInt(),
-            streamEpoch = values.getOrElse(4) { 0 }.toInt(),
-            reconnectAttempt = values.getOrElse(5) { 0 }.toInt(),
-            reconnectDelayMs = values.getOrElse(6) { 0 },
-        )
+        /** Null means decoder evidence has not arrived; empty means no matching product request. */
+        val receiverSourceFormats: List<VideoSourceFormat>?,
+        /** Last admitted native format, retained for recovery even when disconnected. */
+        val lastCommittedSourceFormat: VideoSourceFormat?,
+    ) {
+        companion object {
+            internal fun fromNative(values: LongArray): SenderSnapshot {
+                check(values.size in 9..33 && (values.size - 9) % 3 == 0) { "Invalid native sender snapshot" }
+                check(values[5] == 0L || values[5] == 1L) { "Invalid native capability state" }
+                check(values[5] == 1L || values.size == 9) { "Unknown capabilities cannot contain candidates" }
+                val sourceFormats = if (values[5] == 0L) null else (9 until values.size step 3).map { index ->
+                    checkNotNull(VideoSourceFormat.fromWire(values[index].toInt(), values[index + 1].toInt(), values[index + 2].toInt()))
+                }
+                val committed = if (values[6] == 0L) {
+                    check(values[7] == 0L && values[8] == 0L) { "Invalid absent committed format" }
+                    null
+                } else checkNotNull(VideoSourceFormat.fromWire(values[6].toInt(), values[7].toInt(), values[8].toInt()))
+                return SenderSnapshot(
+                    status = values[0].toInt(),
+                    currentBitrateBps = values[1].toInt(),
+                    streamEpoch = values[2].toInt(),
+                    reconnectAttempt = values[3].toInt(),
+                    reconnectDelayMs = values[4],
+                    receiverSourceFormats = sourceFormats,
+                    lastCommittedSourceFormat = committed,
+                )
+            }
+        }
     }
+
+    fun readSenderSnapshot(handle: Long): SenderSnapshot = SenderSnapshot.fromNative(getSenderSnapshot(handle))
 
     fun readEncoderDirective(handle: Long): EncoderDirective? {
         val values = getEncoderDirective(handle) ?: return null
-        if (values.size < 5) return null
+        if (values.size != 7) return null
         return EncoderDirective(
             id = values[0],
             kind = values[1].toInt(),
             targetHeight = values[2].toInt(),
+            targetCodec = values[5].toInt(),
+            targetFps = values[6].toInt(),
             targetBitrateBps = values[3].toInt(),
             streamEpoch = values[4].toInt(),
         )

@@ -1,12 +1,11 @@
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::{atomic::Ordering, Arc};
 
 use shared_memory::{Shmem, ShmemConf, ShmemError};
 
 use super::layout::{
     layout_size, meta_at, slot_meta_at, slot_pixels_at, validate_ring_header, PIXEL_FORMAT_NV12,
-    READY_EMPTY, READY_WRITING, RING_MAGIC, RING_READY_DONE, RING_SLOT_COUNT, RING_VERSION,
-    WRITER_LEASE,
+    READY_EMPTY, READY_WRITING, RING_MAGIC, RING_READY_DONE, RING_SLOT_COUNT, WRITER_LEASE,
 };
 #[cfg(target_os = "windows")]
 use super::lock::acquire_producer_lock;
@@ -15,10 +14,10 @@ use super::lock::KernelLockGuard;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use super::mapping::SlotLockAttempt;
 use super::mapping::{map_shmem_err, ring_flink_path, ProducerMapping, SharedMapping};
-use super::SharedRingError;
+use super::{SharedFrameKind, SharedRingError};
 
 pub struct SharedFrameRingProducer {
-    pub(super) mapping: ProducerMapping,
+    pub(super) mapping: Arc<ProducerMapping>,
     pub(super) max_frame_bytes: usize,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     pub(super) _producer_lock: Option<KernelLockGuard>,
@@ -40,7 +39,7 @@ impl SharedFrameRingProducer {
         producer_lock: KernelLockGuard,
     ) -> Self {
         Self {
-            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
+            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)).retained(),
             max_frame_bytes,
             _producer_lock: Some(producer_lock),
         }
@@ -49,7 +48,7 @@ impl SharedFrameRingProducer {
     #[cfg(not(target_os = "windows"))]
     fn from_named_mapping(shmem: Shmem, flink: PathBuf, max_frame_bytes: usize) -> Self {
         Self {
-            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)),
+            mapping: ProducerMapping::Shared(SharedMapping::new(shmem, flink)).retained(),
             max_frame_bytes,
             #[cfg(target_os = "macos")]
             _producer_lock: None,
@@ -184,16 +183,24 @@ impl SharedFrameRingProducer {
         unsafe {
             let meta = &mut *meta_at(base);
             meta.magic = RING_MAGIC;
-            meta.version = RING_VERSION;
             meta.slot_count = RING_SLOT_COUNT as u32;
             meta.max_frame_bytes = self.max_frame_bytes as u32;
             meta.write_index.store(0, Ordering::Relaxed);
             meta.latest_sequence.store(0, Ordering::Relaxed);
+            meta.content_generation.store(1, Ordering::SeqCst);
+            meta.cpu_demand_until_ms.store(0, Ordering::SeqCst);
+            meta.cpu_request_sequence.store(0, Ordering::SeqCst);
+            meta.content_signal.store(
+                (1 << 1) | SharedFrameKind::Live.signal_bit(),
+                Ordering::SeqCst,
+            );
             for i in 0..RING_SLOT_COUNT {
                 let slot = &mut *slot_meta_at(base, self.max_frame_bytes, i);
                 slot.sequence.store(0, Ordering::Relaxed);
+                slot.content_generation.store(0, Ordering::Relaxed);
                 slot.ready_state.store(READY_EMPTY, Ordering::Relaxed);
                 slot.reader_count.store(0, Ordering::Relaxed);
+                slot.content_kind = SharedFrameKind::Live as u32;
             }
         }
     }
@@ -211,6 +218,76 @@ impl SharedFrameRingProducer {
         timestamp_us: u64,
         nv12: &[u8],
     ) -> Result<RingPublishOutcome, SharedRingError> {
+        let generation = self.content_fence().current();
+        self.publish_nv12_in_generation(
+            generation,
+            width,
+            height,
+            stride,
+            rotation,
+            timestamp_us,
+            nv12,
+        )
+    }
+
+    /// Capture this handle before dispatching work; only atomics are shared.
+    /// Latest aggregate request, only while its host-clock lease is live.
+    pub fn cpu_request_sequence(&self) -> Option<u64> {
+        unsafe { super::demand::sequence(self.mapping.as_ptr()) }
+    }
+
+    pub fn has_cpu_demand(&self) -> bool {
+        unsafe { super::demand::is_requested(self.mapping.as_ptr()) }
+    }
+
+    pub fn content_fence(&self) -> super::RingContentFence {
+        super::RingContentFence::new(Arc::clone(&self.mapping))
+    }
+
+    /// Publish with the generation captured when the work was admitted.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_nv12_in_generation(
+        &mut self,
+        generation: u64,
+        width: u32,
+        height: u32,
+        stride: u32,
+        rotation: u32,
+        timestamp_us: u64,
+        nv12: &[u8],
+    ) -> Result<RingPublishOutcome, SharedRingError> {
+        self.publish_nv12_kind_in_generation(
+            generation,
+            SharedFrameKind::Live,
+            width,
+            height,
+            stride,
+            rotation,
+            timestamp_us,
+            nv12,
+        )
+    }
+
+    /// Publish content with an explicit semantic kind. Placeholder pixels are
+    /// never inferred from timestamps or dimensions by cross-process readers.
+    #[allow(clippy::too_many_arguments)]
+    pub fn publish_nv12_kind_in_generation(
+        &mut self,
+        generation: u64,
+        kind: SharedFrameKind,
+        width: u32,
+        height: u32,
+        stride: u32,
+        rotation: u32,
+        timestamp_us: u64,
+        nv12: &[u8],
+    ) -> Result<RingPublishOutcome, SharedRingError> {
+        if generation == 0 || generation != self.content_fence().current() {
+            return Err(SharedRingError::ContentInvalidated);
+        }
+        if self.content_fence().kind() != Some(kind) {
+            return Err(SharedRingError::ContentInvalidated);
+        }
         if nv12.len() > self.max_frame_bytes {
             return Err(SharedRingError::FrameTooLarge(
                 nv12.len(),
@@ -278,11 +355,20 @@ impl SharedFrameRingProducer {
             slot.rotation = rotation;
             slot.pixel_format = PIXEL_FORMAT_NV12;
             slot.data_length = nv12.len() as u32;
+            slot.content_kind = kind as u32;
 
             let pixels = slot_pixels_at(base, self.max_frame_bytes, index);
             pixels[..nv12.len()].copy_from_slice(nv12);
 
+            if meta.content_generation.load(Ordering::SeqCst) != generation {
+                slot.ready_state.store(READY_EMPTY, Ordering::Release);
+                slot.reader_count.store(0, Ordering::SeqCst);
+                return Err(SharedRingError::ContentInvalidated);
+            }
             let sequence = meta.latest_sequence.load(Ordering::Relaxed) + 1;
+            // A concurrent invalidation after this point cannot relabel these
+            // bytes: readers compare this captured token after acquiring a lease.
+            slot.content_generation.store(generation, Ordering::SeqCst);
             slot.sequence.store(sequence, Ordering::Release);
             slot.ready_state.store(RING_READY_DONE, Ordering::Release);
             slot.reader_count.store(0, Ordering::SeqCst);

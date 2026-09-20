@@ -105,6 +105,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - name: Cache Windows Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          prefix-key: picoo-cargo
+          cache-workspace-crates: false
+          cache-bin: false
+          cache-on-failure: true
+          save-if: ${{ github.event_name == 'push' }}
       - name: Install WiX v5
         shell: pwsh
         run: |
@@ -118,6 +126,20 @@ jobs:
           wix extension add WixToolset.Util.wixext/5.0.2
       - name: Test Windows Shared Frame Ring and Media Foundation source
         run: cargo run -p xtask -- test windows
+      - name: Preserve synthetic Windows mux evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-mux-probe
+          path: target/verification/windows-mux-probe/
+          if-no-files-found: ignore
+      - name: Preserve synthetic Windows recording bundles
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-recording-fixtures
+          path: target/verification/windows-recording/
+          if-no-files-found: ignore
       - run: cargo run -p xtask -- build windows
       - name: Package Windows + MSI
         env:
@@ -153,6 +175,13 @@ jobs:
         run: cargo clippy -p picoo-desktop --all-targets --features gpui-ui -- -D warnings
       - name: Test macOS VideoToolbox receiver and shared ring
         run: cargo run -p xtask -- test macos
+      - name: Preserve synthetic production recording outputs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: apple-recording-fixtures
+          path: target/verification/apple-recording/
+          if-no-files-found: ignore
       - name: Package macOS Host app with Camera Extension
         run: cargo run -p xtask -- package macos
       - uses: actions/upload-artifact@v7

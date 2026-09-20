@@ -44,8 +44,6 @@ pub struct SessionStats {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum EncoderDirectiveKind {
-    AbrDownshift = 1,
-    AbrUpshift = 2,
     Local = 3,
     Recovery = 4,
 }
@@ -55,7 +53,7 @@ pub enum EncoderDirectiveKind {
 pub struct EncoderDirective {
     pub id: u64,
     pub kind: EncoderDirectiveKind,
-    pub target_height: u32,
+    pub target_format: crate::SourceFormat,
     pub target_bitrate_bps: u32,
     pub stream_epoch: u32,
 }
@@ -143,6 +141,8 @@ pub struct SenderSession<T: PicooTransport> {
     last_allocated_stream_epoch: u32,
     /// Zero until the platform reports its first actual encoder output.
     committed_encoder_height: u32,
+    /// Last source format committed by an admitted native AU, never a request.
+    committed_source_format: Option<crate::SourceFormat>,
     /// Native generation bound by EncoderStarted; zero until the first encoder starts.
     committed_encoder_generation: u64,
     /// A committed epoch must not emit media until its matching StreamConfig
@@ -191,12 +191,12 @@ impl<T: PicooTransport> SenderSession<T> {
             reconnect_backoff: ReconnectBackoff::default(),
             reconnect_after: None,
             last_scheduled_reconnect_delay_ms: None,
-            bitrate: BitrateController::for_height(1080),
+            bitrate: BitrateController::for_height(1080).unwrap(),
             requested_preferred_height: 1080,
             last_bitrate_action: BitrateAction::Hold,
             last_receiver_stats: None,
             pre_fec_packet_loss: 0.0,
-            pending_stream_config: Some(StreamConfigParams::default()),
+            pending_stream_config: None,
             receiver_capabilities: None,
             stream_config_sent: false,
             keyframe_requested: false,
@@ -205,6 +205,7 @@ impl<T: PicooTransport> SenderSession<T> {
             current_stream_epoch: INITIAL_STREAM_EPOCH,
             last_allocated_stream_epoch: INITIAL_STREAM_EPOCH,
             committed_encoder_height: 0,
+            committed_source_format: None,
             committed_encoder_generation: 0,
             media_blocked_for_stream_config: false,
             pending_camera_command: None,

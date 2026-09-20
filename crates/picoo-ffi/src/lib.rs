@@ -8,6 +8,7 @@ pub mod c_media;
 pub mod c_pairing;
 pub mod c_sender;
 pub mod c_sender_control;
+mod encoder_input;
 mod handles;
 
 pub use c_diagnostics::*;

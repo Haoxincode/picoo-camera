@@ -10,31 +10,48 @@ bytes.workspace = true
 shared_memory = "0.12"
 thiserror.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-io-surface = { version = "0.3.2", default-features = false, features = ["std", "IOSurfaceRef", "objc2-core-foundation"] }
+objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFDictionary", "CFString"] }
+objc2-core-video = { version = "0.3.2", default-features = false, features = ["std", "CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVPixelBufferIOSurface", "CVReturn", "objc2-io-surface"] }
 memmap2 = "0.9.11"
-objc2-foundation = { version = "0.3.2", default-features = false, features = [
-    "NSBundle",
-    "std",
-    "NSFileManager",
-    "NSValue",
-    "NSString",
-    "NSURL",
-] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Media_MediaFoundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+    "Win32_System_Pipes",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 memmap2 = "0.9.11"
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_IO",
+    "Win32_System_SystemInformation",
     "Win32_UI_Shell",
 ] }
 
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows-core = "0.62.2"
+
 [dev-dependencies]
 loom = "=0.7.2"
-proptest = "=1.6.0"
+proptest.workspace = true
 
 [[bench]]
 name = "nv12_transform"

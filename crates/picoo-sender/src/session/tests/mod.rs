@@ -38,6 +38,9 @@ fn native_au(
 }
 
 mod abr;
+mod capability_selection;
+mod committed_source;
+mod configuration_admission;
 mod epoch;
 mod pairing;
 mod reconnect;
@@ -125,6 +128,7 @@ fn signed_server_hello<T: PicooTransport>(
         .channel_binding(session)
         .expect("channel binding");
     let transcript = picoo_pairing::PairingTranscript {
+        protocol: picoo_protocol::ALPN,
         sender_id: sender.identity.device_id(),
         sender_public_key: sender.identity.public_key(),
         sender_nonce: &sender_nonce,
@@ -289,5 +293,37 @@ impl PicooTransport for RejectConnectTransport {
 
     fn channel_binding(&self, _session: SessionId) -> Result<ChannelBinding, TransportError> {
         Err(TransportError::ChannelBindingUnavailable)
+    }
+}
+
+pub(super) fn source_configuration(height: u32) -> StreamConfigParams {
+    let (width, fixture): (u32, &[u8]) = match height {
+        720 => (1280, picoo_testkit::AVC_1280X720_BT709_IDR),
+        1080 => (1920, picoo_testkit::AVC_1920X1080_BT709_IDR),
+        _ => panic!("unsupported test source height"),
+    };
+    let (sps, pps) = picoo_bitstream::avc::extract_sps_pps(fixture).unwrap();
+    StreamConfigParams {
+        width,
+        height,
+        configuration: picoo_bitstream::CodecConfiguration::from_avc_parameter_sets(&sps, &pps)
+            .unwrap()
+            .into(),
+        fps: 30,
+        bitrate_bps: 3_000_000,
+        stream_epoch: 1,
+        mirrored: false,
+        rotation: 0,
+    }
+}
+
+fn exact_capabilities(config: &StreamConfigParams) -> Capabilities {
+    let wire = config.to_proto().unwrap();
+    Capabilities {
+        offers: vec![picoo_protocol::control::DecoderOffer {
+            format: Some(wire.validated_video_format().unwrap()),
+            max_level_idc: wire.level_idc,
+            max_access_unit_bytes: picoo_protocol::MAX_MEDIA_ACCESS_UNIT_BYTES,
+        }],
     }
 }

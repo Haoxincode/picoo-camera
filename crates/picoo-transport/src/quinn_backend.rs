@@ -2,7 +2,9 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-#[cfg(any(target_os = "android", target_os = "ios", target_os = "macos"))]
+#[cfg(any(target_os = "ios", target_os = "macos"))]
+use std::num::NonZeroU32;
+#[cfg(target_os = "android")]
 use std::os::fd::AsRawFd;
 use std::sync::{mpsc as std_mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -279,14 +281,14 @@ fn client_socket(
         let _ = socket.set_only_v6(false);
     }
     socket.bind(&bind_addr.into())?;
-    let socket: std::net::UdpSocket = socket.into();
-    apply_client_network_binding(&socket, network_binding)
+    apply_client_network_binding(&socket, bind_addr.is_ipv4(), network_binding)
         .map_err(QuicTransportError::NetworkBinding)?;
-    Ok(socket)
+    Ok(socket.into())
 }
 
 fn apply_client_network_binding(
-    socket: &std::net::UdpSocket,
+    socket: &Socket,
+    is_ipv4: bool,
     binding: ClientNetworkBinding,
 ) -> io::Result<()> {
     match binding {
@@ -324,32 +326,21 @@ fn apply_client_network_binding(
         ClientNetworkBinding::AppleInterface(interface_index) => {
             #[cfg(any(target_os = "ios", target_os = "macos"))]
             {
-                let interface_index = libc::c_int::try_from(interface_index).map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidInput, "interface index is too large")
-                })?;
-                let (level, option) = if socket.local_addr()?.is_ipv4() {
-                    (libc::IPPROTO_IP, libc::IP_BOUND_IF)
-                } else {
-                    (libc::IPPROTO_IPV6, libc::IPV6_BOUND_IF)
-                };
-                let result = unsafe {
-                    libc::setsockopt(
-                        socket.as_raw_fd(),
-                        level,
-                        option,
-                        (&interface_index as *const libc::c_int).cast(),
-                        std::mem::size_of_val(&interface_index) as libc::socklen_t,
+                let interface_index = NonZeroU32::new(interface_index).ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "interface index must be non-zero",
                     )
-                };
-                if result == 0 {
-                    Ok(())
+                })?;
+                if is_ipv4 {
+                    socket.bind_device_by_index_v4(Some(interface_index))
                 } else {
-                    Err(io::Error::last_os_error())
+                    socket.bind_device_by_index_v6(Some(interface_index))
                 }
             }
             #[cfg(not(any(target_os = "ios", target_os = "macos")))]
             {
-                let _ = (socket, interface_index);
+                let _ = (socket, is_ipv4, interface_index);
                 Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "Apple interface indexes are only supported on Apple platforms",
@@ -636,7 +627,7 @@ async fn run_connection(
         .export_keying_material(
             &mut channel_binding,
             b"EXPORTER-Picoo-Camera-Channel-Binding",
-            b"picoocam",
+            picoo_protocol::ALPN.as_bytes(),
         )
         .is_err()
     {

@@ -13,8 +13,22 @@ use crate::ReceiverError;
 
 impl ReceiverSession {
     /// Inject a synthetic decoder without adding fallback behavior to builds.
-    pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder>) {
+    pub fn set_decoder_for_test(&mut self, decoder: Box<dyn AccessUnitDecoder + Send>) {
         self.decoder_worker = DecoderWorker::with_decoder(decoder);
+        self.decoder_readiness = Default::default();
+        self.receiver_capabilities_sent = None;
+    }
+
+    /// Exercise the production native preparation and owner negotiation path.
+    #[cfg(target_os = "macos")]
+    pub fn set_native_decoder_for_test(&mut self) {
+        self.decoder_worker = DecoderWorker::with_preparation(
+            picoo_media_decode::create_platform_decoder,
+            picoo_media_decode::probe_capabilities,
+            self.runtime_wake.clone(),
+        );
+        self.decoder_readiness = Default::default();
+        self.receiver_capabilities_sent = None;
     }
 
     /// Publish a recovery fixture without constructing a network timeline.
@@ -31,7 +45,7 @@ impl ReceiverSession {
             .map_or(1, |config| u64::from(config.stream_epoch));
         if self.current_stream_config.is_none() {
             self.current_stream_config = Some(Arc::new(StreamConfig {
-                codec: "h264".into(),
+                codec: picoo_protocol::control::VideoCodec::Avc as i32,
                 width: 1280,
                 height: 720,
                 fps: 30,

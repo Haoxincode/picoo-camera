@@ -195,6 +195,7 @@ impl<T: PicooTransport> SenderSession<T> {
             return;
         };
         let transcript = PairingTranscript {
+            protocol: picoo_protocol::ALPN,
             sender_id: self.identity.device_id(),
             sender_public_key: self.identity.public_key(),
             sender_nonce: &sender_nonce,

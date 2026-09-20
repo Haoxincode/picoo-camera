@@ -12,7 +12,15 @@ use crate::ReceiverError;
 
 impl ReceiverSession {
     fn reset_session_resources(&mut self) {
+        #[cfg(any(target_os = "macos", windows))]
+        {
+            self.report_recording_gap(picoo_recording::bundle::GapReason::SourceStopped);
+            self.stop_encoded_recording();
+        }
+        #[cfg(any(target_os = "macos", windows))]
+        self.frames.reset_ordered_source();
         self.decoder_worker.reset();
+        #[cfg(not(any(target_os = "macos", windows)))]
         self.frame_buffer_pool.clear();
         self.active_sender = None;
         self.pending_pairing = None;
@@ -25,10 +33,14 @@ impl ReceiverSession {
         self.last_sender_stats = None;
         self.last_decoded_fps = 0;
         self.last_media_error = None;
+        self.last_decode_skip = None;
+        self.decoder_completions_skipped = 0;
         self.current_stream_config = None;
+        self.admitted_access_unit_budget = None;
         self.waiting_for_stream_config_epoch = None;
         self.pending_stream_config_idr = None;
         self.receiver_capabilities_sent = None;
+        self.pending_decoder_configuration = None;
         self.decoder_recovery.reset_session();
         self.control_generation = None;
         self.next_control_message_id = 1;
@@ -56,6 +68,9 @@ impl ReceiverSession {
                         ReceiverCloseReason::Local => CloseReason::LocalClose,
                         ReceiverCloseReason::InvalidControl => {
                             CloseReason::Error("invalid PCP control message".into())
+                        }
+                        ReceiverCloseReason::DecoderUnavailable => {
+                            CloseReason::Error("native decoder unavailable".into())
                         }
                         ReceiverCloseReason::PairingExpired => {
                             CloseReason::Error("pairing challenge expired".into())
@@ -91,5 +106,24 @@ impl ReceiverSession {
         }
         self.apply_receiver_event(ReceiverEvent::DisconnectHoldElapsed)?;
         Ok(())
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", windows)))]
+mod tests {
+    use super::*;
+    use picoo_frame_hub::SubscriptionEnd;
+
+    #[test]
+    fn session_reset_ends_rendered_source_before_preview_hold_expires() {
+        let mut receiver = ReceiverSession::new();
+        let mut subscription = receiver.frames.subscribe_ordered().unwrap();
+
+        receiver.reset_session_resources();
+
+        assert!(matches!(
+            subscription.try_next(),
+            Err(SubscriptionEnd::Reset)
+        ));
     }
 }

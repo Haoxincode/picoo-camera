@@ -18,14 +18,14 @@ fn protocol_name_cstr() {
 }
 
 #[test]
-fn sender_rejects_offline_ingest_via_ffi() {
+fn sender_rejects_invalid_atomic_encoder_event_via_ffi() {
     assert!(picoo_sender_create(std::ptr::null_mut()).is_null());
     let handle = create_test_sender();
     assert!(!handle.is_null());
     let data = b"test-nalu";
-    let mut out = 0u32;
+    let mut out = PicooEncoderSubmitOutcome::default();
     assert_eq!(
-        picoo_sender_ingest_access_unit(
+        picoo_sender_submit_encoder_event(
             handle,
             data.as_ptr(),
             data.len(),
@@ -33,14 +33,24 @@ fn sender_rejects_offline_ingest_via_ffi() {
             42,
             42,
             1,
+            1,
+            1280,
+            720,
+            30,
+            3_000_000,
+            0,
+            0,
             0,
             1,
-            720,
+            std::ptr::null(),
+            0,
             &mut out,
         ),
         -2
     );
-    assert_eq!(out, 0);
+    assert_eq!(out.encoder_accepted, 0);
+    assert_eq!(out.stream_configured, 0);
+    assert_eq!(out.packet_count, 0);
     assert_eq!(picoo_sender_wait_for_event(handle, 0, 0), 0);
     let mut stats = [0.0f64; 8];
     assert_eq!(
@@ -61,6 +71,10 @@ fn sender_rejects_offline_ingest_via_ffi() {
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
     assert_eq!(snapshot.status, SenderStatus::Disconnected.as_code());
     assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
+    assert_eq!(
+        snapshot.last_committed_source_format,
+        PicooSourceFormat::default()
+    );
     picoo_sender_destroy(handle);
 }
 
@@ -167,50 +181,22 @@ fn identity_load_roundtrip_via_ffi() {
 }
 
 #[test]
-fn extract_sps_pps_via_ffi() {
-    let sps = [0x67u8, 0x42, 0x00, 0x0a];
-    let pps = [0x68u8, 0xce, 0x3c, 0x80];
-    let mut annex = Vec::new();
-    annex.extend_from_slice(&[0, 0, 0, 1]);
-    annex.extend_from_slice(&sps);
-    annex.extend_from_slice(&[0, 0, 0, 1]);
-    annex.extend_from_slice(&pps);
-    let mut sps_out = [0u8; 64];
-    let mut pps_out = [0u8; 64];
-    let mut sps_len = sps_out.len();
-    let mut pps_len = pps_out.len();
-    assert_eq!(
-        picoo_h264_extract_sps_pps(
-            annex.as_ptr(),
-            annex.len(),
-            sps_out.as_mut_ptr(),
-            &mut sps_len,
-            pps_out.as_mut_ptr(),
-            &mut pps_len,
-        ),
-        0
-    );
-    assert_eq!(&sps_out[..sps_len], &sps);
-    assert_eq!(&pps_out[..pps_len], &pps);
-}
-
-#[test]
 fn sender_snapshot_is_coherent_before_capabilities() {
     let handle = create_test_sender();
     assert!(!handle.is_null());
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
-    assert_eq!(snapshot.receiver_max_height, 0);
-    assert_eq!(snapshot.active_height, 1080);
+    assert!(!snapshot.receiver_capabilities_known);
+    assert_eq!(snapshot.receiver_source_format_count, 0);
     assert!(snapshot.current_bitrate_bps > 0);
     picoo_sender_destroy(handle);
 }
 
 #[test]
-fn encoder_started_fact_requires_the_matching_transaction() {
+fn native_request_rollback_requires_the_matching_transaction() {
     let handle = create_test_sender();
     assert!(!handle.is_null());
-    let pending = picoo_sender_begin_stream_reconfiguration(handle, 720);
+    let pending = picoo_sender_begin_stream_reconfiguration(handle, 720, 1, 30);
     assert!(pending > picoo_sender::INITIAL_STREAM_EPOCH);
     let mut directive = PicooEncoderDirective::default();
     assert_eq!(
@@ -220,16 +206,20 @@ fn encoder_started_fact_requires_the_matching_transaction() {
     let transaction = picoo_sender_encoder_transaction_id(handle, pending);
     assert!(transaction > 0);
     assert_eq!(
-        picoo_sender_report_encoder_started(handle, transaction, 7, pending + 1, 720),
+        picoo_sender_report_encoder_failed(handle, transaction + 1, 0),
         0
     );
     assert_eq!(
-        picoo_sender_report_encoder_started(handle, transaction, 7, pending, 720),
-        1
+        picoo_sender_encoder_transaction_id(handle, pending),
+        transaction
     );
     let mut snapshot = PicooSenderSnapshot::default();
     assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
     assert_eq!(snapshot.stream_epoch, picoo_sender::INITIAL_STREAM_EPOCH);
+    assert_eq!(
+        snapshot.last_committed_source_format,
+        PicooSourceFormat::default()
+    );
     assert_eq!(
         picoo_sender_report_encoder_failed(handle, transaction, 0),
         1
@@ -333,4 +323,60 @@ fn export_diagnostics_with_session_includes_redacted_host() {
         !json.contains("ingress_"),
         "session counters must be role-neutral: {json}"
     );
+}
+
+#[test]
+fn sender_snapshot_carries_bounded_complete_candidates_through_c_abi() {
+    use picoo_protocol::control::{
+        Capabilities, ColorRange, DecoderOffer, FrameRate, Resolution, VideoCodec, VideoFormat,
+    };
+    let handle = create_test_sender();
+    let inner = unsafe { &*(handle as *mut crate::handles::SenderInner) };
+    let mut caps = Capabilities {
+        offers: vec![DecoderOffer {
+            format: Some(VideoFormat::sdr_709(
+                VideoCodec::Hevc,
+                Resolution {
+                    width: 1920,
+                    height: 1088,
+                },
+                FrameRate {
+                    numerator: 60,
+                    denominator: 1,
+                },
+                ColorRange::Limited,
+            )),
+            max_level_idc: 123,
+            max_access_unit_bytes: 4096,
+        }],
+    };
+    caps.offers[0]
+        .format
+        .as_mut()
+        .unwrap()
+        .visible_rect
+        .as_mut()
+        .unwrap()
+        .height = 1080;
+    assert!(inner
+        .session
+        .lock()
+        .unwrap()
+        .apply_capabilities_for_test(caps));
+    let mut snapshot = PicooSenderSnapshot::default();
+    assert_eq!(picoo_sender_snapshot(handle, &mut snapshot), 0);
+    assert!(snapshot.receiver_capabilities_known);
+    assert_eq!(snapshot.receiver_source_format_count, 1);
+    assert_eq!(
+        snapshot.receiver_source_formats[0],
+        PicooSourceFormat {
+            codec: 2,
+            height: 1080,
+            fps: 60
+        }
+    );
+    assert!(snapshot.receiver_source_formats[1..]
+        .iter()
+        .all(|format| *format == PicooSourceFormat::default()));
+    picoo_sender_destroy(handle);
 }

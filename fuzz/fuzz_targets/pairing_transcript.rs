@@ -32,6 +32,7 @@ fn exercise_valid(transcript: &PairingTranscript<'_>, phase: &[u8], signature_by
 fuzz_target!(|data: &[u8]| {
     if let Some(phase) = data.strip_prefix(b"valid:") {
         let transcript = PairingTranscript {
+            protocol: picoo_protocol::ALPN,
             sender_id: "sender",
             sender_public_key: &[1; 32],
             sender_nonce: &[2; 32],
@@ -69,6 +70,7 @@ fuzz_target!(|data: &[u8]| {
         ""
     };
     let transcript = PairingTranscript {
+        protocol: picoo_protocol::ALPN,
         sender_id,
         sender_public_key: sender_key,
         sender_nonce,

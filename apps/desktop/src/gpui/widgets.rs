@@ -3,7 +3,7 @@ use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use picoo_session::ReceiverStatus;
 
-use super::icons::reicon_named;
+use super::icons::{reicon_named, DesktopIcon};
 use super::PicooDesktopApp;
 
 pub(super) fn hardware_topology(cx: &Context<PicooDesktopApp>) -> impl IntoElement {
@@ -149,8 +149,11 @@ pub(super) fn hardware_topology(cx: &Context<PicooDesktopApp>) -> impl IntoEleme
                                                 .border_color(cx.theme().primary.opacity(0.4))
                                                 .bg(cx.theme().primary.opacity(0.16))
                                                 .child(
-                                                    reicon_named("camera", cx.theme().primary)
-                                                        .size_3(),
+                                                    reicon_named(
+                                                        DesktopIcon::CameraPreview,
+                                                        cx.theme().primary,
+                                                    )
+                                                    .size_3(),
                                                 ),
                                         ),
                                 ),
@@ -160,7 +163,7 @@ pub(super) fn hardware_topology(cx: &Context<PicooDesktopApp>) -> impl IntoEleme
 }
 
 pub(super) fn page_header(
-    icon: &'static str,
+    icon: DesktopIcon,
     title: &'static str,
     description: &'static str,
     cx: &Context<PicooDesktopApp>,
@@ -187,7 +190,7 @@ pub(super) fn page_header(
 }
 
 pub(super) fn section_header(
-    icon: &'static str,
+    icon: DesktopIcon,
     title: &'static str,
     cx: &Context<PicooDesktopApp>,
 ) -> impl IntoElement {
@@ -231,7 +234,7 @@ pub(super) fn placeholder_preview(
                     .border_1()
                     .border_color(cx.theme().primary.opacity(0.4))
                     .bg(cx.theme().group_box)
-                    .child(reicon_named("camera", cx.theme().primary)),
+                    .child(reicon_named(DesktopIcon::CameraPreview, cx.theme().primary)),
             )
             .child(
                 div()
@@ -281,7 +284,7 @@ pub(super) fn placeholder_choice_indicator(
     cx: &Context<PicooDesktopApp>,
 ) -> AnyElement {
     if selected {
-        reicon_named("check-circle-filled", cx.theme().primary)
+        reicon_named(DesktopIcon::Success, cx.theme().primary)
             .size_4()
             .into_any_element()
     } else {
@@ -295,7 +298,7 @@ pub(super) fn placeholder_choice_indicator(
 }
 
 pub(super) fn settings_toggle_row(
-    icon: &'static str,
+    icon: DesktopIcon,
     title: &'static str,
     description: &'static str,
     toggle: impl IntoElement,
@@ -336,7 +339,7 @@ pub(super) fn settings_toggle_row(
 }
 
 pub(super) fn network_detail_row(
-    icon: &'static str,
+    icon: DesktopIcon,
     title: &'static str,
     description: &'static str,
     value: String,
@@ -414,7 +417,7 @@ pub(super) fn live_network_quality(
         .text_color(color)
         .when(ready, |this| {
             this.child(
-                reicon_named("check-circle-filled", color)
+                reicon_named(DesktopIcon::Success, color)
                     .size(rems(0.875))
                     .into_any_element(),
             )
@@ -496,7 +499,7 @@ pub(super) fn live_preview_badge(cx: &Context<PicooDesktopApp>) -> impl IntoElem
         .text_xs()
         .font_weight(FontWeight::MEDIUM)
         .text_color(cx.theme().primary_foreground)
-        .child(reicon_named("check-circle-filled", cx.theme().success).size(rems(0.875)))
+        .child(reicon_named(DesktopIcon::Success, cx.theme().success).size(rems(0.875)))
         .child("Live")
 }
 
@@ -527,7 +530,7 @@ pub(super) fn status_badge(
 
 pub(super) fn onboarding_step(
     number: &'static str,
-    icon: &'static str,
+    icon: DesktopIcon,
     label: &'static str,
     cx: &Context<PicooDesktopApp>,
 ) -> impl IntoElement {
@@ -574,16 +577,16 @@ pub(super) enum NetworkStatusState {
 }
 
 pub(super) fn network_status_item(
-    icon: &'static str,
+    icon: DesktopIcon,
     value: impl Into<SharedString>,
     state: NetworkStatusState,
     show_divider: bool,
     cx: &Context<PicooDesktopApp>,
 ) -> impl IntoElement {
     let (state_color, state_icon) = match state {
-        NetworkStatusState::Healthy => (cx.theme().success, "check-circle-filled"),
-        NetworkStatusState::Pending => (cx.theme().muted_foreground, "more-horizontal"),
-        NetworkStatusState::Warning => (cx.theme().warning, "xmark"),
+        NetworkStatusState::Healthy => (cx.theme().success, DesktopIcon::Success),
+        NetworkStatusState::Pending => (cx.theme().muted_foreground, DesktopIcon::MoreActions),
+        NetworkStatusState::Warning => (cx.theme().warning, DesktopIcon::Rejected),
     };
 
     div()

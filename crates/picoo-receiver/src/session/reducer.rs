@@ -117,6 +117,7 @@ impl ReceiverEffects {
 pub(super) enum ReceiverCloseReason {
     Local,
     InvalidControl,
+    DecoderUnavailable,
     PairingExpired,
     PairingRejected,
     PublicKeyChanged,
