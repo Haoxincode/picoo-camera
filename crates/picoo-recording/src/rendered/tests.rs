@@ -129,6 +129,17 @@ fn wait(worker: &RenderedRecordingWorker) -> RecordingResult {
     }
 }
 
+fn wait_until_recording(worker: &RenderedRecordingWorker) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while worker.state() != RecordingState::Recording {
+        assert!(
+            Instant::now() < deadline,
+            "rendered recording did not leave Arming"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 fn config() -> RenderedRecordingConfig {
     RenderedRecordingConfig {
         codec: Codec::Avc,
@@ -149,6 +160,12 @@ fn frame_bus_worker_drains_stop_and_writes_fixed_rate_rendered_bundle() {
         RenderedRecordingWorker::start(parent.path().to_owned(), subscription, config()).unwrap();
     for (index, pts) in [0, 16_666, 33_333, 50_000, 66_666].into_iter().enumerate() {
         assert!(bus.publish(frame(index as u64 + 1, pts)).is_none());
+        // Ordered frames expire after 150ms. Wait until the worker has left
+        // Arming before enqueueing the rest, otherwise a slow CI GPU init
+        // marks the whole prefix TooOld and the bundle finishes HasGaps.
+        if index == 0 {
+            wait_until_recording(&worker);
+        }
     }
     worker.stop();
     // The stop call has already closed the subscription publication gate.
@@ -184,11 +201,7 @@ fn frame_bus_worker_drains_stop_and_writes_fixed_rate_rendered_bundle() {
     )
     .unwrap();
     assert!(next_bus.publish(frame(10, 0)).is_none());
-    let state_deadline = Instant::now() + Duration::from_secs(15);
-    while next.state() != RecordingState::Recording {
-        assert!(Instant::now() < state_deadline);
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    wait_until_recording(&next);
     next_bus.clear();
     let ended = wait(&next);
     assert_eq!(ended.state, RecordingState::HasGaps);
