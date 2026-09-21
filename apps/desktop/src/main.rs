@@ -29,6 +29,8 @@ mod vcam_register;
 mod vcam_status;
 #[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
 mod video_surface;
+#[cfg(all(windows, feature = "gpui-ui"))]
+mod windows_startup;
 
 use std::io::{self, BufRead};
 use std::sync::mpsc;
@@ -46,6 +48,8 @@ use receiver_runtime::{
 fn main() {
     let prefs = load_prefs();
     crate::logging::init_logging(prefs.log_level.env_filter());
+    #[cfg(all(windows, feature = "gpui-ui"))]
+    windows_startup::install_panic_hook();
 
     let args: Vec<String> = std::env::args().collect();
 
@@ -92,10 +96,7 @@ fn main() {
     if args.iter().any(|arg| arg == "--gpui") {
         #[cfg(all(feature = "gpui-ui", any(windows, target_os = "macos")))]
         {
-            if let Err(err) = gpui::run_gpui_app() {
-                eprintln!("GPUI app failed: {err}");
-                std::process::exit(1);
-            }
+            launch_gpui_or_exit();
             return;
         }
         #[cfg(not(all(feature = "gpui-ui", any(windows, target_os = "macos"))))]
@@ -143,10 +144,7 @@ fn main() {
 
     #[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
     if args.len() <= 1 {
-        if let Err(err) = gpui::run_gpui_app() {
-            eprintln!("GPUI app failed: {err}");
-            std::process::exit(1);
-        }
+        launch_gpui_or_exit();
         return;
     }
 
@@ -166,6 +164,16 @@ fn main() {
     println!("Run on windows-latest for GPUI + MF + Virtual Camera build.");
     #[cfg(all(windows, feature = "windows-vcam"))]
     println!("Run with --register-vcam [--no-wait] / --unregister-vcam / --verify-vcam-host on Windows 11 for MF virtual camera.");
+}
+
+#[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
+fn launch_gpui_or_exit() {
+    if let Err(err) = gpui::run_gpui_app() {
+        eprintln!("GPUI app failed: {err}");
+        #[cfg(all(windows, feature = "gpui-ui"))]
+        windows_startup::report_error(&err);
+        std::process::exit(1);
+    }
 }
 
 #[cfg(all(windows, feature = "windows-vcam"))]

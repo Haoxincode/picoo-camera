@@ -135,6 +135,12 @@ impl Default for DesktopPreferences {
 /// legacy-path migration or relative-path fallback: an unavailable standard
 /// directory is surfaced to the caller instead of silently creating a second
 /// preferences store.
+#[cfg_attr(not(all(windows, feature = "gpui-ui")), allow(dead_code))]
+pub fn log_file_path() -> Option<PathBuf> {
+    ProjectDirs::from(PROJECT_QUALIFIER, PROJECT_ORGANIZATION, PROJECT_APPLICATION)
+        .map(|dirs| dirs.data_local_dir().join("logs").join("picoo-desktop.log"))
+}
+
 pub fn prefs_path() -> Result<PathBuf, String> {
     if let Ok(explicit) = std::env::var("PICOO_PREFS") {
         return Ok(PathBuf::from(explicit));
