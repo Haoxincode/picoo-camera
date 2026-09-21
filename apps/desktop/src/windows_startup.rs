@@ -2,9 +2,24 @@
 
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::os::windows::io::{FromRawHandle, OwnedHandle, RawHandle};
+use std::sync::OnceLock;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, MessageBoxW, SetForegroundWindow, ShowWindow, MB_ICONERROR, MB_OK, SW_RESTORE,
+    SW_SHOW,
+};
+
+static INSTANCE_MUTEX: OnceLock<OwnedHandle> = OnceLock::new();
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstanceClaim {
+    Unique,
+    AlreadyRunning,
+}
 
 pub fn install_panic_hook() {
     let previous = std::panic::take_hook();
@@ -14,8 +29,60 @@ pub fn install_panic_hook() {
     }));
 }
 
+/// Keep one interactive desktop process. A second shortcut click restores the
+/// existing window (often hidden in the tray) instead of failing to bind UDP 4433.
+pub fn claim_single_instance() -> InstanceClaim {
+    let handle = match unsafe { CreateMutexW(None, true, w!("Local\\PicooCamera.SingleInstance")) }
+    {
+        Ok(handle) => handle,
+        Err(error) => {
+            tracing::warn!(%error, "single-instance mutex unavailable");
+            return InstanceClaim::Unique;
+        }
+    };
+    let already = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+    let owned = unsafe { OwnedHandle::from_raw_handle(handle.0 as RawHandle) };
+    if already {
+        if !activate_running_instance() {
+            report(
+                "Picoo Camera 已在运行。请点击任务栏托盘图标打开窗口，或在任务管理器中结束 picoo-desktop 后再试。",
+            );
+        }
+        return InstanceClaim::AlreadyRunning;
+    }
+    let _ = INSTANCE_MUTEX.set(owned);
+    InstanceClaim::Unique
+}
+
 pub fn report_error(error: &impl std::fmt::Display) {
-    report(&format!("无法启动 Picoo Camera：{error}"));
+    report(&startup_error_message(&error.to_string()));
+}
+
+fn startup_error_message(error: &str) -> String {
+    if error.contains("10048")
+        || error.contains("只允许使用一次")
+        || error.contains("Address already in use")
+    {
+        "无法启动 Picoo Camera：局域网端口 4433 已被占用。请先退出任务栏托盘中已运行的 Picoo Camera，或关闭占用该端口的程序。".into()
+    } else {
+        format!("无法启动 Picoo Camera：{error}")
+    }
+}
+
+fn activate_running_instance() -> bool {
+    let hwnd = unsafe { FindWindowW(None, w!("Picoo Camera")) };
+    let Ok(hwnd) = hwnd else {
+        return false;
+    };
+    if hwnd.is_invalid() {
+        return false;
+    }
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(hwnd);
+    }
+    true
 }
 
 fn report(message: &str) {
@@ -45,5 +112,19 @@ fn append_log(message: &str) {
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{message}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::startup_error_message;
+
+    #[test]
+    fn address_in_use_explains_the_quic_port() {
+        let message = startup_error_message(
+            "transport: connection failed: I/O error: 通常每个套接字地址(协议/网络地址/端口)只允许使用一次。 (os error 10048)",
+        );
+        assert!(message.contains("4433"), "{message}");
+        assert!(message.contains("托盘"), "{message}");
     }
 }

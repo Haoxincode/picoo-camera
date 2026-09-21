@@ -168,6 +168,10 @@ fn main() {
 
 #[cfg(all(feature = "gpui-ui", any(target_os = "windows", target_os = "macos")))]
 fn launch_gpui_or_exit() {
+    #[cfg(all(windows, feature = "gpui-ui"))]
+    if windows_startup::claim_single_instance() == windows_startup::InstanceClaim::AlreadyRunning {
+        return;
+    }
     if let Err(err) = gpui::run_gpui_app() {
         eprintln!("GPUI app failed: {err}");
         #[cfg(all(windows, feature = "gpui-ui"))]
