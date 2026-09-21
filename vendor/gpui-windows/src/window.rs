@@ -572,14 +572,16 @@ impl WindowsWindow {
             };
             unsafe { SetWindowPlacement(hwnd, &placement)? };
             unsafe {
-                let _ = ShowWindow(
-                    hwnd,
-                    if params.focus {
-                        SW_SHOW
-                    } else {
-                        SW_SHOWNOACTIVATE
-                    },
-                );
+                let show_cmd = if params.focus {
+                    SW_SHOWNORMAL
+                } else {
+                    SW_SHOWNOACTIVATE
+                };
+                let _ = ShowWindow(hwnd, show_cmd);
+                if !IsWindowVisible(hwnd).as_bool() {
+                    let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+                }
+                let _ = UpdateWindow(hwnd);
             }
         } else {
             this.state.initial_placement.set(Some(WindowOpenStatus {
@@ -805,9 +807,9 @@ impl PlatformWindow for WindowsWindow {
                 this.set_window_placement().log_err();
 
                 unsafe {
-                    // If the window is minimized, restore it.
-                    if IsIconic(hwnd).as_bool() {
+                    if IsIconic(hwnd).as_bool() || !IsWindowVisible(hwnd).as_bool() {
                         ShowWindowAsync(hwnd, SW_RESTORE).ok().log_err();
+                        let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
                     }
 
                     SetActiveWindow(hwnd).ok();

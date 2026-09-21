@@ -352,6 +352,16 @@ pub fn force_show_product_window() {
         return;
     };
     unsafe {
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        let _ = windows::Win32::UI::WindowsAndMessaging::GetWindowRect(hwnd, &mut rect);
+        tracing::info!(
+            target: "picoo_tray",
+            left = rect.left,
+            top = rect.top,
+            right = rect.right,
+            bottom = rect.bottom,
+            "force_show_product_window"
+        );
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = ShowWindow(hwnd, SW_SHOW);

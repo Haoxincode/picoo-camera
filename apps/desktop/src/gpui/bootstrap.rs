@@ -84,6 +84,8 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
         std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
     }
+    #[cfg(all(windows, feature = "gpui-ui"))]
+    crate::windows_startup::append_log("run_gpui_app: constructing GPUI application");
     let app = gpui_kit::application().with_assets(PicooAssets);
     let vcam_status = detect_vcam_status();
     let startup = match ReceiverRuntimeHandle::start_from_prefs(prefs.clone(), vcam_status) {
@@ -179,6 +181,9 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                     crate::tray::ensure_tray_icon(&crate::tray::tip_for_status(
                         picoo_session::ReceiverStatus::Discovering,
                     ));
+                    crate::windows_startup::append_log(
+                        "run_gpui_app: open_window finished; force_show + tray requested",
+                    );
                 }
                 cx.new(|cx| Root::new(content, window, cx).bg(cx.theme().background))
             },

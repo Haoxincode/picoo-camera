@@ -51,6 +51,7 @@ pub fn claim_single_instance() -> InstanceClaim {
         return InstanceClaim::AlreadyRunning;
     }
     let _ = INSTANCE_MUTEX.set(owned);
+    append_log("single-instance mutex acquired; launching GPUI");
     InstanceClaim::Unique
 }
 
@@ -106,7 +107,7 @@ fn report(message: &str) {
     }
 }
 
-fn append_log(message: &str) {
+pub(crate) fn append_log(message: &str) {
     let Some(path) = crate::prefs::log_file_path() else {
         return;
     };
@@ -114,7 +115,7 @@ fn append_log(message: &str) {
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{message}");
+        let _ = writeln!(file, "{:?} {message}", std::time::SystemTime::now());
     }
 }
 

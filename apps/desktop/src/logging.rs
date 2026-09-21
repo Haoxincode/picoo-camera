@@ -5,6 +5,8 @@ use std::sync::{Mutex, OnceLock};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt, reload, EnvFilter, Registry};
 
+use crate::prefs::log_file_path;
+
 type FilterHandle = reload::Handle<EnvFilter, Registry>;
 
 static FILTER_RELOAD: OnceLock<Mutex<FilterHandle>> = OnceLock::new();
@@ -22,10 +24,27 @@ pub fn init_logging(default_filter: &str) {
         .unwrap_or_else(|| EnvFilter::new("info"));
     let (filter_layer, handle) = reload::Layer::new(filter);
     let _ = FILTER_RELOAD.set(Mutex::new(handle));
-    // Ignore double-init in tests / CLI re-entry.
+    let file_layer = log_file_path().and_then(|path| {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok()?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .ok()?;
+        Some(
+            fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::sync::Mutex::new(file)),
+        )
+    });
+    // Ignore double-init in tests / CLI re-entry. The file layer is required on
+    // Windows GUI builds: the process has no console, so stderr is discarded.
     let _ = tracing_subscriber::registry()
         .with(filter_layer)
         .with(fmt::layer())
+        .with(file_layer)
         .try_init();
 }
 
