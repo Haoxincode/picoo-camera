@@ -7,6 +7,8 @@ use crate::model::VirtualCameraStatus;
 #[cfg(target_os = "macos")]
 use crate::prefs::current_macos_boot_session;
 use crate::prefs::{MacosCameraExtensionIntent, PendingMacosCameraExtension};
+#[cfg(all(windows, feature = "windows-vcam"))]
+use crate::receiver_runtime::await_receiver_reply;
 use crate::receiver_runtime::ReceiverSnapshot;
 #[cfg(target_os = "macos")]
 use crate::vcam_status::query_macos_vcam_status;
@@ -284,18 +286,20 @@ impl PicooDesktopApp {
             });
             cx.spawn(async move |this, cx| {
                 let repair_result = repair.await.unwrap_or_else(Err);
-                let _ = this.update(cx, |this, cx| {
+                let retry = this.update(cx, |this, cx| {
                     match repair_result {
                         Ok(status) => {
                             this.vcam_status = status;
                             this.runtime.set_virtual_camera_status(status);
-                            let _ = this.runtime.retry_virtual_camera_output();
+                            let retry = this.runtime.retry_virtual_camera_output();
                             let message = if status == VirtualCameraStatus::Active {
                                 "虚拟摄像头已修复并可枚举。"
                             } else {
                                 "虚拟摄像头已注册，正在等待 Windows 发布设备；请重启会议应用后重新检测。"
                             };
                             this.vcam_setup_state = VcamSetupState::Succeeded(message.into());
+                            cx.notify();
+                            Some(retry)
                         }
                         Err(err) => {
                             tracing::warn!("Install or repair Virtual Camera failed: {err}");
@@ -303,10 +307,21 @@ impl PicooDesktopApp {
                             this.vcam_status = status;
                             this.runtime.set_virtual_camera_status(status);
                             this.vcam_setup_state = VcamSetupState::Failed(err);
+                            cx.notify();
+                            None
                         }
                     }
-                    cx.notify();
                 });
+                if let Ok(Some(retry)) = retry {
+                    if let Err(err) = await_receiver_reply(retry).await {
+                        let _ = this.update(cx, |this, cx| {
+                            this.vcam_setup_state = VcamSetupState::Failed(format!(
+                                "虚拟摄像头已注册，但共享画面仍无法发布：{err}"
+                            ));
+                            cx.notify();
+                        });
+                    }
+                }
             })
             .detach();
         }

@@ -233,15 +233,16 @@ impl AppleEncoder {
         };
         let timeout =
             || RecordingError::Platform("hardware encoder output deadline expired".into());
+        let deadline = output_deadline();
         let result = status(code, "submit encoder input")
             .and_then(|()| {
-                let remaining = Duration::from_millis(250)
+                let remaining = deadline
                     .checked_sub(submitted.elapsed())
                     .ok_or_else(timeout)?;
                 receive.recv_timeout(remaining).map_err(|_| timeout())?
             })
             .and_then(|frame| {
-                if submitted.elapsed() >= Duration::from_millis(250) {
+                if submitted.elapsed() >= deadline {
                     return Err(timeout());
                 }
                 output::validate(&frame, self.width, self.height, force_idr)?;
@@ -252,6 +253,16 @@ impl AppleEncoder {
             self.last_pts = Some(pts_us);
         }
         result
+    }
+}
+
+fn output_deadline() -> Duration {
+    // CI VideoToolbox on AppleM2ScalerParavirtDriver can miss a 250ms first
+    // output after a rejected input; production still fails fast.
+    if cfg!(test) {
+        Duration::from_secs(2)
+    } else {
+        Duration::from_millis(250)
     }
 }
 

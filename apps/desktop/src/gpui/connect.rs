@@ -7,7 +7,9 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use picoo_discovery::DEFAULT_QUIC_PORT;
-use picoo_protocol::control::{camera_command, CameraCommand, Resolution, StreamConfig, VideoCodec};
+use picoo_protocol::control::{
+    camera_command, CameraCommand, Resolution, StreamConfig, VideoCodec,
+};
 use serde::Deserialize;
 
 use crate::model::VirtualCameraStatus;
