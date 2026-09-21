@@ -142,6 +142,7 @@ data class PicooDimensions(
     val discoveryIllustrationHeight: Dp = 184.dp,
     val discoveryDeviceWidth: Dp = 176.dp,
     val settingsIconContainer: Dp = 48.dp,
+    val settingsValueMaxWidth: Dp = 184.dp,
     val elevationSurface: Dp = 2.dp,
 )
 

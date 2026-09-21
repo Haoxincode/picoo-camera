@@ -763,7 +763,6 @@ private struct SettingsSheet: View {
                             IOSSettingsRow(
                                 title: "默认初始画质",
                                 detail: "新连接的编码格式、分辨率与帧率",
-                                value: model.preferredSourceFormat.label,
                                 icon: .exposure
                             )
                         }
@@ -922,7 +921,7 @@ private struct IOSSettingsRow: View {
     init(
         title: String,
         detail: String,
-        value: String,
+        value: String = "",
         valueColor: Color = PicooColor.contentMuted,
         icon: PicooIcon,
         showsChevron: Bool = true
@@ -955,10 +954,12 @@ private struct IOSSettingsRow: View {
             Spacer(minLength: PicooSpace.sm)
 
             HStack(spacing: PicooSpace.xs) {
-                Text(value)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(valueColor)
-                    .multilineTextAlignment(.trailing)
+                if !value.isEmpty {
+                    Text(value)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(valueColor)
+                        .multilineTextAlignment(.trailing)
+                }
                 if showsChevron {
                     ReiconIcon(icon: .navigateBack)
                         .frame(width: PicooIconSize.compact, height: PicooIconSize.compact)

@@ -45,6 +45,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import com.picoo.camera.BuildConfig
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.R
@@ -140,7 +143,6 @@ fun SettingsScreen(
                         SettingsValueRow(
                             title = "默认初始画质",
                             description = "新连接的编码格式、分辨率与帧率",
-                            value = preferredSourceFormat.label,
                             onClick = { showResolutionSheet = true },
                             leadingContent = { QualityGlyph() },
                         )
@@ -282,10 +284,10 @@ private fun SettingsToggleRow(
             .semantics(mergeDescendants = true) {}
             .defaultMinSize(minHeight = dimensions.touchTarget)
             .padding(horizontal = dimensions.space8, vertical = dimensions.space12),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        leadingContent()
+        SettingsLeadingSlot(leadingContent)
         SettingsText(title, description, Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = null)
     }
@@ -295,8 +297,8 @@ private fun SettingsToggleRow(
 private fun SettingsValueRow(
     title: String,
     description: String,
-    value: String,
     onClick: (() -> Unit)?,
+    value: String = "",
     valueColor: Color = PicooTheme.colors.contentMuted,
     leadingContent: @Composable () -> Unit,
 ) {
@@ -317,32 +319,72 @@ private fun SettingsValueRow(
                 horizontal = dimensions.space8,
                 vertical = dimensions.space12,
             ),
-        horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+        horizontalArrangement = Arrangement.spacedBy(dimensions.space12),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        leadingContent()
-        SettingsText(title, description, Modifier.weight(1f))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
+        SettingsLeadingSlot(leadingContent)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(dimensions.space2),
         ) {
-            Text(
-                text = value,
-                color = valueColor,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium,
-            )
-            if (onClick != null) {
-                ReiconIcon(
-                    icon = Reicon.NavigateBack,
-                    contentDescription = null,
-                    tint = colors.contentMuted,
-                    modifier = Modifier
-                        .size(dimensions.iconCompact)
-                        .graphicsLayer(rotationZ = 180f),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(dimensions.space8),
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f),
                 )
+                Row(
+                    modifier = Modifier.widthIn(max = dimensions.settingsValueMaxWidth),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(dimensions.space4),
+                ) {
+                    if (value.isNotEmpty()) {
+                        Text(
+                            text = value,
+                            color = valueColor,
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.End,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (onClick != null) {
+                        ReiconIcon(
+                            icon = Reicon.NavigateBack,
+                            contentDescription = null,
+                            tint = colors.contentMuted,
+                            modifier = Modifier
+                                .size(dimensions.iconCompact)
+                                .graphicsLayer(rotationZ = 180f),
+                        )
+                    }
+                }
             }
+            Text(
+                text = description,
+                color = colors.contentMuted,
+                style = MaterialTheme.typography.bodyMedium,
+            )
         }
+    }
+}
+
+@Composable
+private fun SettingsLeadingSlot(content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier.defaultMinSize(
+            minWidth = PicooTheme.dimensions.iconEmphasis,
+            minHeight = PicooTheme.dimensions.iconEmphasis,
+        ),
+        contentAlignment = Alignment.Center,
+    ) {
+        content()
     }
 }
 
@@ -352,8 +394,10 @@ private fun QualityGlyph(modifier: Modifier = Modifier) {
         text = "HD",
         modifier = modifier,
         color = PicooTheme.colors.actionHighlight,
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = FontWeight.Bold,
+        letterSpacing = 0.6.sp,
+        maxLines = 1,
     )
 }
 
@@ -406,7 +450,11 @@ internal fun TrustedDeviceRemovalDialog(
 @Composable
 private fun SettingsText(title: String, description: String, modifier: Modifier = Modifier) {
     val colors = PicooTheme.colors
-    Column(modifier = modifier) {
+    val dimensions = PicooTheme.dimensions
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(dimensions.space2),
+    ) {
         Text(
             text = title,
             style = MaterialTheme.typography.bodyLarge,
@@ -426,7 +474,7 @@ private fun SettingsDivider() {
         modifier = Modifier.padding(
             start = PicooTheme.dimensions.space8 +
                 PicooTheme.dimensions.iconEmphasis +
-                PicooTheme.dimensions.space8,
+                PicooTheme.dimensions.space12,
         ),
         color = PicooTheme.colors.borderDefault,
     )
