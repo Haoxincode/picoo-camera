@@ -47,12 +47,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.sp
 import com.picoo.camera.BuildConfig
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.R
 import com.picoo.camera.pairing.TrustedDeviceList
-import com.picoo.camera.media.VideoSourceFormat
 import com.picoo.camera.ui.components.PicooIconButton
 import com.picoo.camera.ui.components.PicooSheet
 import com.picoo.camera.ui.components.PicooSheetRow
@@ -69,20 +67,15 @@ fun SettingsScreen(
     nearbyWifiGranted: Boolean,
     notificationsGranted: Boolean,
     autoConnectEnabled: Boolean,
-    preferredSourceFormat: VideoSourceFormat,
-    sourceCandidates: List<VideoSourceFormat>?,
     onBack: () -> Unit,
     onCheckPermissions: () -> Unit,
     onToggleAutoConnect: () -> Unit,
-    onSelectDefaultSource: (VideoSourceFormat) -> Unit,
     modifier: Modifier = Modifier,
     pairedDevices: List<PicooNative.TrustedDevice> = emptyList(),
     errorText: String? = null,
-    sourcePreparationError: String? = null,
     onRemovePaired: (PicooNative.TrustedDevice) -> Unit = {},
 ) {
     var showPairedSheet by rememberSaveable { mutableStateOf(false) }
-    var showResolutionSheet by rememberSaveable { mutableStateOf(false) }
     var pendingRemoval by remember { mutableStateOf<PicooNative.TrustedDevice?>(null) }
     val colors = PicooTheme.colors
     val dimensions = PicooTheme.dimensions
@@ -138,13 +131,6 @@ fun SettingsScreen(
                                     modifier = Modifier.size(dimensions.iconEmphasis),
                                 )
                             },
-                        )
-                        SettingsDivider()
-                        SettingsValueRow(
-                            title = "默认初始画质",
-                            description = "新连接的编码格式、分辨率与帧率",
-                            onClick = { showResolutionSheet = true },
-                            leadingContent = { QualityGlyph() },
                         )
                     }
                 }
@@ -219,18 +205,6 @@ fun SettingsScreen(
             errorText = errorText,
             onDismiss = { showPairedSheet = false },
             onRemove = { pendingRemoval = it },
-        )
-    }
-    if (showResolutionSheet) {
-        SourceFormatSheet(
-            selected = preferredSourceFormat,
-            candidates = sourceCandidates,
-            preparationError = sourcePreparationError,
-            onDismiss = { showResolutionSheet = false },
-            onSelect = { label ->
-                onSelectDefaultSource(label)
-                showResolutionSheet = false
-            },
         )
     }
     pendingRemoval?.let { device ->
@@ -386,19 +360,6 @@ private fun SettingsLeadingSlot(content: @Composable () -> Unit) {
     ) {
         content()
     }
-}
-
-@Composable
-private fun QualityGlyph(modifier: Modifier = Modifier) {
-    Text(
-        text = "HD",
-        modifier = modifier,
-        color = PicooTheme.colors.actionHighlight,
-        style = MaterialTheme.typography.labelSmall,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 0.6.sp,
-        maxLines = 1,
-    )
 }
 
 @Composable

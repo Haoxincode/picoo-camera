@@ -4,6 +4,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasText
@@ -30,12 +31,9 @@ class SettingsScreenSemanticsTest {
                     nearbyWifiGranted = true,
                     notificationsGranted = true,
                     autoConnectEnabled = autoConnect,
-                    preferredSourceFormat = com.picoo.camera.media.VideoSourceFormat.Default,
-                    sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
                     onBack = {},
                     onCheckPermissions = {},
                     onToggleAutoConnect = { autoConnect = !autoConnect },
-                    onSelectDefaultSource = {},
                 )
             }
         }
@@ -48,7 +46,7 @@ class SettingsScreenSemanticsTest {
     }
 
     @Test
-    fun defaultQualityRowHidesFormatUntilTheOptionsSheet() {
+    fun settingsDoesNotExposeDefaultQuality() {
         composeRule.setContent {
             PicooCameraTheme {
                 SettingsScreen(
@@ -57,18 +55,14 @@ class SettingsScreenSemanticsTest {
                     nearbyWifiGranted = true,
                     notificationsGranted = true,
                     autoConnectEnabled = true,
-                    preferredSourceFormat = com.picoo.camera.media.VideoSourceFormat.Default,
-                    sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
                     onBack = {},
                     onCheckPermissions = {},
                     onToggleAutoConnect = {},
-                    onSelectDefaultSource = {},
                 )
             }
         }
 
-        composeRule.onNodeWithText("HD", useUnmergedTree = true).assertExists()
-        composeRule.onNodeWithText("默认初始画质").assertExists()
-        composeRule.onNodeWithText("H.264 · 1080p · 60 fps").assertDoesNotExist()
+        composeRule.onNodeWithText("默认初始画质").assertDoesNotExist()
+        composeRule.onNodeWithText("HD", useUnmergedTree = true).assertDoesNotExist()
     }
 }

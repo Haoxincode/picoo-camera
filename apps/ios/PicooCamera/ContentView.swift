@@ -747,30 +747,6 @@ private struct SettingsSheet: View {
                         }
                         .tint(PicooColor.actionHighlight)
                         .frame(minHeight: PicooIconSize.touchTarget)
-
-                        IOSSettingsDivider()
-
-                        Menu {
-                            ForEach(model.camera.localSourceFormats ?? [], id: \.self) { source in
-                                Button {
-                                    model.preferredSourceFormat = source
-                                } label: {
-                                    HStack {
-                                        Text(source.label)
-                                        if source == model.preferredSourceFormat {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            IOSSettingsRow(
-                                title: "默认初始画质",
-                                detail: "新连接的编码格式、分辨率与帧率",
-                                icon: .exposure
-                            )
-                        }
-                        .buttonStyle(.plain)
                     }
 
                     IOSSettingsSection(title: "设备与权限") {

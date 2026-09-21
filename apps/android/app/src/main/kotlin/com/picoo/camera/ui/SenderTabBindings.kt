@@ -107,9 +107,6 @@ internal fun SenderTabContent(
             nearbyWifiGranted = nearbyWifiGranted,
             notificationsGranted = notificationsGranted,
             autoConnectEnabled = autoConnectEnabled,
-            preferredSourceFormat = uiState.preferredSourceFormat,
-            sourceCandidates = uiState.availableSourceFormats,
-            sourcePreparationError = uiState.sourcePreparationError,
             onBack = { senderTab = SenderTab.Streaming },
             onCheckPermissions = {
                 onRequestNearbyWifi()
@@ -128,7 +125,6 @@ internal fun SenderTabContent(
             onToggleAutoConnect = {
                 sessionModel.setAutoConnectEnabled(!autoConnectEnabled)
             },
-            onSelectDefaultSource = sessionModel::setPreferredSourceFormat,
         )
     } else {
         StreamingScreen(

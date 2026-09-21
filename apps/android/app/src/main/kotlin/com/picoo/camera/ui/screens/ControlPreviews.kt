@@ -43,12 +43,9 @@ private fun SettingsScreenPreview() {
             nearbyWifiGranted = true,
             notificationsGranted = false,
             autoConnectEnabled = true,
-            preferredSourceFormat = com.picoo.camera.media.VideoSourceFormat.Default,
-            sourceCandidates = com.picoo.camera.media.VideoSourceFormat.ProductFormats,
             onBack = {},
             onCheckPermissions = {},
             onToggleAutoConnect = {},
-            onSelectDefaultSource = {},
         )
     }
 }
