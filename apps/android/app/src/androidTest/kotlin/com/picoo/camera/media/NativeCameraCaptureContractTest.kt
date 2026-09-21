@@ -107,6 +107,8 @@ class NativeCameraCaptureContractTest {
             val first = facts.sample(encoder, 1, 0, 60)
             encoder.prepareStreamEpoch(2)
             encoder.setCaptureProfile(original.copy(lensFacing = LensFacing.Front, targetFps = target.framesPerSecond))
+            assertEquals(LensFacing.Front, encoder.previewTransformInfo.lensFacing)
+            assertEquals(encoder.captureSize, encoder.previewTransformInfo.bufferSize)
             val second = facts.sample(encoder, 2, first, 30)
             assertEquals(LensFacing.Front, encoder.profile.lensFacing)
             assertTrue(encoder.captureSize.height >= 1920)

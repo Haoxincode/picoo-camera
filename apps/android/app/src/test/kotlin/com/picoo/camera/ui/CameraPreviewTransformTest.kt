@@ -116,6 +116,30 @@ class CameraPreviewTransformTest {
     }
 
     @Test
+    fun backSquareBufferMustNotBeReusedForFrontFourByThree() {
+        val correct = calculatePreviewTransform(
+            viewWidth = 1080,
+            viewHeight = 2400,
+            bufferWidth = 1440,
+            bufferHeight = 1080,
+            sensorOrientationDegrees = 90,
+            displayRotationDegrees = 0,
+            frontFacing = true,
+        )
+        val staleBack = calculatePreviewTransform(
+            viewWidth = 1080,
+            viewHeight = 2400,
+            bufferWidth = 2448,
+            bufferHeight = 2448,
+            sensorOrientationDegrees = 90,
+            displayRotationDegrees = 0,
+            frontFacing = false,
+        )
+
+        assertTrue(correct.scaleX != staleBack.scaleX || correct.scaleY != staleBack.scaleY)
+    }
+
+    @Test
     fun fourByThreeOemSourceCenterCropsInsideOutputViewport() {
         val transform = calculatePreviewTransform(
             viewWidth = 1080,

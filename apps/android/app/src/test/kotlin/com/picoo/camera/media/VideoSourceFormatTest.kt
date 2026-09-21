@@ -1,6 +1,7 @@
 package com.picoo.camera.media
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class VideoSourceFormatTest {
@@ -16,5 +17,13 @@ class VideoSourceFormatTest {
             "HEVC · 720p · 60 fps", "HEVC · 720p · 30 fps",
         ), VideoSourceFormat.ProductFormats.map { it.label }.toSet())
         assertEquals(8, VideoSourceFormat.ProductFormats.size)
+    }
+
+    @Test fun fromWireKeepsCodecResolutionAndFpsAndRejectsUnknownHeight() {
+        assertEquals(
+            VideoSourceFormat(NativeVideoCodec.Hevc, StreamResolution.P1080, 60),
+            VideoSourceFormat.fromWire(NativeVideoCodec.Hevc.wireValue, 1080, 60),
+        )
+        assertNull(VideoSourceFormat.fromWire(NativeVideoCodec.Hevc.wireValue, 480, 60))
     }
 }

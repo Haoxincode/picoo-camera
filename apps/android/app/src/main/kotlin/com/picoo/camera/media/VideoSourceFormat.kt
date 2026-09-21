@@ -29,5 +29,8 @@ data class VideoSourceFormat(
             if (framesPerSecond != 30 && framesPerSecond != 60) return null
             return VideoSourceFormat(nativeCodec, resolution, framesPerSecond)
         }
+
+        fun fromProfile(profile: CaptureProfile): VideoSourceFormat? =
+            fromWire(profile.codec.wireValue, profile.resolution.height, profile.targetFps)
     }
 }

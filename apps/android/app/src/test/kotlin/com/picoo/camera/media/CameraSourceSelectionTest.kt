@@ -28,4 +28,13 @@ class CameraSourceSelectionTest {
         assertEquals(avc720p60, CameraSourceSelection.select(listOf(avc720p60), NativeVideoCodec.Hevc))
         assertNull(CameraSourceSelection.select(emptyList(), NativeVideoCodec.Avc))
     }
+
+    @Test fun onlyLiveStreamingUsesACoreEpochForLensSwitch() {
+        assertEquals(true, cameraSwitchUsesLiveReconfiguration(com.picoo.camera.jni.PicooNative.STATUS_STREAMING))
+        assertEquals(true, cameraSwitchUsesLiveReconfiguration(com.picoo.camera.jni.PicooNative.STATUS_NETWORK_UNSTABLE))
+        assertEquals(false, cameraSwitchUsesLiveReconfiguration(com.picoo.camera.jni.PicooNative.STATUS_DISCONNECTED))
+        assertEquals(false, cameraSwitchUsesLiveReconfiguration(com.picoo.camera.jni.PicooNative.STATUS_CONNECTING))
+        assertEquals(false, cameraSwitchUsesLiveReconfiguration(com.picoo.camera.jni.PicooNative.STATUS_PAIRING))
+        assertEquals(false, cameraSwitchUsesLiveReconfiguration(com.picoo.camera.jni.PicooNative.STATUS_RECONNECTING))
+    }
 }

@@ -208,6 +208,7 @@ class Camera2MediaEncoder(
 
     internal fun setCaptureProfile(requested: CaptureProfile) {
         profile = requested
+        deviceSession.preparePreviewGeometry(requested)
         when (lifecycle.state) {
             CaptureState.Previewing -> deviceSession.restartPreviewAfterCameraCloses()
             CaptureState.Opening -> deviceSession.restartOpeningPreviewIfCameraOpened()

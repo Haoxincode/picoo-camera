@@ -119,6 +119,17 @@ class StreamingScreenSemanticsTest {
     }
 
     @Test
+    fun disconnectedFlipCameraRemainsAvailable() {
+        setConnectedContent(
+            connected = false,
+            connectionTitle = "点击连接电脑",
+            connectionDetail = "自动发现或输入局域网 IP",
+        )
+
+        composeRule.onNodeWithContentDescription("切换前后摄像头").assertIsEnabled()
+    }
+
+    @Test
     fun disconnectedCameraSurfaceKeepsConnectionEntryOnTheMainPage() {
         var opens = 0
         setConnectedContent(

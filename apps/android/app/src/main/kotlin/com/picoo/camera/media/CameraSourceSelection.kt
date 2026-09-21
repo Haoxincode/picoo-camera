@@ -1,5 +1,7 @@
 package com.picoo.camera.media
 
+import com.picoo.camera.jni.PicooNative
+
 /** MEDIA-060: an explicit lens switch chooses that lens's complete admitted ceiling. */
 internal object CameraSourceSelection {
     fun initial(candidates: List<VideoSourceFormat>, preferred: VideoSourceFormat): VideoSourceFormat? =
@@ -14,3 +16,7 @@ internal object CameraSourceSelection {
         )
     }
 }
+
+/** Live streaming still owns a Core epoch; the disconnected viewfinder does not. */
+internal fun cameraSwitchUsesLiveReconfiguration(status: Int): Boolean =
+    status == PicooNative.STATUS_STREAMING || status == PicooNative.STATUS_NETWORK_UNSTABLE

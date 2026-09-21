@@ -524,25 +524,12 @@ private struct LiveCameraView: View {
         } else if model.senderStatus == .connecting || model.senderStatus == .negotiating {
             CameraOverlay(
                 title: "正在连接电脑…",
-                detail: "连接建立后会自动开始本机预览。"
+                detail: "连接建立后会继续本机预览。"
             )
-        } else if !isConnected && model.senderStatus != .permissionRequired {
-            VStack(spacing: PicooSpace.md) {
-                CameraOverlay(
-                    title: connectionTitle,
-                    detail: connectionDetail
-                )
-                Button("打开连接面板") {
-                    model.isConnectionPresented = true
-                }
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(PicooCameraColor.selected)
-                .frame(minHeight: PicooIconSize.touchTarget)
-            }
         } else {
             switch model.camera.state {
         case .requestingPermission:
-            CameraOverlay(title: "正在请求相机权限", detail: "只有开始推流时才会访问摄像头。")
+            CameraOverlay(title: "正在请求相机权限", detail: "预览与推流需要使用摄像头。")
         case .starting:
             CameraOverlay(title: "正在启动摄像头", detail: "准备本机低延迟预览。")
         case .stopping:
@@ -561,7 +548,24 @@ private struct LiveCameraView: View {
             CameraOverlay(title: "当前设备没有可用摄像头", detail: "Simulator 只验证界面与状态；真实预览需要 iPhone。")
         case let .failed(message):
             CameraOverlay(title: "摄像头启动失败", detail: message)
-        case .idle, .running:
+        case .idle:
+            if !isConnected {
+                VStack(spacing: PicooSpace.md) {
+                    CameraOverlay(
+                        title: connectionTitle,
+                        detail: connectionDetail
+                    )
+                    Button("打开连接面板") {
+                        model.isConnectionPresented = true
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(PicooCameraColor.selected)
+                    .frame(minHeight: PicooIconSize.touchTarget)
+                }
+            } else {
+                EmptyView()
+            }
+        case .running:
             EmptyView()
             }
         }

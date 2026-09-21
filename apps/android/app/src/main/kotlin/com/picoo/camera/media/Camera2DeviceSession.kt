@@ -151,10 +151,7 @@ internal class Camera2DeviceSession(
                 encoder.fail("No camera for ${encoder.profile.lensFacing}")
                 return
             }
-            encoder.selectedCameraId = cameraId
-            encoder.activePhysicalCameraId = null
-            encoder.captureSize = chooseCaptureSize(cameraId, profile)
-            refreshPreviewTransformInfo()
+            preparePreviewGeometry(profile)
             synchronized(encoder.lifecycle.outputSurfaceLock) {
                 val surfaceTexture = encoder.previewSurfaceTexture
                 if (surfaceTexture != null) {
@@ -505,6 +502,28 @@ internal class Camera2DeviceSession(
         }.onFailure {
             encoder.lastError = "exposure update failed: ${it.message}"
         }
+    }
+
+    /**
+     * Publish the target lens buffer size and sensor orientation before Camera2
+     * rebuilds. The TextureView transform must not keep the previous lens.
+     */
+    fun preparePreviewGeometry(profile: CaptureProfile): PreviewTransformInfo {
+        val cameraId = findCameraId(profile.lensFacing) ?: return encoder.previewTransformInfo
+        val size = runCatching { chooseCaptureSize(cameraId, profile) }.getOrElse {
+            return encoder.previewTransformInfo
+        }
+        encoder.selectedCameraId = cameraId
+        encoder.activePhysicalCameraId = null
+        encoder.captureSize = size
+        val info = refreshPreviewTransformInfo()
+        synchronized(encoder.lifecycle.outputSurfaceLock) {
+            val surfaceTexture = encoder.previewSurfaceTexture ?: return info
+            runCatching {
+                surfaceTexture.setDefaultBufferSize(size.width, size.height)
+            }
+        }
+        return info
     }
 
     /** Refresh dynamic camera orientation (API 32+ fold state / display reconfiguration). */

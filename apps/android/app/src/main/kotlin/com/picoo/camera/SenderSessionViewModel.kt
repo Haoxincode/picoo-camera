@@ -9,7 +9,9 @@ import androidx.lifecycle.viewModelScope
 import com.picoo.camera.discovery.PairedAutoConnect
 import com.picoo.camera.jni.PicooNative
 import com.picoo.camera.media.Camera2MediaEncoder
+import com.picoo.camera.media.CaptureProfile
 import com.picoo.camera.media.CaptureState
+import com.picoo.camera.media.cameraSwitchUsesLiveReconfiguration
 import com.picoo.camera.media.EncodedFrameListener
 import com.picoo.camera.media.EncodedAccessUnitBuffer
 import com.picoo.camera.media.EncodedAccessUnitHandoff
@@ -220,6 +222,7 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         encoder.setDisplayRotationDegrees(requestedDisplayRotationDegrees)
         pendingDisplayRotation = null
         encoder.setSourceFormat(source)
+        uiState.previewTransformInfo = encoder.previewTransformInfo
         applyStreamConfig()
         if (cameraGranted) encoder.startPreview()
         pendingConnectionSource.set(null)
@@ -266,31 +269,63 @@ class SenderSessionViewModel(application: Application) : AndroidViewModel(applic
         val before = encoder.profile
         val facing = target ?: if (before.lensFacing == LensFacing.Back) LensFacing.Front else LensFacing.Back
         if (facing == before.lensFacing) return
+        val rotation = requestedDisplayRotationDegrees
+        if (!cameraSwitchUsesLiveReconfiguration(uiState.senderStatus)) {
+            if (!cameraGranted) return
+            switchLocalPreview(facing, before, rotation)
+            return
+        }
         val snapshot = PicooNative.readSenderSnapshot(runtime.senderHandle)
         val source = snapshot.lastCommittedSourceFormat ?: return
-        val rotation = requestedDisplayRotationDegrees
+        val remote = uiState.receiverSourceFormats ?: return
         cameraSwitchJob = viewModelScope.launch {
-            val targetSource = sourceSelection.prepareCameraSource(source, facing, rotation) ?: return@launch
+            val targetSource = sourceSelection.prepareCameraSource(
+                source, facing, rotation, remote,
+            ) { "$it 与接收端没有共同可用的视频格式，请调整手机方向后重试" } ?: return@launch
             val current = PicooNative.readSenderSnapshot(runtime.senderHandle)
             if (!cameraGranted || encoder.profile != before || requestedDisplayRotationDegrees != rotation ||
                 current.streamEpoch != snapshot.streamEpoch || current.lastCommittedSourceFormat != source ||
-                current.status !in setOf(PicooNative.STATUS_STREAMING, PicooNative.STATUS_NETWORK_UNSTABLE) ||
+                !cameraSwitchUsesLiveReconfiguration(current.status) ||
                 encoderReconfiguration.isPending
             ) return@launch
             if (encoderReconfiguration.beginLocal(runtime.senderHandle, encoder, targetSource) == 0) return@launch
-            encoder.setTargetBitrateBps(PicooNative.bitrateInitialForHeight(targetSource.resolution.height))
-            pendingDisplayRotation = null
-            uiState.errorText = null
-            encoder.setCaptureProfile(before.copy(
-                lensFacing = facing, displayRotationDegrees = rotation,
-                resolution = android.util.Size(targetSource.resolution.width, targetSource.resolution.height),
-                codec = targetSource.codec, targetFps = targetSource.framesPerSecond,
-            ))
-            encoder.startPreview()
-            uiState.localPreviewMirrored = LocalPreviewMirror.defaultFor(facing)
-            sourceSelection.refresh(facing, rotation)
+            applyLensProfile(facing, rotation, before, targetSource)
             applyStreamConfig()
         }
+    }
+
+    private fun switchLocalPreview(facing: LensFacing, before: CaptureProfile, rotation: Int) {
+        val currentSource = VideoSourceFormat.fromProfile(before) ?: uiState.preferredSourceFormat
+        cameraSwitchJob = viewModelScope.launch {
+            val targetSource = sourceSelection.prepareCameraSource(
+                currentSource, facing, rotation, VideoSourceFormat.ProductFormats,
+            ) { "$it 当前不可用，请调整手机方向后重试" } ?: return@launch
+            if (!cameraGranted || encoder.profile != before || requestedDisplayRotationDegrees != rotation ||
+                cameraSwitchUsesLiveReconfiguration(uiState.senderStatus) ||
+                encoderReconfiguration.isPending
+            ) return@launch
+            applyLensProfile(facing, rotation, before, targetSource)
+        }
+    }
+
+    private fun applyLensProfile(
+        facing: LensFacing,
+        rotation: Int,
+        before: CaptureProfile,
+        targetSource: VideoSourceFormat,
+    ) {
+        encoder.setTargetBitrateBps(PicooNative.bitrateInitialForHeight(targetSource.resolution.height))
+        pendingDisplayRotation = null
+        uiState.errorText = null
+        encoder.setCaptureProfile(before.copy(
+            lensFacing = facing, displayRotationDegrees = rotation,
+            resolution = android.util.Size(targetSource.resolution.width, targetSource.resolution.height),
+            codec = targetSource.codec, targetFps = targetSource.framesPerSecond,
+        ))
+        uiState.previewTransformInfo = encoder.previewTransformInfo
+        encoder.startPreview()
+        uiState.localPreviewMirrored = LocalPreviewMirror.defaultFor(facing)
+        sourceSelection.refresh(facing, rotation)
     }
 
     fun beginLocalEncoderReconfiguration(targetHeight: Int): Boolean {

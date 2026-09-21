@@ -135,6 +135,9 @@ final class SenderAppModel {
                 self?.tick()
             }
         }
+        if isSceneActive {
+            scheduleCameraActivation()
+        }
         if let mediaPipeline {
             let signals = camera.encoderEventSignals
             mediaTask = Task { [weak self] in
@@ -185,9 +188,7 @@ final class SenderAppModel {
         switch phase {
         case .active:
             isSceneActive = true
-            if screen == .live {
-                scheduleCameraActivation()
-            }
+            scheduleCameraActivation()
         case .inactive, .background:
             isSceneActive = false
             suspendMediaSending()
@@ -426,7 +427,7 @@ final class SenderAppModel {
             : .waiting
         if resolved != screen {
             screen = resolved
-            if resolved == .live, isSceneActive {
+            if isSceneActive {
                 scheduleCameraActivation()
             } else if screen == .devices {
                 scheduleCameraStop()
@@ -475,16 +476,39 @@ final class SenderAppModel {
     }
 
     private func activateCamera() async {
+        guard !Task.isCancelled else { return }
+        if matchesActiveMediaState {
+            await activateLiveCamera()
+        } else {
+            await activateLocalPreview()
+        }
+    }
+
+    private func activateLocalPreview() async {
+        suspendMediaSending()
+        if camera.state == .running { return }
+        await camera.refreshSourceFormats()
+        guard !Task.isCancelled else { return }
+        let source = VideoSourceFormat.initial(
+            camera.localSourceFormats ?? [],
+            preferred: preferredSourceFormat
+        ) ?? preferredSourceFormat
+        _ = await camera.start(
+            sourceFormat: source,
+            bitrateBps: PicooSenderSession.initialBitrate(forHeight: UInt32(source.resolution.rawValue)),
+            streamEpoch: session?.snapshot.streamEpoch ?? camera.streamEpoch
+        )
+    }
+
+    private func activateLiveCamera() async {
         guard let session, let mediaPipeline else { return }
         guard !Task.isCancelled else { return }
-        if camera.state == .running {
-            isMediaSendEnabled = matchesActiveMediaState
-            return
-        }
-        suspendMediaSending()
         let preferred = selectedInitialSourceFormat ? camera.sourceFormat : preferredSourceFormat
         guard session.snapshot.receiverSourceFormats != nil else {
             waitingForSourceCapabilities = true
+            if camera.state != .running {
+                await activateLocalPreview()
+            }
             return
         }
         await camera.refreshSourceFormats()
@@ -494,6 +518,7 @@ final class SenderAppModel {
             errorMessage = "已连接，但当前镜头与接收端没有共同可用的视频格式。"
             return
         }
+        suspendMediaSending()
         activeBitrateBps = PicooSenderSession.initialBitrate(forHeight: UInt32(initialSourceFormat.resolution.rawValue))
         let streamEpoch = encoderApply.beginLocal(
             session: session,
@@ -506,11 +531,21 @@ final class SenderAppModel {
             _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
             return
         }
-        let granted = await camera.start(
-            sourceFormat: initialSourceFormat,
-            bitrateBps: activeBitrateBps,
-            streamEpoch: streamEpoch
-        )
+        let granted: Bool
+        if camera.state == .running {
+            granted = await camera.setSourceFormat(
+                initialSourceFormat,
+                captureRotation: camera.captureRotation,
+                bitrateBps: activeBitrateBps,
+                streamEpoch: streamEpoch
+            )
+        } else {
+            granted = await camera.start(
+                sourceFormat: initialSourceFormat,
+                bitrateBps: activeBitrateBps,
+                streamEpoch: streamEpoch
+            )
+        }
         guard !Task.isCancelled else {
             _ = session.reportEncoderFailed(streamEpoch: streamEpoch, encoderGeneration: 0)
             await camera.stop()
@@ -562,7 +597,11 @@ final class SenderAppModel {
         screen = .devices
         selectedInitialSourceFormat = false
         waitingForSourceCapabilities = false
-        scheduleCameraStop()
+        if isSceneActive {
+            scheduleCameraActivation()
+        } else {
+            scheduleCameraStop()
+        }
     }
 
     private func pollMediaControl() {
@@ -649,34 +688,46 @@ final class SenderAppModel {
         failure: String
     ) async {
         if let position, camera.position == position { return }
-        guard let session else { return }
         guard let targetSource = await preparedCameraSwitchSource() else {
-            errorMessage = "目标镜头与接收端没有共同可用的视频格式。"
+            errorMessage = matchesActiveMediaState
+                ? "目标镜头与接收端没有共同可用的视频格式。"
+                : "目标镜头当前不可用。"
             return
         }
-        suspendMediaSending()
-        let epoch = encoderApply.beginLocal(
-            session: session,
-            sourceFormat: targetSource
-        )
-        guard epoch > 0 else { return }
-        let switched = await camera.switchCamera(sourceFormat: targetSource, streamEpoch: epoch)
-        guard !Task.isCancelled else {
-            _ = session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0)
-            return
-        }
-        if switched {
-            encoderApply.waitForApply(
-                directive: nil,
-                streamEpoch: epoch,
-                encoderGeneration: camera.encoderGeneration,
-                sourceFormat: targetSource,
-                captureRotation: camera.captureRotation,
-                bitrateBps: PicooSenderSession.initialBitrate(forHeight: UInt32(targetSource.resolution.rawValue)),
-                session: session
+        if matchesActiveMediaState {
+            guard let session else { return }
+            suspendMediaSending()
+            let epoch = encoderApply.beginLocal(
+                session: session,
+                sourceFormat: targetSource
             )
-        } else {
-            encoderApply.failBeforeStart(streamEpoch: epoch, message: failure, host: self)
+            guard epoch > 0 else { return }
+            let switched = await camera.switchCamera(sourceFormat: targetSource, streamEpoch: epoch)
+            guard !Task.isCancelled else {
+                _ = session.reportEncoderFailed(streamEpoch: epoch, encoderGeneration: 0)
+                return
+            }
+            if switched {
+                encoderApply.waitForApply(
+                    directive: nil,
+                    streamEpoch: epoch,
+                    encoderGeneration: camera.encoderGeneration,
+                    sourceFormat: targetSource,
+                    captureRotation: camera.captureRotation,
+                    bitrateBps: PicooSenderSession.initialBitrate(forHeight: UInt32(targetSource.resolution.rawValue)),
+                    session: session
+                )
+            } else {
+                encoderApply.failBeforeStart(streamEpoch: epoch, message: failure, host: self)
+            }
+            return
+        }
+        let switched = await camera.switchCamera(
+            sourceFormat: targetSource,
+            streamEpoch: camera.streamEpoch
+        )
+        if !switched {
+            errorMessage = failure
         }
     }
 

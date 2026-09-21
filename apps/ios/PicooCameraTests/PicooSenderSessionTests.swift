@@ -56,6 +56,9 @@ struct PicooSenderSessionTests {
         #expect(VideoSourceFormat.cameraCeiling([front, .defaultFormat], preferredCodec: .avc) == .defaultFormat)
         #expect(VideoSourceFormat.cameraCeiling([fast], preferredCodec: .hevc) == fast)
         #expect(VideoSourceFormat.cameraCeiling([], preferredCodec: .avc) == nil)
+        #expect(VideoSourceFormat.cameraSwitchCeiling(local: [front, fast, hevc], remote: nil, preferredCodec: .avc) == front)
+        #expect(VideoSourceFormat.cameraSwitchCeiling(local: [front, fast, hevc], remote: [fast, hevc], preferredCodec: .avc) == fast)
+        #expect(VideoSourceFormat.cameraSwitchCeiling(local: [front], remote: [hevc], preferredCodec: .avc) == nil)
     }
 
     @Test("Source matching rejects a different codec, dimensions, or frame rate")

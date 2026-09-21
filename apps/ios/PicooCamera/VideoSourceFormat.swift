@@ -26,6 +26,15 @@ nonisolated struct VideoSourceFormat: Hashable, Sendable {
         }
     }
 
+    static func cameraSwitchCeiling(
+        local: [Self],
+        remote: [Self]?,
+        preferredCodec: NativeVideoCodec
+    ) -> Self? {
+        let admitted = remote.map { remote in local.filter { remote.contains($0) } } ?? local
+        return cameraCeiling(admitted, preferredCodec: preferredCodec)
+    }
+
     var label: String {
         "\(codec == .avc ? "H.264" : "HEVC") · \(resolution.rawValue)p · \(framesPerSecond) fps"
     }
