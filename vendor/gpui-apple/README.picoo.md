@@ -1,6 +1,6 @@
 # GPUI Apple surface 生命周期修补
 
-关联 ARCH-PICOO-MEDIA-002、REQ-PICOO-NEXT-016。来源、固定 release checksum 与许可证见 ORIGIN.json / LICENSE-APACHE。这是现有 gpui-pre-apple 0.3.3 的局部依赖修补，Cargo 根 manifest 通过 patch 选择它；没有引入另一套桌面框架。
+关联 ARCH-PICOO-MEDIA-002、REQ-PICOO-NEXT-016。来源、固定 release checksum 与许可证见 ORIGIN.json / LICENSE-APACHE。这是基于 gpui-pre-apple 0.3.3、保留 Picoo Metal surface 生命周期修补的本地兼容 fork；其 Cargo package identity 已与 GPUI Kit 0.6.6 要求的 0.3.6 对齐，Cargo 根 manifest 通过 patch 选择它；没有引入另一套桌面框架。
 
 上游 draw_surfaces 创建的 CVMetalTexture 包装器在编码完 draw 后即释放；Metal 后续读取仍可能进行。CoreVideo 要求源 CVPixelBuffer 和 CVMetalTexture 保留到 GPU 完成，不能仅依赖 MTLTexture 的引用，也不能以若干帧延迟推测完成。现在每条 command buffer 保留实际使用的三元 lease，并在完成回调中释放；Scene 与 Preview 可以提前释放自身引用，输出池仍不能复用 GPU 正在读取的 allocation。
 
