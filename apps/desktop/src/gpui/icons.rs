@@ -10,6 +10,7 @@ use gpui_kit::*;
 pub(super) enum DesktopIcon {
     NetworkActivity,
     CameraPreview,
+    Recording,
     SwitchCamera,
     Success,
     NavigateBack,
@@ -56,9 +57,10 @@ impl DesktopIcon {
     /// The complete semantic surface. Keep this exhaustive when adding a
     /// product icon so asset validation covers every callable variant.
     #[allow(dead_code)]
-    const ALL: [Self; 42] = [
+    const ALL: [Self; 43] = [
         Self::NetworkActivity,
         Self::CameraPreview,
+        Self::Recording,
         Self::SwitchCamera,
         Self::Success,
         Self::NavigateBack,
@@ -105,6 +107,7 @@ impl DesktopIcon {
         match self {
             Self::NetworkActivity => include_bytes!("../../../../assets/icons/reicon/activity.svg"),
             Self::CameraPreview => include_bytes!("../../../../assets/icons/reicon/camera.svg"),
+            Self::Recording => include_bytes!("../../../../assets/icons/reicon/video.svg"),
             Self::SwitchCamera => {
                 include_bytes!("../../../../assets/icons/reicon/camera_rotate.svg")
             }
@@ -199,6 +202,9 @@ mod tests {
                 }
                 DesktopIcon::CameraPreview => {
                     include_bytes!("../../../../assets/icons/reicon/camera.svg").as_slice()
+                }
+                DesktopIcon::Recording => {
+                    include_bytes!("../../../../assets/icons/reicon/video.svg").as_slice()
                 }
                 DesktopIcon::SwitchCamera => {
                     include_bytes!("../../../../assets/icons/reicon/camera_rotate.svg").as_slice()

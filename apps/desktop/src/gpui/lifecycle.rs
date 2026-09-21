@@ -442,7 +442,6 @@ impl Render for PicooDesktopApp {
                         .min_w_0()
                         .min_h_0()
                         .child(self.render_workspace_toolbar(cx))
-                        .child(self.render_recording_bar(&snapshot, cx))
                         .child(self.render_section(&snapshot, cx)),
                 );
             div()

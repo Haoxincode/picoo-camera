@@ -163,7 +163,7 @@
 
 | REQ-PICOO-MEDIA-074 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、022 | Apple取消原生写入后，从创建时保留的文件句柄恢复被原生删除的partial；不覆盖已有路径，不给未最终化文件签发完成凭据，恢复失败明确返回 | AVC/HEVC原生cancel后字节留存、已有文件不覆盖与I/O失败；可播放性独立于字节留存 |
 
-| REQ-PICOO-MEDIA-075 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021 | 桌面原码流录像使用原生文件夹选择、显式开始/停止与Receiver快照；固定工作区入口跨页面显示准备/录制/收尾/结果，打开已保留目录，不把命令接纳当作保存完成 | 取消选择、重复请求、队列拒绝、收尾状态、完整/缺口/失败呈现及本机界面验证 |
+| REQ-PICOO-MEDIA-075 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、021 | 桌面原码流录像使用原生文件夹选择、显式开始/停止与Receiver快照；仅在连接成功后的 Live 顶栏以「录像」按钮与分辨率等操作并列，菜单内显示准备/录制/收尾/结果，打开已保留目录，不把命令接纳当作保存完成；待机连接页与工作区标题行不显示录像入口 | 取消选择、重复请求、队列拒绝、收尾状态、完整/缺口/失败呈现及本机界面验证 |
 
 | REQ-PICOO-MEDIA-076 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-020、021、028 | Receiver独立观察录制工作者推进时间；原生/磁盘操作超过15秒未返回时显示无响应，仍保留线程资源名额，不伪造完成结果或在UI清理原生对象；已失败入口不再接受AU或请求RAP | 虚拟时间停滞/恢复、最终结果优先、停止与失败入口、慢工作者不阻塞观察；真实存储故障另验 |
 
@@ -176,7 +176,7 @@
 | REQ-PICOO-MEDIA-080 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-018、020、022、024 | Windows原码流段使用MF原生压缩直通，AVC fragmented/HEVC普通MP4，系统维护description；每个样本以marker确认处理，最终化以回调确认，资源只在所属录制线程释放 | 已接入共享Recorder、Receiver与桌面入口；Mac共享合同回归通过，Windows八组合生产适配、回调与完整bundle仍待新CI及原生故障验收 |
 | REQ-PICOO-MEDIA-081 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-019、020、022 | 处理后录像按源媒体时间的30/60fps绝对槽采样，不累加截断周期；未到槽跳过，跨槽明确报告gap并从零开始强制IDR新段；连接、stream、Decoder或配置代际变化同样切段 | 60→30固定采样、跨槽gap/分段、代际/配置分段、身份与PTS倒退拒绝；FrameBus worker、GPU/Encoder/Mux和UI另验 |
 | REQ-PICOO-MEDIA-082 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-008、019、020、021、022 | macOS处理后录像由独立工作者独占FrameBus有序订阅、GPU renderer、硬件Encoder、原生mux和Rendered bundle；正常停止排空已发布帧，约10秒、源代际/配置变化及确认gap均以零PTS强制IDR新段；订阅超龄/溢出和源停止形成明确终态，不阻塞Receiver或占用原码流工作者名额 | 60→30 FrameBus→GPU→硬编→MP4完整工作者回归、Rendered模式/源输出PTS/scene映射、停止排空、十秒切段及订阅终止合同；本机运行受Xcode许可阻断，Receiver/UI接线、Windows硬编及原生故障验收另验 |
-| REQ-PICOO-MEDIA-083 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-008、019、021、024 | macOS Receiver独立拥有处理后录像句柄与FrameBus订阅；桌面分别呈现原码流/处理后录像状态、命令、错误和结果目录，处理后开始显式选择AVC/HEVC及不高于当前源的30/60fps，固定当前源尺寸与标准码率，不从窗口推导 | Receiver配置策略、双模式命令拒绝、独立快照/停止和GPUI双入口编译检查；实际文件选择与真实手机并录交互留平台验收 |
+| REQ-PICOO-MEDIA-083 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-008、019、021、024 | macOS Receiver独立拥有处理后录像句柄与FrameBus订阅；桌面在连接成功后的 Live 顶栏以「录像」按钮呈现原码流/处理后录像状态、命令、错误和结果目录，处理后开始显式选择AVC/HEVC及不高于当前源的30/60fps，固定当前源尺寸与标准码率，不从窗口推导 | Receiver配置策略、双模式命令拒绝、独立快照/停止和GPUI双入口编译检查；实际文件选择与真实手机并录交互留平台验收 |
 | REQ-PICOO-MEDIA-084 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-019、020、024 | Windows处理后录像只枚举硬件异步encoder MFT，绑定目标纹理同一D3D11 device manager并直接提交NV12 surface；显式profile/level/码率/低延迟/IDR，AVC在类型前设置零B帧，HEVC不要求未支持属性；缓存提前到达的NeedInput额度但保持单在途，拒绝跨输出持有输入的MFT；目标保留至输出，压缩结果重新验证后交给原生mux，不允许软件或CPU readback回退 | 硬件枚举与同设备准入、八组合媒体类型、异步NeedInput/HaveOutput、一入一出PTS/IDR/AU与配置验证；跨Windows目标严格编译通过，原生执行和故障注入另验 |
 | REQ-PICOO-MEDIA-085 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-008、019、020、021、022、024 | Windows与macOS共用处理后录像的FrameBus有序订阅、媒体时间采样、分段、bundle、Receiver双工作者和桌面命令/状态契约；平台只在GPU renderer、硬件encoder与原生mux适配处分流。Windows renderer从首个源帧建立，encoder在首个已渲染目标完成后于同一owner线程建立，两者必须保留同一D3D11 device，不得复制macOS业务状态机或回退CPU | Windows目标的八组合策略、双工作者独立控制、Receiver会话重置和桌面可用性编译检查；Windows原生MFT文件、真机并录、故障与持续吞吐留平台验收 |
 | REQ-PICOO-MEDIA-086 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、025、026 | Android 对应 iOS 的显式 VUI：MediaFormat 确认 BT.709 limited 后，硬件省略或 unspecified 的 AVC VUI 由适配层写入同一色彩，带内 SPS 对齐到已提交记录 | 见 [media.md](media.md) REQ-PICOO-MEDIA-086 |

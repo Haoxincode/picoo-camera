@@ -1,10 +1,13 @@
 //! Desktop recording commands and presentation — REQ-PICOO-MEDIA-075/083.
+use std::path::PathBuf;
+
+use super::icons::{reicon_button_content, DesktopIcon};
 use super::PicooDesktopApp;
 use crate::receiver_runtime::{
     await_receiver_reply, ReceiverSnapshot, RecordingRequest, RecordingSnapshot,
 };
 use gpui_kit::component::dialog::DialogButtonProps;
-use gpui_kit::component::menu::DropdownMenu;
+use gpui_kit::component::menu::{DropdownMenu, PopupMenu, PopupMenuItem};
 use gpui_kit::component::{button::*, *};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
@@ -15,21 +18,45 @@ use serde::Deserialize;
 #[derive(Clone, Action, PartialEq, Eq, Deserialize)]
 #[action(namespace = picoo_recording, no_json)]
 enum RecordingAction {
+    StartEncoded,
+    StopEncoded,
     StartRenderedAvc30,
     StartRenderedAvc60,
     StartRenderedHevc30,
     StartRenderedHevc60,
+    StopRendered,
 }
 
 impl RecordingAction {
-    fn request(&self) -> RecordingRequest {
-        let (codec, fps) = match self {
-            Self::StartRenderedAvc30 => (VideoCodec::Avc, 30),
-            Self::StartRenderedAvc60 => (VideoCodec::Avc, 60),
-            Self::StartRenderedHevc30 => (VideoCodec::Hevc, 30),
-            Self::StartRenderedHevc60 => (VideoCodec::Hevc, 60),
-        };
-        RecordingRequest::Rendered { codec, fps }
+    fn start_request(&self) -> Option<RecordingRequest> {
+        Some(match self {
+            Self::StartEncoded => RecordingRequest::Encoded,
+            Self::StartRenderedAvc30 => RecordingRequest::Rendered {
+                codec: VideoCodec::Avc,
+                fps: 30,
+            },
+            Self::StartRenderedAvc60 => RecordingRequest::Rendered {
+                codec: VideoCodec::Avc,
+                fps: 60,
+            },
+            Self::StartRenderedHevc30 => RecordingRequest::Rendered {
+                codec: VideoCodec::Hevc,
+                fps: 30,
+            },
+            Self::StartRenderedHevc60 => RecordingRequest::Rendered {
+                codec: VideoCodec::Hevc,
+                fps: 60,
+            },
+            Self::StopEncoded | Self::StopRendered => return None,
+        })
+    }
+
+    fn stop_mode(&self) -> Option<RecordingMode> {
+        match self {
+            Self::StopEncoded => Some(RecordingMode::Encoded),
+            Self::StopRendered => Some(RecordingMode::Rendered),
+            _ => None,
+        }
     }
 }
 
@@ -77,25 +104,22 @@ impl RecordingUiState {
     }
 }
 
-fn button_label(
-    mode: RecordingMode,
-    snapshot: &RecordingSnapshot,
+fn toolbar_accessibility(
+    any_active: bool,
     pending: Option<RecordingPending>,
+    stopping: bool,
 ) -> &'static str {
     match pending {
-        Some(RecordingPending::Starting) => return "正在开始录像…",
-        Some(RecordingPending::Stopping) => return "正在提交停止…",
+        Some(RecordingPending::Starting) => return "正在开始录像",
+        Some(RecordingPending::Stopping) => return "正在提交停止",
         None => {}
     }
-    if snapshot.stopping {
+    if stopping {
         "正在结束录像"
-    } else if active(snapshot) {
-        "停止录像"
+    } else if any_active {
+        "正在录像"
     } else {
-        match mode {
-            RecordingMode::Encoded => "开始原码流录像…",
-            RecordingMode::Rendered => "开始处理后录像…",
-        }
+        "录像"
     }
 }
 
@@ -202,41 +226,43 @@ impl PicooDesktopApp {
         cx.notify();
     }
 
-    fn render_recording_row(
+    pub(super) fn render_recording_controls(
         &self,
-        mode: RecordingMode,
-        recording: &RecordingSnapshot,
         snapshot: &ReceiverSnapshot,
         cx: &Context<Self>,
-    ) -> AnyElement {
-        let is_active = active(recording);
-        let is_stopping = recording.stopping;
+    ) -> Option<AnyElement> {
+        let recordings = &snapshot.recordings;
+        if !recordings.encoded.available && !recordings.rendered.available {
+            return None;
+        }
+        let encoded_available = recordings.encoded.available;
+        let rendered_available = recordings.rendered.available;
+        let encoded_active = active(&recordings.encoded);
+        let rendered_active = active(&recordings.rendered);
+        let any_active = encoded_active || rendered_active;
+        let encoded_pending = self.recording_ui.pending(RecordingMode::Encoded);
+        let rendered_pending = self.recording_ui.pending(RecordingMode::Rendered);
+        let pending = encoded_pending.or(rendered_pending);
+        let stopping = recordings.encoded.stopping || recordings.rendered.stopping;
         let disconnected = snapshot.stream_config.is_none() || snapshot.active_sender.is_none();
-        let unsupported_rendered_source =
-            mode == RecordingMode::Rendered && !snapshot.recordings.rendered_source_supported;
-        let unavailable = disconnected || unsupported_rendered_source;
-        let pending = self.recording_ui.pending(mode);
-        let label = button_label(mode, recording, pending);
-        let operation_error = self.recording_ui.error(mode).map(str::to_owned);
-        let detail = operation_error
-            .clone()
-            .or_else(|| {
-                recording
-                    .result
-                    .as_ref()
-                    .and_then(|result| result.error.clone())
-            })
-            .or_else(|| {
-                recording.stalled.then(|| {
-                    "录制工作者超过 15 秒未推进，可能仍在等待系统写入。直播不受影响；文件结果将在写入与清理返回后更新。".to_owned()
-                })
-            });
-        let message = if operation_error.is_some() {
-            "录像操作未完成"
-        } else {
-            status(mode, recording)
-        };
-        let reveal = recording
+        let unsupported_rendered_source = !recordings.rendered_source_supported;
+        let encoded_detail = recording_detail(
+            &self.recording_ui,
+            RecordingMode::Encoded,
+            &recordings.encoded,
+        );
+        let rendered_detail = recording_detail(
+            &self.recording_ui,
+            RecordingMode::Rendered,
+            &recordings.rendered,
+        );
+        let encoded_reveal = recordings
+            .encoded
+            .result
+            .as_ref()
+            .and_then(|result| result.path.clone());
+        let rendered_reveal = recordings
+            .rendered
             .result
             .as_ref()
             .and_then(|result| result.path.clone());
@@ -245,166 +271,206 @@ impl PicooDesktopApp {
             .as_ref()
             .map(|config| config.fps)
             .unwrap_or(0);
-        let button_id = match mode {
-            RecordingMode::Encoded => "encoded-recording-toggle",
-            RecordingMode::Rendered => "rendered-recording-toggle",
-        };
-        let button = Button::new(button_id)
-            .outline()
-            .small()
-            .label(label)
-            .accessibility_label(label)
-            .loading(pending.is_some())
-            .disabled(pending.is_some() || is_stopping || (!is_active && unavailable))
-            .tooltip(if !is_active && disconnected {
-                "连接手机并准备视频后可录制"
-            } else if !is_active && unsupported_rendered_source {
-                "当前视频规格不支持处理后录像；请选择720p或1080p、30或60fps"
-            } else {
-                match mode {
-                    RecordingMode::Encoded => "保存手机发送的原始码流",
-                    RecordingMode::Rendered => "选择编码格式与帧率；输出尺寸不随窗口变化",
-                }
-            });
-        let button: AnyElement = if is_active {
-            button
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.end_recording(mode, cx);
-                }))
-                .into_any_element()
+        let can_start = !disconnected;
+        let can_start_rendered = can_start && !unsupported_rendered_source;
+        let encoded_stopping = recordings.encoded.stopping;
+        let rendered_stopping = recordings.rendered.stopping;
+        let icon_color = if any_active {
+            cx.theme().primary_foreground
         } else {
-            match mode {
-                RecordingMode::Encoded => button
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.begin_recording(RecordingRequest::Encoded, cx);
-                    }))
-                    .into_any_element(),
-                RecordingMode::Rendered => button
-                    .dropdown_menu_with_anchor(Anchor::TopLeft, move |menu, _, _| {
-                        menu.label("处理后录像格式")
-                            .menu_with_enable(
-                                "H.264 · 30 fps",
-                                Box::new(RecordingAction::StartRenderedAvc30),
-                                source_fps >= 30,
-                            )
-                            .menu_with_enable(
-                                "H.264 · 60 fps",
-                                Box::new(RecordingAction::StartRenderedAvc60),
-                                source_fps >= 60,
-                            )
-                            .separator()
-                            .menu_with_enable(
-                                "HEVC · 30 fps",
-                                Box::new(RecordingAction::StartRenderedHevc30),
-                                source_fps >= 30,
-                            )
-                            .menu_with_enable(
-                                "HEVC · 60 fps",
-                                Box::new(RecordingAction::StartRenderedHevc60),
-                                source_fps >= 60,
-                            )
-                    })
-                    .into_any_element(),
-            }
+            cx.theme().primary
         };
-
-        div()
-            .h_flex()
-            .items_center()
-            .gap_3()
-            .child(button)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_sm()
-                    .text_color(if detail.is_some() {
-                        cx.theme().danger
-                    } else {
-                        cx.theme().muted_foreground
-                    })
-                    .child(message),
-            )
-            .when_some(detail, |row, error| {
-                row.child(
-                    Button::new(match mode {
-                        RecordingMode::Encoded => "encoded-recording-error-details",
-                        RecordingMode::Rendered => "rendered-recording-error-details",
-                    })
-                    .ghost()
-                    .small()
-                    .label("查看原因")
-                    .on_click(move |_, window, cx| {
-                        let error = error.clone();
-                        window.open_alert_dialog(cx, move |alert, _, _| {
-                            alert
-                                .title("录像详情")
-                                .description(error.clone())
-                                .button_props(DialogButtonProps::default().ok_text("关闭"))
-                        });
-                    }),
+        Some(
+            div()
+                .flex_none()
+                .on_action(cx.listener(|this, action: &RecordingAction, _, cx| {
+                    if let Some(mode) = action.stop_mode() {
+                        this.end_recording(mode, cx);
+                    } else if let Some(request) = action.start_request() {
+                        this.begin_recording(request, cx);
+                    }
+                }))
+                .child(
+                    Button::new("live-recording-toggle")
+                        .outline()
+                        .small()
+                        .selected(any_active)
+                        .toggled(any_active)
+                        .accessibility_label(toolbar_accessibility(any_active, pending, stopping))
+                        .loading(pending.is_some())
+                        .disabled(
+                            pending.is_some()
+                                || (stopping && !any_active)
+                                || (!any_active && disconnected),
+                        )
+                        .tooltip(recording_tooltip(
+                            any_active,
+                            disconnected,
+                            encoded_detail.is_some() || rendered_detail.is_some(),
+                            &recordings.encoded,
+                            &recordings.rendered,
+                        ))
+                        .child(reicon_button_content(
+                            "录像",
+                            DesktopIcon::Recording,
+                            icon_color,
+                        ))
+                        .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, _| {
+                            let encoded_busy = encoded_pending.is_some() || encoded_stopping;
+                            let rendered_busy = rendered_pending.is_some() || rendered_stopping;
+                            let menu = if encoded_available {
+                                if encoded_active || encoded_stopping {
+                                    menu.menu_with_enable(
+                                        "停止原码流录像",
+                                        Box::new(RecordingAction::StopEncoded),
+                                        encoded_active && !encoded_busy,
+                                    )
+                                } else {
+                                    menu.menu_with_enable(
+                                        "原码流录像",
+                                        Box::new(RecordingAction::StartEncoded),
+                                        can_start && !encoded_busy,
+                                    )
+                                }
+                            } else {
+                                menu
+                            };
+                            let menu = if rendered_available {
+                                let menu = menu.when(encoded_available, |menu| menu.separator());
+                                if rendered_active || rendered_stopping {
+                                    menu.menu_with_enable(
+                                        "停止处理后录像",
+                                        Box::new(RecordingAction::StopRendered),
+                                        rendered_active && !rendered_busy,
+                                    )
+                                } else {
+                                    menu.label("处理后录像")
+                                        .menu_with_enable(
+                                            "H.264 · 30 fps",
+                                            Box::new(RecordingAction::StartRenderedAvc30),
+                                            can_start_rendered
+                                                && !rendered_busy
+                                                && source_fps >= 30,
+                                        )
+                                        .menu_with_enable(
+                                            "H.264 · 60 fps",
+                                            Box::new(RecordingAction::StartRenderedAvc60),
+                                            can_start_rendered
+                                                && !rendered_busy
+                                                && source_fps >= 60,
+                                        )
+                                        .separator()
+                                        .menu_with_enable(
+                                            "HEVC · 30 fps",
+                                            Box::new(RecordingAction::StartRenderedHevc30),
+                                            can_start_rendered
+                                                && !rendered_busy
+                                                && source_fps >= 30,
+                                        )
+                                        .menu_with_enable(
+                                            "HEVC · 60 fps",
+                                            Box::new(RecordingAction::StartRenderedHevc60),
+                                            can_start_rendered
+                                                && !rendered_busy
+                                                && source_fps >= 60,
+                                        )
+                                }
+                            } else {
+                                menu
+                            };
+                            append_recording_result_items(
+                                append_recording_result_items(
+                                    menu,
+                                    "原码流",
+                                    encoded_reveal.clone(),
+                                    encoded_detail.clone(),
+                                ),
+                                "处理后",
+                                rendered_reveal.clone(),
+                                rendered_detail.clone(),
+                            )
+                        }),
                 )
-            })
-            .when_some(reveal, |row, path| {
-                row.child(
-                    Button::new(match mode {
-                        RecordingMode::Encoded => "reveal-encoded-recording",
-                        RecordingMode::Rendered => "reveal-rendered-recording",
-                    })
-                    .ghost()
-                    .small()
-                    .label("打开文件夹")
-                    .on_click(move |_, _, cx| cx.reveal_path(&path)),
-                )
-            })
-            .into_any_element()
+                .into_any_element(),
+        )
     }
+}
 
-    pub(super) fn render_recording_bar(
-        &self,
-        snapshot: &ReceiverSnapshot,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let recordings = &snapshot.recordings;
-        if !recordings.encoded.available && !recordings.rendered.available {
-            return div().into_any_element();
-        }
-        div()
-            .v_flex()
-            .flex_shrink_0()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
-            .when(recordings.encoded.available, |bar| {
-                bar.child(self.render_recording_row(
-                    RecordingMode::Encoded,
-                    &recordings.encoded,
-                    snapshot,
-                    cx,
-                ))
+fn recording_detail(
+    ui: &RecordingUiState,
+    mode: RecordingMode,
+    recording: &RecordingSnapshot,
+) -> Option<String> {
+    ui.error(mode)
+        .map(str::to_owned)
+        .or_else(|| {
+            recording
+                .result
+                .as_ref()
+                .and_then(|result| result.error.clone())
+        })
+        .or_else(|| {
+            recording.stalled.then(|| {
+                "录制工作者超过 15 秒未推进，可能仍在等待系统写入。直播不受影响；文件结果将在写入与清理返回后更新。"
+                    .to_owned()
             })
-            .when(recordings.rendered.available, |bar| {
-                bar.child(self.render_recording_row(
-                    RecordingMode::Rendered,
-                    &recordings.rendered,
-                    snapshot,
-                    cx,
-                ))
-            })
-            .on_action(cx.listener(|this, action: &RecordingAction, _, cx| {
-                this.begin_recording(action.request(), cx);
-            }))
-            .into_any_element()
+        })
+}
+
+fn recording_tooltip(
+    any_active: bool,
+    disconnected: bool,
+    has_error: bool,
+    encoded: &RecordingSnapshot,
+    rendered: &RecordingSnapshot,
+) -> &'static str {
+    if disconnected && !any_active {
+        "连接手机并准备视频后可录制"
+    } else if has_error {
+        "录像操作未完成"
+    } else if encoded.stalled || encoded.stopping || encoded.state.is_some() {
+        status(RecordingMode::Encoded, encoded)
+    } else if rendered.stalled || rendered.stopping || rendered.state.is_some() {
+        status(RecordingMode::Rendered, rendered)
+    } else {
+        "保存原码流或处理后画面"
     }
+}
+
+fn append_recording_result_items(
+    menu: PopupMenu,
+    kind: &'static str,
+    reveal: Option<PathBuf>,
+    detail: Option<String>,
+) -> PopupMenu {
+    menu.when(reveal.is_some() || detail.is_some(), |menu| {
+        menu.separator()
+    })
+    .when_some(detail, |menu, error| {
+        menu.item(
+            PopupMenuItem::new(format!("查看{kind}原因")).on_click(move |_, window, cx| {
+                let error = error.clone();
+                window.open_alert_dialog(cx, move |alert, _, _| {
+                    alert
+                        .title("录像详情")
+                        .description(error.clone())
+                        .button_props(DialogButtonProps::default().ok_text("关闭"))
+                });
+            }),
+        )
+    })
+    .when_some(reveal, |menu, path| {
+        menu.item(
+            PopupMenuItem::new(format!("打开{kind}文件夹"))
+                .on_click(move |_, _, cx| cx.reveal_path(&path)),
+        )
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        active, button_label, status, RecordingAction, RecordingMode, RecordingPending,
+        active, status, toolbar_accessibility, RecordingAction, RecordingMode, RecordingPending,
         RecordingRequest, RecordingSnapshot, RecordingState, RecordingUiState, VideoCodec,
     };
 
@@ -447,7 +513,10 @@ mod tests {
     }
 
     #[test]
-    fn pending_and_loading_copy_are_independent_per_mode() {
+    fn live_toolbar_uses_a_single_recording_label() {
+        assert_eq!(toolbar_accessibility(false, None, false), "录像");
+        assert_eq!(toolbar_accessibility(true, None, false), "正在录像");
+
         let mut ui = RecordingUiState::default();
         ui.set_pending(RecordingMode::Encoded, Some(RecordingPending::Starting));
         assert_eq!(
@@ -456,36 +525,62 @@ mod tests {
         );
         assert_eq!(ui.pending(RecordingMode::Rendered), None);
         assert_eq!(
-            button_label(
-                RecordingMode::Encoded,
-                &RecordingSnapshot::default(),
-                ui.pending(RecordingMode::Encoded),
-            ),
-            "正在开始录像…"
+            toolbar_accessibility(false, ui.pending(RecordingMode::Encoded), false),
+            "正在开始录像"
         );
 
         ui.set_pending(RecordingMode::Rendered, Some(RecordingPending::Stopping));
         ui.set_pending(RecordingMode::Encoded, None);
         assert_eq!(ui.pending(RecordingMode::Encoded), None);
         assert_eq!(
-            button_label(
-                RecordingMode::Rendered,
-                &RecordingSnapshot::default(),
-                ui.pending(RecordingMode::Rendered),
-            ),
-            "正在提交停止…"
+            toolbar_accessibility(true, ui.pending(RecordingMode::Rendered), false),
+            "正在提交停止"
         );
     }
 
     #[test]
-    fn every_rendered_menu_action_carries_one_explicit_profile() {
+    fn every_start_menu_action_carries_one_explicit_request() {
+        assert_eq!(
+            RecordingAction::StartEncoded.start_request(),
+            Some(RecordingRequest::Encoded)
+        );
+        assert_eq!(
+            RecordingAction::StopEncoded.stop_mode(),
+            Some(RecordingMode::Encoded)
+        );
+        assert_eq!(
+            RecordingAction::StopRendered.stop_mode(),
+            Some(RecordingMode::Rendered)
+        );
+        assert_eq!(RecordingAction::StopEncoded.start_request(), None);
         for (action, codec, fps) in [
             (RecordingAction::StartRenderedAvc30, VideoCodec::Avc, 30),
             (RecordingAction::StartRenderedAvc60, VideoCodec::Avc, 60),
             (RecordingAction::StartRenderedHevc30, VideoCodec::Hevc, 30),
             (RecordingAction::StartRenderedHevc60, VideoCodec::Hevc, 60),
         ] {
-            assert_eq!(action.request(), RecordingRequest::Rendered { codec, fps });
+            assert_eq!(
+                action.start_request(),
+                Some(RecordingRequest::Rendered { codec, fps })
+            );
         }
+    }
+
+    #[test]
+    fn recording_controls_are_not_mounted_on_workspace_chrome() {
+        const LIFECYCLE_SOURCE: &str = include_str!("lifecycle.rs");
+        const CONNECT_SOURCE: &str = include_str!("connect.rs");
+        assert!(
+            !LIFECYCLE_SOURCE.contains("render_recording"),
+            "recording must not sit under the section title"
+        );
+        assert!(CONNECT_SOURCE.contains("render_recording_controls"));
+        let waiting = CONNECT_SOURCE
+            .lines()
+            .skip_while(|line| !line.contains("fn render_waiting"))
+            .take_while(|line| !line.contains("fn render_manual_endpoint_card"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!waiting.contains("render_recording"));
     }
 }

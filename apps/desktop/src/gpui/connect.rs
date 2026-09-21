@@ -663,6 +663,10 @@ impl PicooDesktopApp {
                             .gap_2()
                             .child(details)
                             .child(resolution)
+                            .when_some(
+                                self.render_recording_controls(snapshot, cx),
+                                |this, controls| this.child(controls),
+                            )
                             .child(
                                 Button::new("remote-mirror-toolbar")
                                     .outline()
