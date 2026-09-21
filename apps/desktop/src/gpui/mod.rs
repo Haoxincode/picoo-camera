@@ -17,11 +17,14 @@ mod lifecycle;
 mod nav;
 mod pages;
 mod pairing;
+mod receiver_startup;
 mod recording;
 mod vcam;
 mod widgets;
 
 pub use bootstrap::run_gpui_app;
+#[cfg(all(windows, feature = "gpui-ui"))]
+pub(crate) use receiver_startup::receiver_startup_error_message;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::*;

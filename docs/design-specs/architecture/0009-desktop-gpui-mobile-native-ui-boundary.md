@@ -67,6 +67,8 @@ struct DesktopAppState {
 
 后台 Rust Core 通过事件更新状态；GPUI 只观察并渲染。
 
+产品窗口必须在 Receiver owner factory 完成前打开。`open_window` 只创建 `ReceiverStartupView`，由它通过独立 OS 线程等待 `start_from_prefs`；GPUI 消息泵在此期间只渲染 Loading，并在身份/配对损坏或其它启动失败时进入页面内恢复或错误态。不得在窗口回调里同步探测 VCam 或启动 Receiver，以免留下已监听 UDP、却无法绘制的无窗口或假死进程。
+
 ### 页面结构
 
 桌面端主要页面：

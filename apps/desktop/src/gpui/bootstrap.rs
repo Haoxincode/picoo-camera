@@ -6,11 +6,8 @@ use gpui_kit::*;
 use picoo_receiver::ReceiverError;
 
 use crate::prefs::load_prefs;
-use crate::receiver_runtime::ReceiverRuntimeHandle;
-use crate::vcam_status::detect_vcam_status;
 
-use super::identity_recovery::{IdentityRecoveryView, PairingRecoveryKind};
-use super::PicooDesktopApp;
+use super::receiver_startup::ReceiverStartupView;
 
 const DEVICE_FRAME_ASSETS: [(&str, &[u8]); 4] = [
     (
@@ -36,11 +33,6 @@ struct PicooAssets;
 // REQ-PICOO-UI-0001 / AC-D-LAYOUT-01 / AC-D-LIVE-01: the product window is
 // intentionally large enough to keep the complete Live toolbar visible.
 const PRODUCT_WINDOW_SIZE: gpui_kit::Size<Pixels> = size(px(1440.), px(900.));
-
-enum DesktopStartup {
-    Ready(Box<ReceiverRuntimeHandle>),
-    PairingRecovery(PairingRecoveryKind),
-}
 
 impl AssetSource for PicooAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
@@ -75,14 +67,14 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     // GPUI's Windows platform calls OleInitialize (STA). It must own the UI
     // thread apartment before ReceiverRuntime creates the Media Foundation
     // decoder; otherwise an earlier MTA init makes platform construction panic.
-    // Open the product window before starting the Receiver: a 0.1.624 hang in
-    // start_from_prefs left picoo-desktop running with UDP 4433 and no HWND.
+    // Open the product window before starting the Receiver. Receiver startup
+    // is dispatched by ReceiverStartupView so platform/network initialization
+    // cannot block the GPUI message pump.
     #[cfg(all(windows, feature = "gpui-ui"))]
     crate::windows_startup::append_log("run_gpui_app: constructing GPUI application");
     let app = gpui_kit::application().with_assets(PicooAssets);
-    let vcam_status = detect_vcam_status();
     #[cfg(all(windows, feature = "gpui-ui"))]
-    crate::windows_startup::append_log("run_gpui_app: vcam probe finished; entering app.run");
+    crate::windows_startup::append_log("run_gpui_app: entering app.run before vcam probe");
 
     let prefs_for_window = prefs.clone();
     app.run(move |cx| {
@@ -113,91 +105,40 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 #[cfg(all(windows, feature = "windows-vcam"))]
                 {
                     crate::tray::force_show_product_window();
-                    crate::windows_startup::append_log(
-                        "run_gpui_app: product HWND created; starting receiver",
-                    );
-                }
-                let startup = match ReceiverRuntimeHandle::start_from_prefs(
-                    prefs_for_window.clone(),
-                    vcam_status,
-                ) {
-                    Ok(runtime) => DesktopStartup::Ready(Box::new(runtime)),
-                    Err(error) => match PairingRecoveryKind::classify(&error) {
-                        Some(kind) => {
-                            tracing::error!(%error, "Receiver identity/trust startup failed closed");
-                            DesktopStartup::PairingRecovery(kind)
-                        }
-                        None => {
-                            #[cfg(all(windows, feature = "gpui-ui"))]
-                            crate::windows_startup::report_error(&error);
-                            cx.quit();
-                            DesktopStartup::PairingRecovery(PairingRecoveryKind::Identity)
-                        }
-                    },
-                };
-                #[cfg(all(windows, feature = "gpui-ui"))]
-                crate::windows_startup::append_log("run_gpui_app: receiver runtime started");
-                let content: AnyView = match startup {
-                    DesktopStartup::Ready(runtime) => {
-                        let view = cx.new(|cx| {
-                            PicooDesktopApp::new(
-                                *runtime,
-                                prefs_for_window,
-                                vcam_status,
-                                window_handle,
-                                window,
-                                cx,
-                            )
-                        });
-                        // Start frame/tray pump after the view exists — not inside Render.
-                        view.update(cx, |this, cx| {
-                            this.ensure_pump_loop(cx);
-                            #[cfg(target_os = "macos")]
-                            this.refresh_vcam_status(cx);
-                        });
-                        // REQ-PICOO-UI-008: Windows closes to tray when enabled; macOS
-                        // keeps the app in Dock/background without a fake tray icon.
-                        let tray_view = view.clone();
-                        window.on_window_should_close(cx, move |window, cx| {
-                            let outcome = tray_view.read(cx).close_outcome();
-                            if outcome.hide_to_background {
-                                #[cfg(all(windows, feature = "windows-vcam"))]
-                                {
-                                    let status = tray_view.read(cx).runtime.snapshot().status;
-                                    let tip = crate::tray::tip_for_status(status);
-                                    crate::tray::note_hidden_to_tray_with_tip(&tip);
-                                }
-                                // App-level hide keeps the process; minimize covers hosts
-                                // where hide() is a no-op.
-                                cx.hide();
-                                window.minimize_window();
-                                return false;
-                            }
-                            #[cfg(all(windows, feature = "windows-vcam"))]
-                            crate::tray::note_tray_cleared();
-                            outcome.allow_close
-                        });
-                        #[cfg(all(windows, feature = "windows-vcam"))]
-                        crate::tray::pump_win32_tray_messages();
-                        view.into()
-                    }
-                    DesktopStartup::PairingRecovery(kind) => cx
-                        .new(|_| {
-                            IdentityRecoveryView::new(kind, prefs_for_window.display_name.clone())
-                        })
-                        .into(),
-                };
-                #[cfg(all(windows, feature = "windows-vcam"))]
-                {
-                    crate::tray::force_show_product_window();
                     crate::tray::ensure_tray_icon(&crate::tray::tip_for_status(
                         picoo_session::ReceiverStatus::Discovering,
                     ));
                     crate::windows_startup::append_log(
-                        "run_gpui_app: open_window finished; force_show + tray requested",
+                        "run_gpui_app: product HWND created; receiver startup dispatched",
                     );
                 }
-                cx.new(|cx| Root::new(content, window, cx).bg(cx.theme().background))
+                let startup_view =
+                    cx.new(|_| ReceiverStartupView::new(prefs_for_window, window_handle));
+                startup_view.update(cx, |this, cx| this.start(cx));
+                // REQ-PICOO-UI-008: the close policy is available before the
+                // Receiver is ready, so a slow startup still has a usable
+                // tray/quit path.
+                let tray_view = startup_view.clone();
+                window.on_window_should_close(cx, move |window, cx| {
+                    let outcome = tray_view.read(cx).close_outcome(cx);
+                    if outcome.hide_to_background {
+                        #[cfg(all(windows, feature = "windows-vcam"))]
+                        {
+                            let status = tray_view.read(cx).tray_status(cx);
+                            let tip = crate::tray::tip_for_status(status);
+                            crate::tray::note_hidden_to_tray_with_tip(&tip);
+                        }
+                        cx.hide();
+                        window.minimize_window();
+                        return false;
+                    }
+                    #[cfg(all(windows, feature = "windows-vcam"))]
+                    crate::tray::note_tray_cleared();
+                    outcome.allow_close
+                });
+                #[cfg(all(windows, feature = "windows-vcam"))]
+                crate::tray::pump_win32_tray_messages();
+                cx.new(|cx| Root::new(startup_view, window, cx).bg(cx.theme().background))
             },
         )
         .expect("open window");
@@ -228,8 +169,8 @@ mod tests {
             .find("let app = gpui_kit::application()")
             .expect("GPUI platform initialization");
         let receiver = body
-            .find("ReceiverRuntimeHandle::start_from_prefs")
-            .expect("receiver runtime initialization");
+            .find("ReceiverStartupView::new")
+            .expect("receiver startup view");
         assert!(
             platform < receiver,
             "Windows OLE/STA must be initialized before Media Foundation"
@@ -237,11 +178,15 @@ mod tests {
         let open_window = body.find("cx.open_window(").expect("open_window");
         assert!(
             open_window < receiver,
-            "product HWND must exist before ReceiverRuntime starts"
+            "product HWND must exist before Receiver startup is dispatched"
         );
         assert!(
             body.contains("show: true"),
             "Windows CreateWindowExW must request a visible product window"
+        );
+        assert!(
+            !body.contains("start_from_prefs"),
+            "Receiver factory must not block the open_window callback"
         );
     }
 

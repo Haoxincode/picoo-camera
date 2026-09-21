@@ -60,14 +60,7 @@ pub fn report_error(error: &impl std::fmt::Display) {
 }
 
 fn startup_error_message(error: &str) -> String {
-    if error.contains("10048")
-        || error.contains("只允许使用一次")
-        || error.contains("Address already in use")
-    {
-        "无法启动 Picoo Camera：局域网端口 4433 已被占用。请先退出任务栏托盘中已运行的 Picoo Camera，或关闭占用该端口的程序。".into()
-    } else {
-        format!("无法启动 Picoo Camera：{error}")
-    }
+    crate::gpui::receiver_startup_error_message(error)
 }
 
 fn activate_running_instance() -> bool {
