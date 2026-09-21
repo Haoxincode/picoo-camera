@@ -153,6 +153,7 @@ pub(crate) struct ReceiverRuntime {
     advertised_trusted_count: usize,
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     virtual_camera: crate::model::VirtualCameraStatus,
+    shared_ring_name: String,
     vcam_output_error: Option<String>,
     metrics_history: LiveMetricsHistory,
     trusted_snapshot_cache: RefCell<TrustedSnapshotCache>,
@@ -171,17 +172,17 @@ impl ReceiverRuntime {
             .with_identity(config.identity.clone())
             .with_loaded_trusted_store(config.trusted_store, &config.trusted_store_path);
 
-        let vcam_output_error =
-            match receiver.attach_virtual_camera_output(&config.shared_ring_name) {
-                Ok(()) => None,
-                Err(err) => {
-                    tracing::error!(
-                        output = %config.shared_ring_name,
-                        "virtual camera output unavailable — VCam will stay on placeholder: {err}"
-                    );
-                    Some(err.to_string())
-                }
-            };
+        let shared_ring_name = config.shared_ring_name.clone();
+        let vcam_output_error = match receiver.attach_virtual_camera_output(&shared_ring_name) {
+            Ok(()) => None,
+            Err(err) => {
+                tracing::error!(
+                    output = %config.shared_ring_name,
+                    "virtual camera output unavailable — VCam will stay on placeholder: {err}"
+                );
+                Some(err.to_string())
+            }
+        };
 
         let bind = receiver.listen(Endpoint {
             host: config.bind_host,
@@ -240,6 +241,7 @@ impl ReceiverRuntime {
             display_name: config.identity.display_name().to_owned(),
             advertised_trusted_count: trusted_count,
             virtual_camera: crate::model::VirtualCameraStatus::Unknown,
+            shared_ring_name,
             vcam_output_error,
             metrics_history: LiveMetricsHistory::default(),
             trusted_snapshot_cache: RefCell::new(TrustedSnapshotCache::default()),
@@ -326,6 +328,23 @@ impl ReceiverRuntime {
             }
             crate::model::VirtualCameraStatus::Active => {
                 self.receiver.clear_virtual_camera_unavailable();
+            }
+        }
+    }
+
+    #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
+    pub fn retry_virtual_camera_output(&mut self) -> Result<(), ReceiverError> {
+        match self
+            .receiver
+            .attach_virtual_camera_output(&self.shared_ring_name)
+        {
+            Ok(()) => {
+                self.vcam_output_error = None;
+                Ok(())
+            }
+            Err(error) => {
+                self.vcam_output_error = Some(error.to_string());
+                Err(error)
             }
         }
     }

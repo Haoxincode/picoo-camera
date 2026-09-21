@@ -19,6 +19,7 @@ mod writer;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod file_mapping;
+mod windows_acl;
 #[cfg(target_os = "windows")]
 mod windows_machine;
 
@@ -31,8 +32,9 @@ pub use layout::{
     RING_SLOT_COUNT, RING_SLOT_META_SIZE,
 };
 pub use producer::{RingPublishOutcome, SharedFrameRingProducer};
+pub use windows_acl::{WINDOWS_SHARED_RING_DIRECTORY, WINDOWS_SHARED_RING_DIRECTORY_SDDL};
 #[cfg(target_os = "windows")]
-pub use windows_machine::{windows_shared_ring_path, WINDOWS_SHARED_RING_DIRECTORY};
+pub use windows_machine::{provision_windows_shared_ring_directory, windows_shared_ring_path};
 pub use writer::{
     SharedFrameRingWriter, SharedRingSubmitOutcome, SharedRingWriterEvent, SharedRingWriterStats,
 };

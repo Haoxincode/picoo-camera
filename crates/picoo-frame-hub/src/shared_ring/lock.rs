@@ -115,6 +115,35 @@ pub(super) fn acquire_producer_lock(ring_path: &Path) -> Result<KernelLockGuard,
 pub(super) fn map_file_err(path: &Path, error: std::io::Error) -> SharedRingError {
     SharedRingError::FileMapping {
         path: path.to_path_buf(),
-        message: error.to_string(),
+        message: mapping_error_message(path, error),
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn mapping_error_message(path: &Path, error: std::io::Error) -> String {
+    #[cfg(windows)]
+    if error.kind() == std::io::ErrorKind::PermissionDenied
+        && path
+            .components()
+            .any(|component| component.as_os_str() == super::WINDOWS_SHARED_RING_DIRECTORY)
+    {
+        return format!(
+            "{error}; 请使用「安装或修复」或重新运行 PicooCamera.msi，为 %ProgramData%\\Picoo Camera 恢复交互用户与 Local Service 的读写权限后重启 Picoo Camera"
+        );
+    }
+    let _ = path;
+    error.to_string()
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn program_data_permission_denied_asks_for_installer_repair() {
+        let path = Path::new(r"C:\ProgramData\Picoo Camera\frame-ring.bin");
+        let message = mapping_error_message(path, std::io::Error::from_raw_os_error(5));
+        assert!(message.contains("安装或修复"), "{message}");
+        assert!(message.contains("PicooCamera.msi"), "{message}");
     }
 }

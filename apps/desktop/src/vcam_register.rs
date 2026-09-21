@@ -73,6 +73,8 @@ impl VirtualCameraRegistration {
     /// Register an all-users, system-lifetime virtual camera (MSI/UAC only).
     pub fn register_system() -> Result<Self, String> {
         repair_installed_com_server()?;
+        picoo_frame_hub::provision_windows_shared_ring_directory()
+            .map_err(|err| format!("无法准备虚拟摄像头共享画面目录：{err}"))?;
         // Ownership is established by a previously committed symbolic link,
         // not by whether the Windows Installer service account can enumerate
         // the device in its non-interactive session.

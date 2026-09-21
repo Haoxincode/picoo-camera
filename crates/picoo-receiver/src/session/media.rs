@@ -129,6 +129,9 @@ impl ReceiverSession {
     pub fn attach_virtual_camera_output(&mut self, name: &str) -> Result<(), ReceiverError> {
         #[cfg(target_os = "macos")]
         {
+            if self.native_output.is_some() {
+                return Ok(());
+            }
             let _ = name;
             self.native_output =
                 Some(crate::output::NativeOutput::start().map_err(|error| {
@@ -140,6 +143,9 @@ impl ReceiverSession {
         }
         #[cfg(not(target_os = "macos"))]
         {
+            if self.shared_ring.is_some() {
+                return Ok(());
+            }
             let name = name.to_owned();
             let use_platform_ring = name == DEFAULT_SHARED_RING_NAME;
             let factory = move || {

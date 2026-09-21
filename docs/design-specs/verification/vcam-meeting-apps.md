@@ -166,7 +166,7 @@ navigator.mediaDevices.enumerateDevices().then(ds => {
 | 现象 | 处理 |
 | --- | --- |
 | MSI 报 setup program did not finish | 确认管理员安装；查看 `%TEMP%\picoo-camera-install.log` 搜索 `RegisterVcamOnInstall` / `WixQuietExec`；若文件已复制到 Program Files，按 §0 手动运行安装目录中的 `picoo-desktop --register-vcam --no-wait` |
-| 列表有 Picoo Camera 但仍显示 Disconnected 占位 | 确认 desktop Streaming；运行安装目录的 `picoo-vcam-ring-reader.exe`，应附着到 `%ProgramData%\Picoo Camera\frame-ring-*.bin` 且 `seq` 持续递增；用 `icacls "$env:ProgramData\Picoo Camera"` 确认 `LOCAL SERVICE` 与 `Users` 有继承的读写权限；否则 repair/重装当前 MSI |
+| 列表有 Picoo Camera 但仍显示 Disconnected 占位 | 确认 desktop Streaming；运行安装目录的 `picoo-vcam-ring-reader.exe`，应附着到 `%ProgramData%\Picoo Camera\frame-ring-*.bin` 且 `seq` 持续递增；用 `icacls "$env:ProgramData\Picoo Camera"` 确认 `LOCAL SERVICE` 与 `Users` 有继承的读写权限，且目录为 Medium integrity；桌面若报 `拒绝访问 (os error 5)`，用「安装或修复」或重装 MSI 后重启 Picoo Camera |
 | 只有 Integrated Camera | 重启应用；检查 MSI 安装；系统相机是否可见 Picoo |
 | Zoom 报摄像头被占用 | 关闭 Windows 相机 App 与其他占用 VCam 的程序 |
 | Teams 缓存旧设备 | 退出 Teams → `%appdata%\Microsoft\Teams` 清缓存（可选）→ 重登 |

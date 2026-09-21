@@ -289,6 +289,7 @@ impl PicooDesktopApp {
                         Ok(status) => {
                             this.vcam_status = status;
                             this.runtime.set_virtual_camera_status(status);
+                            let _ = this.runtime.retry_virtual_camera_output();
                             let message = if status == VirtualCameraStatus::Active {
                                 "虚拟摄像头已修复并可枚举。"
                             } else {

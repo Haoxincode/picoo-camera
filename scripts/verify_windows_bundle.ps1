@@ -258,7 +258,7 @@ if ($SharedRingAclObject -ne 'PicooFrameDataFolder' -or $SharedRingAclTable -ne 
 if ($SharedRingComponentDirectory -ne 'PicooFrameDataFolder' -or $SharedRingComponentKeyPath) {
     Write-Error "SharedRingDirectory must use PicooFrameDataFolder itself as the MSI component key path"
 }
-foreach ($requiredAce in @(';;;LS)', ';;;BU)')) {
+foreach ($requiredAce in @('M;;;LS)', 'M;;;BU)', 'S:P(ML;OICI;NW;;;ME)')) {
     if (-not $SharedRingAclSddl.Contains($requiredAce)) {
         Write-Error "SharedRingDirectoryAcl is missing required ACE '$requiredAce': $SharedRingAclSddl"
     }

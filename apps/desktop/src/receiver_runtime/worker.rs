@@ -50,6 +50,7 @@ pub(crate) enum ReceiverCommand {
     ReplaceTrustedIdentityHistory(u64, oneshot::Sender<Result<usize, ReceiverError>>),
     DismissTrustedIdentityReplacement(u64, oneshot::Sender<Result<bool, ReceiverError>>),
     ClearTrustedDevices(oneshot::Sender<Result<usize, ReceiverError>>),
+    RetryVirtualCameraOutput(oneshot::Sender<Result<(), ReceiverError>>),
     Shutdown,
 }
 
@@ -70,7 +71,8 @@ impl ReceiverCommand {
             | Self::StartRecording(_, _, response)
             | Self::StopRecording(_, response)
             | Self::ConfirmPairing(response)
-            | Self::RejectPairing(response) => {
+            | Self::RejectPairing(response)
+            | Self::RetryVirtualCameraOutput(response) => {
                 let _ = response.send(Err(error));
             }
             Self::RemoveTrustedDevice(_, response)
@@ -190,6 +192,11 @@ impl ReceiverRuntimeHandle {
 
     pub fn set_virtual_camera_status(&self, status: crate::model::VirtualCameraStatus) {
         self.update_settings(|settings| settings.virtual_camera_status = Some(status));
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn retry_virtual_camera_output(&self) -> ReceiverReply<()> {
+        self.request(ReceiverCommand::RetryVirtualCameraOutput)
     }
 
     pub fn disconnect(&self) -> ReceiverReply<()> {
@@ -350,6 +357,9 @@ fn apply_receiver_command(
                 runtime.disconnect();
             }
             let _ = response.send(result);
+        }
+        ReceiverCommand::RetryVirtualCameraOutput(response) => {
+            let _ = response.send(runtime.retry_virtual_camera_output());
         }
         ReceiverCommand::Shutdown => return RuntimeCommandOutcome::Shutdown,
     }
