@@ -55,10 +55,9 @@ directories = "6.0"
 auto-launch = "0.6"
 netdev = { version = "0.46.3", default-features = false }
 
-# GPUI Kit facade — one compatible crates.io stack. 0.6.6 is the latest
-# published release and includes the current GPUI snapshot.
+# GPUI Kit facade — one compatible crates.io stack. 0.6.1 includes #2940, so
 # the desktop build does not pull the unused reqwest/AWS-LC/CMake chain.
-gpui-kit = { version = "0.6.6", default-features = false, features = ["component", "assets"] }
+gpui-kit = { version = "0.6.1", default-features = false, features = ["component", "assets"] }
 
 picoo-protocol = { path = "crates/picoo-protocol" }
 picoo-packet = { path = "crates/picoo-packet" }

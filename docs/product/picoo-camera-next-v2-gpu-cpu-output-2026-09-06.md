@@ -535,7 +535,7 @@ reset(new_decoder_generation)
 
 ### 14.2 窄范围 GPUI 补丁
 
-以当前锁定 `gpui-pre 0.3.6` 包族为起点维护一致版本的补丁；公共视频 surface/scene primitive、Windows renderer 和 Apple renderer 必须一起核对。不要只改 `gpui-kit` 的版本约束，实际 Cargo.lock 和类型 identity 才决定链接的实现。[R16][R17]
+以当前锁定 `gpui-pre 0.3.3` 包族为起点维护一致版本的补丁；公共视频 surface/scene primitive、Windows renderer 和 Apple renderer 必须一起核对。不要只改 `gpui-kit` 的版本约束，实际 Cargo.lock 和类型 identity 才决定链接的实现。[R16][R17]
 
 对应上游 Surface 只实现 Apple buffer；Windows 用 DirectXRenderer，Apple 已有 texture cache，但其特定表面格式/色彩约束需扩展。[U01][U02][U03] 新增正式的视频 surface primitive，覆盖 texture source、source rect、transform、color、clip 和完成资源 lease。
 

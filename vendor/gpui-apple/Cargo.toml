@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "gpui-pre-apple"
-version = "0.3.6"
+version = "0.3.3"
 build = "build.rs"
 publish = true
 autolib = false
@@ -42,7 +42,7 @@ name = "gpui_apple"
 path = "src/gpui_apple.rs"
 
 [dependencies.gpui]
-version = "=0.3.6"
+version = "=0.3.3"
 default-features = false
 package = "gpui-pre"
 
@@ -56,7 +56,7 @@ version = "0.1"
 version = "=0.26.0"
 
 [target.'cfg(target_os = "macos")'.dependencies.collections]
-version = "=0.3.6"
+version = "=0.3.3"
 package = "gpui-pre-collections"
 
 [target.'cfg(target_os = "macos")'.dependencies.core-foundation]
