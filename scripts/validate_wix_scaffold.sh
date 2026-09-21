@@ -95,10 +95,10 @@ need "$WXS" 'Id="SharedRingDirectory"'
 need "$WXS" 'Guid="A7C4E2F1-8B3D-4C6A-9E5F-1D2C3B4A5E76"'
 need "$WXS" 'Id="PicooFrameDataFolder" Name="Picoo Camera"'
 need "$WXS" 'Id="SharedRingDirectoryAcl"'
-need "$WXS" 'M;;;LS)'
-need "$WXS" 'M;;;BU)'
+need "$WXS" '0x1301BF;;;LS)'
+need "$WXS" '0x1301BF;;;BU)'
 need "$WXS" 'S:P(ML;OICI;NW;;;ME)'
-need "$WXS" 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;CO)(A;OICI;M;;;LS)(A;OICI;M;;;BU)S:P(ML;OICI;NW;;;ME)'
+need "$WXS" 'D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;CO)(A;OICI;0x1301BF;;;LS)(A;OICI;0x1301BF;;;BU)S:P(ML;OICI;NW;;;ME)'
 need "$VCAM_RS" 'provision_windows_shared_ring_directory'
 # COM registration is declarative; self-registration is intentionally absent.
 for forbidden in RegisterVcamDll RegisterVcamComDll regsvr32.exe DllRegisterServer; do

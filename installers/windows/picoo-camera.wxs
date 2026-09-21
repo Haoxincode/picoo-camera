@@ -176,7 +176,7 @@
                integrity, and a Medium Receiver then gets ACCESS_DENIED on the ring. -->
           <PermissionEx
               Id="SharedRingDirectoryAcl"
-              Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;CO)(A;OICI;M;;;LS)(A;OICI;M;;;BU)S:P(ML;OICI;NW;;;ME)" />
+              Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;CO)(A;OICI;0x1301BF;;;LS)(A;OICI;0x1301BF;;;BU)S:P(ML;OICI;NW;;;ME)" />
         </CreateFolder>
       </Component>
       <!-- REQ-PICOO-VCAM-004: stable QUIC ingress rule. -->

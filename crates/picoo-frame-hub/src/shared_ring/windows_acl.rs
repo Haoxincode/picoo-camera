@@ -10,9 +10,10 @@ pub const WINDOWS_SHARED_RING_DIRECTORY: &str = "Picoo Camera";
 /// interactive Receiver then gets `ERROR_ACCESS_DENIED` (5) on the ring file
 /// even when Builtin Users is present in the DACL. The SACL `ML;...;ME` label
 /// keeps the directory at Medium so Users and Local Service can map it.
-/// Modify (`M`) includes DELETE so a later generation can replace a stale file.
+/// `0x1301BF` is FILE_GENERIC_READ|WRITE|EXECUTE plus DELETE (icacls Modify).
+/// SDDL has no `M` rights alias; that string fails ConvertStringSecurityDescriptor.
 pub const WINDOWS_SHARED_RING_DIRECTORY_SDDL: &str =
-    "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;CO)(A;OICI;M;;;LS)(A;OICI;M;;;BU)S:P(ML;OICI;NW;;;ME)";
+    "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;CO)(A;OICI;0x1301BF;;;LS)(A;OICI;0x1301BF;;;BU)S:P(ML;OICI;NW;;;ME)";
 
 #[cfg(test)]
 mod tests {
@@ -20,8 +21,12 @@ mod tests {
 
     #[test]
     fn sddl_admits_local_service_users_and_medium_integrity() {
-        assert!(WINDOWS_SHARED_RING_DIRECTORY_SDDL.contains("M;;;LS)"));
-        assert!(WINDOWS_SHARED_RING_DIRECTORY_SDDL.contains("M;;;BU)"));
+        assert!(WINDOWS_SHARED_RING_DIRECTORY_SDDL.contains("0x1301BF;;;LS)"));
+        assert!(WINDOWS_SHARED_RING_DIRECTORY_SDDL.contains("0x1301BF;;;BU)"));
+        assert!(
+            !WINDOWS_SHARED_RING_DIRECTORY_SDDL.contains("M;;;"),
+            "icacls Modify alias M is not valid SDDL"
+        );
         assert!(WINDOWS_SHARED_RING_DIRECTORY_SDDL.contains("S:P(ML;OICI;NW;;;ME)"));
     }
 
