@@ -219,6 +219,7 @@ impl PicooDesktopApp {
                                 crate::tray::note_tray_cleared();
                                 cx.quit();
                             } else if outcome.restore_window {
+                                crate::tray::force_show_product_window();
                                 // Defer activate out of this entity update to avoid
                                 // nested App/Entity RefCell borrows during pump.
                                 cx.spawn(async move |_, cx| {

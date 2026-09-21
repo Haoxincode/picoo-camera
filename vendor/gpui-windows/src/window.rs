@@ -468,7 +468,7 @@ impl WindowsWindow {
                 .unwrap_or(""),
         );
 
-        let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+        let (mut dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WINDOW_STYLE(0x0))
         } else {
             let mut dwstyle = WS_SYSMENU;
@@ -489,6 +489,12 @@ impl WindowsWindow {
 
             (dwexstyle, dwstyle)
         };
+        // CreateWindowExW otherwise starts hidden. SetWindowPlacement can keep
+        // SW_HIDE if GetWindowPlacement still reports it, leaving a process
+        // with no taskbar button.
+        if params.show {
+            dwstyle |= WS_VISIBLE;
+        }
         if !disable_direct_composition {
             dwexstyle |= WS_EX_NOREDIRECTIONBITMAP;
         }

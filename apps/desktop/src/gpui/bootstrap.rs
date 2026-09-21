@@ -75,6 +75,15 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     // GPUI's Windows platform calls OleInitialize (STA). It must own the UI
     // thread apartment before ReceiverRuntime creates the Media Foundation
     // decoder; otherwise an earlier MTA init makes platform construction panic.
+    //
+    // DirectComposition + WS_EX_NOREDIRECTIONBITMAP can leave a "shown" HWND
+    // with no DWM framebuffer, so Task Manager lists picoo-desktop.exe and the
+    // user still sees no window. Disable it before Application constructs the
+    // Windows platform (the env var is read once in WindowsPlatform::new).
+    #[cfg(target_os = "windows")]
+    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
+        std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
+    }
     let app = gpui_kit::application().with_assets(PicooAssets);
     let vcam_status = detect_vcam_status();
     let startup = match ReceiverRuntimeHandle::start_from_prefs(prefs.clone(), vcam_status) {
@@ -106,6 +115,8 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                     title: Some("Picoo Camera".into()),
                     ..TitleBar::title_bar_options()
                 }),
+                show: true,
+                focus: true,
                 ..TitleBar::window_options()
             },
             move |window, cx| {
@@ -128,11 +139,6 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                             #[cfg(target_os = "macos")]
                             this.refresh_vcam_status(cx);
                         });
-                        #[cfg(all(windows, feature = "windows-vcam"))]
-                        {
-                            let status = view.read(cx).runtime.snapshot().status;
-                            crate::tray::ensure_tray_icon(&crate::tray::tip_for_status(status));
-                        }
                         // REQ-PICOO-UI-008: Windows closes to tray when enabled; macOS
                         // keeps the app in Dock/background without a fake tray icon.
                         let tray_view = view.clone();
@@ -167,6 +173,13 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                 };
                 window.set_window_title("Picoo Camera");
                 window.activate_window();
+                #[cfg(all(windows, feature = "windows-vcam"))]
+                {
+                    crate::tray::force_show_product_window();
+                    crate::tray::ensure_tray_icon(&crate::tray::tip_for_status(
+                        picoo_session::ReceiverStatus::Discovering,
+                    ));
+                }
                 cx.new(|cx| Root::new(content, window, cx).bg(cx.theme().background))
             },
         )
@@ -203,6 +216,17 @@ mod tests {
         assert!(
             platform < receiver,
             "Windows OLE/STA must be initialized before Media Foundation"
+        );
+        let disable_dcomp = body
+            .find("GPUI_DISABLE_DIRECT_COMPOSITION")
+            .expect("Windows DirectComposition disable");
+        assert!(
+            disable_dcomp < platform,
+            "GPUI_DISABLE_DIRECT_COMPOSITION must be set before WindowsPlatform::new"
+        );
+        assert!(
+            body.contains("show: true"),
+            "Windows CreateWindowExW must request a visible product window"
         );
     }
 

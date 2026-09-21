@@ -70,13 +70,16 @@ fn startup_error_message(error: &str) -> String {
 }
 
 fn activate_running_instance() -> bool {
-    let hwnd = unsafe { FindWindowW(None, w!("Picoo Camera")) };
-    let Ok(hwnd) = hwnd else {
+    // GPUI registers class "Zed::Window". Title can still be empty if the
+    // custom TitleBar has not called SetWindowTextW yet. Class-only is last
+    // so a running Zed editor is not activated instead of Picoo Camera.
+    let hwnd = unsafe { FindWindowW(w!("Zed::Window"), w!("Picoo Camera")) }
+        .ok()
+        .or_else(|| unsafe { FindWindowW(None, w!("Picoo Camera")) }.ok())
+        .or_else(|| unsafe { FindWindowW(w!("Zed::Window"), None) }.ok());
+    let Some(hwnd) = hwnd.filter(|hwnd| !hwnd.is_invalid()) else {
         return false;
     };
-    if hwnd.is_invalid() {
-        return false;
-    }
     unsafe {
         let _ = ShowWindow(hwnd, SW_RESTORE);
         let _ = ShowWindow(hwnd, SW_SHOW);

@@ -1,9 +1,11 @@
 //! Minimize-to-tray close policy — REQ-PICOO-UI-008 / PRD §16.
 //!
 //! GPUI wires [`CloseOutcome`] via `Window::on_window_should_close`. On Windows,
-//! a message-only tray host HWND backs `Shell_NotifyIconW` + Show/Quit menu
-//! (with FindWindowW("Picoo Camera") as fallback). Linux CI still records
-//! ADD/MODIFY/DELETE intent without calling Shell APIs.
+//! a hidden overlapped tray-host HWND backs `Shell_NotifyIconW` + Show/Quit
+//! menu. A message-only (`HWND_MESSAGE`) host is not used: Explorer often
+//! drops that notify icon, leaving a running process with no window and no
+//! tray. Linux CI still records ADD/MODIFY/DELETE intent without calling Shell
+//! APIs.
 
 #![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 
@@ -197,16 +199,10 @@ impl NotifyIconController {
         }
     }
 
-    /// Resolve HWND: message-only tray host (preferred), else FindWindowW.
+    /// Prefer the visible product window, then the dedicated tray-host HWND.
     #[cfg(all(windows, feature = "windows-vcam"))]
     fn resolve_hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
-        use windows::core::w;
-        use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
-
-        if let Some(host) = tray_message_hwnd() {
-            return Some(host);
-        }
-        unsafe { FindWindowW(None, w!("Picoo Camera")).ok() }.filter(|h| !h.is_invalid())
+        product_window_hwnd().or_else(tray_host_hwnd)
     }
 
     #[cfg(all(windows, feature = "windows-vcam"))]
@@ -221,7 +217,7 @@ impl NotifyIconController {
             tracing::debug!(
                 target: "picoo_tray",
                 ?op,
-                "Shell_NotifyIconW deferred — no HWND (tray host / FindWindowW)"
+                "Shell_NotifyIconW deferred — no HWND (product window / tray host)"
             );
             return;
         };
@@ -239,9 +235,9 @@ impl NotifyIconController {
                     tracing::warn!(
                         target: "picoo_tray",
                         %error,
-                        "embedded tray icon could not be loaded"
+                        "embedded tray icon could not be loaded; adding notify icon without NIF_ICON"
                     );
-                    return;
+                    None
                 }
             }
         };
@@ -308,27 +304,78 @@ fn load_tray_icon() -> windows::core::Result<windows::Win32::UI::WindowsAndMessa
     use windows::Win32::Foundation::HINSTANCE;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Controls::{LoadIconMetric, LIM_SMALL};
+    use windows::Win32::UI::WindowsAndMessaging::{LoadIconW, IDI_APPLICATION};
 
     let module = unsafe { GetModuleHandleW(None)? };
     let instance = HINSTANCE(module.0);
-    unsafe {
-        LoadIconMetric(
-            Some(instance),
-            PCWSTR(TRAY_ICON_RESOURCE_ID as *const u16),
-            LIM_SMALL,
-        )
-    }
+    let resource = PCWSTR(TRAY_ICON_RESOURCE_ID as *const u16);
+    unsafe { LoadIconMetric(Some(instance), resource, LIM_SMALL) }
+        .or_else(|_| unsafe { LoadIconW(Some(instance), resource) })
+        .or_else(|_| unsafe { LoadIconW(None, IDI_APPLICATION) })
 }
 
 #[cfg(all(windows, feature = "windows-vcam"))]
 static TRAY_HOST_HWND: Mutex<Option<isize>> = Mutex::new(None);
 
 #[cfg(all(windows, feature = "windows-vcam"))]
-fn tray_message_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+fn product_window_hwnd() -> Option<windows::Win32::Foundation::HWND> {
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+
+    // GPUI registers class "Zed::Window". Prefer the product title so a
+    // running Zed editor is not restored; class-only is last because the
+    // custom TitleBar can leave the native caption empty.
+    unsafe { FindWindowW(w!("Zed::Window"), w!("Picoo Camera")).ok() }
+        .filter(|hwnd| !hwnd.is_invalid())
+        .or_else(|| {
+            unsafe { FindWindowW(None, w!("Picoo Camera")).ok() }.filter(|hwnd| !hwnd.is_invalid())
+        })
+        .or_else(|| {
+            unsafe { FindWindowW(w!("Zed::Window"), None).ok() }.filter(|hwnd| !hwnd.is_invalid())
+        })
+}
+
+/// Show the GPUI product window. CreateWindowExW starts hidden; this is the
+/// restore path when placement still reports SW_HIDE or DWM has no pixels.
+#[cfg(all(windows, feature = "windows-vcam"))]
+pub fn force_show_product_window() {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOP, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_SHOWWINDOW, SW_RESTORE, SW_SHOW, SW_SHOWNORMAL,
+    };
+
+    let Some(hwnd) = product_window_hwnd() else {
+        tracing::warn!(
+            target: "picoo_tray",
+            "force_show_product_window: GPUI HWND not found"
+        );
+        return;
+    };
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = ShowWindow(hwnd, SW_SHOW);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+    }
+}
+
+#[cfg(all(windows, feature = "windows-vcam"))]
+fn tray_host_hwnd() -> Option<windows::Win32::Foundation::HWND> {
     use windows::core::w;
     use windows::Win32::Foundation::{GetLastError, HWND};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, RegisterClassW, HWND_MESSAGE, WNDCLASSW,
+        CreateWindowExW, RegisterClassW, ShowWindow, SW_HIDE, WNDCLASSW, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_POPUP,
     };
 
     if let Ok(guard) = TRAY_HOST_HWND.lock() {
@@ -353,28 +400,33 @@ fn tray_message_hwnd() -> Option<windows::Win32::Foundation::HWND> {
         }
     }
 
+    // Hidden overlapped popup — Explorer accepts this as a notify-icon owner.
+    // HWND_MESSAGE hosts often get NIM_ADD success with no visible tray icon.
     let hwnd = unsafe {
         CreateWindowExW(
-            Default::default(),
+            WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
             class_name,
             w!("Picoo Tray Host"),
-            Default::default(),
+            WS_POPUP,
             0,
             0,
             0,
             0,
-            Some(HWND_MESSAGE),
+            None,
             None,
             None,
             None,
         )
     };
     let Ok(hwnd) = hwnd else {
-        tracing::warn!(target: "picoo_tray", "CreateWindowExW HWND_MESSAGE failed");
+        tracing::warn!(target: "picoo_tray", "CreateWindowExW tray host failed");
         return None;
     };
     if hwnd.is_invalid() {
         return None;
+    }
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_HIDE);
     }
     if let Ok(mut guard) = TRAY_HOST_HWND.lock() {
         *guard = Some(hwnd.0 as isize);
@@ -454,7 +506,7 @@ pub fn pump_win32_tray_messages() {
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
     };
-    let Some(hwnd) = tray_message_hwnd() else {
+    let Some(hwnd) = tray_host_hwnd() else {
         return;
     };
     unsafe {
