@@ -164,7 +164,11 @@ mod tests {
         let start = source
             .find("pub fn run_gpui_app()")
             .expect("run_gpui_app source");
-        let body = &source[start..];
+        let end = source[start..]
+            .find("#[cfg(test)]")
+            .map(|offset| start + offset)
+            .unwrap_or(source.len());
+        let body = &source[start..end];
         let platform = body
             .find("let app = gpui_kit::application()")
             .expect("GPUI platform initialization");
@@ -186,7 +190,7 @@ mod tests {
         );
         assert!(
             !body.contains("start_from_prefs"),
-            "Receiver factory must not block the open_window callback"
+            "Receiver startup factory must not block the open_window callback"
         );
     }
 
