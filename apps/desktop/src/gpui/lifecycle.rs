@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::*;
-use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use picoo_session::ReceiverStatus;
 
@@ -449,9 +448,7 @@ impl Render for PicooDesktopApp {
                 .size_full()
                 .min_w_0()
                 .min_h_0()
-                .when(cfg!(target_os = "macos"), |this| {
-                    this.child(self.render_window_title_bar(cx))
-                })
+                .child(self.render_window_title_bar(cx))
                 .child(workspace)
                 .into_any_element()
         };

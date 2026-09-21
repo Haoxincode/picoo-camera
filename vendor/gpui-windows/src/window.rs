@@ -556,10 +556,25 @@ impl WindowsWindow {
             retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
         if params.show {
             let mut placement = placement;
-            if !params.focus {
-                placement.showCmd = SW_SHOWNOACTIVATE.0 as u32;
-            }
+            // CreateWindowExW is called without WS_VISIBLE, so GetWindowPlacement
+            // often reports SW_HIDE. Leaving that in place keeps a running process
+            // with no taskbar button and no window.
+            placement.showCmd = if params.focus {
+                SW_SHOWNORMAL.0 as u32
+            } else {
+                SW_SHOWNOACTIVATE.0 as u32
+            };
             unsafe { SetWindowPlacement(hwnd, &placement)? };
+            unsafe {
+                let _ = ShowWindow(
+                    hwnd,
+                    if params.focus {
+                        SW_SHOW
+                    } else {
+                        SW_SHOWNOACTIVATE
+                    },
+                );
+            }
         } else {
             this.state.initial_placement.set(Some(WindowOpenStatus {
                 placement,

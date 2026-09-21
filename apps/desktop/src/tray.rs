@@ -466,6 +466,15 @@ pub fn pump_win32_tray_messages() {
     }
 }
 
+/// Show the notify icon as soon as the main window exists so a hidden
+/// first frame still has a restore target.
+#[cfg(all(windows, feature = "windows-vcam"))]
+pub fn ensure_tray_icon(tip: &str) {
+    if let Ok(mut icon) = NOTIFY_ICON.lock() {
+        icon.show(tip);
+    }
+}
+
 /// Hide-to-tray with a live status tip (preferred from GPUI close handler).
 #[cfg(any(test, all(windows, feature = "windows-vcam")))]
 pub fn note_hidden_to_tray_with_tip(tip: &str) {

@@ -102,6 +102,10 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                     size: PRODUCT_WINDOW_SIZE,
                 })),
                 window_min_size: Some(PRODUCT_WINDOW_SIZE),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Picoo Camera".into()),
+                    ..TitleBar::title_bar_options()
+                }),
                 ..TitleBar::window_options()
             },
             move |window, cx| {
@@ -124,6 +128,11 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                             #[cfg(target_os = "macos")]
                             this.refresh_vcam_status(cx);
                         });
+                        #[cfg(all(windows, feature = "windows-vcam"))]
+                        {
+                            let status = view.read(cx).runtime.snapshot().status;
+                            crate::tray::ensure_tray_icon(&crate::tray::tip_for_status(status));
+                        }
                         // REQ-PICOO-UI-008: Windows closes to tray when enabled; macOS
                         // keeps the app in Dock/background without a fake tray icon.
                         let tray_view = view.clone();
@@ -156,6 +165,8 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                         })
                         .into(),
                 };
+                window.set_window_title("Picoo Camera");
+                window.activate_window();
                 cx.new(|cx| Root::new(content, window, cx).bg(cx.theme().background))
             },
         )
