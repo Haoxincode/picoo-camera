@@ -116,6 +116,7 @@ pub(crate) fn append_log(message: &str) {
     }
     if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(file, "{:?} {message}", std::time::SystemTime::now());
+        let _ = file.flush();
     }
 }
 

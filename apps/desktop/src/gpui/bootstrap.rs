@@ -75,29 +75,14 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
     // GPUI's Windows platform calls OleInitialize (STA). It must own the UI
     // thread apartment before ReceiverRuntime creates the Media Foundation
     // decoder; otherwise an earlier MTA init makes platform construction panic.
-    //
-    // DirectComposition + WS_EX_NOREDIRECTIONBITMAP can leave a "shown" HWND
-    // with no DWM framebuffer, so Task Manager lists picoo-desktop.exe and the
-    // user still sees no window. Disable it before Application constructs the
-    // Windows platform (the env var is read once in WindowsPlatform::new).
-    #[cfg(target_os = "windows")]
-    if std::env::var_os("GPUI_DISABLE_DIRECT_COMPOSITION").is_none() {
-        std::env::set_var("GPUI_DISABLE_DIRECT_COMPOSITION", "1");
-    }
+    // Open the product window before starting the Receiver: a 0.1.624 hang in
+    // start_from_prefs left picoo-desktop running with UDP 4433 and no HWND.
     #[cfg(all(windows, feature = "gpui-ui"))]
     crate::windows_startup::append_log("run_gpui_app: constructing GPUI application");
     let app = gpui_kit::application().with_assets(PicooAssets);
     let vcam_status = detect_vcam_status();
-    let startup = match ReceiverRuntimeHandle::start_from_prefs(prefs.clone(), vcam_status) {
-        Ok(runtime) => DesktopStartup::Ready(Box::new(runtime)),
-        Err(error) => match PairingRecoveryKind::classify(&error) {
-            Some(kind) => {
-                tracing::error!(%error, "Receiver identity/trust startup failed closed");
-                DesktopStartup::PairingRecovery(kind)
-            }
-            None => return Err(error),
-        },
-    };
+    #[cfg(all(windows, feature = "gpui-ui"))]
+    crate::windows_startup::append_log("run_gpui_app: vcam probe finished; entering app.run");
 
     let prefs_for_window = prefs.clone();
     app.run(move |cx| {
@@ -123,6 +108,35 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
             },
             move |window, cx| {
                 let window_handle = window.window_handle();
+                window.set_window_title("Picoo Camera");
+                window.activate_window();
+                #[cfg(all(windows, feature = "windows-vcam"))]
+                {
+                    crate::tray::force_show_product_window();
+                    crate::windows_startup::append_log(
+                        "run_gpui_app: product HWND created; starting receiver",
+                    );
+                }
+                let startup = match ReceiverRuntimeHandle::start_from_prefs(
+                    prefs_for_window.clone(),
+                    vcam_status,
+                ) {
+                    Ok(runtime) => DesktopStartup::Ready(Box::new(runtime)),
+                    Err(error) => match PairingRecoveryKind::classify(&error) {
+                        Some(kind) => {
+                            tracing::error!(%error, "Receiver identity/trust startup failed closed");
+                            DesktopStartup::PairingRecovery(kind)
+                        }
+                        None => {
+                            #[cfg(all(windows, feature = "gpui-ui"))]
+                            crate::windows_startup::report_error(&error);
+                            cx.quit();
+                            DesktopStartup::PairingRecovery(PairingRecoveryKind::Identity)
+                        }
+                    },
+                };
+                #[cfg(all(windows, feature = "gpui-ui"))]
+                crate::windows_startup::append_log("run_gpui_app: receiver runtime started");
                 let content: AnyView = match startup {
                     DesktopStartup::Ready(runtime) => {
                         let view = cx.new(|cx| {
@@ -173,8 +187,6 @@ pub fn run_gpui_app() -> Result<(), ReceiverError> {
                         })
                         .into(),
                 };
-                window.set_window_title("Picoo Camera");
-                window.activate_window();
                 #[cfg(all(windows, feature = "windows-vcam"))]
                 {
                     crate::tray::force_show_product_window();
@@ -222,12 +234,10 @@ mod tests {
             platform < receiver,
             "Windows OLE/STA must be initialized before Media Foundation"
         );
-        let disable_dcomp = body
-            .find("GPUI_DISABLE_DIRECT_COMPOSITION")
-            .expect("Windows DirectComposition disable");
+        let open_window = body.find("cx.open_window(").expect("open_window");
         assert!(
-            disable_dcomp < platform,
-            "GPUI_DISABLE_DIRECT_COMPOSITION must be set before WindowsPlatform::new"
+            open_window < receiver,
+            "product HWND must exist before ReceiverRuntime starts"
         );
         assert!(
             body.contains("show: true"),

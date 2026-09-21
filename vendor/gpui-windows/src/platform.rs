@@ -174,13 +174,11 @@ impl WindowsPlatform {
             .context("CreateWindowExW did not run correctly")?;
         let handle = result?;
 
-        // Picoo defaults to an HWND swap chain. DirectComposition plus
-        // WS_EX_NOREDIRECTIONBITMAP can leave a shown window with no DWM pixels.
-        let disable_direct_composition = match std::env::var(DISABLE_DIRECT_COMPOSITION) {
-            Ok(value) if value == "0" || value.eq_ignore_ascii_case("false") => false,
-            Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
-            _ => true,
-        };
+        // CreateSwapChainForHwnd during WM_NCCREATE can hang on Intel Xe.
+        // DirectComposition's composition swap chain does not bind the HWND
+        // at create time. Keep DComp on unless an operator explicitly disables it.
+        let disable_direct_composition = std::env::var(DISABLE_DIRECT_COMPOSITION)
+            .is_ok_and(|value| value == "true" || value == "1");
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
 
