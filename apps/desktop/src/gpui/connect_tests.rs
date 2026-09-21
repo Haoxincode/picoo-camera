@@ -1,4 +1,39 @@
+use picoo_protocol::control::{StreamConfig, VideoCodec};
+
+use super::connect::video_spec_label;
+
 const CONNECT_SOURCE: &str = include_str!("connect.rs");
+
+#[test]
+fn live_video_spec_follows_stream_config_codec() {
+    let mut config = StreamConfig {
+        codec: VideoCodec::Hevc as i32,
+        width: 1920,
+        height: 1080,
+        ..Default::default()
+    };
+    assert_eq!(video_spec_label(Some(&config)), "HEVC · 1920×1080");
+
+    config.codec = VideoCodec::Avc as i32;
+    config.width = 1280;
+    config.height = 720;
+    assert_eq!(video_spec_label(Some(&config)), "H.264 · 1280×720");
+
+    assert_eq!(video_spec_label(None), "—");
+}
+
+#[test]
+fn live_connection_details_do_not_hardcode_avc() {
+    let details = CONNECT_SOURCE
+        .lines()
+        .skip_while(|line| !line.contains("fn render_live("))
+        .take_while(|line| !line.contains("fn video_spec_label"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(details.contains("video_spec_label(snapshot.stream_config.as_ref())"));
+    assert!(!details.contains("H.264 · {}×{}"));
+}
 
 #[test]
 fn desktop_disconnect_is_bound_to_the_owner_command_without_a_dialog() {

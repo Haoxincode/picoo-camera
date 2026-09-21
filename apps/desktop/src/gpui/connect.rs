@@ -7,7 +7,7 @@ use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use picoo_discovery::DEFAULT_QUIC_PORT;
-use picoo_protocol::control::{camera_command, CameraCommand, Resolution};
+use picoo_protocol::control::{camera_command, CameraCommand, Resolution, StreamConfig, VideoCodec};
 use serde::Deserialize;
 
 use crate::model::VirtualCameraStatus;
@@ -499,11 +499,7 @@ impl PicooDesktopApp {
                     .map(|device| device.identity_prefix.clone())
             })
             .unwrap_or_else(|| "—".into());
-        let video_spec = snapshot
-            .stream_config
-            .as_ref()
-            .map(|config| format!("H.264 · {}×{}", config.width, config.height))
-            .unwrap_or_else(|| "H.264 · —".into());
+        let video_spec = video_spec_label(snapshot.stream_config.as_ref());
         let packet_loss_label = snapshot
             .receiver_stats
             .as_ref()
@@ -802,4 +798,17 @@ pub(super) fn endpoint_label(snapshot: &ReceiverSnapshot) -> String {
         return "—".into();
     }
     format!("{}:{DEFAULT_QUIC_PORT}", snapshot.advertise_host)
+}
+
+/// Live 连接详情中的真实视频规格（REQ-PICOO-UI-0001 / AC-D-DEVICE-02）。
+pub(super) fn video_spec_label(config: Option<&StreamConfig>) -> String {
+    let Some(config) = config else {
+        return "—".into();
+    };
+    let codec = match VideoCodec::try_from(config.codec) {
+        Ok(VideoCodec::Avc) => "H.264",
+        Ok(VideoCodec::Hevc) => "HEVC",
+        _ => "未知编码",
+    };
+    format!("{codec} · {}×{}", config.width, config.height)
 }
