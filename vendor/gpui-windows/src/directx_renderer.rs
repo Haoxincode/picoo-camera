@@ -420,7 +420,7 @@ impl DirectXRenderer {
     ) -> Result<image::RgbaImage> {
         // A pending device-lost recovery (`skip_draws`) leaves the atlas holding
         // tile references from the previous device; drawing before the forced
-        // re-render rebuilds them panics in `DirectXAtlasState::texture`.
+        // re-render rebuilds them panics in `DirectXAtlasTextures::texture`.
         anyhow::ensure!(
             !self.skip_draws,
             "render_to_image unavailable while recovering from a lost device"
@@ -1338,7 +1338,7 @@ fn create_swap_chain(
         },
         BufferUsage: DXGI_USAGE_RENDER_TARGET_OUTPUT,
         BufferCount: BUFFER_COUNT as u32,
-        Scaling: DXGI_SCALING_STRETCH,
+            Scaling: DXGI_SCALING_STRETCH,
         SwapEffect: DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
         AlphaMode: DXGI_ALPHA_MODE_IGNORE,
         Flags: 0,

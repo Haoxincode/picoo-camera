@@ -1,6 +1,6 @@
 # GPUI Windows 原生图像接入
 
-关联 ARCH-PICOO-MEDIA-002、REQ-PICOO-NEXT-016 与 REQ-PICOO-GPU-008。发布包版本、校验和及许可证见 ORIGIN.json 和 LICENSE-APACHE。保持现有 GPUI 依赖版本；根 Cargo.toml 使用局部 patch。
+关联 ARCH-PICOO-MEDIA-002、REQ-PICOO-NEXT-016 与 REQ-PICOO-GPU-008。该 fork 基于 gpui-pre 0.3.6，保留 Picoo GPU surface 扩展；发布包版本、校验和及许可证见 ORIGIN.json 和 LICENSE-APACHE，根 Cargo.toml 使用局部 patch。
 
 GPUI 的 Windows surface 原先没有绘制实现。局部扩展接受外部 BGRA8 shader view，复用现有 PolychromeSprite shader、布局与裁剪。资源提供者负责跨设备导入、访问锁及 GPU 完成前的所有权；框架不依赖 Picoo，不引入第二套完成调度器，也不上传 CPU 像素。绘制结束解除 shader 资源绑定，忙碌或失败图像不阻止其他 UI 重绘。
 
