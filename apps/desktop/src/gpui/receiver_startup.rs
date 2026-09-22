@@ -6,6 +6,7 @@ use gpui_kit::*;
 use picoo_receiver::ReceiverError;
 #[cfg(all(windows, feature = "windows-vcam"))]
 use picoo_session::ReceiverStatus;
+use std::time::Duration;
 
 use super::blocking::spawn_os_thread;
 use super::identity_recovery::{IdentityRecoveryView, PairingRecoveryKind};
@@ -20,6 +21,8 @@ enum StartupState {
     Recovery,
     Failed(String),
 }
+
+const RECEIVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// REQ-PICOO-UI-002 / REQ-PICOO-UI-011: keep the GPUI message pump responsive
 /// while the Receiver performs platform and network initialization on its owner
@@ -72,6 +75,29 @@ impl ReceiverStartupView {
         #[cfg(all(windows, feature = "windows-vcam"))]
         self.start_tray_pump(cx);
 
+        // A platform call must never leave the product window in an endless
+        // loading state.  The worker remains isolated from GPUI; this timer
+        // only changes the visible state and leaves the user a quit path.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(RECEIVER_STARTUP_TIMEOUT)
+                .await;
+            let _ = this.update(cx, |startup, cx| {
+                if matches!(&startup.state, StartupState::Loading) {
+                    tracing::error!(
+                        timeout_seconds = RECEIVER_STARTUP_TIMEOUT.as_secs(),
+                        "receiver startup timed out"
+                    );
+                    startup.state = StartupState::Failed(format!(
+                        "无法启动 Picoo Camera：摄像头服务初始化超过 {} 秒。请检查 Windows 摄像头驱动、虚拟摄像头安装状态，然后重试。",
+                        RECEIVER_STARTUP_TIMEOUT.as_secs()
+                    ));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+
         let prefs = self.prefs.clone();
         let window_handle = self.window_handle;
         let startup = spawn_os_thread(cx, move || {
@@ -90,6 +116,9 @@ impl ReceiverStartupView {
                 Ok(runtime) => {
                     let _ = window_handle.update(cx, |_, window, cx| {
                         let _ = this.update(cx, |startup, cx| {
+                            if !matches!(&startup.state, StartupState::Loading) {
+                                return;
+                            }
                             let prefs = startup.prefs.clone();
                             let view = cx.new(|cx| {
                                 PicooDesktopApp::new(
@@ -135,6 +164,9 @@ impl ReceiverStartupView {
                 }
                 Err(error) => {
                     let _ = this.update(cx, |startup, cx| {
+                        if !matches!(&startup.state, StartupState::Loading) {
+                            return;
+                        }
                         if let Some(kind) = PairingRecoveryKind::classify(&error) {
                             tracing::error!(%error, "Receiver identity/trust startup failed closed");
                             startup.state = StartupState::Recovery;
