@@ -122,7 +122,7 @@ impl ReceiverStartupView {
                                 cx.spawn(async move |_, cx| {
                                     if let Ok(status) = probe.await {
                                         if let Some(view) = view_for_probe {
-                                            let _ = view.update(cx, |this, cx| {
+                                            view.update(cx, |this, cx| {
                                                 this.apply_detected_vcam_status(status, cx);
                                             });
                                         }
