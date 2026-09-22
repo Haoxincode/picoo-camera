@@ -168,20 +168,44 @@ struct TrustedSnapshotCache {
 
 impl ReceiverRuntime {
     pub fn start(config: ReceiverRuntimeConfig) -> Result<Self, ReceiverError> {
+        Self::start_with_output(config, true)
+    }
+
+    /// Start the desktop Receiver without making VCam output creation part of
+    /// the critical startup path. The owner thread can attach it immediately
+    /// after publishing its first snapshot through `retry_virtual_camera_output`.
+    pub(crate) fn start_without_output(
+        config: ReceiverRuntimeConfig,
+    ) -> Result<Self, ReceiverError> {
+        Self::start_with_output(config, false)
+    }
+
+    fn start_with_output(
+        config: ReceiverRuntimeConfig,
+        attach_output: bool,
+    ) -> Result<Self, ReceiverError> {
         let mut receiver = ReceiverSession::new()
             .with_identity(config.identity.clone())
             .with_loaded_trusted_store(config.trusted_store, &config.trusted_store_path);
 
         let shared_ring_name = config.shared_ring_name.clone();
-        let vcam_output_error = match receiver.attach_virtual_camera_output(&shared_ring_name) {
-            Ok(()) => None,
-            Err(err) => {
-                tracing::error!(
-                    output = %config.shared_ring_name,
-                    "virtual camera output unavailable — VCam will stay on placeholder: {err}"
-                );
-                Some(err.to_string())
+        let vcam_output_error = if attach_output {
+            match receiver.attach_virtual_camera_output(&shared_ring_name) {
+                Ok(()) => None,
+                Err(err) => {
+                    tracing::error!(
+                        output = %config.shared_ring_name,
+                        "virtual camera output unavailable — VCam will stay on placeholder: {err}"
+                    );
+                    Some(err.to_string())
+                }
             }
+        } else {
+            tracing::info!(
+                target: "picoo_startup",
+                "receiver startup phase: deferring virtual camera output"
+            );
+            None
         };
 
         let bind = receiver.listen(Endpoint {
@@ -250,9 +274,12 @@ impl ReceiverRuntime {
 
     #[cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
     pub fn from_prefs(prefs: &DesktopPreferences) -> Result<Self, ReceiverError> {
+        tracing::info!(target: "picoo_startup", "receiver startup phase: loading identity and trusted devices");
         let mut config = ReceiverRuntimeConfig::load()?;
+        tracing::info!(target: "picoo_startup", "receiver startup phase: starting transport and camera output");
         config.identity.set_display_name(prefs.display_name.clone());
-        let mut runtime = Self::start(config)?;
+        let mut runtime = Self::start_without_output(config)?;
+        tracing::info!(target: "picoo_startup", "receiver startup phase: applying desktop preferences");
         runtime
             .receiver
             .set_auto_accept_paired(prefs.auto_accept_paired);

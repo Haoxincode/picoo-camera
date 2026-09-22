@@ -124,14 +124,25 @@ impl ReceiverRuntimeHandle {
     ) -> Result<Self, ReceiverError> {
         let pending_settings = Arc::new(Mutex::new(PendingReceiverSettings::default()));
         let inner = CoreRuntimeHandle::start(move || {
+            tracing::info!(target: "picoo_startup", "receiver runtime initialization started");
             let mut runtime = ReceiverRuntime::from_prefs(&prefs)?;
             runtime.set_virtual_camera_status(virtual_camera);
+            tracing::info!(target: "picoo_startup", "receiver runtime initialization finished");
             Ok(runtime)
         })?;
-        Ok(Self {
+        let handle = Self {
             inner,
             pending_settings,
-        })
+        };
+        // Output creation is deliberately a normal owner-thread command. If
+        // a stale ring/VCam installation blocks or fails, the desktop UI has
+        // already reached Ready and can report/retry it without trapping the
+        // startup screen.
+        let (response, _result) = oneshot::channel();
+        let _ = handle
+            .inner
+            .submit(ReceiverCommand::RetryVirtualCameraOutput(response));
+        Ok(handle)
     }
 
     pub fn snapshot(&self) -> Arc<ReceiverSnapshot> {
