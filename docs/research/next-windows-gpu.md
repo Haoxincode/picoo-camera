@@ -84,3 +84,14 @@ WindowsDisplayReader 采用 GPUI 所用的实际 ID3D11Device，以官方 OpenSh
 采用`MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_SORTANDFILTER, NV12, AVC/HEVC)`。微软明确规定hardware MFT属于异步模型，因此直接实现`METransformNeedInput`/`METransformHaveOutput`事件驱动，不把同步MFT或系统inbox软件encoder列为候选。NeedInput可先于当前HaveOutput到达，作为后续输入额度有界保存，不能按请求/响应严格交替解释；产品仍在取得当前输出后才消费下一额度。AVC/HEVC官方encoder均要求先设output type再设input type；HEVC最小Windows 10符合产品基线。低延迟属性要求不因重排增加sample延迟并期望一入一出，本产品仍逐帧核对输出PTS、IDR和压缩语法，不能只信属性。类型协商后拒绝`MFT_INPUT_STREAM_HOLDS_BUFFERS`，调用方输出sample使用MFT声明的`cbSize`与`cbAlignment`。
 
 目标NV12纹理已经由Windows Video Processor在固定D3D11 device上完成。编码器从该纹理device建立DXGI manager并要求MFT声明D3D11 aware，随后用`MFCreateDXGISurfaceBuffer`包装输入；RenderedImage owner保留到对应输出取回，禁止CPU map/readback。硬件枚举、D3D manager与surface输入三项共同构成准入证据；缺任一项即明确不可用，不重选source adapter或改用软件。
+
+
+## Progressive 单帧与 rate-conversion caps（2026-09-22）
+
+关联 REQ-PICOO-GPU-006。Windows build 640 的 Intel Iris Xe 现场诊断显示解码 656 帧成功，但预览准备 460 次全部被 `stateless progressive processing` 检查拒绝，尚未提交任何显示 surface。
+
+微软 [D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_video_processor_rate_conversion_caps) 定义 PastFrames/FutureFrames 为最佳视频处理所需参考帧数量，属于帧率转换、去隔行和 inverse telecine 能力组；它们不是 progressive 单帧颜色/几何转换的最低输入数量。原先要求两者均为零的门禁混淆了两种契约。
+
+继续采用已有官方 D3D11/windows-rs 0.62.2，无新增依赖、平台最低版本或安装体积变化，不引入自研 shader 或 CPU 回退。枚举驱动全部能力组，优先较少 future/past 的组，但非零不拒绝；查询/创建错误仍传播。依据 [VideoProcessorSetStreamOutputRate](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11videocontext-videoprocessorsetstreamoutputrate)，显式使用 NORMAL、RepeatFrame=true，输入/输出声明同速，禁用插帧和自动画质处理。依据 [D3D11_VIDEO_PROCESSOR_STREAM](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_video_processor_stream)，每次只提供当前 progressive surface，PastFrames/FutureFrames=0，无时间队列；Blt 与完成事件成功才可交付。
+
+能力选择回归用合成的非零 caps，不宣称它们是现场驱动原始值。Windows CI 验证原生编译、选择逻辑和资源契约；实际 Intel 图像成功仍需现场确认，不能以 WARP 或诊断计数替代显卡像素验收。

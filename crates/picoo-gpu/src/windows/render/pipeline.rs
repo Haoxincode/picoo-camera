@@ -79,22 +79,74 @@ impl Pipeline {
         {
             return Err(super::unsupported("mirror"));
         }
-        for index in 0..caps.RateConversionCapsCount.min(32) {
+        let index = progressive_processor_index(caps.RateConversionCapsCount, |index| {
             let mut rate = D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS::default();
             enumerator
                 .GetVideoProcessorRateConversionCaps(index, &mut rate)
                 .map_err(super::platform)?;
-            if rate.PastFrames == 0 && rate.FutureFrames == 0 {
-                let processor = device
-                    .CreateVideoProcessor(&enumerator, index)
-                    .map_err(super::platform)?;
-                return Ok(Self {
-                    size,
-                    enumerator,
-                    processor,
-                });
-            }
-        }
-        Err(super::unsupported("stateless progressive processing"))
+            Ok(rate)
+        })?;
+        let processor = device
+            .CreateVideoProcessor(&enumerator, index)
+            .map_err(super::platform)?;
+        Ok(Self {
+            size,
+            enumerator,
+            processor,
+        })
+    }
+}
+
+// REQ-PICOO-GPU-006: reference counts describe OPTIMAL temporal processing,
+// not a minimum for progressive color/geometry conversion. Prefer the least
+// temporal capability, but admit nonzero counts. Each Blt still supplies only
+// the current progressive frame, with normal output rate and auto processing off.
+fn progressive_processor_index(
+    count: u32,
+    mut query: impl FnMut(u32) -> Result<D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS, RenderError>,
+) -> Result<u32, RenderError> {
+    let mut selected = None;
+    for index in 0..count {
+        let rate = query(index)?;
+        let preference = (rate.FutureFrames, rate.PastFrames, index);
+        selected = Some(selected.map_or(preference, |current| preference.min(current)));
+    }
+    selected
+        .map(|(_, _, index)| index)
+        .ok_or_else(|| super::unsupported("any rate-conversion processor"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn select(references: &[(u32, u32)]) -> Result<u32, RenderError> {
+        progressive_processor_index(references.len() as u32, |index| {
+            let (past, future) = references[index as usize];
+            Ok(D3D11_VIDEO_PROCESSOR_RATE_CONVERSION_CAPS {
+                PastFrames: past,
+                FutureFrames: future,
+                ..Default::default()
+            })
+        })
+    }
+
+    #[test]
+    fn progressive_conversion_accepts_groups_that_all_advertise_reference_frames() {
+        // Regression: build 640 rejected every frame on Intel Iris Xe before Blt.
+        // These are representative nonzero capabilities, not a hardware dump.
+        assert_eq!(select(&[(1, 0)]).unwrap(), 0);
+        assert_eq!(select(&[(2, 1), (1, 0), (4, 2)]).unwrap(), 1);
+        assert_eq!(select(&[(2, 1)]).unwrap(), 0);
+    }
+
+    #[test]
+    fn progressive_conversion_prefers_less_history_without_hiding_query_errors() {
+        assert_eq!(select(&[(2, 1), (0, 0), (0, 0)]).unwrap(), 1);
+        assert!(select(&[]).is_err());
+        assert!(matches!(
+            progressive_processor_index(1, |_| Err(RenderError::DeviceUnavailable)),
+            Err(RenderError::DeviceUnavailable)
+        ));
     }
 }

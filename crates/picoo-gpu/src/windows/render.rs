@@ -247,6 +247,13 @@ impl WindowsRenderer {
         );
         self.context
             .VideoProcessorSetStreamAutoProcessingMode(processor, 0, false);
+        self.context.VideoProcessorSetStreamOutputRate(
+            processor,
+            0,
+            D3D11_VIDEO_PROCESSOR_OUTPUT_RATE_NORMAL,
+            true,
+            None,
+        );
         self.context.VideoProcessorSetStreamColorSpace1(
             processor,
             0,
