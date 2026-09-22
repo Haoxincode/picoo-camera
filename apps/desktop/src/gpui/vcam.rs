@@ -128,6 +128,7 @@ fn pending_macos_vcam_display_status(
 impl PicooDesktopApp {
     /// Apply a background VCam probe without making detection part of the
     /// receiver startup critical path.
+    #[cfg(all(windows, feature = "windows-vcam"))]
     pub(super) fn apply_detected_vcam_status(
         &mut self,
         status: VirtualCameraStatus,
