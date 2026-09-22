@@ -10,9 +10,9 @@ use picoo_session::ReceiverStatus;
 use super::blocking::spawn_os_thread;
 use super::identity_recovery::{IdentityRecoveryView, PairingRecoveryKind};
 use super::PicooDesktopApp;
+use crate::model::VirtualCameraStatus;
 use crate::prefs::DesktopPreferences;
 use crate::receiver_runtime::ReceiverRuntimeHandle;
-use crate::vcam_status::detect_vcam_status;
 
 enum StartupState {
     Loading,
@@ -75,9 +75,10 @@ impl ReceiverStartupView {
         let prefs = self.prefs.clone();
         let window_handle = self.window_handle;
         let startup = spawn_os_thread(cx, move || {
-            let vcam_status = detect_vcam_status();
-            ReceiverRuntimeHandle::start_from_prefs(prefs, vcam_status)
-                .map(|runtime| (runtime, vcam_status))
+            // VCam enumeration is a best-effort status probe.  It may enter
+            // Media Foundation / COM code that waits for a device refresh, so
+            // it must not gate creation of the receiver UI or its quit path.
+            ReceiverRuntimeHandle::start_from_prefs(prefs, VirtualCameraStatus::Unknown)
         });
 
         cx.spawn(async move |this, cx| {
@@ -86,7 +87,7 @@ impl ReceiverStartupView {
                 Err(error) => Err(ReceiverError::Protocol(error)),
             };
             match result {
-                Ok((runtime, vcam_status)) => {
+                Ok(runtime) => {
                     let _ = window_handle.update(cx, |_, window, cx| {
                         let _ = this.update(cx, |startup, cx| {
                             let prefs = startup.prefs.clone();
@@ -94,7 +95,7 @@ impl ReceiverStartupView {
                                 PicooDesktopApp::new(
                                     runtime,
                                     prefs,
-                                    vcam_status,
+                                    VirtualCameraStatus::Unknown,
                                     window_handle,
                                     window,
                                     cx,
@@ -109,6 +110,26 @@ impl ReceiverStartupView {
                             startup.content = Some(view.into());
                             startup.state = StartupState::Ready;
                             cx.notify();
+
+                            // Refresh the non-critical VCam status after the
+                            // receiver is visible.  This task is independent
+                            // from the startup state and cannot strand the
+                            // loading/quit UI if Media Foundation is slow.
+                            #[cfg(all(windows, feature = "windows-vcam"))]
+                            {
+                                let probe = spawn_os_thread(cx, crate::vcam_status::detect_vcam_status);
+                                let view_for_probe = startup.desktop_view.clone();
+                                cx.spawn(async move |_, cx| {
+                                    if let Ok(status) = probe.await {
+                                        if let Some(view) = view_for_probe {
+                                            let _ = view.update(cx, |this, cx| {
+                                                this.apply_detected_vcam_status(status, cx);
+                                            });
+                                        }
+                                    }
+                                })
+                                .detach();
+                            }
                         });
                     });
                 }
@@ -193,6 +214,12 @@ impl Render for ReceiverStartupView {
                         .text_color(cx.theme().muted_foreground)
                         .child("正在初始化摄像头服务…"),
                 )
+                .child(
+                    Button::new("quit-receiver-startup-loading")
+                        .danger()
+                        .label("退出")
+                        .on_click(|_, _, cx| cx.quit()),
+                )
                 .into_any_element(),
             StartupState::Failed(error) => div()
                 .v_flex()
@@ -265,6 +292,12 @@ mod tests {
             .expect("render impl");
         let tests = source.find("#[cfg(test)]").expect("tests");
         assert!(source.contains("spawn_os_thread"));
+        assert!(
+            source.contains(
+                "ReceiverRuntimeHandle::start_from_prefs(prefs, VirtualCameraStatus::Unknown)"
+            ),
+            "VCam probing must not gate receiver UI startup"
+        );
         assert!(
             source[start..render].contains("start_from_prefs"),
             "Receiver factory belongs on the startup worker"
