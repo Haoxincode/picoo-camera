@@ -199,10 +199,16 @@ impl NotifyIconController {
         }
     }
 
-    /// Prefer the visible product window, then the dedicated tray-host HWND.
+    /// Always use the dedicated tray-host HWND when it is available.
+    ///
+    /// The Win32 callback message is handled by `tray_wnd_proc`, and the GPUI
+    /// window procedure does not forward `TRAY_CALLBACK_MSG` to that handler.
+    /// Binding the notify icon to the product HWND therefore makes the icon
+    /// visible but drops its Show/Quit messages.  Creating the tray host here
+    /// keeps the owner and the message pump on the same HWND.
     #[cfg(all(windows, feature = "windows-vcam"))]
     fn resolve_hwnd(&self) -> Option<windows::Win32::Foundation::HWND> {
-        product_window_hwnd().or_else(tray_host_hwnd)
+        tray_host_hwnd().or_else(product_window_hwnd)
     }
 
     #[cfg(all(windows, feature = "windows-vcam"))]
