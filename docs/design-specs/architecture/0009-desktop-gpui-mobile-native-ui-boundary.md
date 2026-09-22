@@ -81,6 +81,18 @@ struct DesktopAppState {
 - **虚拟摄像头页**：显示系统设备与平台输出状态（Windows Shared Frame Ring、macOS CMIO sink/source），提供平台正确的检测、安装、激活或修复入口，并管理无视频流时的占位画面。
 - **通用页**：只承载电脑名称与桌面生命周期偏好（关闭窗口后后台运行、登录时启动）；Windows 托盘与 macOS Dock/后台行为使用平台正确文案，不互相借用平台术语。桌面偏好 JSON 使用 `directories::ProjectDirs` 提供的标准配置目录；`PICOO_PREFS` 仅作为显式覆盖，标准目录不可用时不写入相对路径，也不读取旧路径。托盘库替换必须满足 GPUI 现有平台事件循环的线程亲和性；在 Windows/macOS 主线程事件循环边界完成验收前，不引入第二套 GUI 事件循环。
 - **帮助页诊断区**：承载日志级别与脱敏诊断导出，避免把面向故障排查的能力混入日常通用设置。
+
+预览诊断由桌面 Preview Pipeline 独立持有，不混入 Receiver 解码统计，也不将 GPUI 类型引入 Core。
+现有 `picoo-diagnostics` 使用 `serde` 与标准库有界元数据同步，足够表达 Picoo 特有的阶段证据；
+无需引入遥测服务、外部 metrics 注册表或另一套日志基础设施。固定阶段的累积计数属于一次
+Preview Pipeline 生命周期，最近事件带 pipeline generation 与单调时钟帧龄；源切换不把迟到的
+GPU 回调伪装成新代进展。单条最近原生错误上限 512 字符，禁止传入用户文本、路径、网络地址或
+视频数据。导出复制元数据快照，不读取 GPU 像素；锁内不执行 GPU/文件操作，不增加解码或渲染
+队列。Windows 通过应用已有 `Direct3DSurfaceSource::with_read` 边界观察纹理读取、busy、错误
+和绘制提交，保留既有 GPU lease 与完成机制，不向 vendor 注入产品诊断。macOS 未观察到的绘制
+阶段明确标记为不支持。绘制提交不证明 GPU 完成、像素正确或最终可见，解码计数也不能代替预览
+证据。诊断导出保留基础版本并单列存在的构建号，CLI 没有活动预览实例时不伪造零值预览报告。
+
 - **关于页**：在产品名下显示与 Windows 安装包相同的三字段产品版本。主次版本来自 workspace SemVer；编译环境提供 `PICOO_BUILD_NUMBER` 时用它替换补丁位，例如 workspace `0.1.1` 与构建号 `637` 显示为 `0.1.637`。
 
 桌面一级导航由 GPUI View 持有进程内展开/折叠状态。窗口采用贴边的单层工作区，不再叠加品牌图标、应用标题、外侧留白或包住 Sidebar 与主内容的第二层圆角边框；Sidebar 只拥有与主内容相邻的分割线。展开态 Sidebar 宽度为 `204px`，折叠态收敛为 `48px` 图标栏。宽度变化复用官方 Sidebar 的 `200ms + ease_in_out_cubic` 外层裁剪过渡：导航内容按目标宽度一次排版，工作区只对裁剪宽度插值，避免逐帧重排文案。“连接”必须保留在 Sidebar 导航列表并与其他导航项共享相同结构；主内容侧的折叠控制通过与首个“连接”导航行共用高度和顶部 inset，严格位于同一水平中心线，同时保持在 Sidebar 分割线右侧。Windows 不保留额外空标题行，主内容顶部工具行复用 `gpui_kit::component::TitleBar` 的拖拽和窗口按钮契约，最小化、最大化、关闭位于同一行最右侧；macOS 单独保留最上方交通灯与拖拽安全行，导航和主内容工具行位于其下方。两端都不重复展示相机图标或 `Picoo Camera` 文案。折叠控制遵循 `gpui_kit::component::SidebarToggleButton` 的紧凑几何和方向状态语义，图标使用 Reicon Filled `sidebar-left` / `sidebar-right`，应用层补充稳定 ID、中文 Tooltip 与无障碍名称。该状态只改变视图几何与标签可见性，不进入 `ReceiverRuntime`、协议状态或跨设备偏好；导航按钮在两种状态下保持相同的稳定 ID、页面 Action、选中态和无障碍语义。

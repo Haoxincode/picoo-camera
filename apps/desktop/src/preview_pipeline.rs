@@ -7,6 +7,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
+use picoo_diagnostics::{PreviewDiagnostics, PreviewStage};
 use picoo_receiver::ReceiverFrame as VideoFrame;
 
 #[cfg(target_os = "macos")]
@@ -27,12 +28,15 @@ struct PreviewRequest {
     generation: u64,
     frame: Arc<VideoFrame>,
     target_width: u32,
+    diagnostics: PreviewDiagnostics,
 }
 
 #[derive(Debug)]
 pub(crate) struct PreparedPreview {
     pub(crate) sequence: u64,
     pub(crate) surface: gpui_kit::SurfaceSource,
+    pub(crate) generation: u64,
+    pub(crate) diagnostics: PreviewDiagnostics,
 }
 
 // CoreVideo pixel buffers are immutable while crossing this hand-off: the worker
@@ -116,6 +120,7 @@ pub(crate) struct PreviewPipeline {
     last_submitted_width: u32,
     cadence: PreviewCadence,
     target_width: u32,
+    diagnostics: PreviewDiagnostics,
 }
 
 #[derive(Debug)]
@@ -174,7 +179,17 @@ impl PreviewPipeline {
             last_submitted_width: 0,
             cadence: PreviewCadence::new(PREVIEW_TARGET_FRAME_INTERVAL),
             target_width: PREVIEW_MAX_DETAIL_WIDTH,
+            diagnostics: PreviewDiagnostics::new(cfg!(windows)),
         }
+    }
+
+    pub(crate) fn diagnostics(&self) -> &PreviewDiagnostics {
+        &self.diagnostics
+    }
+
+    pub(crate) fn note_stage(&self, stage: PreviewStage) {
+        let generation = self.shared.0.lock().unwrap().generation;
+        self.diagnostics.record(stage, generation);
     }
 
     /// Use the physical window width as a conservative upper bound for the
@@ -210,9 +225,17 @@ impl PreviewPipeline {
             generation,
             frame: Arc::clone(frame),
             target_width: self.target_width,
+            diagnostics: self.diagnostics.clone(),
         };
         let (state, ready) = &*self.shared;
-        state.lock().unwrap().enqueue_latest(request);
+        let mut state = state.lock().unwrap();
+        if state.pending.is_some() {
+            self.diagnostics
+                .record(PreviewStage::PendingReplaced, generation);
+        }
+        state.enqueue_latest(request);
+        self.diagnostics.record(PreviewStage::Submitted, generation);
+        drop(state);
         ready.notify_one();
         true
     }
@@ -241,6 +264,7 @@ impl PreviewPipeline {
         }
         state.pending = None;
         state.completed = None;
+        self.diagnostics.set_generation(state.generation);
     }
 
     pub(crate) fn take_prepared(&mut self) -> Option<PreparedPreview> {
@@ -276,6 +300,7 @@ fn preview_worker(shared: Arc<(Mutex<WorkerState>, Condvar)>) {
         };
 
         let generation = request.generation;
+        let diagnostics = request.diagnostics.clone();
         if generation != active_generation {
             platform_resources = new_platform_preview_resources();
             active_generation = generation;
@@ -286,6 +311,7 @@ fn preview_worker(shared: Arc<(Mutex<WorkerState>, Condvar)>) {
             return;
         }
         if state.generation != generation {
+            diagnostics.record(PreviewStage::StaleCompletion, generation);
             platform_resources = new_platform_preview_resources();
             active_generation = state.generation;
             continue;
@@ -311,11 +337,23 @@ fn prepare_preview(
     platform_resources: &mut PlatformPreviewResources,
 ) -> Option<PreparedPreview> {
     let sequence = request.sequence;
-
-    let surface = platform_resources.prepare_surface(&request.frame, request.target_width)?;
+    request
+        .diagnostics
+        .record(PreviewStage::PrepareStarted, request.generation);
+    let surface = platform_resources.prepare_surface(
+        &request.frame,
+        request.target_width,
+        &request.diagnostics,
+        request.generation,
+    )?;
+    request
+        .diagnostics
+        .record(PreviewStage::PrepareSucceeded, request.generation);
     Some(PreparedPreview {
         sequence,
         surface: surface.into(),
+        generation: request.generation,
+        diagnostics: request.diagnostics,
     })
 }
 
@@ -324,6 +362,30 @@ mod tests {
     use super::*;
     use picoo_frame_hub::nv12_black;
     use std::time::Instant;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn prepared_surface_export_does_not_claim_a_draw() {
+        let request = request(1, 2, 2, 1280);
+        let diagnostics = request.diagnostics.clone();
+        let preview = prepare_preview(request, &mut new_platform_preview_resources()).unwrap();
+        let duplicate = PreparedPreview {
+            sequence: preview.sequence,
+            generation: preview.generation,
+            diagnostics: diagnostics.clone(),
+            surface: preview.surface.clone(),
+        };
+        let mut surface = crate::video_surface::VideoSurface::default();
+        assert!(surface.present(preview));
+        assert!(!surface.present(duplicate));
+        let json = serde_json::to_value(diagnostics.snapshot()).unwrap();
+        assert_eq!(json["stages"]["prepare_started"]["count"], 1);
+        assert_eq!(json["stages"]["prepare_succeeded"]["count"], 1);
+        assert_eq!(json["stages"]["surface_presented"]["count"], 1);
+        assert_eq!(json["stages"]["surface_rejected"]["count"], 1);
+        assert_eq!(json["stages"]["draw_submitted"]["count"], 0);
+        assert_eq!(json["draw_observation_supported"], false);
+    }
 
     #[test]
     fn preview_demand_survives_a_source_gap_and_is_consumed_once() {
@@ -409,6 +471,7 @@ mod tests {
             generation: 0,
             frame: Arc::new(frame),
             target_width,
+            diagnostics: PreviewDiagnostics::new(cfg!(windows)),
         }
     }
 
@@ -418,6 +481,8 @@ mod tests {
             PreparedPreview {
                 sequence,
                 surface: gpui_kit::Direct3DSurface::new(NoDrawFixture).into(),
+                generation: 0,
+                diagnostics: PreviewDiagnostics::new(true),
             }
         }
         #[cfg(not(windows))]

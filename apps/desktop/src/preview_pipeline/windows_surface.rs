@@ -1,5 +1,6 @@
 //! Native Windows preview uses the Decoder device, then GPUI's shared read seam.
 use gpui_kit::{size, DevicePixels, Direct3DSurface, Direct3DSurfaceSource, Size};
+use picoo_diagnostics::{PreviewDiagnostics, PreviewStage};
 use picoo_frame_hub::{NativeVideoFrame, Rotation};
 use picoo_gpu::{
     OutputColor, OutputFormat, RenderSpec, WindowsDisplayImage, WindowsDisplayReader,
@@ -23,15 +24,22 @@ impl PlatformPreviewResources {
         &mut self,
         frame: &NativeVideoFrame,
         target_width: u32,
+        diagnostics: &PreviewDiagnostics,
+        generation: u64,
     ) -> Option<Direct3DSurface> {
-        self.prepare(frame, target_width)
-            .map_err(|error| tracing::warn!(%error, "native Windows preview failed"))
+        self.prepare(frame, target_width, diagnostics, generation)
+            .map_err(|error| {
+                diagnostics.failure(PreviewStage::PrepareFailed, generation, &error.to_string());
+                tracing::warn!(%error, "native Windows preview failed");
+            })
             .ok()
     }
     fn prepare(
         &mut self,
         frame: &NativeVideoFrame,
         target_width: u32,
+        diagnostics: &PreviewDiagnostics,
+        generation: u64,
     ) -> Result<Direct3DSurface, picoo_gpu::RenderError> {
         let description = frame.description();
         let rect = description.visible_rect;
@@ -67,17 +75,25 @@ impl PlatformPreviewResources {
             });
         }
         let image = self.prepared.as_mut().unwrap().renderer.render(frame)?;
-        Ok(Direct3DSurface::new(Surface(self.reader.image(image)?)))
+        Ok(Direct3DSurface::new(Surface {
+            image: self.reader.image(image)?,
+            diagnostics: diagnostics.clone(),
+            generation,
+        }))
     }
 }
 
 #[derive(Debug)]
-struct Surface(WindowsDisplayImage);
+struct Surface {
+    image: WindowsDisplayImage,
+    diagnostics: PreviewDiagnostics,
+    generation: u64,
+}
 // SAFETY: WindowsDisplayImage owns the original output image and keyed access
 // through the existing bounded GPU completion mechanism, also on draw failure.
 unsafe impl Direct3DSurfaceSource for Surface {
     fn size(&self) -> Size<DevicePixels> {
-        let spec = self.0.spec();
+        let spec = self.image.spec();
         size(
             DevicePixels(spec.width as i32),
             DevicePixels(spec.height as i32),
@@ -88,10 +104,26 @@ unsafe impl Direct3DSurfaceSource for Surface {
         device: &ID3D11Device,
         read: &mut dyn FnMut(&ID3D11ShaderResourceView) -> anyhow::Result<()>,
     ) -> anyhow::Result<bool> {
-        self.0
-            .with_read(device, |view| {
-                read(view).map_err(|error| picoo_gpu::RenderError::Platform(error.to_string()))
-            })
-            .map_err(Into::into)
+        self.diagnostics
+            .record(PreviewStage::DrawAttempted, self.generation);
+        let result = self.image.with_read(device, |view| {
+            self.diagnostics
+                .record(PreviewStage::TextureReadAcquired, self.generation);
+            read(view).map_err(|error| picoo_gpu::RenderError::Platform(error.to_string()))
+        });
+        match &result {
+            Ok(true) => self
+                .diagnostics
+                .record(PreviewStage::DrawSubmitted, self.generation),
+            Ok(false) => self
+                .diagnostics
+                .record(PreviewStage::DrawBusy, self.generation),
+            Err(error) => self.diagnostics.failure(
+                PreviewStage::DrawFailed,
+                self.generation,
+                &error.to_string(),
+            ),
+        }
+        result.map_err(Into::into)
     }
 }

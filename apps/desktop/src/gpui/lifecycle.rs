@@ -5,6 +5,7 @@ use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::*;
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
+use picoo_diagnostics::PreviewStage;
 use picoo_session::ReceiverStatus;
 
 use crate::model::VirtualCameraStatus;
@@ -192,8 +193,17 @@ impl PicooDesktopApp {
                             frame.identity().connection_generation == generation
                         })
                     });
+                    this.preview_pipeline.note_stage(PreviewStage::Poll);
+                    if latest_frame.is_some() {
+                        this.preview_pipeline.note_stage(PreviewStage::SourceAvailable);
+                    }
+                    if live_frame.is_some() {
+                        this.preview_pipeline.note_stage(PreviewStage::SourceAdmitted);
+                    }
                     if preview_visible {
+                        this.preview_pipeline.note_stage(PreviewStage::VisiblePoll);
                         if let Some(width) = this.preview_viewport.take_target_physical_width() {
+                            this.preview_pipeline.note_stage(PreviewStage::ViewportDemand);
                             this.preview_pipeline.set_viewport_physical_width(width);
                             if let Some(slot) = live_frame {
                                 this.preview_pipeline.submit_latest(slot);
@@ -207,7 +217,7 @@ impl PicooDesktopApp {
                     let video_changed = this
                         .preview_pipeline
                         .take_prepared()
-                        .is_some_and(|preview| this.video_surface.present(preview, cx));
+                        .is_some_and(|preview| this.video_surface.present(preview));
                     let previous_page = this.page;
                     // REQ-PICOO-UI-008: Windows tray message/tip pump.
                     #[cfg(all(windows, feature = "windows-vcam"))]

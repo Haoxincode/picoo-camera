@@ -6,6 +6,9 @@ use picoo_pairing::TrustedDevice;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+mod preview;
+pub use preview::{DiagnosticPreviewSnapshot, PreviewDiagnostics, PreviewStage};
+
 const REPORT_VERSION: u32 = 1;
 
 #[derive(Debug, Error)]
@@ -106,6 +109,10 @@ pub struct DiagnosticReport {
     pub exported_at_ms: u64,
     pub platform: String,
     pub app_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub build_number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<DiagnosticPreviewSnapshot>,
     pub protocol_name: String,
     pub redaction_enabled: bool,
     pub includes_video: bool,
@@ -117,6 +124,8 @@ pub struct DiagnosticReport {
 pub struct DiagnosticInput {
     pub platform: String,
     pub app_version: String,
+    pub build_number: Option<String>,
+    pub preview: Option<DiagnosticPreviewSnapshot>,
     pub exported_at_ms: u64,
     pub redaction: RedactionPolicy,
     pub session: Option<DiagnosticSessionSnapshot>,
@@ -263,6 +272,8 @@ pub fn build_report(input: DiagnosticInput) -> DiagnosticReport {
         exported_at_ms: input.exported_at_ms,
         platform: input.platform,
         app_version: input.app_version,
+        build_number: input.build_number,
+        preview: input.preview,
         protocol_name: "PCP".into(),
         redaction_enabled,
         includes_video: false,
@@ -304,6 +315,29 @@ mod tests {
         let json = export_json(&report).expect("json");
         assert!(!json.contains("video_frame"));
         assert!(!json.contains("pixel"));
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(value.get("preview").is_none());
+        assert!(value.get("build_number").is_none());
+    }
+
+    #[test]
+    fn desktop_export_keeps_build_identity_and_preview_separate_from_decode() {
+        let diagnostics = PreviewDiagnostics::new(true);
+        diagnostics.record(PreviewStage::PrepareStarted, 3);
+        let report = build_report(DiagnosticInput {
+            platform: "windows".into(),
+            app_version: "0.1.1".into(),
+            build_number: Some("640".into()),
+            preview: Some(diagnostics.snapshot()),
+            ..Default::default()
+        });
+        let value = serde_json::to_value(report).unwrap();
+        assert_eq!(value["build_number"], "640");
+        assert_eq!(value["app_version"], "0.1.1");
+        assert_eq!(value["preview"]["stages"]["prepare_started"]["count"], 1);
+        assert_eq!(value["preview"]["stages"]["draw_submitted"]["count"], 0);
+        assert!(value["session"].is_null());
+        assert_eq!(value["includes_video"], false);
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 use core_foundation::base::TCFType;
 use core_video::pixel_buffer::CVPixelBuffer;
+use picoo_diagnostics::{PreviewDiagnostics, PreviewStage};
 use picoo_frame_hub::NativeVideoFrame;
 use picoo_gpu::{AppleRenderer, OutputColor, RenderSpec, Rotation};
 
@@ -16,7 +17,22 @@ impl PlatformPreviewResources {
         &mut self,
         frame: &NativeVideoFrame,
         target_width: u32,
+        diagnostics: &PreviewDiagnostics,
+        generation: u64,
     ) -> Option<CVPixelBuffer> {
+        self.prepare(frame, target_width)
+            .map_err(|error| {
+                diagnostics.failure(PreviewStage::PrepareFailed, generation, &error.to_string());
+                tracing::warn!(%error, "native preview preparation failed");
+            })
+            .ok()
+    }
+
+    fn prepare(
+        &mut self,
+        frame: &NativeVideoFrame,
+        target_width: u32,
+    ) -> Result<CVPixelBuffer, picoo_gpu::RenderError> {
         let description = frame.description();
         let rect = description.visible_rect;
         if rect.width == 0
@@ -24,12 +40,7 @@ impl PlatformPreviewResources {
             || description.pixel_aspect_ratio.numerator
                 != description.pixel_aspect_ratio.denominator
         {
-            tracing::warn!(
-                visible = ?rect,
-                par = ?description.pixel_aspect_ratio,
-                "native preview rejected remaining crop or non-square pixels"
-            );
-            return None;
+            return Err(picoo_gpu::RenderError::InvalidDimensions);
         }
         let (mut width, mut height) = (rect.width, rect.height);
         if matches!(
@@ -50,40 +61,35 @@ impl PlatformPreviewResources {
             format: picoo_gpu::OutputFormat::Nv12,
         };
         if self.spec != Some(spec) {
-            self.renderer = Some(
-                AppleRenderer::new(spec)
-                    .map_err(|error| tracing::warn!(%error, "native preview context failed"))
-                    .ok()?,
-            );
+            self.renderer = Some(AppleRenderer::new(spec)?);
             self.spec = Some(spec);
         }
-        let output = match self.renderer.as_mut()?.render_frame(frame) {
+        let output = match self
+            .renderer
+            .as_mut()
+            .ok_or(picoo_gpu::RenderError::DeviceUnavailable)?
+            .render_frame(frame)
+        {
             Ok(output) => output,
             Err(picoo_gpu::RenderError::PoolFull) => {
                 // Reconnect and GPUI can keep the previous pool's three
                 // outputs alive. A new renderer owns a fresh allocation set.
                 tracing::warn!("native preview pool full; recreating renderer");
-                self.renderer = Some(
-                    AppleRenderer::new(spec)
-                        .map_err(|error| tracing::warn!(%error, "native preview context failed"))
-                        .ok()?,
-                );
+                self.renderer = Some(AppleRenderer::new(spec)?);
                 self.spec = Some(spec);
                 self.renderer
-                    .as_mut()?
-                    .render_frame(frame)
-                    .map_err(|error| tracing::warn!(%error, "native preview render failed"))
-                    .ok()?
+                    .as_mut()
+                    .ok_or(picoo_gpu::RenderError::DeviceUnavailable)?
+                    .render_frame(frame)?
             }
             Err(error) => {
-                tracing::warn!(%error, "native preview render failed");
-                return None;
+                return Err(error);
             }
         };
         // SAFETY: The completed immutable output remains retained during this
         // bridge. GPUI's binding receives its own +1 reference to the same CF
         // object, with no pixel mapping or intermediate image allocation.
-        Some(unsafe {
+        Ok(unsafe {
             CVPixelBuffer::wrap_under_get_rule(
                 (output.pixel_buffer() as *const objc2_core_video::CVPixelBuffer)
                     .cast_mut()

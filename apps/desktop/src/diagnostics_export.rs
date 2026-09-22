@@ -2,7 +2,10 @@
 
 #![cfg_attr(not(feature = "gpui-ui"), allow(dead_code))]
 
-use picoo_diagnostics::{build_report, export_json, DiagnosticInput, DiagnosticSessionSnapshot};
+use picoo_diagnostics::{
+    build_report, export_json, DiagnosticInput, DiagnosticPreviewSnapshot,
+    DiagnosticSessionSnapshot,
+};
 use picoo_pairing::TrustedDeviceStore;
 use picoo_receiver::IngressStats;
 use picoo_session::ReceiverStatus;
@@ -18,8 +21,9 @@ pub fn export_diagnostics_to_file_with_hosts(
     status: ReceiverStatus,
     ingress: IngressStats,
     hosts: &[String],
+    preview: Option<DiagnosticPreviewSnapshot>,
 ) -> Result<DiagnosticsExportResult, String> {
-    let json = build_diagnostics_json(status, ingress, hosts)?;
+    let json = build_diagnostics_json(status, ingress, hosts, preview)?;
     std::fs::write(out_path, &json).map_err(|err| format!("write {out_path}: {err}"))?;
     Ok(DiagnosticsExportResult {
         path: Some(out_path.to_string()),
@@ -30,13 +34,14 @@ pub fn export_diagnostics_json(
     status: ReceiverStatus,
     ingress: IngressStats,
 ) -> Result<String, String> {
-    build_diagnostics_json(status, ingress, &[])
+    build_diagnostics_json(status, ingress, &[], None)
 }
 
 fn build_diagnostics_json(
     status: ReceiverStatus,
     ingress: IngressStats,
     hosts: &[String],
+    preview: Option<DiagnosticPreviewSnapshot>,
 ) -> Result<String, String> {
     let trusted_path = default_trusted_store_path();
     let store = TrustedDeviceStore::load_from_path(&trusted_path)
@@ -50,6 +55,8 @@ fn build_diagnostics_json(
     let report = build_report(DiagnosticInput {
         platform: std::env::consts::OS.into(),
         app_version: env!("CARGO_PKG_VERSION").into(),
+        build_number: option_env!("PICOO_BUILD_NUMBER").map(str::to_owned),
+        preview,
         exported_at_ms: now_ms,
         session: Some(DiagnosticSessionSnapshot {
             role: "receiver".into(),
@@ -140,10 +147,14 @@ mod tests {
             ReceiverStatus::Streaming,
             ingress,
             &["192.168.1.42".into()],
+            Some(picoo_diagnostics::PreviewDiagnostics::new(true).snapshot()),
         )
         .expect("export");
 
         let on_disk = std::fs::read_to_string(&out_path).expect("read out");
+        let json: serde_json::Value = serde_json::from_str(&on_disk).unwrap();
+        assert_eq!(json["preview"]["draw_observation_supported"], true);
+        assert_eq!(json["preview"]["stages"]["draw_submitted"]["count"], 0);
         assert_eq!(result.path.as_deref(), out_path.to_str());
         assert!(
             on_disk.contains("\"includes_video\": false")

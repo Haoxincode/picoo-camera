@@ -51,6 +51,7 @@ impl PicooDesktopApp {
             snapshot.status,
             snapshot.ingress,
             &hosts,
+            Some(self.preview_pipeline.diagnostics().snapshot()),
         ) {
             Ok(result) => {
                 let exported_path = result

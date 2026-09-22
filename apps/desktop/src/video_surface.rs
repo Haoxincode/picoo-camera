@@ -3,6 +3,7 @@
 
 use crate::preview_pipeline::PreparedPreview;
 use gpui_kit::*;
+use picoo_diagnostics::PreviewStage;
 
 #[derive(Default)]
 pub struct VideoSurface {
@@ -16,10 +17,16 @@ impl VideoSurface {
         self.last_sequence = 0;
     }
 
-    pub fn present(&mut self, preview: PreparedPreview, _cx: &mut App) -> bool {
+    pub fn present(&mut self, preview: PreparedPreview) -> bool {
         if !self.accepts_sequence(preview.sequence) {
+            preview
+                .diagnostics
+                .record(PreviewStage::SurfaceRejected, preview.generation);
             return false;
         }
+        preview
+            .diagnostics
+            .record(PreviewStage::SurfacePresented, preview.generation);
         self.native_surface = Some(preview.surface);
         true
     }
