@@ -15,7 +15,8 @@ use windows::Win32::{
         },
         Dxgi::{
             CreateDXGIFactory2, DXGI_ADAPTER_FLAG_SOFTWARE, DXGI_CREATE_FACTORY_DEBUG,
-            DXGI_CREATE_FACTORY_FLAGS, IDXGIAdapter1, IDXGIFactory6,
+            DXGI_CREATE_FACTORY_FLAGS, DXGI_ERROR_NOT_FOUND,
+            DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IDXGIAdapter1, IDXGIFactory6,
         },
     },
 };
@@ -112,18 +113,32 @@ fn get_adapter(
     ID3D11DeviceContext,
     D3D_FEATURE_LEVEL,
 )> {
+    // GPUI creates its device before the Receiver has a decoded frame.  Use
+    // DXGI's high-performance ordering here so a hybrid laptop does not bind
+    // the UI to the Microsoft Basic Render Driver/integrated fallback while
+    // the media path is admitted on the hardware adapter.  We still walk the
+    // complete list: the preference is an ordering hint, not a capability
+    // guarantee.
     for adapter_index in 0.. {
-        let adapter: IDXGIAdapter1 = unsafe { dxgi_factory.EnumAdapters(adapter_index)?.cast()? };
-        if let Ok(desc) = unsafe { adapter.GetDesc1() } {
-            if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
-                log::info!("Skipping software GPU adapter");
-                continue;
-            }
-            let gpu_name = String::from_utf16_lossy(&desc.Description)
-                .trim_matches(char::from(0))
-                .to_string();
-            log::info!("Using GPU: {}", gpu_name);
+        let adapter: IDXGIAdapter1 = match unsafe {
+            dxgi_factory.EnumAdapterByGpuPreference(
+                adapter_index,
+                DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+            )
+        } {
+            Ok(adapter) => adapter,
+            Err(error) if error.code() == DXGI_ERROR_NOT_FOUND => break,
+            Err(error) => return Err(error.into()),
+        };
+        let desc = unsafe { adapter.GetDesc1()? };
+        if desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0 {
+            log::info!("Skipping software GPU adapter");
+            continue;
         }
+        let gpu_name = String::from_utf16_lossy(&desc.Description)
+            .trim_matches(char::from(0))
+            .to_string();
+        log::info!("Trying hardware GPU: {}", gpu_name);
         // Check to see whether the adapter supports Direct3D 11 and create
         // the device if it does.
         let mut context: Option<ID3D11DeviceContext> = None;
@@ -136,11 +151,12 @@ fn get_adapter(
         )
         .log_err()
         {
+            log::info!("Selected hardware GPU: {}", gpu_name);
             return Ok((adapter, device, context.unwrap(), feature_level));
         }
     }
 
-    unreachable!()
+    anyhow::bail!("no usable hardware DXGI adapter")
 }
 
 #[inline]
