@@ -635,7 +635,7 @@ CI 34051699070 的 Windows 原生测试步骤已成功，BGRA 跨 device clear/�
 
 ## GPUI Windows surface 接入（验证中）
 
-在现有 gpui-pre/gpui-pre-windows 0.3.3 增加窄 Direct3DSurfaceSource 接口、Windows PaintSurface/paint_surface 与原生 shader draw。GPUI 不持有业务事务、不导入 CPU 图像；供应者同步提供 UI device 上的 view 并保留读取完成 owner。draw_view 复用 PolychromeSprite shader 与 content mask，结束时解除 VS/PS 的图像绑定。源码包来源、校验和、许可证与升级边界写入 vendor 的 ORIGIN.json / README.picoo.md。
+在 gpui-pre/gpui-pre-windows 0.3.6 增加窄 Direct3DSurfaceSource 接口、Windows PaintSurface/paint_surface 与原生 shader draw。GPUI 不持有业务事务、不导入 CPU 图像；供应者同步提供 UI device 上的 view 并保留读取完成 owner。draw_view 复用 PolychromeSprite shader 与 content mask，结束时解除 VS/PS 的图像绑定。源码包来源、校验和、许可证与升级边界写入 vendor 的 ORIGIN.json / README.picoo.md。
 
 新增 Windows WARP shader 回归直接执行生产 draw_view：BGRA 原生纹理 clear 后绘制，左半裁剪区域输出红色、右半保持黑色；诊断 staging readback 验证像素，并检查 VS/PS 解绑、错误尺寸与错误 device 拒绝。测试已接入 xtask Windows 流程，尚未编译/原生执行通过，不宣称完整 GPUI 预览。完整应用仍待 Windows NativeVideoFrame 接线。
 

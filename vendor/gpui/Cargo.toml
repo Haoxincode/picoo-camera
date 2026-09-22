@@ -12,7 +12,7 @@
 [package]
 edition = "2024"
 name = "gpui-pre"
-version = "0.3.3"
+version = "0.3.6"
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 build = "build.rs"
 publish = true
@@ -21,7 +21,7 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Zed's GPU-accelerated UI framework (gpui-pre snapshot of zed@5b055fa)"
+description = "Zed's GPU-accelerated UI framework (gpui-pre snapshot of zed@bcf6582)"
 homepage = "https://gpui.rs"
 readme = "README.md"
 keywords = [
@@ -41,14 +41,13 @@ ignored = [
     "getrandom",
     "objc2",
     "objc2-metal",
-    "tracing",
 ]
 ignored-paths = ["src/_ownership_and_data_flow.rs"]
 
 [package.metadata.gpui-pre]
 zed-crate = "gpui"
 zed-version = "0.2.2"
-zed-rev = "5b055fa789a8b8d38ac951a6e0cde272f66b4495"
+zed-rev = "bcf6582ce3500df93a8a39366640173e6786cea6"
 
 [features]
 bench = ["bench-support"]
@@ -82,7 +81,6 @@ x11 = ["scap?/x11"]
 [lib]
 name = "gpui"
 path = "src/gpui.rs"
-doctest = false
 
 [[example]]
 name = "a11y"
@@ -267,9 +265,6 @@ features = ["enumn"]
 [dependencies.anyhow]
 version = "1.0.86"
 
-[dependencies.async-channel]
-version = "2.5.0"
-
 [dependencies.async-task]
 version = "4.7"
 
@@ -285,7 +280,7 @@ version = "0.4"
 features = ["serde"]
 
 [dependencies.collections]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-collections"
 
 [dependencies.criterion]
@@ -315,21 +310,21 @@ features = [
 version = "0.2"
 
 [dependencies.futures]
-version = "0.3.32"
+version = "0.3.34"
 
 [dependencies.futures-concurrency]
 version = "7.7.1"
 
 [dependencies.gpui_macros]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-macros"
 
 [dependencies.gpui_shared_string]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-shared-string"
 
 [dependencies.gpui_util]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-util"
 
 [dependencies.hdrhistogram]
@@ -341,7 +336,7 @@ default-features = false
 version = "0.9.2"
 
 [dependencies.http_client]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-http-client"
 
 [dependencies.image]
@@ -416,7 +411,7 @@ version = "0.9"
 version = "0.6"
 
 [dependencies.refineable]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-refineable"
 
 [dependencies.regex]
@@ -433,7 +428,7 @@ features = [
 default-features = false
 
 [dependencies.scheduler]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-scheduler"
 
 [dependencies.schemars]
@@ -479,17 +474,14 @@ version = "0.28"
 features = ["derive"]
 
 [dependencies.sum_tree]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-sum-tree"
 
 [dependencies.taffy]
-version = "=0.13.0"
+version = "0.13.0"
 
 [dependencies.thiserror]
 version = "2.0.12"
-
-[dependencies.tracing]
-version = "0.1.40"
 
 [dependencies.ttf-parser]
 version = "0.25"
@@ -502,7 +494,7 @@ version = "0.46.0"
 default-features = false
 
 [dependencies.util_macros]
-version = "=0.3.3"
+version = "=0.3.6"
 package = "gpui-pre-util-macros"
 
 [dependencies.uuid]
@@ -520,19 +512,22 @@ version = "1.2.0"
 [dependencies.web-time]
 version = "1.1.0"
 
-[dependencies.ztracing]
-version = "=0.3.3"
-package = "gpui-pre-ztracing"
-
 [build-dependencies.embed-resource]
 version = "3.0"
 optional = true
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.async-channel]
+version = "2.5.0"
+default-features = false
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "windows"))'.dependencies.scap]
 version = "0.0.8-zed"
 optional = true
 default-features = false
 package = "zed-scap"
+
+[target.'cfg(not(all(target_arch = "wasm32", target_os = "unknown")))'.dependencies.async-channel]
+version = "2.5.0"
 
 [target.'cfg(target_family = "wasm")'.dependencies.getrandom]
 version = "0.3.4"
@@ -567,6 +562,18 @@ features = [
 [target.'cfg(target_os = "macos")'.dependencies.objc2]
 version = "0.6"
 optional = true
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-core-foundation]
+version = "0.3.2"
+default-features = false
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-core-video]
+version = "0.3.2"
+features = [
+    "CVBuffer",
+    "CVImageBuffer",
+]
+default-features = false
 
 [target.'cfg(target_os = "macos")'.dependencies.objc2-metal]
 version = "0.3"
@@ -619,6 +626,7 @@ features = [
     "Win32_System_Ole",
     "Win32_System_Performance",
     "Win32_System_Pipes",
+    "Win32_System_Power",
     "Win32_System_RestartManager",
     "Win32_System_SystemInformation",
     "Win32_System_SystemServices",

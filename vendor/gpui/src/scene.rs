@@ -766,13 +766,13 @@ impl From<PolychromeSprite> for Primitive {
 #[derive(Clone, Debug)]
 #[allow(missing_docs)]
 pub struct PaintSurface {
-    #[cfg(target_os = "windows")]
-    pub image_buffer: crate::Direct3DSurface,
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     #[cfg(target_os = "macos")]
     pub image_buffer: core_video::pixel_buffer::CVPixelBuffer,
+    #[cfg(target_os = "windows")]
+    pub image_buffer: crate::Direct3DSurface,
 }
 
 impl From<PaintSurface> for Primitive {

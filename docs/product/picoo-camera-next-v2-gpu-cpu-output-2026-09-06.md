@@ -535,7 +535,7 @@ reset(new_decoder_generation)
 
 ### 14.2 窄范围 GPUI 补丁
 
-以当前锁定 `gpui-pre 0.3.3` 包族为起点维护一致版本的补丁；公共视频 surface/scene primitive、Windows renderer 和 Apple renderer 必须一起核对。不要只改 `gpui-kit` 的版本约束，实际 Cargo.lock 和类型 identity 才决定链接的实现。[R16][R17]
+以当前锁定 `gpui-pre 0.3.6` 包族为起点维护一致版本的补丁；公共视频 surface/scene primitive、Windows renderer 和 Apple renderer 必须一起核对。不要只改 `gpui-kit` 的版本约束，实际 Cargo.lock 和类型 identity 才决定链接的实现。[R16][R17]
 
 对应上游 Surface 只实现 Apple buffer；Windows 用 DirectXRenderer，Apple 已有 texture cache，但其特定表面格式/色彩约束需扩展。[U01][U02][U03] 新增正式的视频 surface primitive，覆盖 texture source、source rect、transform、color、clip 和完成资源 lease。
 
@@ -1087,7 +1087,7 @@ R和U为上一轮检查固定提交及依赖时保留的依据，本次未重新
 - [U01] 对应上游快照：Surface element。
 - [U02] 对应上游快照：Windows DirectX Renderer。
 - [U03] 对应上游快照：Apple Metal Renderer。
-- [U04] 发布元数据：gpui-pre-http-client 0.3.3 / zed@5b055fa。
+- [U04] 发布元数据：gpui-pre-http-client 0.3.6 / zed snapshot。
 - [P01] Microsoft：Frame Server custom media source / GPU surface 与系统合同。
 - [P02] Microsoft：H.265/HEVC Decoder、输入输出及硬件协作。
 - [P03] Android：MediaFormat / KEY_LATENCY 与实际配置。
@@ -1159,7 +1159,7 @@ R和U为上一轮检查固定提交及依赖时保留的依据，本次未重新
 [R14]: https://github.com/Haoxincode/picoo-camera/blob/6a214b34df619f407faf3b1fa7760a3123e4049e/crates/picoo-transport/src/quinn_backend.rs "QUIC 后端缓冲配置"
 [R15]: https://github.com/Haoxincode/picoo-camera/blob/6a214b34df619f407faf3b1fa7760a3123e4049e/crates/picoo-transport/src/quinn_backend/stats.rs "完整 AU 准入判断"
 [R16]: https://github.com/Haoxincode/picoo-camera/blob/6a214b34df619f407faf3b1fa7760a3123e4049e/Cargo.lock "实际依赖锁"
-[R17]: https://crates.io/crates/gpui-kit/0.6.1 "GPUI Kit 锁定版本 0.6.1"
+[R17]: https://crates.io/crates/gpui-kit/0.6.6 "GPUI Kit 锁定版本 0.6.6"
 [R18]: https://github.com/Haoxincode/picoo-camera/blob/6a214b34df619f407faf3b1fa7760a3123e4049e/crates/picoo-media-decode/Cargo.toml "Decoder crate 依赖边界"
 [R19]: https://github.com/Haoxincode/picoo-camera/blob/6a214b34df619f407faf3b1fa7760a3123e4049e/crates/picoo-media-decode/src/videotoolbox.rs "macOS VideoToolbox Decoder"
 [R20]: https://github.com/Haoxincode/picoo-camera/blob/6a214b34df619f407faf3b1fa7760a3123e4049e/crates/picoo-jitter/src/lib.rs "Jitter 时序与容量"
@@ -1173,7 +1173,7 @@ R和U为上一轮检查固定提交及依赖时保留的依据，本次未重新
 [U01]: https://github.com/zed-industries/zed/blob/5b055fa/crates/gpui/src/elements/surface.rs "对应上游快照：Surface element"
 [U02]: https://github.com/zed-industries/zed/blob/5b055fa/crates/gpui_windows/src/directx_renderer.rs "对应上游快照：Windows DirectX Renderer"
 [U03]: https://github.com/zed-industries/zed/blob/5b055fa/crates/gpui_apple/src/metal_renderer.rs "对应上游快照：Apple Metal Renderer"
-[U04]: https://docs.rs/crate/gpui-pre-http-client/0.3.3 "发布元数据：gpui-pre-http-client 0.3.3 / zed@5b055fa"
+[U04]: https://docs.rs/crate/gpui-pre-http-client/0.3.6 "发布元数据：gpui-pre-http-client 0.3.6"
 [P25]: https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-map "D3D11 Map / DO_NOT_WAIT"
 [P26]: https://learn.microsoft.com/en-us/windows/win32/api/mfobjects/nf-mfobjects-imf2dbuffer2-lock2dsize "MF2DBuffer2 / pitch and buffer bounds"
 [P27]: https://developer.apple.com/documentation/corevideo/cvpixelbufferunlockbaseaddress%28_%3A_%3A%29 "PixelBuffer CPU lock / GPU access distinction"

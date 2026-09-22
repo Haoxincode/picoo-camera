@@ -21,17 +21,17 @@ pub enum SurfaceSource {
     Surface(CVPixelBuffer),
 }
 
+#[cfg(target_os = "windows")]
+impl From<Direct3DSurface> for SurfaceSource {
+    fn from(value: Direct3DSurface) -> Self {
+        SurfaceSource::Direct3D(value)
+    }
+}
+
 #[cfg(target_os = "macos")]
 impl From<CVPixelBuffer> for SurfaceSource {
     fn from(value: CVPixelBuffer) -> Self {
         SurfaceSource::Surface(value)
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl From<Direct3DSurface> for SurfaceSource {
-    fn from(value: Direct3DSurface) -> Self {
-        Self::Direct3D(value)
     }
 }
 
