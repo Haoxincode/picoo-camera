@@ -132,6 +132,10 @@ pub(super) unsafe fn make_native_sample(
     let mut guard = acquire_key_zero(&imported.mutex)?;
     let surface_buffer =
         MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, &imported.texture, 0, false)?;
+    // REQ-PICOO-NEXT-014 / REQ-PICOO-VCAM-012: publishing the texture does
+    // not initialize the MF buffer's valid byte count. Downstream consumers
+    // may inspect that count even when they receive an IMFDXGIBuffer.
+    surface_buffer.SetCurrentLength(surface_buffer.GetMaxLength()?)?;
     // Keep the official DXGI buffer object directly on the sample so its
     // IMFDXGIBuffer/IMF2DBuffer interfaces remain visible to Frame Server.
     let tracked: IMFTrackedSample = MFCreateTrackedSample()?;
@@ -223,3 +227,6 @@ unsafe fn import_surface(
     let mutex = texture.cast().map_err(NativeImportError::Open)?;
     Ok(ImportedNativeSurface { texture, mutex })
 }
+
+#[cfg(test)]
+mod tests;

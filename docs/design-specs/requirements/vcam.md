@@ -4,6 +4,20 @@ Next v2 中的格式与后端契约由 `REQ-PICOO-NEXT-013/014/030/036` 和
 `ARCH-PICOO-MEDIA-002` 覆盖；本表中的旧 480p/单一 CPU 输出描述只保留为历史追溯，不能
 作为当前产品验收标准。
 
+### Windows GPU sample 有效长度（REQ-PICOO-VCAM-012 / REQ-PICOO-NEXT-014）
+
+`GpuNative` 的 NV12 DXGI buffer 在加入 sample 前必须设置有效数据长度；
+仅持有纹理不代表 `IMFMediaBuffer` 已声明可消费的数据。沿用系统
+`MFCreateDXGISurfaceBuffer`，通过 `GetMaxLength` / `SetCurrentLength` 完成元数据设置，
+不增加像素复制、第三方依赖或后端切换。
+依据为 [Microsoft IMFMediaBuffer 契约](https://learn.microsoft.com/en-us/windows/win32/api/mfobjects/nf-mfobjects-imfmediabuffer-setcurrentlength)
+及 [Chromium DXGI sample 实现](https://chromium.googlesource.com/chromium/src/+/4ad0f4d64a1064f2528aa372f85a9ab9c7050709/media/gpu/windows/media_foundation_video_encode_accelerator_win.cc)。
+Windows 回归测试通过生产 `make_native_sample` 检查 720p/1080p 的 buffer/sample 有效长度、
+时间戳和原始 DXGI 纹理身份；它不替代真实 Frame Server 和飞书会议验收。
+
+2026-09-22 用户反馈飞书会议纯绿屏、Windows 桌面预览正常。当前源码缺少上述有效长度设置，
+已补齐；本机为 macOS，Windows 原生测试与飞书复测仍待，不能将该遗漏直接认定为已确认根因。
+
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-VCAM-001 | implemented | PUC-004 | 注册统一 base name `Picoo Camera`；允许 Windows 追加/本地化系统 Virtual Camera 后缀 | `FRIENDLY_NAME` / `PICOO_VCAM_FRIENDLY_NAME`；CI `verify_windows_bundle.ps1` UTF-16 嵌入校验；桌面状态通过 `MFEnumDeviceSources` 精确匹配受保护注册表中持久化的 symbolic link，不再以 DLL/COM、显示名精确相等或任意同名设备冒充 Active；独立 Win11 Host Contract 从安装目录执行同一 exact-link 枚举并激活 Source，首次 self-hosted 绿测前不冒充 `verified` |
