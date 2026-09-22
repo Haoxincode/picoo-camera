@@ -272,6 +272,16 @@ impl PicooDesktopApp {
             )
             .child(
                 div()
+                    .text_sm()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_color(cx.theme().muted_foreground)
+                    .child(desktop_version_label(
+                        env!("CARGO_PKG_VERSION"),
+                        option_env!("PICOO_BUILD_NUMBER"),
+                    )),
+            )
+            .child(
+                div()
                     .max_w_96()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
@@ -404,6 +414,46 @@ impl PicooDesktopApp {
     }
 }
 
+/// REQ-PICOO-UI-002 / AC-D-NAV-01: the About page shows the same three-field
+/// product version Windows Installer compares. CI replaces the patch field
+/// with `PICOO_BUILD_NUMBER`, so workspace `0.1.1` and build `637` display
+/// as `0.1.637`. An unusable build number keeps the package version.
+fn desktop_version_label(package_version: &str, build_number: Option<&str>) -> String {
+    let Some(version) = product_version(package_version, build_number) else {
+        return package_version.to_string();
+    };
+    version
+}
+
+fn product_version(package_version: &str, build_number: Option<&str>) -> Option<String> {
+    let numeric_version = package_version
+        .split(['-', '+'])
+        .next()
+        .unwrap_or(package_version);
+    let mut fields = numeric_version.split('.');
+    let major = fields.next()?.parse::<u16>().ok()?;
+    let minor = fields.next()?.parse::<u16>().ok()?;
+    let patch = fields.next()?.parse::<u16>().ok()?;
+    if fields.next().is_some() || major > 255 || minor > 255 {
+        return None;
+    }
+
+    let build = match build_number
+        .map(str::trim)
+        .filter(|build| !build.is_empty())
+    {
+        Some(build) => {
+            let build = build.parse::<u16>().ok()?;
+            if build == 0 || build <= patch {
+                return None;
+            }
+            build
+        }
+        None => patch,
+    };
+    Some(format!("{major}.{minor}.{build}"))
+}
+
 fn default_diagnostics_path() -> PathBuf {
     if cfg!(target_os = "windows") {
         std::env::var("TEMP")
@@ -435,5 +485,22 @@ mod tests {
         state.failed();
         assert!(!state.can_reveal());
         assert!(state.path().is_none());
+    }
+
+    #[test]
+    fn about_page_version_matches_the_installer_product_version() {
+        assert_eq!(super::desktop_version_label("0.1.1", None), "0.1.1");
+        assert_eq!(super::desktop_version_label("0.1.1", Some("")), "0.1.1");
+        assert_eq!(super::desktop_version_label("0.1.1", Some("  ")), "0.1.1");
+        assert_eq!(
+            super::desktop_version_label("0.1.1", Some("637")),
+            "0.1.637"
+        );
+        assert_eq!(super::desktop_version_label("2.3.4-beta.1", None), "2.3.4");
+        assert_eq!(super::desktop_version_label("0.1.1", Some("0")), "0.1.1");
+        assert_eq!(
+            super::desktop_version_label("0.1.1", Some("not-a-build")),
+            "0.1.1"
+        );
     }
 }
