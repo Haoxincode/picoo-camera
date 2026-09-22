@@ -444,12 +444,17 @@ impl Render for PicooDesktopApp {
                         .child(self.render_workspace_toolbar(cx))
                         .child(self.render_section(&snapshot, cx)),
                 );
+            // REQ-PICOO-UI-0001 / AC-D-NAV-03: the empty title row is the macOS
+            // traffic-light and drag inset. Windows already owns minimize,
+            // maximize, and close on the workspace toolbar TitleBar.
             div()
                 .v_flex()
                 .size_full()
                 .min_w_0()
                 .min_h_0()
-                .child(self.render_window_title_bar(cx))
+                .when(cfg!(target_os = "macos"), |this| {
+                    this.child(self.render_window_title_bar(cx))
+                })
                 .child(workspace)
                 .into_any_element()
         };
@@ -459,5 +464,34 @@ impl Render for PicooDesktopApp {
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(content)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn windows_workspace_does_not_stack_an_empty_title_row() {
+        let source = include_str!("lifecycle.rs");
+        let workspace = source
+            .split_once("let workspace = div()")
+            .expect("workspace branch")
+            .1;
+        let title_row = workspace
+            .lines()
+            .skip_while(|line| !line.contains("cfg!(target_os = \"macos\")"))
+            .take(4)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            title_row.contains("render_window_title_bar"),
+            "the empty title row belongs only to the macOS traffic-light inset"
+        );
+        assert!(
+            !workspace
+                .lines()
+                .take_while(|line| !line.contains("cfg!(target_os = \"macos\")"))
+                .any(|line| line.contains("render_window_title_bar")),
+            "Windows workspace must not mount a second title bar above the toolbar"
+        );
     }
 }
