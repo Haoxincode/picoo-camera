@@ -20,7 +20,11 @@ unsafe impl Sync for Staging {}
 struct ReadbackOwners {
     image: RenderedImage,
     staging: Arc<Staging>,
+    _access: Option<super::render::SharedAccess>,
 }
+// SAFETY: The free-threaded D3D11 mutex and resource leases are retained by
+// the completion owner until CopyResource finishes, including cancellation.
+unsafe impl Send for ReadbackOwners {}
 
 /// One lazy staging texture and three CPU outputs. No queue, timer or idle work.
 /// Callers own CPU demand, source deduplication and output generation admission.
@@ -79,12 +83,16 @@ impl CpuExporter {
         let spec = self.spec;
         // CPU capacity is reserved before any new staging allocation or GPU copy.
         let output = self.pool.materialize(|pixels| unsafe {
+            // REQ-PICOO-GPU-007: render completion releases the producer's
+            // keyed mutex. Even a same-device read must reacquire ownership.
+            let access = image.acquire_read()?;
             if staging.is_none() {
                 *staging = Some(Arc::new(allocate_staging(gpu, spec)?));
             }
             let owners = ReadbackOwners {
                 image: image.clone(),
                 staging: Arc::clone(staging.as_ref().expect("allocated staging")),
+                _access: access,
             };
             let owners = gpu
                 .submit_owned(owners, |gpu, owners| {

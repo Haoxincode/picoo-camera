@@ -8,6 +8,83 @@ use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::System::Threading::GetCurrentProcess;
 
+struct Nv12Upload {
+    surface: Arc<Surface>,
+    _access: Option<SharedAccess>,
+    pixels: Vec<u8>,
+}
+// SAFETY: The upload bytes, texture and keyed ownership survive GPU completion.
+unsafe impl Send for Nv12Upload {}
+
+#[test]
+fn cpu_export_reads_shared_nv12_only_while_it_owns_key_zero() {
+    let _serial = GPU_WORK_TEST_LOCK.lock().unwrap();
+    let _runtime = Runtime::start();
+    let gpu = diagnostic_context();
+    let spec = RenderSpec {
+        width: 64,
+        height: 32,
+        rotation: Rotation::None,
+        mirror: false,
+        color: OutputColor::Bt709Limited,
+        format: OutputFormat::Nv12,
+    };
+    let mut expected = vec![96u8; (spec.width * spec.height) as usize];
+    expected.extend((0..spec.width * spec.height / 2).map(|i| if i % 2 == 0 { 80 } else { 190 }));
+    let mut pool = OutputPool::new(spec);
+    unsafe {
+        let surface = pool.acquire(&gpu.device).unwrap();
+        let access = SharedAccess::acquire(&surface).unwrap();
+        let upload = gpu
+            .submit_owned(
+                Nv12Upload {
+                    surface,
+                    _access: access,
+                    pixels: expected.clone(),
+                },
+                |gpu, work| {
+                    gpu.with_immediate_context(|context| {
+                        context.UpdateSubresource(
+                            &work.surface.texture,
+                            0,
+                            None,
+                            work.pixels.as_ptr().cast(),
+                            spec.width,
+                            work.pixels.len() as u32,
+                        );
+                    });
+                    Ok(())
+                },
+            )
+            .unwrap()
+            .wait_on_worker()
+            .unwrap();
+        let image = RenderedImage {
+            surface: Arc::clone(&upload.surface),
+            spec,
+        };
+        drop(upload);
+        let mutex: IDXGIKeyedMutex = image.surface.texture.cast().unwrap();
+        // Leave the allocation unowned but available only at key 1. An exporter
+        // that skips AcquireSync would incorrectly submit a copy and report success.
+        acquire_mutex(&mutex).unwrap();
+        mutex.ReleaseSync(1).unwrap();
+        let mut exporter = CpuExporter::new(gpu, spec).unwrap();
+        assert!(matches!(
+            exporter.export(&image),
+            Err(RenderError::SharedSurfaceBusy)
+        ));
+        assert_eq!(exporter.exports(), 0);
+        mutex.AcquireSync(1, 0).unwrap();
+        mutex.ReleaseSync(0).unwrap();
+        assert_eq!(exporter.export(&image).unwrap().pixels(), expected);
+        assert_eq!(exporter.exports(), 1);
+        // Successful export releases its access lease for the next consumer.
+        acquire_mutex(&mutex).unwrap();
+        mutex.ReleaseSync(0).unwrap();
+    }
+}
+
 #[test]
 fn native_identity_allows_initial_zero_decoder_generation() {
     assert!(WindowsSharedSurfaceIdentity {

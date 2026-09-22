@@ -245,7 +245,7 @@ pub(super) unsafe fn create_handle(texture: &ID3D11Texture2D) -> Result<OwnedHan
     Ok(OwnedHandle::from_raw_handle(handle.0))
 }
 
-pub(super) struct SharedAccess {
+pub(in crate::windows) struct SharedAccess {
     surface: Arc<Surface>,
     mutex: IDXGIKeyedMutex,
 }

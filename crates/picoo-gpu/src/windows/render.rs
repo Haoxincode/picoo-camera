@@ -8,6 +8,7 @@ mod shared;
 pub use picoo_frame_hub::{
     WindowsSharedSurfaceDescriptor, WindowsSharedSurfaceFormat, WindowsSharedSurfaceIdentity,
 };
+pub(super) use shared::SharedAccess;
 pub use shared::{WindowsSharedSurfaceLease, WindowsSharedSurfaceTransfer};
 
 use crate::{OutputColor, RenderError, RenderSpec, Rotation, WindowsGpuContext};
@@ -37,6 +38,11 @@ pub struct RenderedImage {
     spec: RenderSpec,
 }
 impl RenderedImage {
+    /// Retain this guard through completion of every read of a shared target.
+    pub(super) unsafe fn acquire_read(&self) -> Result<Option<SharedAccess>, RenderError> {
+        shared::SharedAccess::acquire(&self.surface)
+    }
+
     pub fn spec(&self) -> RenderSpec {
         self.spec
     }

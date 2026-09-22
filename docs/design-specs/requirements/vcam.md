@@ -18,6 +18,11 @@ Windows 回归测试通过生产 `make_native_sample` 检查 720p/1080p 的 buff
 2026-09-22 用户反馈飞书会议纯绿屏、Windows 桌面预览正常。当前源码缺少上述有效长度设置，
 已补齐；本机为 macOS，Windows 原生测试与飞书复测仍待，不能将该遗漏直接认定为已确认根因。
 
+2026-09-23：CI #642（`a81358bb`）全部通过，包括新增 Windows sample 测试；用户复测
+1.642 仍为飞书绿屏。因此有效长度修补不是本次问题的充分修复，会议软件验收仍未通过。
+后续检查发现 CpuBridge 读回共享 NV12 目标时未获取 keyed mutex，补齐访问 lease 并增加
+共享纹理忙碌拒绝与已知 Y/UV 像素回归。实际采用的后端、失败阶段仍需现场日志确定。
+
 | ID | 状态 | 来源 | 描述 | 验收 |
 | --- | --- | --- | --- | --- |
 | REQ-PICOO-VCAM-001 | implemented | PUC-004 | 注册统一 base name `Picoo Camera`；允许 Windows 追加/本地化系统 Virtual Camera 后缀 | `FRIENDLY_NAME` / `PICOO_VCAM_FRIENDLY_NAME`；CI `verify_windows_bundle.ps1` UTF-16 嵌入校验；桌面状态通过 `MFEnumDeviceSources` 精确匹配受保护注册表中持久化的 symbolic link，不再以 DLL/COM、显示名精确相等或任意同名设备冒充 Active；独立 Win11 Host Contract 从安装目录执行同一 exact-link 枚举并激活 Source，首次 self-hosted 绿测前不冒充 `verified` |

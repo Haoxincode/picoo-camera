@@ -65,6 +65,13 @@ GPU 完成 API 进一步核对了官方 ID3D11DeviceContext4::Signal、ID3D11Fen
 
 官方 [AcquireSync](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgikeyedmutex-acquiresync) 特别警告 SUCCEEDED 不足：WAIT_TIMEOUT 和 WAIT_ABANDONED 也是正值。当前 windows-rs AcquireSync 包装成 Result，会丢失这个区别，因此最小绑定边界直接读取 vtable HRESULT 并要求 exact S_OK。0ms 获取不阻塞 UI/其他输出；不递归获取，不以完成帧数推测释放。原图像 lease 与访问锁随 GPU completion 一起持有；它们各自防止不同的错误，不能只保留 handle。
 
+REQ-PICOO-GPU-007：CpuExporter 的 CopyResource 同样是共享目标读取，必须在提交前取得
+key 0，并将已有 SharedAccess 与目标、staging 一起交给 GPU completion owner；不能因
+读写位于同一 device 或 producer 已完成而省略访问所有权。继续复用已有系统 keyed mutex
+封装，无新增库或 CPU/GPU 上传。回归使用生产共享 NV12 池，先将可获取 key 改为 1，验证
+export 拒绝且不累计成功；恢复 key 0 后验证已知 Y/UV 数据和读取锁释放。WARP 只验证此
+同步和资源契约，不代表 Intel 硬件或飞书画面通过。原有非共享纹理测试不覆盖此边界。
+
 核对 gpui-pre 0.3.3：Windows PaintSurface 当前没有图像字段，SurfaceSource/surface/paint_surface 的图像入口只在 macOS 编译；gpui-pre-windows 0.3.3 的 draw_surfaces 为空。接入需同时补齐框架表面描述和 Windows 消费者，不应只修改应用选择 surface 元素。框架补丁不得依赖 Picoo 配置、Decoder 或输出事务；此消费部分尚未实现。
 
 WindowsDisplayReader 采用 GPUI 所用的实际 ID3D11Device，以官方 OpenSharedResource1/CreateShaderResourceView 导入既有 BGRA allocation，WindowsGpuContext 继续负责线程保护和完成提交。相同图像的重复 UI 绘制通过 Weak<ReadAccess> 共用尚存活的访问权；不能缓存 Weak<Surface>，因为即使没有强 reader，它也会阻止输出池 Arc::get_mut 判定独占。忙碌只跳过本次绘制，不等待、不复制。
