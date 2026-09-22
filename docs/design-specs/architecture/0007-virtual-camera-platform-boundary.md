@@ -56,7 +56,7 @@ lifecycle revision 复核，并与 start/stop/shutdown 共用 lifecycle operatio
 
 AllUsers + System-lifetime 摄像头由 per-machine MSI 或用户显式 UAC 修复时创建；普通桌面启动不得再创建一个重名的 Session-lifetime 摄像头。安装与卸载维护命令必须在非 impersonated 的管理员上下文中执行，使多用户枚举、静默部署、升级与清理使用同一身份。Windows 会在产品提供的 base friendly name 后追加并本地化 `Windows Virtual Camera` 标识，因此状态不得把显示名精确等于 `Picoo Camera` 作为身份条件；只有交互用户上下文中的 Media Foundation 枚举到安装时持久化的精确 symbolic link（按 Windows 设备路径语义忽略大小写）才能提升为 Active，DLL、COM 注册表存在或任意同名设备都不能冒充 Active。`IMFVirtualCamera::Start` 是创建和注册设备的权威命令；Start 成功后必须取得并持久化 `MF_DEVSOURCE_ATTRIBUTE_SOURCE_TYPE_VIDCAP_SYMBOLIC_LINK`，此时状态为 Installed。Software Device 向不同会话的发布是异步收敛过程：交互用户可用有界重试观察，但 Windows Installer 服务身份下的枚举超时不得否定 Start、触发 MSI 回滚或删除有效 identity。仅当持久化 identity 在操作前不存在时，Start/持久化失败才能 best-effort Remove，repair 不得删除操作前已存在的设备。卸载 Remove 不依赖 Source Start；identity 不存在时是幂等成功。维护进程必须先调用 `IMFVirtualCamera::Shutdown` 并 Release camera，再执行 `MFShutdown` 与 `CoUninitialize`；任何返回路径都不得颠倒该所有权顺序。成功 Remove 后的动态 identity 清理是 best-effort，声明式 COM 由 MSI 自身事务删除。
 
-Windows major upgrade 是独立事务边界。仍受支持的旧 MSI 可能在 `RemoveExistingProducts` 中执行其已发布且不可修改的卸载命令，因此升级包必须先以单调递增的 PE FileVersion 安装新版维护程序，再移除旧产品，最后重新注册摄像头；成功事务结束时只允许保留新 ProductCode 与单一 exact identity。late upgrade 的 `InstallExecute` 与 `InstallFinalize` 之间除 `RemoveExistingProducts` 外不得排入任何 in-script action；最终注册必须在 `InstallExecute` 前写入 commit script，并在移除旧产品成功、`InstallFinalize` 提交时执行。新包的升级卸载条件必须排除 `UPGRADINGPRODUCTCODE`，防止该桥接成为常态。新注册失败时，rollback Custom Action 必须在 `InstallExecute` 前写入 rollback script，并在文件回滚前 best-effort 恢复旧产品可用的 identity；全新安装仍使用反向 Remove 回滚。组件 GUID、KeyPath 与安装目录在 late upgrade 下必须保持严格稳定，CI 直接查询 MSI 数据库验证受限窗口、CustomAction 类型、FileVersion，并执行 ICE27/ICE63/ICE77；真机仍须验证受支持的旧版到新版升级。
+安装、修复和卸载必须围绕当前产品身份形成单一事务；产品契约变化时，先卸载当前安装，再安装当前配套版本并重新完成系统扩展/虚拟摄像头注册。
 
 ### macOS
 
@@ -115,7 +115,7 @@ Rust Receiver Core
 
 - 未配对或未连接时输出定义占位画面，不是不可枚举设备或随机噪声。
 - 会议软件关闭并重新打开后仍可选择 Picoo Camera。
-- 虚拟摄像头组件升级必须与 Desktop 主应用版本兼容，并通过安装器或应用内修复流程处理。
+- 虚拟摄像头组件必须与同一配套发布中的 Desktop 主应用保持版本一致；修复流程只处理当前安装的产品身份。
 - Rust COM DLL 的公开 ABI 不得让 panic 越过导出函数或 COM vtable；共享可变状态必须显式同步，DLL 仅在 Windows runner 上完成最终链接与加载验证。
 - Windows Media Foundation 组件必须满足 free-threaded/neutral 约束：对外实现 `IAgileObject`，其余共享状态由互斥锁串行化。Media Foundation event queue、descriptor、allocator 等标准接口直接持有类型化 COM 引用；不得对这些接口调用 `RoGetAgileReference`，因为 Frame Server 环境中并不保证其 IID 存在代理注册，错误包装会让 Source 激活在注册阶段以 `REGDB_E_IIDNOTREG` 失败。
 

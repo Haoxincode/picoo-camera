@@ -1,6 +1,6 @@
 # Design Specs Context：管理规范、追溯规则与概念对齐
 
-> 2026-09-06：用户已采纳 [Next v2 产品方案](../product/picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md) 并开始破坏性重构。本文旧基线中的 H.264-only/30fps、公共 CPU 帧、CPU 预览、无录像及旧版本约束不再作为新实现目标；未冲突的安全与业务约束继续有效。新架构为 ARCH-PICOO-MEDIA-002，验收按 REQ-PICOO-NEXT；不得把旧实现状态视为新版完成。
+> 当前契约以 ARCH-PICOO-MEDIA-002、REQ-PICOO-NEXT 和对应平台 Architecture 为准。历史产品基线仅供需求追溯，不构成实现目标。
 
 仓库名：`picoo-camera` · 产品名：**Picoo Camera**
 
@@ -105,7 +105,7 @@ User request / product requirement
 | `Sender` | 运行在 Android 或 iPhone 上的手机端应用，负责摄像头采集、硬件编码和向 Receiver 发送视频。 | 不称为 Client 或 Mobile App 作为架构角色名；UI 层可显示产品名。 |
 | `Receiver` | 运行在 Windows 或 macOS 上的桌面应用，负责发现、配对、接收、解码、预览和驱动虚拟摄像头。 | 不称为 Server 作为用户可见产品名；协议层 Receiver 承担 QUIC Server 角色。 |
 | `Rust Core` | 由多个 `picoo-*` crate 组成的共享业务核心，统一协议、传输、会话、配对、分包、抖动缓冲、码率控制、指标和 FFI。 | 不负责各平台 Camera、MediaCodec、VideoToolbox、虚拟摄像头安装 UI 和系统权限弹窗。 |
-| `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 固定为 `picoocam`；协议、FFI、IPC 不加版本号或版本协商，直接修改当前契约，不维护旧接口或迁移器。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
+| `Picoo Camera Protocol (PCP)` | Sender 与 Receiver 之间当前唯一的控制与视频传输协议，QUIC ALPN 固定为 `picoocam`；协议、FFI、IPC 不加版本号或版本协商，直接遵循当前契约。 | ControlEnvelope 走可靠 Stream；视频数据片与 FEC 校验片走 QUIC Datagram。 |
 | `FrameBus` / `NativeVideoFrame` | 原生源图像与提交时身份、描述、时间绑定；FrameBus 分开提供 latest 和有界有序订阅。 | 不含 CPU 像素/stride；预览与输出持有自己的 GPU 完成 lease。LatestFrameStore 是尚未替换平台的旧实现名称，不是新架构目标。 |
 | `Shared Frame Ring` | CPU 输出后端的跨进程 NV12 共享区；不是公共源帧，也不是 GpuNative 交接。 | ready state、reader lease 与进程恢复属于跨进程 sink，不套用到 FrameBus；各平台独立验证 GpuNative/CpuBridge。 |
 | `Virtual Camera` | 向操作系统注册的标准摄像头设备，统一名称为 `Picoo Camera`。 | Windows 使用 MF Virtual Camera；macOS 使用 CMIO Camera Extension。 |

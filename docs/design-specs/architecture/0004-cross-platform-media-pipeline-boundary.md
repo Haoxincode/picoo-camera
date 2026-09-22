@@ -28,12 +28,12 @@ QUIC Datagram
   失效和释放，不得在旧编码器 Surface 上继续交换缓冲。
 - Android 在编码前按传感器方向、显示方向和前后摄像头计算唯一变换，输出始终为已经直立的横向
   480p/720p/1080p 16:9。横持尽量使用完整画面；竖持在直立空间中取中央 cover 区域。编码后的
-  `StreamConfig.rotation` 固定为 `0`，Receiver 不为旧 Android Sender 保留二次裁切兼容。
+  `StreamConfig.rotation` 固定为 `0`，Receiver 不在协议边界外追加二次裁切。
 - 竖持裁切时，Camera2 源的短边必须优先覆盖编码输出宽度，并受目标 FPS 的最小帧时长约束。
   本机 TextureView 使用全屏 center-cover，避免因手机屏幕与相机源比例不同产生黑边；不叠加容易
   误解的小型构图参考框。电脑端仍由 EGL 合成器独立执行中央横向 16:9 输出，因此竖屏本机预览
   是相机控制取景器，不声称与电脑端逐像素同构。
-- MediaCodec 的释放、创建、配置和启动必须在同一 codec 线程串行执行；旧实例完全释放后才能创建新实例，以兼容只支持单个硬件 H.264 encoder 的设备。
+- MediaCodec 的释放、创建、配置和启动必须在同一 codec 线程串行执行；旧实例完全释放后才能创建新实例，确保设备资源生命周期单一且可观测。
 - 第一版不使用 CameraX Recorder 作为实时传输核心。
 
 ### Sender：iOS
@@ -74,7 +74,7 @@ H.264 Access Units
 
 - 使用 `objc2-video-toolbox`、`objc2-core-media`、`objc2-core-video` 的生成式 Rust 系统框架绑定，不增加 Swift/C 胶水层、CMake 或软件解码器。
 - Receiver 将 Annex-B / AVCC Access Unit 统一封装为四字节长度前缀的 `CMSampleBuffer`；SPS/PPS 改变或 `stream_epoch` 切换时销毁并重建 `VTDecompressionSession`。
-- VideoToolbox 必须创建硬件解码器并明确请求 `420v` 双平面输出；进入 LatestFrameStore 前按 CoreVideo plane stride 复制为紧凑 NV12。目标 macOS 仅支持 Apple Silicon，不保留软件解码兼容路径。
+- VideoToolbox 必须创建硬件解码器并明确请求 `420v` 双平面输出；进入 LatestFrameStore 前按 CoreVideo plane stride 复制为紧凑 NV12。目标 macOS 仅支持 Apple Silicon，不提供软件解码路径。
 - macOS 正式解码失败必须作为媒体错误暴露，不得回退 OpenH264 或用占位帧掩盖真实 H.264 错误。
 
 ### 编码参数

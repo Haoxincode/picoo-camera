@@ -1,6 +1,6 @@
 # 无线手机摄像头系统：产品需求与技术设计文档
 
-> 2026-09-06：用户已采纳 [Next v2 产品方案](picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md) 并开始破坏性重构。本文旧基线中的 H.264-only/30fps、公共 CPU 帧、CPU 预览、无录像及旧版本约束不再作为新实现目标；未冲突的安全与业务约束继续有效。新架构为 ARCH-PICOO-MEDIA-002，验收按 REQ-PICOO-NEXT；不得把旧实现状态视为新版完成。
+> 本文是已归档的 V1 立项基线，不是当前产品契约。当前实现与验收以 [Next v2 方案](picoo-camera-next-v2-gpu-cpu-output-2026-09-06.md)、ARCH-PICOO-MEDIA-002 和 REQ-PICOO-NEXT 为准；V1 内容仅用于需求追溯。
 
 暂定产品名： Picoo Camera
 
@@ -883,8 +883,7 @@ FFI 边界只允许：
 
 协议名称：**Picoo Camera Protocol（PCP）**
 
-QUIC ALPN：**picoocam**。Sender 与 Receiver 由同一仓库同步发布，不维护数字协议版本、旧线协议
-兼容解析器或静默迁移路径。
+QUIC ALPN：**picoocam**。Sender 与 Receiver 由同一仓库同步发布，协议只接受当前契约。
 
 ### 12.1 连接角色
 

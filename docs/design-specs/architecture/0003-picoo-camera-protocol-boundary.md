@@ -136,7 +136,7 @@ Android 视频方向的真实拥塞。
 
 ## 约束
 
-- 旧协议、旧 trust store 和裸控制 payload 必须 fail fast，不能静默降级或尝试猜测消息类型。
+- 不符合当前协议、trust store 或控制 payload 契约的输入必须 fail fast，不能静默降级或猜测消息类型。
 - 控制消息 Parser 与 VideoPacket Parser 必须可 fuzz。
 - 配对完成前，控制面不得接受 StartStream 或 CameraCommand 中的敏感操作。
 - 明文控制消息与视频不得在链路上裸传；QUIC/TLS 负责传输层保护。

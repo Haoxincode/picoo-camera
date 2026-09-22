@@ -29,7 +29,7 @@
 | REQ-PICOO-NEXT-023 | planned | NEXT-REQ-023 | 重组与恢复 codec-aware；IDR/CRA 不能混同 | AVC/HEVC 各类随机访问样本与缺片注入 |
 | REQ-PICOO-NEXT-024 | planned | NEXT-REQ-024 | 只有摄像头输出边界可自动选择 CpuBridge；硬件 codec 或 GPU 主链路不足明确失败 | 能力组合故障注入、路由原因和依赖检查 |
 | REQ-PICOO-NEXT-025 | planned | NEXT-REQ-025 | 网络、命令、媒体、输出全部有容量和时限；控制命令有明确结果 | 过载状态机与预算断言 |
-| REQ-PICOO-NEXT-026 | planned | NEXT-REQ-026 | 旧协议、旧 IPC、旧配置、旧 FFI 不被新产品接受 | 非法契约输入拒绝测试 |
+| REQ-PICOO-NEXT-026 | planned | NEXT-REQ-026 | 协议、IPC、配置和 FFI 输入必须符合当前契约 | 非法契约输入拒绝测试 |
 | REQ-PICOO-NEXT-027 | planned | NEXT-REQ-027 | 配对认证、加密、资源权限、输入边界、隐私行为继续有效 | 未授权访问与恶意输入测试 |
 | REQ-PICOO-NEXT-028 | planned | NEXT-REQ-028 | 度量自动采集并区分请求值/实际值、提交/呈现、新帧/重复帧 | 结构化诊断完整性检查 |
 | REQ-PICOO-NEXT-029 | planned | NEXT-REQ-029 | CPU 整图仅由 Output Exporter 产生；不进入 Decoder API 或 Preview | 构建依赖审查、preview-only 导出数为零 |
@@ -115,7 +115,7 @@
 | REQ-PICOO-MEDIA-045 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、011、023、025 | iOS VideoToolbox 由显式 codec 请求选择硬件 AVC High/HEVC Main；HEVC 关闭 Open GOP；输入快照和原生 atom codec 一致；确认每张 420v BT.709 输入/目标后显式写入压缩 VUI，未知色彩拒绝 | M4 上同一生产 Swift 的八组原生调用、共享位流闭合 IDR/几何/色彩检查、未知输入拒绝与 iOS 构建；iPhone 相机/完整选择/持续 fps 另验 |
 | REQ-PICOO-MEDIA-046 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025 | Decoder offer 接纳 1080 可见图像的 1088 编码存储，正式可见尺寸仍受约束；level 按编码工作量，最终 supports 精确匹配存储/crop；准备请求按该条目的可见尺寸选择 | 双 codec padding/crop 区分、拒绝 padding 冒充画面、裁剪不降低 level、合法准备请求；原生探测 offers 接线另验 |
 | REQ-PICOO-MEDIA-047 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、026 | Android MediaCodec generation 从 CaptureProfile 读取显式 codec，Core 请求同源；删除 H264 专用编码生命周期名称；恢复保留完整 profile 并匹配 codec/fps/尺寸，不能只恢复高度 | 完整 APK/JNI 与 JVM 构建；原有 native configuration/handoff 回归；小米实际双 codec、完整 offers/用户选择与失败恢复须另验 |
-| REQ-PICOO-MEDIA-048 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-026 | 删除 C/JNI 无产品调用方的独立 ingest、flush、started 入口；公开媒体提交必须携带同一原生配置快照，无旧接口别名 | FFI 原子提交拒绝与事务身份回归、Android 完整 JNI/APK、iOS 构建与 Swift/C ABI 测试；内部状态机接口不属于公开平台契约 |
+| REQ-PICOO-MEDIA-048 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-026 | 删除 C/JNI 无产品调用方的独立 ingest、flush、started 入口；公开媒体提交必须携带同一原生配置快照 | FFI 原子提交拒绝与事务身份回归、Android 完整 JNI/APK、iOS 构建与 Swift/C ABI 测试；内部状态机接口不属于公开平台契约 |
 | REQ-PICOO-MEDIA-049 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025 | 实际标准记录统一映射完整 VideoFormat，未知色彩不猜测，wire 声明必须一致；支持真实 736/1088 padding，level 下限按实际编码工作量计算 | Apple/小米真实八组合参数事实与 Mac 原生解码，缺色彩/标签冲突/预算/错误组合/736 宏块门限回归；原生 offers 广告及会话提交门禁另验 |
 | REQ-PICOO-MEDIA-050 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-004、005、006 | Android 输入选择只接纳已知且满足固定 fps 的 Camera2 同表候选；旋转裁剪后像素充足，空候选/不足明确失败，不隐式降尺寸或放大 | JVM 空表/不足/旋转回归，小米后置相机八组合真实输出 PTS 短时测量；前摄、竖持、完整 offers、长时热稳态另验 |
 | REQ-PICOO-MEDIA-051 | implemented | ARCH-PICOO-MEDIA-002 / REQ-PICOO-NEXT-003、004、025、026 | Sender 在媒体事件修改状态前按实际存储/crop/tier/level/色彩/AU预算匹配同一 Decoder offer；显式 tier 无旧默认，hvcC身份与SPS一致；序列化色彩来源于实际VUI | 小米High tier样本、伪造tier/level、错误存储/色彩/tier/预算保持generation和控制序号、合法重试；Core/原生平台回归；Receiver原生offers及网络全链路另验 |

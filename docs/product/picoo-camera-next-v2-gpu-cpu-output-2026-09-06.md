@@ -1,9 +1,9 @@
 # Picoo Camera Next：完整需求与技术实现方案（修订版 v2）
 
-> 2026-09-06 实施修正（用户明确决定）：ALPN 始终为 `picoocam`；协议、发现 TXT、FFI、IPC 不带版本号，不维护版本协商或旧接口。直接替换当前契约，不做配置迁移。本文已同步删除原提案的协议版本与版本协商建议。stream epoch、device/backend generation、配置 revision 是运行时身份，继续用于防止迟到结果与资源误用。
+> 当前契约：ALPN 固定为 `picoocam`；协议、发现 TXT、FFI、IPC 不带版本号或版本协商。stream epoch、device/backend generation、配置 revision 仅表示运行时身份，用于防止迟到结果与资源误用。
 
 
-> 归档说明：2026-09-06 用户授权按本方案开始实施，不要求兼容。以下原始提案正文保留；当前契约与实现状态见 [架构](../design-specs/architecture/0012-native-media-multi-output-boundary.md) 和 [需求追溯](../design-specs/requirements/next-media.md)。D01 为未随本次提供的上一版附件，不是仓库文件。
+> 本文是当前媒体架构的设计依据；实现状态见 [架构](../design-specs/architecture/0012-native-media-multi-output-boundary.md) 和 [需求追溯](../design-specs/requirements/next-media.md)。
 
 **方案版本：v2 · GPU 主链路 + 虚拟摄像头 CPU 输出桥接**  
 **状态：Proposed · 允许破坏性修改 · 尚未实现、编译或真机验收**  
@@ -12,7 +12,7 @@
 **产品平台：Android、iOS 发送端；Windows、macOS 接收端与虚拟摄像头。**  
 **取代：上一版 `Picoo-Camera-Next-Requirements-and-Implementation.md` 的设计提议，及更早 `picoo-native-preview-implementation-6a214b3.md`。不表示仓库规范或代码已被修改。**
 
-本次按用户明确决定保留 CPU 输出。它是新版输出架构内的正式后端，不是对旧协议、旧 FFI 或旧共享内存 ABI 的兼容。软件编解码回退、CPU 预览流水线不恢复。
+CPU 输出是当前输出架构内的正式后端；软件编解码和 CPU 预览不属于当前架构。
 
 **阅读依据：**本方案继承上一版需求、平台范围、模块组织与固定提交事实，重新编写受 CPU 输出影响的帧类型、路由、IPC、资源预算、安全、测试和实施门槛。标有 R 的引用为上一轮固定提交源码依据，U 为当时核对的依赖上游，P 为平台资料；本次重新查阅了与 CPU 桥接直接相关的官方文档，并新增 P25—P28；D01 标识本次修订的原始附件。需求、接口、阈值、目录和默认策略均为设计提议。没有承诺任何第三方软件内部全程使用 GPU，也没有把拟议指标当作实测结果。
 
@@ -32,7 +32,7 @@
 
 原码流录像在解码前保存已经编码的 AU；处理后录像仍采用 GPU 图像处理和硬件编码。CPU 输出不能弥补缺失的硬件编解码器，不能在整个 GPU 不可用时凭空恢复新视频。
 
-不维护旧协议、旧 FFI、旧 IPC/配置迁移和软件编解码回退；应用与扩展作为完整配套集合发布。旧 CPU Shared Ring 的安全、lease、Busy 重试等经验证逻辑可以复用，但数据格式、命名空间和接口直接重构，不接入旧端点。
+应用与扩展作为完整配套集合发布，协议、FFI、IPC 和配置均直接遵循当前契约。CPU Shared Ring 只按当前数据格式、命名空间和接口实现。
 
 ### 0.1 已确认的产品约束
 
@@ -56,7 +56,7 @@
 | 删除全部 CPU ring 实现 | Windows 保留并重构为本代 CPU IPC；Mac 优先复用 CMIO sink 交接 CPU 准备的原生容器 |
 | 全局 readback 必须为 0 | Preview-only/GPU-native 输出为 0；CPU 输出按需求统计并限制 |
 | 缺少 native sample 直接判摄像头不可用 | 有合法 CPU sample/可上传目标时可用，否则明确失败 |
-| “不做兼容”同时等于 GPU-only | 不做旧版本兼容；新版本支持两种合法输出存储方式 |
+| 输出后端不是单一路径 | 当前版本支持两种合法输出存储方式：GpuNative 与 CpuBridge |
 
 保留 CPU 桥接不保证零开销。线程隔离只能避免逻辑反压，GPU copy、内存带宽、总线和 CPU 仍共享实际机器资源；必须在多输出测试中验证其影响。
 
@@ -71,7 +71,7 @@
 | GPU 虚拟摄像头 | 合法的原生表面交接、系统 manager/allocator 和独立采样 |
 | CPU 虚拟摄像头 | GPU 完成目标图像处理，输出专用 Exporter 提供 CPU 可访问图像；只做布局整理、复制和必要的目标上传 |
 | 录像 | 原码流不重编码；处理后录像使用 GPU 和硬件 Encoder，不从预览缓存抽帧 |
-| 接口 | PCP/FFI/本地 IPC 只有当前契约，无版本号、版本协商与旧接口分支 |
+| 接口 | PCP/FFI/本地 IPC 只有当前契约，不设置版本号或版本协商 |
 | 故障处理 | 输出能力不足可局部选择 CPU；权限拒绝、硬件 codec 缺失、整个 GPU 丢失不被这种选择掩盖 |
 | UI | 不增加用途/后端模式；默认自动，诊断记录路径与原因 |
 
@@ -146,7 +146,7 @@ CPU output 的存在不能被用来宣布 native 路径完成；native 的存在
 | NEXT-REQ-023 | 重组与恢复 codec-aware；IDR/CRA 不能混同 | AVC/HEVC 各类随机访问样本与缺片注入 |
 | NEXT-REQ-024 | 只有摄像头输出边界可自动选择 CpuBridge；硬件 codec 或 GPU 主链路不足明确失败 | 能力组合故障注入、路由原因和依赖检查 |
 | NEXT-REQ-025 | 网络、命令、媒体、输出全部有容量和时限；控制命令有明确结果 | 过载状态机与预算断言 |
-| NEXT-REQ-026 | 旧协议、旧 IPC、旧配置、旧 FFI 不被新产品接受 | 非法契约输入拒绝测试 |
+| NEXT-REQ-026 | 所有协议、IPC、配置和 FFI 输入必须符合当前契约 | 非法契约输入拒绝测试 |
 | NEXT-REQ-027 | 配对认证、加密、资源权限、输入边界、隐私行为继续有效 | 未授权访问与恶意输入测试 |
 | NEXT-REQ-028 | 度量自动采集并区分请求值/实际值、提交/呈现、新帧/重复帧 | 结构化诊断完整性检查 |
 
@@ -339,9 +339,9 @@ CPU-only placeholder 是允许的例外：预先生成对应格式的静态占�
 
 ### 8.1 当前契约与发布
 
-ALPN 固定为 `picoocam`。协议、发现 TXT、FFI 和 IPC 不设置版本字段，不做版本协商，也不保留旧接口分支。配对 transcript 绑定协议标识、算法和端点身份。应用、手机端和扩展配套部署，直接使用当前契约；非法消息与布局按具体校验错误拒绝。
+ALPN 固定为 `picoocam`。协议、发现 TXT、FFI 和 IPC 不设置版本字段或版本协商。配对 transcript 绑定协议标识、算法和端点身份。应用、手机端和扩展配套部署，直接使用当前契约；非法消息与布局按具体校验错误拒绝。
 
-旧个人设置与配对记录不设计迁移器；新版本首次配置与配对。卸载旧扩展只清理本项目拥有的注册和 IPC 资源；不触碰录像素材。新旧桌面同名虚拟摄像头不同时保留为正式部署方式。
+个人设置与配对记录按当前格式读取；无法验证时要求用户重新配置和配对。卸载只清理本项目拥有的注册和 IPC 资源，不触碰录像素材；系统中只保留当前配套版本的虚拟摄像头。
 
 ### 8.2 完整配置，不使用尺寸与 fps 的笛卡尔积
 
@@ -468,7 +468,7 @@ CPU输出与GPU录像争用同一硬件时，保留既定源配置，优先取�
 
 使用实际 codec 列表和硬件标志筛选，检查目标尺寸、速率、profile、bitrate 与 Surface 输入的组合。`createEncoderByType()` 成功不等于硬件证明；记录组件名、请求配置、实际 output format，并校验原生输出参数集。没有受支持硬件实例时返回能力错误，不选择软件编码器。
 
-默认保留现有 Camera2→OES/EGL→MediaCodec Surface 的一次 GPU 合成路径，以维持固定画幅、方向和裁剪。不再并行维护一条“为了兼容旧机型”的 CPU YUV 编码路径。手机预览继续来自同一采集 session 的显示目标；采集控制、有效区域、镜像意图从同一个配置模型派生，避免以降低手机基准来制造对齐。
+默认使用 Camera2→OES/EGL→MediaCodec Surface 的一次 GPU 合成路径，固定画幅、方向和裁剪。手机预览继续来自同一采集 session 的显示目标；采集控制、有效区域、镜像意图从同一个配置模型派生。
 
 Camera2 目标 FPS Range 先查询支持组合，不能直接请求不存在的 60—60 区间；采集、compositor、编码三处分别统计唯一帧时间戳。帧通知允许合并，但同一 SurfaceTexture timestamp 不重复编码成两张“新帧”。资源丢失与 Activity/surface 销毁不能复用旧 generation。
 
@@ -900,7 +900,7 @@ GPU handle与CPU共享内存采用同等级授权。新版本CPU ring只有明�
 
 CPU内存增加一份可读图像，需计入隐私生命周期。Stop/撤权后不再产生新真实帧；旧画面只按显式hold保留（建议默认不超过500ms，作为待确认工程上限），随后必须发布占位。缓存/IPC/目标sample都检查相应generation；没有新的camera图像也要推进占位，不能等待“下一帧再覆盖”。已交给外部系统且由其持有的历史sample无法追回，不声称可清除第三方已有副本。
 
-共享区域重用遵守有效长度和plane范围，不把padding/上次较大帧尾部暴露给新权限主体。generation切换、关闭和跨实例复用按预算清理敏感区域，清理不在UI执行。升级只清除本项目旧注册/IPC，不删除用户录像。
+共享区域重用遵守有效长度和 plane 范围，不把 padding/上次较大帧尾部暴露给新权限主体。generation 切换、关闭和跨实例复用按预算清理敏感区域，清理不在 UI 执行。卸载只清除本项目注册/IPC，不删除用户录像。
 
 ### 20.3 取消和资源回收
 
@@ -913,7 +913,7 @@ CPU mapped指针不能跨Unmap、PixelBuffer锁借用不能跨Unlock，旧IPC视
 
 ## 21. 逐文件修改与删除清单
 
-新路径为设计提议，实施时核对当前主干引用。复用经过验证的算法允许，保留旧版本运行分支不允许。
+新路径为设计提议，实施时核对当前主干引用。复用经过验证的算法允许；产品只实现当前路径。
 
 | 位置 | 动作 |
 |---|---|
@@ -939,7 +939,7 @@ CPU mapped指针不能跨Unmap、PixelBuffer锁借用不能跨Unlock，旧IPC视
 | `picoo-frame-hub/src/shared_ring/*` | 重构为新版CPU输出IPC（建议模块名`output/cpu_ipc`）；保留安全lease/Busy/崩溃逻辑与测试，删除旧ABI和全局必经依赖 |
 | Windows `frame_provider*`、`windows_source/*` | 共用source生命周期和SampleClock，增加两backend；SetD3DManager真实处理，CPU sample按实际stride填充 |
 | Windows `sample_copy.rs` | 不再全删；重写为CpuBridge专用、平面/边界正确、可测量的最终copy |
-| Windows旧`ring-reader`工具 | 改成本代CPU/GPU capture harness；不继续读取旧版本ring |
+| Windows `ring-reader`工具 | 改成本代 CPU/GPU capture harness，使用当前 ring 契约 |
 | Mac `SharedRingReader.swift`、`SharedRingAtomic.c/.h` | 从新Mac产品移除旧像素文件通道；复用需要的copy校验测试到新CPU adapter |
 | Mac `PicooCameraProvider.swift`及新sink/bridge资源模块 | 同一CMIO sink/source下native/CPU-filled PixelBuffer，统一需求与授权 |
 | `picoo-recording/`（新增） | 两Recorder、native硬编/mux、gap/segment/manifest；不依赖CpuBridge |
@@ -947,7 +947,7 @@ CPU mapped指针不能跨Unmap、PixelBuffer锁借用不能跨Unlock，旧IPC视
 | `xtask`、安装、CI | 配套bundle、CPU IPC权限和清理、完整四平台验证入口 |
 | `docs/design-specs/*` | 用本版替代GPU-only硬约束；需求009/013/024修订，新增029—040追溯 |
 
-明确删除：旧PCP/FFI/IPC兼容分支、生产软件codec fallback、全局CpuNv12源帧、Receiver CPU变换、GPUI逐帧CPU图片路径。明确保留/重构：输出专用CPU exporter、plane copy、新版CPU IPC、占位、buffer pool和安全回归。不能用“删CPU”把这次保留的正式输出后端再次删掉。
+当前正式产物不包含协议/FFI/IPC 分支、生产软件 codec、全局 CpuNv12 源帧、Receiver CPU 变换或 GPUI 逐帧 CPU 图片路径；输出专用 CPU exporter、plane copy、当前 CPU IPC、占位、buffer pool 和安全回归属于正式架构。
 
 
 ## 22. 实施批次与完成门槛
@@ -975,7 +975,7 @@ CpuBridge成立不能用来跳过GpuNative开发；GpuNative成立也不能跳�
 | P8 | 质量/60fps、CPU与GPU路径并用、热稳态矩阵 | 同规格验收，无静默降档；CPU开销归因、非目标sink不被拖入CPU |
 | P9 | 旧ABI/依赖/工具清理、规范、发布 | 新CPU后端保留，旧回退退出；四平台交付证据齐全 |
 
-P5与P6在共同接口明确后可以并行，先用CPU完成某环境的系统摄像头回归也可以，但不能把GPU功能延期为可选。Windows优先体验验收不缩小Mac/iOS范围。阶段分支可以破坏旧接口，正式发布不能保留dummy frame/panic占位实现冒充可用。
+P5与P6在共同接口明确后可以并行，先用 CPU 完成某环境的系统摄像头回归也可以，但不能把 GPU 功能延期为可选。Windows 优先体验验收不缩小 Mac/iOS 范围。正式发布不能保留 dummy frame/panic 占位实现冒充可用。
 
 
 ## 23. 需求追溯与回归清单
@@ -1042,7 +1042,7 @@ P5与P6在共同接口明确后可以并行，先用CPU完成某环境的系统�
 
 **可用性和性能：**同尺寸与大画面对齐目标通过；CPU/native摄像头分别通过30/60规格与并用测试；只有活跃需求才持续readback；资源、超期、回退原因可见，不能静默降规格制造通过。
 
-**旧实现退出：**旧PCP/FFI/IPC兼容层、软件codec回退、全局CpuNv12帧与CPU预览退出正式产物；新版CPU输出Exporter、copy、IPC、安全测试明确保留。权限/错误恢复不因破坏性修改而删除。
+**当前实现边界：**协议、FFI、IPC、软件 codec、全局 CpuNv12 帧和 CPU 预览不属于正式产物；CPU 输出 Exporter、copy、IPC 与安全测试属于当前架构。权限与错误恢复仍是正式契约。
 
 推荐主线：**双codec和原生帧合同 → 原生预览与输出计划 → GPU/CPU两种摄像头路径 → 独立录像 → 质量、60fps和全平台验收。**
 
