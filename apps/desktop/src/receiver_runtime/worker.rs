@@ -370,7 +370,13 @@ fn apply_receiver_command(
             let _ = response.send(result);
         }
         ReceiverCommand::RetryVirtualCameraOutput(response) => {
-            let _ = response.send(runtime.retry_virtual_camera_output());
+            let result = runtime.retry_virtual_camera_output();
+            if let Err(error) = &result {
+                tracing::error!(target: "picoo_vcam_output", %error, "virtual camera output initialization failed");
+            } else {
+                tracing::info!(target: "picoo_vcam_output", "virtual camera output initialized");
+            }
+            let _ = response.send(result);
         }
         ReceiverCommand::Shutdown => return RuntimeCommandOutcome::Shutdown,
     }
