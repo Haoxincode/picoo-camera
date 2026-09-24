@@ -114,52 +114,67 @@ impl ReceiverStartupView {
             };
             match result {
                 Ok(runtime) => {
-                    let _ = window_handle.update(cx, |_, window, cx| {
-                        let _ = this.update(cx, |startup, cx| {
-                            if !matches!(&startup.state, StartupState::Loading) {
-                                return;
-                            }
-                            let prefs = startup.prefs.clone();
-                            let view = cx.new(|cx| {
-                                PicooDesktopApp::new(
-                                    runtime,
-                                    prefs,
-                                    VirtualCameraStatus::Unknown,
-                                    window_handle,
-                                    window,
-                                    cx,
-                                )
-                            });
-                            view.update(cx, |this, cx| {
-                                this.ensure_pump_loop(cx);
-                                #[cfg(target_os = "macos")]
-                                this.refresh_vcam_status(cx);
-                            });
-                            startup.desktop_view = Some(view.clone());
-                            startup.content = Some(view.into());
-                            startup.state = StartupState::Ready;
-                            cx.notify();
-
+                    // Read the startup entity before entering the window update.
+                    // `AnyWindowHandle::update` already owns the GPUI App borrow;
+                    // calling `this.update` inside it used to re-enter that borrow
+                    // and produced `RefCell already borrowed` at runtime.
+                    let prefs = this.update(cx, |startup, _| {
+                        matches!(&startup.state, StartupState::Loading)
+                            .then(|| startup.prefs.clone())
+                    });
+                    let Some(prefs) = prefs else {
+                        return;
+                    };
+                    let view = match window_handle.update(cx, |_, window, cx| {
+                        let view = cx.new(|cx| {
+                            PicooDesktopApp::new(
+                                runtime,
+                                prefs,
+                                VirtualCameraStatus::Unknown,
+                                window_handle,
+                                window,
+                                cx,
+                            )
+                        });
+                        view.update(cx, |this, cx| {
+                            this.ensure_pump_loop(cx);
+                            #[cfg(target_os = "macos")]
+                            this.refresh_vcam_status(cx);
                             // Refresh the non-critical VCam status after the
-                            // receiver is visible.  This task is independent
-                            // from the startup state and cannot strand the
-                            // loading/quit UI if Media Foundation is slow.
+                            // receiver is visible. This task is independent
+                            // from startup state and cannot strand the quit
+                            // path.
                             #[cfg(all(windows, feature = "windows-vcam"))]
                             {
-                                let probe = spawn_os_thread(cx, crate::vcam_status::detect_vcam_status);
-                                let view_for_probe = startup.desktop_view.clone();
+                                let probe =
+                                    spawn_os_thread(cx, crate::vcam_status::detect_vcam_status);
+                                let view_for_probe = cx.entity();
                                 cx.spawn(async move |_, cx| {
                                     if let Ok(status) = probe.await {
-                                        if let Some(view) = view_for_probe {
-                                            view.update(cx, |this, cx| {
-                                                this.apply_detected_vcam_status(status, cx);
-                                            });
-                                        }
+                                        view_for_probe.update(cx, |this, cx| {
+                                            this.apply_detected_vcam_status(status, cx);
+                                        });
                                     }
                                 })
                                 .detach();
                             }
                         });
+                        view
+                    }) {
+                        Ok(view) => view,
+                        Err(error) => {
+                            tracing::error!(%error, "failed to create desktop view");
+                            return;
+                        }
+                    };
+                    let _ = this.update(cx, |startup, cx| {
+                        if !matches!(&startup.state, StartupState::Loading) {
+                            return;
+                        }
+                        startup.desktop_view = Some(view.clone());
+                        startup.content = Some(view.into());
+                        startup.state = StartupState::Ready;
+                        cx.notify();
                     });
                 }
                 Err(error) => {
