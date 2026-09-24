@@ -118,10 +118,13 @@ impl ReceiverStartupView {
                     // `AnyWindowHandle::update` already owns the GPUI App borrow;
                     // calling `this.update` inside it used to re-enter that borrow
                     // and produced `RefCell already borrowed` at runtime.
-                    let prefs = this.update(cx, |startup, _| {
-                        matches!(&startup.state, StartupState::Loading)
-                            .then(|| startup.prefs.clone())
-                    });
+                    let prefs = this
+                        .update(cx, |startup, _| {
+                            matches!(&startup.state, StartupState::Loading)
+                                .then(|| startup.prefs.clone())
+                        })
+                        .ok()
+                        .flatten();
                     let Some(prefs) = prefs else {
                         return;
                     };
