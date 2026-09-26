@@ -263,6 +263,11 @@ pub(super) fn shutdown(shared: &SharedStreamState) -> Result<()> {
             state.native_worker.take(),
         )
     };
+    // The native worker may be finishing an asynchronous RequestSample while
+    // holding this same lifecycle gate. State is already marked stopped and
+    // the worker handle is detached from StreamState, so release the gate
+    // before joining it; otherwise shutdown waits on a worker waiting on us.
+    drop(_operation);
     if let Some(prepared) = prepared {
         prepared.abort();
     }
