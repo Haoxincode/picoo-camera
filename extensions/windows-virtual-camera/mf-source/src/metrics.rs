@@ -64,12 +64,17 @@ impl VcamMetrics {
         self.take_snapshot_if_due()
     }
 
+    // The MF COM callback path is only reachable in the Windows source host;
+    // keep the metrics helper available to that path while Linux all-targets
+    // linting checks this crate's portable build too.
+    #[allow(dead_code)]
     pub fn record_queued(&mut self, delivery_time: Duration) -> Option<VcamMetricsSnapshot> {
         self.requests = self.requests.saturating_add(1);
         self.record_delivery_time(delivery_time);
         self.take_snapshot_if_due()
     }
 
+    #[allow(dead_code)]
     pub fn record_origin(&mut self, origin: FrameOrigin) -> Option<VcamMetricsSnapshot> {
         match origin {
             FrameOrigin::Fresh => self.fresh = self.fresh.saturating_add(1),
