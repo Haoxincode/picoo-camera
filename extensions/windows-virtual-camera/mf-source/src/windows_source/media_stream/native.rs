@@ -28,6 +28,7 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITH
 use super::super::native_import::{import_nv12_surface, make_native_sample};
 use super::super::producer_identity::is_expected_receiver_process;
 
+const E_PENDING: HRESULT = HRESULT(0x8000000Au32 as i32);
 const MAX_NATIVE_REQUESTS: usize = 8;
 
 pub(super) struct PreparedNativeSample {
@@ -521,7 +522,9 @@ pub(super) fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
                 }
             };
             if let Err(error) = deliver_native_sample_owned(&shared, token) {
-                tracing::warn!(%error, "native VCam sample delivery failed");
+                super::super::emit_debug_message(&format!(
+                    "Picoo native VCam sample delivery failed: {error}\n"
+                ));
                 reset_native_session_inner(&shared, None);
             }
             continue;
