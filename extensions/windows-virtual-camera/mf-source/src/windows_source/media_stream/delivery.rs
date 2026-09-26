@@ -12,7 +12,7 @@ use windows::Win32::Media::MediaFoundation::{
 pub(super) fn deliver_sample(
     shared: &SharedStreamState,
     token: Ref<'_, IUnknown>,
-) -> Result<FrameOrigin> {
+) -> Result<Option<FrameOrigin>> {
     let (native, frames, output_width, output_height) = {
         let state = lock(shared)?;
         if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
@@ -30,10 +30,11 @@ pub(super) fn deliver_sample(
         native::set_placeholder_active(shared, placeholder)?;
         if placeholder {
             frames.set_placeholder_output_active(output_width, output_height, true);
-            return cpu::deliver_placeholder_sample(shared, token);
+            return cpu::deliver_placeholder_sample(shared, token).map(Some);
         }
         frames.set_placeholder_output_active(output_width, output_height, false);
-        return native::deliver_native_sample(shared, token);
+        native::request_native_sample(shared, token)?;
+        return Ok(None);
     }
-    cpu::deliver_cpu_sample(shared, token)
+    cpu::deliver_cpu_sample(shared, token).map(Some)
 }

@@ -64,6 +64,21 @@ impl VcamMetrics {
         self.take_snapshot_if_due()
     }
 
+    pub fn record_queued(&mut self, delivery_time: Duration) -> Option<VcamMetricsSnapshot> {
+        self.requests = self.requests.saturating_add(1);
+        self.record_delivery_time(delivery_time);
+        self.take_snapshot_if_due()
+    }
+
+    pub fn record_origin(&mut self, origin: FrameOrigin) -> Option<VcamMetricsSnapshot> {
+        match origin {
+            FrameOrigin::Fresh => self.fresh = self.fresh.saturating_add(1),
+            FrameOrigin::Cached => self.cached = self.cached.saturating_add(1),
+            FrameOrigin::Placeholder => self.placeholder = self.placeholder.saturating_add(1),
+        }
+        self.take_snapshot_if_due()
+    }
+
     fn record_delivery_time(&mut self, delivery_time: Duration) {
         let delivery_us = delivery_time.as_micros().min(u64::MAX as u128) as u64;
         self.delivery_total_us = self.delivery_total_us.saturating_add(delivery_us);

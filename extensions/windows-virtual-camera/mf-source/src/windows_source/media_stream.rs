@@ -1,6 +1,7 @@
 use picoo_frame_hub::{
     WindowsAdapterId, WindowsNativeChannel, WindowsNativePipeClient, WindowsSharedSurfaceIdentity,
 };
+use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -81,6 +82,7 @@ pub(super) struct StreamState {
     native_channel: Option<Arc<Mutex<WindowsNativeChannel>>>,
     native_prepared: Option<native::PreparedNativeSample>,
     native_inflight: bool,
+    native_requests: VecDeque<Option<IUnknown>>,
     native_last_delivered_identity: Option<WindowsSharedSurfaceIdentity>,
     native_ready: Arc<(Mutex<u64>, Condvar)>,
     native_worker: Option<JoinHandle<()>>,
@@ -175,6 +177,7 @@ impl MediaStream {
                 native_channel: None,
                 native_prepared: None,
                 native_inflight: false,
+                native_requests: VecDeque::new(),
                 native_last_delivered_identity: None,
                 native_ready: Arc::new((Mutex::new(0), Condvar::new())),
                 native_worker: None,
@@ -636,10 +639,19 @@ impl IMFMediaStream_Impl for MediaStream_Impl {
     fn RequestSample(&self, token: Ref<'_, IUnknown>) -> Result<()> {
         let delivery_started = std::time::Instant::now();
         let result = delivery::deliver_sample(&self.shared, token);
-        let origin = result.as_ref().ok().copied();
-        let snapshot = lock(&self.shared)?
-            .metrics
-            .record_result(origin, delivery_started.elapsed());
+        let origin = result.as_ref().ok().and_then(|origin| *origin);
+        let snapshot = {
+            let mut state = lock(&self.shared)?;
+            match origin {
+                Some(origin) => state
+                    .metrics
+                    .record_result(Some(origin), delivery_started.elapsed()),
+                None if result.is_ok() => state.metrics.record_queued(delivery_started.elapsed()),
+                None => state
+                    .metrics
+                    .record_result(None, delivery_started.elapsed()),
+            }
+        };
         if let Some(snapshot) = snapshot {
             emit_metrics(snapshot);
         }

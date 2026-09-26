@@ -16,7 +16,7 @@ use std::sync::{
     Arc, Mutex, Weak,
 };
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use windows::core::{Error, IUnknown, Interface, Ref, Result, GUID, HRESULT};
 use windows::Win32::Foundation::{GetHandleInformation, E_FAIL, E_INVALIDARG, HANDLE};
 use windows::Win32::Media::MediaFoundation::{
@@ -28,7 +28,7 @@ use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_MULTITH
 use super::super::native_import::{import_nv12_surface, make_native_sample};
 use super::super::producer_identity::is_expected_receiver_process;
 
-const E_PENDING: HRESULT = HRESULT(0x8000000Au32 as i32);
+const MAX_NATIVE_REQUESTS: usize = 8;
 
 pub(super) struct PreparedNativeSample {
     sample: IMFSample,
@@ -460,7 +460,13 @@ pub(super) fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
             }
             return;
         };
-        let should_prepare = match shared.lock() {
+        #[derive(Clone, Copy)]
+        enum Work {
+            Prepare,
+            Deliver,
+            Idle,
+        }
+        let work = match shared.lock() {
             Ok(state) => {
                 if state.queue.is_none() {
                     if com_initialized {
@@ -468,7 +474,17 @@ pub(super) fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
                     }
                     return;
                 }
-                state.native_generation.is_some()
+                if state.native_generation.is_some()
+                    && !state.native_session_exhausted
+                    && !state.native_placeholder_active
+                    && state.native_device.is_some()
+                    && state.state == MF_STREAM_STATE_RUNNING
+                    && !state.transitioning
+                    && state.native_prepared.is_some()
+                    && !state.native_requests.is_empty()
+                {
+                    Work::Deliver
+                } else if state.native_generation.is_some()
                     && !state.native_session_exhausted
                     && !state.native_placeholder_active
                     && state.native_device.is_some()
@@ -476,6 +492,12 @@ pub(super) fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
                     && !state.transitioning
                     && state.native_prepared.is_none()
                     && !state.native_inflight
+                    && !state.native_requests.is_empty()
+                {
+                    Work::Prepare
+                } else {
+                    Work::Idle
+                }
             }
             Err(_) => {
                 if com_initialized {
@@ -484,8 +506,24 @@ pub(super) fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
                 return;
             }
         };
-        if !should_prepare {
+        if matches!(work, Work::Idle) {
             thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        if matches!(work, Work::Deliver) {
+            let token = match shared.lock() {
+                Ok(mut state) => state.native_requests.pop_front().flatten(),
+                Err(_) => {
+                    if com_initialized {
+                        unsafe { CoUninitialize() };
+                    }
+                    return;
+                }
+            };
+            if let Err(error) = deliver_native_sample_owned(&shared, token) {
+                tracing::warn!(%error, "native VCam sample delivery failed");
+                reset_native_session_inner(&shared, None);
+            }
             continue;
         }
         match prepare_native_sample(&shared) {
@@ -525,9 +563,31 @@ pub(super) fn native_prepare_loop(weak: Weak<Mutex<StreamState>>) {
     }
 }
 
-pub(super) fn deliver_native_sample(
+pub(super) fn request_native_sample(
     shared: &SharedStreamState,
     token: Ref<'_, IUnknown>,
+) -> Result<()> {
+    let ready = {
+        let mut state = lock(shared)?;
+        if state.state != MF_STREAM_STATE_RUNNING || state.transitioning {
+            return Err(Error::from(MF_E_MEDIA_SOURCE_WRONGSTATE));
+        }
+        if state.native_requests.len() >= MAX_NATIVE_REQUESTS {
+            // IMFMediaStream permits a source to drop a request it cannot
+            // fulfill. Release the token by dropping this owned clone and keep
+            // the media pipeline alive instead of returning a fatal HRESULT.
+            return Ok(());
+        }
+        state.native_requests.push_back(token.as_ref().cloned());
+        Arc::clone(&state.native_ready)
+    };
+    ready.1.notify_all();
+    Ok(())
+}
+
+fn deliver_native_sample_owned(
+    shared: &SharedStreamState,
+    token: Option<IUnknown>,
 ) -> Result<FrameOrigin> {
     {
         let state = lock(shared)?;
@@ -536,23 +596,6 @@ pub(super) fn deliver_native_sample(
         }
     }
     let lifecycle_operation = Arc::clone(&lock(shared)?.lifecycle_operation);
-    let ready = Arc::clone(&lock(shared)?.native_ready);
-    let deadline = Instant::now() + Duration::from_millis(100);
-    loop {
-        let prepared = lock(shared)?.native_prepared.is_some();
-        if prepared || Instant::now() >= deadline {
-            break;
-        }
-        let wait = deadline.saturating_duration_since(Instant::now());
-        let guard = ready
-            .0
-            .lock()
-            .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))?;
-        let _ = ready
-            .1
-            .wait_timeout(guard, wait)
-            .map_err(|_| Error::from(windows::Win32::Foundation::E_UNEXPECTED))?;
-    }
     let _operation = lock(&lifecycle_operation)?;
     let prepared = {
         let mut state = lock(shared)?;
@@ -562,7 +605,7 @@ pub(super) fn deliver_native_sample(
         let prepared = state
             .native_prepared
             .take()
-            .ok_or_else(|| Error::from(E_PENDING))?;
+            .ok_or_else(|| Error::from(E_FAIL))?;
         state.native_inflight = true;
         prepared
     };
@@ -652,6 +695,9 @@ pub(super) fn deliver_native_sample(
         prepared.abort();
         reset_native_session_if_current(shared, session_revision);
         return Err(error);
+    }
+    if let Some(snapshot) = lock(shared)?.metrics.record_origin(origin) {
+        super::emit_metrics(snapshot);
     }
     Ok(origin)
 }
@@ -746,6 +792,7 @@ pub(super) fn reset_native_session_state(state: &mut StreamState) -> Option<Prep
     state.native_handshake_identity = None;
     state.native_channel = None;
     state.native_inflight = false;
+    state.native_requests.clear();
     state.native_last_delivered_identity = None;
     state.native_session_revision = match next_session_revision(state.native_session_revision) {
         Some(revision) => revision,
