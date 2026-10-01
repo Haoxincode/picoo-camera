@@ -133,6 +133,8 @@ jobs:
             target/release/bundle/picoo-vcam-ring-reader.exe
             target/release/bundle/PicooVirtualCameraSource.dll
             target/release/bundle/msi/PicooCamera.msi
+      # Actions keeps the signed bundle and SBOM. The GitHub Release receives
+      # only PicooCamera.msi, chosen by scripts/publish_user_release.sh.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-signed-release

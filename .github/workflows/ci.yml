@@ -44,6 +44,8 @@ jobs:
         run: bash scripts/validate_wix_scaffold.sh
       - name: Lint Android discovery schema ownership
         run: bash scripts/check_discovery_txt_keys.sh
+      - name: Check GitHub Release asset allowlist
+        run: bash scripts/publish_user_release.sh --self-check
 
   android:
     runs-on: ubuntu-latest

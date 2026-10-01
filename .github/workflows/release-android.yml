@@ -112,6 +112,8 @@ jobs:
           subject-path: |
             apps/android/app/build/outputs/apk/release/app-release.apk
             apps/android/app/build/outputs/bundle/release/app-release.aab
+      # Actions keeps the APK, AAB, and SBOM. The GitHub Release receives only
+      # app-release.apk, chosen by scripts/publish_user_release.sh.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: android-signed-release

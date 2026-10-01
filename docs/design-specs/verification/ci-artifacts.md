@@ -120,6 +120,27 @@ adb install -r app-release.apk
 Environment 注入稳定 keystore，并在上传前核对 APK/AAB certificate SHA-256、application ID、
 versionName 与 versionCode；缺少任一签名输入时 Gradle Release task 直接失败。
 
+## GitHub Release 附件
+
+Actions artifact 继续保留开发、验证、SBOM 和 provenance。GitHub Release 页面只放普通用户能安装使用的包，由 `scripts/publish_user_release.sh` 从绿 run 里挑选。`scripts/publish_user_release.sh --self-check` 会核对每个 workflow 的 `upload-artifact` 名称都已归类；新增产物时必须先归类，不能直接进 Release。
+
+| 平台 | Release 附件 | 不进 Release |
+| --- | --- | --- |
+| Android | 有签名 Release 时只放 `app-release.apk`；否则放普通 CI 的 Debug APK | AAB、SPDX SBOM |
+| Windows | 有签名 MSI 时放签名包；否则放普通 CI 的未签名 MSI | 松散 `windows-bundle`、录制样本、mux 探针 |
+| macOS | 只放已公证的 `PicooCamera-macOS.zip` | 未签名 App 与 entitlements。未签名包不能激活 Camera Extension |
+| iOS | 不放文件。用户以后从 App Store 安装 | Simulator App、XCFramework、App Store IPA |
+
+同一平台同时有签名包和未签名包时，只保留签名包。校验文件 `SHA256SUMS.txt` 只覆盖实际附上的安装包。
+
+当前 [v0.1.649](https://github.com/Haoxincode/picoo-camera/releases/tag/v0.1.649) 按这个范围发布：Debug APK 与未签名 MSI。下一次从 CI 归档时用：
+
+```bash
+scripts/publish_user_release.sh --ci-run <run-id> --tag v0.1.<run-number> --notes-file notes.md
+```
+
+`--dry-run` 只打印会保留的文件。签名包另传 `--android-signed-run`、`--windows-signed-run`、`--macos-signed-run`，并且必须和 CI run 是同一个提交。
+
 ## 真机最小组合
 
 | 平台 | 文件 | 安装 |
