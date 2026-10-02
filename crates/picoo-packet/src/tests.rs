@@ -424,6 +424,46 @@ fn oversized_keyframe_is_counted_and_requests_idr_once() {
 }
 
 #[test]
+fn oversized_fragment_rejection_saturates_after_frame_id_gap_across_epochs() {
+    // REQ-PICOO-PROTOCOL-013: reproduce the nightly reassembly-fec crash
+    // through wire packets, without injecting private counter state.
+    let mut map = ReassemblyMap::new(8, 1_024);
+    let wire_packet = |epoch, frame_id, count| {
+        let mut packet = fragment(epoch, frame_id, 0, count, b"x");
+        packet.flags = VideoPacketFlags::KEYFRAME;
+        VideoPacket::decode(&packet.encode().unwrap()).unwrap()
+    };
+    assert!(map.ingest(wire_packet(1, 0, 1)).unwrap().is_some());
+    assert_eq!(
+        map.ingest(wire_packet(1, u64::MAX, 1_025)),
+        Err(ReassemblyError::TooManyFragments)
+    );
+    assert_eq!(map.drop_count(), u64::MAX);
+    assert_eq!(map.whole_access_unit_gap_drop_count(), u64::MAX - 1);
+    assert!(map.take_reference_chain_loss());
+
+    assert_eq!(
+        map.ingest(wire_packet(2, 0, 1_025)),
+        Err(ReassemblyError::TooManyFragments)
+    );
+    assert_eq!(map.drop_count(), u64::MAX);
+    assert!(map.take_keyframe_loss());
+    assert!(map.take_reference_chain_loss());
+    assert_eq!(
+        map.ingest(wire_packet(2, 0, 1_025)),
+        Err(ReassemblyError::TooManyFragments)
+    );
+    assert!(!map.take_keyframe_loss());
+    assert!(!map.take_reference_chain_loss());
+    assert_eq!(map.oldest_pending_pts_us(), None);
+
+    let recovered = map.ingest(wire_packet(2, 1, 1)).unwrap().unwrap();
+    assert_eq!(recovered.data.as_ref(), b"x");
+    assert_eq!(map.drop_count(), u64::MAX);
+    assert_eq!(map.resolved_fragment_count(), 2);
+}
+
+#[test]
 fn late_duplicate_cannot_recreate_a_completed_frame() {
     let mut map = ReassemblyMap::new(2, 2);
     assert!(map.ingest(fragment(1, 1, 0, 1, b"done")).unwrap().is_some());

@@ -399,7 +399,10 @@ impl ReassemblyMap {
                 self.drop_oldest_rejected();
             }
             if self.rejected_frames.insert(key) {
-                self.drops += 1;
+                // Fuzz inputs can first create a frame-id gap large enough to
+                // saturate loss accounting, then submit another rejected AU.
+                // Metrics must never turn hostile input into a release crash.
+                self.drops = self.drops.saturating_add(1);
                 if !packet.flags.contains(VideoPacketFlags::DISCARDABLE) {
                     self.reference_loss_pending = true;
                 }
