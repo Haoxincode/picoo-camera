@@ -2,11 +2,16 @@ use super::*;
 use picoo_packet::AssembledAccessUnit;
 use picoo_protocol::control::VideoFormat;
 
+// Native segment startup can take longer than the production ingress deadline
+// when the test harness starts several codec writers in parallel. Individual
+// deadline behavior is covered by tests that set an explicit expired deadline.
+const TEST_INPUT_DEADLINE: Duration = Duration::from_secs(30);
+
 pub(crate) fn input(codec_index: usize, epoch: u32, id: u64, pts_us: u64) -> RecordingInput {
     let (configuration, bytes) = crate::test_fixtures::fixtures().remove(codec_index);
     let format = VideoFormat::from_codec_configuration(&configuration, 30).unwrap();
     RecordingInput {
-        deadline: Instant::now() + crate::ingress::INPUT_DEADLINE,
+        deadline: Instant::now() + TEST_INPUT_DEADLINE,
         _reservation: crate::budget::reserve(bytes.len()).unwrap(),
         connection_generation: 1,
         configuration: Arc::new(StreamConfig {
