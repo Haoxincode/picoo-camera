@@ -20,6 +20,7 @@ use windows::Win32::{
         },
     },
 };
+
 pub(crate) fn try_to_recover_from_device_lost<T>(mut f: impl FnMut() -> Result<T>) -> Result<T> {
     (0..5)
         .map(|i| {
@@ -111,12 +112,8 @@ fn get_adapter(
     ID3D11DeviceContext,
     D3D_FEATURE_LEVEL,
 )> {
-    // GPUI creates its device before the Receiver has a decoded frame.  Use
-    // DXGI's high-performance ordering here so a hybrid laptop does not bind
-    // the UI to the Microsoft Basic Render Driver/integrated fallback while
-    // the media path is admitted on the hardware adapter.  We still walk the
-    // complete list: the preference is an ordering hint, not a capability
-    // guarantee.
+    // Prefer the hardware adapter used by the media path on hybrid laptops.
+    // DXGI's preference is an ordering hint, so continue through every adapter.
     for adapter_index in 0.. {
         let adapter: IDXGIAdapter1 = match unsafe {
             dxgi_factory.EnumAdapterByGpuPreference(

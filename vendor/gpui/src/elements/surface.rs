@@ -4,11 +4,11 @@ use crate::{
 };
 #[cfg(target_os = "macos")]
 use core_video::pixel_buffer::CVPixelBuffer;
-use refineable::Refineable;
 #[cfg(target_os = "windows")]
 mod direct3d;
 #[cfg(target_os = "windows")]
 pub use direct3d::*;
+use refineable::Refineable;
 
 /// A source of a surface's content.
 #[derive(Clone, Debug, PartialEq, Eq)]

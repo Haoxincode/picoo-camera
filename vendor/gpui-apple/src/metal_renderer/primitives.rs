@@ -96,8 +96,11 @@ impl MetalRenderer {
         // Retaining just the MTLTexture does not satisfy CoreVideo's contract.
         if !surface_leases.is_empty() {
             let leases = Cell::new(Some(surface_leases));
-            let completed = ConcreteBlock::new(move |_| drop(leases.take())).copy();
-            command_buffer.add_completed_handler(&completed);
+            let completed = RcBlock::new(move |_: ptr::NonNull<AnyObject>| drop(leases.take()));
+            // SAFETY: Both pointee types are opaque views of the same Objective-C block ABI.
+            unsafe {
+                command_buffer.add_completed_handler(&*RcBlock::as_ptr(&completed).cast());
+            }
         }
         Ok(command_buffer.to_owned())
     }
@@ -381,7 +384,9 @@ impl MetalRenderer {
             return;
         }
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            return;
+        };
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),
@@ -435,7 +440,9 @@ impl MetalRenderer {
             return;
         }
 
-        let texture = self.sprite_atlas.metal_texture(texture_id);
+        let Some(texture) = self.sprite_atlas.metal_texture(texture_id) else {
+            return;
+        };
         let texture_size = size(
             DevicePixels(texture.width() as i32),
             DevicePixels(texture.height() as i32),

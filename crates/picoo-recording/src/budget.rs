@@ -23,7 +23,7 @@ pub(crate) struct Reservation {
 impl Budget {
     fn reserve(self: &Arc<Self>, bytes: usize) -> Result<Reservation, IngressFailure> {
         self.used
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
                 used.checked_add(bytes).filter(|total| *total <= self.limit)
             })
             .map_err(|_| IngressFailure::Capacity)?;

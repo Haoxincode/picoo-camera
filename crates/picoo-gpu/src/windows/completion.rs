@@ -36,7 +36,7 @@ struct Permit(Arc<AtomicUsize>);
 impl Permit {
     fn acquire(local: &Arc<AtomicUsize>) -> Result<Self, WindowsCompletionError> {
         let reserve = |count: &AtomicUsize, limit| {
-            count.fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+            count.try_update(Ordering::AcqRel, Ordering::Acquire, |value| {
                 (value < limit).then_some(value + 1)
             })
         };

@@ -30,7 +30,7 @@ Picoo Camera 有四端 UI，但职责不同：手机端 UI 薄，主要负责发
 
 `gpui-shell`、`gpui-wry` 和 `gpui-fps` 不属于 Receiver 运行时依赖；若未来引入，必须先建立独立 Architecture/Requirement 边界。`gpui-kit` 必须关闭隐式默认 feature 并显式启用 Receiver 实际需要的 `component` 与 `assets`，避免上游新增默认能力时静默扩大产品依赖面。
 
-截至 2026-09-05，GPUI Kit 仍由上游活跃维护，最新正式版本为 0.6.0；它使用 Apache-2.0 许可证，要求 Rust 1.90+，支持 Windows 10+ 与 macOS 15+，与 Picoo 的 Rust stable、Windows 11 和 macOS 15 ARM64 基线兼容。facade 只做类型与入口重导出，不增加独立渲染或运行时层；关闭默认 feature 并只启用 `component`、`assets` 后，依赖树不包含 Receiver 未使用的 shell、WebView 和 FPS 能力。直接组合 `gpui-pre`、`gpui-pre-platform` 与 `gpui-component` 虽可构建，但会把版本兼容责任重新泄漏给应用，因此不采用。所锁 revision 必须包含上游 `#2940`：该修复删除 facade 未使用的 `reqwest_client`，使解析树不再包含 `aws-lc-sys` 与 CMake；切换 crates.io 版本前必须确认对应正式版本已经包含该修复。
+截至 2026-10-05，GPUI Kit 仍由上游活跃维护，锁定正式版本为 0.7.0；它使用 Apache-2.0 许可证，支持 Picoo 的 Rust stable、Windows 11 和 macOS 15 ARM64 基线。facade 只做类型与入口重导出，不增加独立渲染或运行时层；关闭默认 feature 并只启用 `component`、`assets` 后，依赖树不包含 Receiver 未使用的 shell、WebView 和 FPS 能力。直接组合 `gpui-pre`、`gpui-pre-platform` 与 `gpui-component` 虽可构建，但会把版本兼容责任重新泄漏给应用，因此不采用。工作区通过局部 patch 将 0.7.0 绑定的完整 `gpui-pre 0.3.7` 包族统一切换到 Picoo fork；公共视频 surface、Windows renderer 与 Apple renderer 必须与该包族一起核对，不能只改 facade 版本约束。
 
 第一版使用的组件：Button、Card、Badge、Select、Switch、Slider、Dialog、Tooltip、Popover、Toast、Progress、Separator、Icon。
 

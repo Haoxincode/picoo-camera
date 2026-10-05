@@ -4,7 +4,7 @@
 
 ## 当前接口与边界
 
-锁定的 GPUI Kit 0.6 / gpui-pre-apple 0.3.3 在 Metal renderer 中只接受 `420f`，shader 使用固定 BT.601 full-range 矩阵。不能把 Decoder 的 BT.709 limited NV12 直接交给 surface。窗口只持有已准备图像；方向、缩放及颜色处理由独立 GPU 工作者拥有。
+锁定的 GPUI Kit 0.7 / gpui-pre-apple 0.3.7 在 Metal renderer 中只接受 `420f`，shader 使用固定 BT.601 full-range 矩阵。不能把 Decoder 的 BT.709 limited NV12 直接交给 surface。窗口只持有已准备图像；方向、缩放及颜色处理由独立 GPU 工作者拥有。
 
 原生图像复用官方 CoreVideo/IOSurface retain/release，不自行分配公共 CPU 像素，也不自制平台引用计数。Rust 使用仓库已有系列的 objc2-core-foundation/core-video 0.3.2，以及同系列 objc2-io-surface 0.3.2；生成绑定来自维护中的 objc2，许可证 Zlib/Apache-2.0/MIT 可选，最低 Rust 1.71，低于项目当前工具链。它们只链接 Apple 系统 framework；按 macOS target 和所需 features 启用，不为其他目标增加框架依赖或软件渲染器。启用 CoreVideo 的 IOSurface API 时必须显式启用 IOSurfaceRef，否则最小 features 构建缺少 CF Type 实现。
 
@@ -37,7 +37,7 @@
 
 ## GPUI 下游读取寿命
 
-2026-09-06 核对 crates.io：gpui-pre-apple 当前发布仍为 0.3.3（2026-09-03），Apache-2.0，与现有 gpui-pre / GPUI Kit 锁定组合一致，edition 2024，按项目 stable 构建（不能只凭 edition 推断完整 MSRV）。其 draw_surfaces 在 draw 编码后释放 CVMetalTexture，render_frame 的完成回调只保留 instance buffer。`vendor/gpui-apple` 保存相同发布包和来源 checksum，局部修补为在 command buffer 完成回调释放源 PixelBuffer 和两个 plane 的 CVMetalTexture；没有新包或平台运行时依赖，只增加每个已绘制 surface 的三个原生 retain。源码按 renderer 生命周期、primitive/pipeline 和 instance buffer 分开，修改文件均低于 800 行；更新方法见 vendor 内 README.picoo.md。
+初始记录（2026-09-06）核对 crates.io 时，gpui-pre-apple 发布为 0.3.3（2026-09-03），Apache-2.0，与当时的 gpui-pre / GPUI Kit 锁定组合一致，edition 2024，按项目 stable 构建（不能只凭 edition 推断完整 MSRV）。本次已随 GPUI Kit 0.7.0 升级到 gpui-pre-apple 0.3.7，并以对应发布包重建 vendor fork；其 draw_surfaces 在 draw 编码后释放 CVMetalTexture，render_frame 的完成回调只保留 instance buffer。`vendor/gpui-apple` 保存 0.3.7 发布包和来源 checksum，局部修补为在 command buffer 完成回调释放源 PixelBuffer 和两个 plane 的 CVMetalTexture；没有新包或平台运行时依赖，只增加每个已绘制 surface 的三个原生 retain。源码按 renderer 生命周期、primitive/pipeline 和 instance buffer 分开，修改文件均低于 800 行；更新方法见 vendor 内 README.picoo.md。
 
 M4 实测：同一 Metal queue 先等待未触发的 SharedEvent，再提交真实 GPUI surface draw；Scene 释放、texture cache flush 后，单槽 CVPixelBufferPool 必须返回 WouldExceedAllocationThreshold。触发事件并等待 command buffer 完成后，池可再次分配。修补版本通过；临时移除保留逻辑的负向版本在“pending GPU reads must prevent pool reuse”处失败；已恢复修补并通过该依赖全部四项单元测试。不以 CPU 引用计数推测 GPU 完成。
 

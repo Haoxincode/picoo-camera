@@ -61,7 +61,7 @@ pub(super) fn set_server_lock(locked: bool) {
     if locked {
         SERVER_LOCKS.fetch_add(1, Ordering::AcqRel);
     } else {
-        let _ = SERVER_LOCKS.fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+        let _ = SERVER_LOCKS.try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
             count.checked_sub(1)
         });
     }

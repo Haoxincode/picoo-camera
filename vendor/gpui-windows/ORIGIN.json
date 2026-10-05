@@ -1,9 +1,10 @@
 {
   "crate": "gpui-pre-windows",
-  "version": "0.3.6",
-  "registry": "https://crates.io/crates/gpui-pre-windows/0.3.6",
-  "sha256": "1a4b60579aa2cb4ef7b6f22133a7b9fe12458062961343bdcf36e259047bc7ad",
+  "version": "0.3.7",
+  "registry": "https://crates.io/crates/gpui-pre-windows/0.3.7",
+  "sha256": "f05592a6f9e3e6bb7a9f2a0d4779271cf747a948db1c07b02448de777ffff8f3",
   "upstream_repository": "https://github.com/zed-industries/zed",
+  "upstream_revision": "1a28cff4b409169bac058bca40dfbfeb7621d19b",
   "license": "Apache-2.0",
   "local_changes": [
     "Add externally supplied Direct3D BGRA surfaces with supplier-owned access and completion"

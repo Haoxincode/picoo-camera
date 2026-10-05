@@ -508,8 +508,7 @@ impl WindowsWindow {
             (dwexstyle, dwstyle)
         };
         // CreateWindowExW otherwise starts hidden. SetWindowPlacement can keep
-        // SW_HIDE if GetWindowPlacement still reports it, leaving a process
-        // with no taskbar button.
+        // SW_HIDE if GetWindowPlacement still reports it, leaving no taskbar window.
         if params.show {
             dwstyle |= WS_VISIBLE;
         }
@@ -580,9 +579,6 @@ impl WindowsWindow {
             retrieve_window_placement(hwnd, display, params.bounds, &this.state.border_offset)?;
         if params.show {
             let mut placement = placement;
-            // CreateWindowExW is called without WS_VISIBLE, so GetWindowPlacement
-            // often reports SW_HIDE. Leaving that in place keeps a running process
-            // with no taskbar button and no window.
             placement.showCmd = if params.focus {
                 SW_SHOWNORMAL.0 as u32
             } else {

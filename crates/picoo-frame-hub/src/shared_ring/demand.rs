@@ -46,7 +46,7 @@ pub(super) unsafe fn request(base: *const u8) {
             .cpu_demand_until_ms
             .store(deadline, Ordering::SeqCst);
         // Exhaustion permanently stops new requests; never reuse an old ticket.
-        let _ = (&*const_meta_at(base)).cpu_request_sequence.fetch_update(
+        let _ = (&*const_meta_at(base)).cpu_request_sequence.try_update(
             Ordering::SeqCst,
             Ordering::SeqCst,
             |sequence| sequence.checked_add(1),

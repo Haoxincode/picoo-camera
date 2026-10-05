@@ -46,7 +46,7 @@ impl RingContentFence {
     /// transitions may fail closed before older pixels are fenced.
     pub fn invalidate_as(&self, kind: SharedFrameKind) -> u64 {
         let signal = unsafe { &(*meta_at(self.mapping.as_ptr())).content_signal };
-        let _ = signal.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+        let _ = signal.try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
             if current == 0 {
                 return Some(0);
             }
@@ -59,7 +59,7 @@ impl RingContentFence {
         });
         let generation = unsafe { &(*meta_at(self.mapping.as_ptr())).content_generation };
         let previous = generation
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 Some(if current == 0 {
                     0
                 } else {
